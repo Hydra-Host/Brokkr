@@ -1,0 +1,32 @@
+enum MemoryType {
+  DDR3
+  DDR4
+  DDR5
+  LPDDR4
+  LPDDR5
+}
+
+enum MemoryEccType {
+  SINGLE_BIT_ECC
+  MULTI_BIT_ECC
+  NONE
+}
+
+model MemoryConfig {
+  id              String         @id @default(uuid())
+  totalSizeMb     Int
+  populatedDimms  Int
+  totalSlots      Int
+  dimmSizeMb      Int?
+  dimmType        MemoryType?
+  dimmSpeed       String?
+  configuredSpeed String?
+  eccType         MemoryEccType?
+  configSummary   String?
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

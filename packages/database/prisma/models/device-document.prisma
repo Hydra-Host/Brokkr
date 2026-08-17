@@ -1,0 +1,18 @@
+model DeviceDocument {
+  id          String  @id @default(uuid())
+  name        String
+  fileUrl     String
+  fileType    String?
+  description String?
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String
+
+  uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([deviceId])
+}

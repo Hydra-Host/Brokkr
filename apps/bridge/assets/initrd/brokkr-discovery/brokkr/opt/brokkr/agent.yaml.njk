@@ -1,0 +1,72 @@
+# Rendered by ``AgentBootstrapService.ensure_agent_deployed`` and installed
+# at ``/opt/brokkr/agent.yaml`` on the device. Today that install happens
+# over SSH — a transitional bootstrap mechanism for devices that came up
+# without the agent baked into their initrd. Once every device ships with
+# the agent + config in the brokkr-live initrd, this template will be
+# rendered at image-build time and the SSH path will go away. The schema
+# below is the Zod-validated ``AgentConfig`` in ``apps/live-agent/src/config.ts`` —
+# keep fields in sync regardless of which channel delivers the file.
+
+device_id: "{{ device_id }}"
+
+zone_id: "{{ zone_id }}"
+
+# Dial bridges over plaintext h2c instead of TLS. Rendered true when the bridge
+# runs without a TLS front (GRPC_INSECURE or local sim). `address` carries only
+# host:port; the agent derives http:// vs https:// from this flag.
+insecure: {{ insecure | default(false) }}
+
+# One entry per bridge the agent should attach to. Rendered from the
+# Redis service registry — bare hostname matches the per-bridge cert CN
+# and the /etc/hosts block written during bootstrap. grpc_address is emitted
+# only when a dialback host is set — a genuine host-rewrite override.
+bridges:
+{%- for b in bridges %}
+  - address: "{{ b }}"
+{%- if grpc_dialback_host %}
+    grpc_address: "{{ 'http' if insecure else 'https' }}://{{ grpc_dialback_host }}:{{ b.split(':')[1] }}"
+{%- endif %}
+{%- endfor %}
+
+auth:
+  # Per-device bearer token the agent attaches to every gRPC call as
+  # ``authorization: Bearer <token>``.  For real device_ids this is a
+  # long-lived device-scoped token; for the nil-UUID device (discovery
+  # phase) it is a per-MAC 24h-TTL discovery token, minted until the device
+  # is commissioned and its per-device initrd rebuilds.
+  token: "{{ agent_token }}"
+
+tls:
+  # Point at the system CA bundle. The brokkr-live ISO bakes the
+  # Hydra/Brokkr CAs into /usr/local/share/ca-certificates/ and runs
+  # update-ca-certificates at image-build time, so /etc/ssl/certs/
+  # ca-certificates.crt has Mozilla + Hydra CAs — sufficient for the
+  # bridge's mTLS cert and any public HTTPS the agent makes (phone-home).
+  # Per-device agent auth is the bearer token above, not a client cert.
+  #
+  # We point at the file explicitly rather than relying on
+  # NODE_EXTRA_CA_CERTS in the systemd unit: config-in-config-file is
+  # cleaner and the bridge can vary the path per fleet via this render.
+  ca_bundle_path: /etc/ssl/certs/ca-certificates.crt
+  reject_unauthorized: true
+
+agent:
+  heartbeat_interval_ms: 30000
+  heartbeat_timeout_ms: 90000
+  reconnect_backoff_initial_ms: 1000
+  reconnect_backoff_max_ms: 60000
+  work_timeout_default_ms: 300000
+  log_level: {{ log_level | default("info") }}
+  collection_snapshot_path: {{ collection_snapshot_path | default("/var/lib/brokkr/collections") }}
+
+telemetry:
+  # Rendered true only by bridges whose own OTLP telemetry is enabled — the
+  # agent ships spans through AgentService.ReportTraces (bridge relays them);
+  # it never needs collector reachability or OTLP credentials.
+  traces_enabled: {{ telemetry_traces_enabled | default(false) }}
+
+# No phone_home block: the brokkr-live agent phones home over its gRPC
+# session (AgentService.PhoneHome), authenticated by the session's bearer
+# token — no encrypted cipher/signature baked into the initrd. The bridge
+# forwards it to the hub. (The deployed OS phones home via a cloud-init shell
+# script, which still carries its own token from the provisioning payload.)

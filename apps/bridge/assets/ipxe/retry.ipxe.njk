@@ -1,0 +1,46 @@
+#!ipxe
+# Retry / re-chain script.
+#
+# Served when the device's identifiers resolve (the box IS known/commissioned)
+# but the hub-published device_record atom is transiently absent even after
+# render-on-miss. We must NOT route to discovery (the initrd builder would
+# 404 a real, non-placeholder device and strand it in a boot loop) and we
+# cannot disk-boot blindly (the device's real status lives in the very atom
+# that is missing). Instead we wait briefly and re-chain: the device_record
+# render request is already in flight, so by the next attempt resolve_device
+# typically returns a real DeviceRecord and routes on the device's actual
+# status. If the atom never reappears this self-heals the moment the atom
+# lands — and is bounded: the re-chain carries an incrementing retry_count
+# (embedded by the bridge below), so after MAX_KNOWN_RECORD_MISSING_RETRIES
+# re-chains the bridge falls back to brokkr-live discovery instead of looping
+# forever, surfacing a permanently-missing atom as an commissioning boot.
+
+echo Brokkr device record not yet available; retrying in {{ sleep_seconds }}s...
+sleep {{ sleep_seconds }}
+
+set retry_count:int32 {{ retry_count }}
+
+:rechain
+# Rebuild the identifier param table exactly as the embedded autoexec does,
+# so the re-chain carries the same identifiers the hub is resolving on.
+params
+param platform ${platform}
+param buildarch ${buildarch}
+param ip ${netX/ip}
+param mac ${netX/mac:hexhyp}
+param serial ${serial}
+param manufacturer ${manufacturer}
+param ipmi_mac ${ipmi/mac}
+param ipmi_ip ${ipmi/ip}
+param ipmi_tag ${ipmi/tag}
+param board_serial ${board-serial}
+param chassis_serial ${chassis-serial}
+param system_uuid ${uuid}
+param retry_count ${retry_count}
+chain --autofree {{ bridge_url }}/api/chain##params || goto retry
+
+:retry
+inc retry_count
+echo Re-chain failed; retrying as attempt ${retry_count} in {{ sleep_seconds }}s...
+sleep {{ sleep_seconds }}
+goto rechain

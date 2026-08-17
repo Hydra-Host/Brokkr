@@ -1,0 +1,59 @@
+[Unit]
+Description=Brokkr Bridge Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Node runtime is expected to be on the device's PATH — brokkr-live ships it
+# as part of the base image (per D13). Bundle is a single CJS file produced
+# by tsup; location matches AgentBootstrapService.REMOTE_BUNDLE_PATH.
+ExecStart=/usr/bin/node /opt/brokkr/agent/main.js
+Restart=always
+RestartSec=5
+
+# ──────────────────────────────────────────────────────────────────────
+# User=root is a DESIGN DECISION, not an oversight.
+# ──────────────────────────────────────────────────────────────────────
+# The agent is the central provisioning tool running inside brokkr-live
+# (the ephemeral live-boot OS that exists only during provisioning). It
+# needs unrestricted root to do its job, which spans:
+#
+#   * Hardware probing — dmidecode, sensors, smartctl, nvme, ghwc,
+#     /sys/class/* reads, /dev/ipmi* access (requires CAP_SYS_ADMIN,
+#     CAP_SYS_RAWIO, root-level /dev access).
+#   * Disk sanitization — `nvme sanitize`, `blkdiscard`, `dd` on raw
+#     devices, ATA Secure Erase (CAP_SYS_ADMIN, direct /dev/sd*, /dev/nvme*).
+#   * Storage preparation — curtin, mdadm, cryptsetup, LVM tooling all
+#     require root; chroot + bind-mounts into /target require CAP_SYS_ADMIN.
+#   * OS deployment — restic/tar extraction into /target, GRUB install,
+#     EFI boot-entry manipulation via efibootmgr, all require root.
+#   * Kernel / module operations — some probes read /proc/kallsyms;
+#     storage flows may load kernel modules; none of this is compatible
+#     with a capability-restricted profile without case-by-case tuning.
+#
+# Brokkr-live is ephemeral — it boots, provisions, reboots into the
+# installed OS. There is no persistent data on the device filesystem to
+# protect with ProtectSystem / ProtectHome. The security boundary lives at
+# the bridge side (agent authenticity, WS channel trust), not at the OS
+# syscall layer on this device.
+#
+# If a future audit wants additional defense-in-depth, the candidates
+# that are compatible with full hardware access are:
+#   * NoNewPrivileges=yes  (blocks setuid escalation — agent never needs)
+#   * RestrictSUIDSGID=yes (agent never creates setuid files)
+#   * LockPersonality=yes  (agent is single-arch)
+# Deliberately not applied here today; add them only when paired with a
+# concrete threat-model change.
+User=root
+
+# Structured JSON goes to stdout/stderr; journald captures both.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=brokkr-bridge-agent
+
+# Environment
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

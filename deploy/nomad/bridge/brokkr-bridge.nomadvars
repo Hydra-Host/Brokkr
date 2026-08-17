@@ -1,0 +1,11 @@
+# Infrastructure values for the brokkr-bridge job. Adjust for your cluster, then:
+#   nomad job run -var-file=brokkr-bridge.nomadvars brokkr-bridge.nomad.hcl
+image           = "hydrahost/brokkr-bridge:latest"
+namespace       = "default"
+node_pool       = "default"
+datacenters     = ["*"]
+bridge_port     = 8000
+env_var_path    = "nomad/jobs/brokkr-bridge"
+node_constraint = ""
+cpu             = 1000
+memory          = 1024

@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Device" ALTER COLUMN "hourlyPrice" SET DATA TYPE DECIMAL(65,30);

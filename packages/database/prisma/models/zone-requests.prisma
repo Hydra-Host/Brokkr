@@ -1,0 +1,44 @@
+enum NetworkType {
+  public
+  private
+  vpc
+}
+
+enum BridgePackage {
+  container
+  lite
+  pro
+}
+
+enum PrefixType {
+  public
+  private
+}
+
+enum PrefixRole {
+  primary
+  management
+}
+
+model ZoneRequest {
+  id String @id @default(uuid())
+
+  dateApproved DateTime?
+  dateCreated  DateTime  @default(now())
+  dateDeleted  DateTime?
+  dateUpdated  DateTime  @updatedAt
+
+  name          String
+  bridgePackage BridgePackage
+  networkType   NetworkType
+  prefixes      Json
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  zoneId String?
+  zone   Zone?   @relation(fields: [zoneId], references: [id])
+
+  @@index([organizationId])
+  @@index([zoneId])
+}

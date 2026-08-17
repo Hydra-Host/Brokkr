@@ -1,0 +1,13 @@
+# Infrastructure values for the brokkr-hub job. Adjust for your cluster, then:
+#   nomad job run -var-file=brokkr-hub.nomadvars brokkr-hub.nomad.hcl
+image              = "hydrahost/brokkr-hub:latest"
+namespace          = "default"
+node_pool          = "default"
+datacenters        = ["*"]
+hub_port           = 3000
+redis_port         = 6379
+bundled_datastores = true
+env_var_path       = "nomad/jobs/brokkr-hub"
+service_tags       = []
+cpu                = 1000
+memory             = 2048

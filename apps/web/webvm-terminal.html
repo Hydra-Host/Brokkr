@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BoSS — Linux Terminal</title>
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <!-- Runs before React to avoid flash of default theme. External file required for CSP script-src 'self'. -->
+    <script src="/theme-init.js"></script>
+    <style>
+      html,
+      body,
+      #root {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/webvm-terminal-main.tsx"></script>
+  </body>
+</html>

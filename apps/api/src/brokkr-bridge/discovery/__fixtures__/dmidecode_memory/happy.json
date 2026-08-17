@@ -1,0 +1,52 @@
+[
+  {
+    "handle": "0x0041",
+    "type": 16,
+    "description": "Physical Memory Array",
+    "values": {
+      "location": "System Board",
+      "use": "System Memory",
+      "error_correction_type": "Single-bit ECC",
+      "maximum_capacity": "8 TB",
+      "number_of_devices": "32"
+    }
+  },
+  {
+    "handle": "0x0042",
+    "type": 17,
+    "description": "Memory Device",
+    "values": {
+      "size": "64 GB",
+      "locator": "P1-DIMMA1",
+      "type": "DDR5",
+      "speed": "4800 MT/s",
+      "configured_memory_speed": "4400 MT/s",
+      "manufacturer": "Micron Technology",
+      "part_number": "MTC40F2046S1RC48BA1"
+    }
+  },
+  {
+    "handle": "0x0043",
+    "type": 17,
+    "description": "Memory Device",
+    "values": {
+      "size": "64 GB",
+      "locator": "P1-DIMMA2",
+      "type": "DDR5",
+      "speed": "4800 MT/s",
+      "configured_memory_speed": "4400 MT/s",
+      "manufacturer": "Micron Technology",
+      "part_number": "MTC40F2046S1RC48BA1"
+    }
+  },
+  {
+    "handle": "0x0044",
+    "type": 17,
+    "description": "Memory Device",
+    "values": {
+      "size": "No Module Installed",
+      "locator": "P1-DIMMA3",
+      "type": "Unknown"
+    }
+  }
+]

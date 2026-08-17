@@ -1,0 +1,30 @@
+// PciDevice — one row per PCI function reported by `ghw_pci` (typically 200–500
+// rows per host). Enables non-NVIDIA accelerator discovery, SmartNIC/DPU
+// detection, HBA inventory, and fleet queries like "how many ConnectX-7 do we
+// have" without needing a new collector. Heavy compared to Device but each row
+// is small; the indexes keep fleet queries cheap.
+
+model PciDevice {
+  id       String @id @default(uuid())
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String
+
+  address            String // "0000:01:00.0" BDF
+  vendorId           String // hex, e.g. "0x10de"
+  vendorName         String?
+  productId          String
+  productName        String?
+  className          String?
+  subclassName       String?
+  driver             String? // kernel driver bound to this function, e.g. "nvme", "mlx5_core"
+  subsystemVendorId  String?
+  subsystemProductId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId, address])
+  @@index([deviceId])
+  @@index([vendorId, productId])
+  @@index([className])
+}

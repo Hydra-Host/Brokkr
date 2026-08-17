@@ -1,0 +1,27 @@
+# Hermetic multi-zone test fixture for the sql-seed generator tests. Represents a RENDERED
+# fleet.yml (the flatten output of modules/fleet-topology.nix): a top-level `zones:` block plus
+# a flat `nodes:` list where each node carries its `zone`. Two zones, the second with 2 HA
+# bridges, exercises N-zone × K-bridge seeding (per-node zoneId + unique bridge netboxIds).
+network:
+  name: brokkr-net
+  cidr: 192.168.200.0/24
+  domain: sim.local
+  bmc_cidr: 192.168.105.0/24
+
+defaults:
+  cpus: 2
+  memory_mb: 2048
+  disk_gb: 40
+  bmc:
+    username: admin
+    password: admin
+
+zones:
+  - {index: 0, name: sim-zone, bridges: 1}
+  - {index: 1, name: den-1, bridges: 2}
+
+nodes:
+  - {name: cpu-1, ipmi_mac: "52:54:00:bc:00:01", data_mac: "52:54:00:da:00:01", zone: sim-zone}
+  - {name: cpu-2, ipmi_mac: "52:54:00:bc:00:02", data_mac: "52:54:00:da:00:02", zone: sim-zone}
+  - {name: gpu-1, ipmi_mac: "52:54:00:bc:00:05", data_mac: "52:54:00:da:00:05", zone: den-1}
+  - {name: gpu-2, ipmi_mac: "52:54:00:bc:00:06", data_mac: "52:54:00:da:00:06", zone: den-1}

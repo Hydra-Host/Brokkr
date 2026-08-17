@@ -1,0 +1,70 @@
+#!ipxe
+
+# Set job ID header for downloads (echoed in bridge access logs so
+# operators can correlate iPXE fetches with the originating saga).
+params
+param --header x-brokkr-job-id {{ job_id | default("") }}
+
+kernel {{ bridge_url }}/api/discovery/{{ arch }}/vmlinuz##params \
+  health_check={{ bridge_url }}/api/health \
+  initrd=initrd.img \
+{%- if platform_type == "rescue" %}
+  initrd=ubuntu-rescue-os-{{ device_id }}.img##params \
+{%- else %}
+  initrd=bridge-agent.img \
+  initrd=brokkr-discovery-{{ discovery_initrd_id }}.img##params \
+{%- endif %}
+  initrd=brokkr-live.img \
+  boot=casper \
+  netboot=url \
+  nfsboot=auto \
+  ro \
+  network \
+  systemd.unit=multi-user.target \
+{%- if kernel_network | default([]) | length > 0 -%}
+{%- for line in kernel_network %}
+  {{ line }} \
+{%- endfor -%}
+{%- else %}
+  ksdevice=bootif \
+  BOOTIF=${netX/mac} \
+  ip=dhcp \
+{%- endif %}
+  url={{ bridge_url }}/api/discovery/{{ arch }}/brokkr-discovery.iso \
+  bdi.station_mac=${netX/mac} \
+  bdi.station_arch={{ arch }} \
+  bdi.station_mode={{ platform }} \
+  bdi.station_ip=${ip} \
+  bdi.station_netmask=${netX/netmask} \
+  bdi.station_gateway=${netX/gateway} \
+  bdi.station_serial=${serial} \
+  console=tty0 \
+{%- if serial_port %}
+  console={{ serial_port }},{{ serial_baud }}n8 \
+  earlyprintk={{ serial_port }},{{ serial_baud }} \
+  earlycon={{ serial_port }},{{ serial_baud }} \
+{%- endif %}
+{%- if pci_realloc_off %}
+  pci=realloc=off \
+{%- endif %}
+  nomodeset
+
+initrd {{ bridge_url }}/api/discovery/{{ arch }}/initrd.img##params
+initrd {{ bridge_url }}/api/initrd/brokkr-live.img##params
+{%- if platform_type == "rescue" %}
+initrd {{ bridge_url }}/api/initrd/ubuntu-rescue-os-{{ device_id }}.img##params
+{%- else %}
+initrd {{ bridge_url }}/api/initrd/bridge-agent.img##params
+initrd {{ bridge_url }}/api/initrd/brokkr-discovery-{{ discovery_initrd_id }}.img##params
+{%- endif %}
+
+echo Booting with network settings...
+{%- if kernel_network | default([]) | length > 0 -%}
+{%- for line in kernel_network %}
+  echo {{ line }}
+{%- endfor -%}
+{%- else %}
+  echo ip=dhcp
+{%- endif %}
+
+boot

@@ -1,0 +1,9 @@
+{
+  "station_mac": "02:00:00:00:00:01",
+  "station_arch": "amd64",
+  "station_mode": "efi",
+  "station_ip": "10.0.0.10",
+  "station_netmask": "255.255.255.0",
+  "station_gateway": "10.0.0.1",
+  "bridge_type": "full"
+}

@@ -1,0 +1,171 @@
+model Organization {
+  id         String     @id @default(uuid())
+  name       String
+  tenantType TenantType
+  logo       String?
+  metadata   String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime?  @updatedAt
+  deletedAt  DateTime?
+
+  auth0OrganizationId String?
+  email               String?
+  country             String?
+
+  // Free-form note shown beneath the supply org's contact directory (admin).
+  contactNotes String?
+
+  /// At most one organization is the instance operator (BOSS: the single
+  /// operator org). Gates operator-only capabilities via OperatorPolicy. A
+  /// partial unique index enforces the singleton at the database level.
+  isInstanceOperator Boolean @default(false)
+
+  organizationMembershipInvitations OrganizationMembershipInvitation[]
+  storefrontSettings                StorefrontSettings?
+  organizationApiKey                OrganizationApiKey[]
+  reservationInvites                ReservationInvite[]
+  inviteeReservationInvites         ReservationInvite[]                @relation("inviteeOrganization")
+  reservations                      Reservation[]
+  deployments                       Deployment[]
+  zoneRequests                      ZoneRequest[]
+  organizationSiteContacts          OrganizationSiteContact[]
+  contacts                          Contact[]
+  webhooks                          Webhook[]
+  deploymentProjects                DeploymentProject[]
+  clusters                          Cluster[]
+  interruptibleClaim                InterruptibleClaim[]
+  members                           Member[]
+  invitations                       Invitation[]
+  sessions                          Session[]
+  apiKeys                           ApiKey[]
+  vrfs                              Vrf[]
+  prefixes                          Prefix[]
+  ipAddresses                       IpAddress[]
+  vlans                             Vlan[]
+  ipRanges                          IpRange[]
+  zones                             Zone[]
+  cloudInitTemplates                CloudInitTemplate[]
+  devicesAsSupplier                 Device[]                           @relation("DeviceSupplier")
+  devicesAsOrganization             Device[]                           @relation("DeviceOrganization")
+  tags                              Tag[]
+  racks                             Rack[]
+  asns                              Asn[]
+  bgpPeerGroups                     BgpPeerGroup[]
+  prefixLists                       PrefixList[]
+  bgpSessions                       BgpSession[]
+  circuits                          Circuit[]
+  orgRoles                          OrganizationMemberRole[]
+}
+
+/// Canonical org-membership table (better-auth shaped). Single source of truth
+/// for membership `role`/`isDefaultOrg`. All readers/writers target this model.
+model Member {
+  id             String                     @id @default(uuid())
+  userId         String
+  organizationId String
+  // Legacy compatibility value for events and external consumers; authorization
+  // uses only `assignedRoleId` and the role's permission set.
+  role           OrganizationMembershipRole
+  assignedRoleId String
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+  deletedAt      DateTime?
+
+  isDefaultOrg Boolean?
+
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // The "assigned" prefix avoids colliding with the legacy enum field.
+  assignedRole OrganizationMemberRole @relation(fields: [assignedRoleId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+  @@index([assignedRoleId])
+}
+
+model Invitation {
+  id             String   @id @default(cuid())
+  email          String
+  organizationId String
+  assignedRoleId String
+  status         String   @default("pending")
+  inviterId      String
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inviter      User                   @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+  assignedRole OrganizationMemberRole @relation(fields: [assignedRoleId], references: [id], onDelete: Restrict)
+
+  @@index([assignedRoleId])
+}
+
+enum OrganizationMembershipRole {
+  SuperAdmin
+  Admin
+  Member
+  Owner
+}
+
+model OrganizationMembershipInvitation {
+  id          String   @id @default(uuid())
+  email       String
+  dateCreated DateTime @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+
+  inviter   User   @relation(fields: [inviterId], references: [id])
+  inviterId String
+
+  @@unique([email, organizationId])
+}
+
+model OrganizationApiKey {
+  id        String    @id @default(uuid())
+  name      String
+  value     String    @unique
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+  expiresAt DateTime?
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  createdBy   User   @relation(fields: [createdById], references: [id])
+  createdById String
+
+  @@index([organizationId])
+}
+
+enum TenantType {
+  SupplyCustomer
+  DemandCustomer
+}
+
+enum OrganizationSiteContactType {
+  Main
+  Technical
+}
+
+model OrganizationSiteContact {
+  id String @id @default(uuid())
+
+  dateCreated DateTime  @default(now())
+  dateDeleted DateTime?
+  dateUpdated DateTime  @updatedAt
+
+  name              String
+  title             String
+  email             String
+  phone             String
+  contactType       OrganizationSiteContactType
+  isShippingContact Boolean                     @default(false)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  @@index([organizationId])
+}

@@ -1,0 +1,8 @@
+{
+  "//": "Subpath redirector so `@repo/auth/rbac` resolves under classic `node` moduleResolution (apps/api), which ignores the package `exports` map. Points at the separately-built NestJS/CommonJS dist; types come from source.",
+  "name": "@repo/auth-rbac",
+  "license": "Apache-2.0",
+  "private": true,
+  "main": "../dist/rbac/index.js",
+  "types": "../src/rbac/index.ts"
+}

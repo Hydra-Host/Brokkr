@@ -1,0 +1,17 @@
+{
+  "lldp": {
+    "interface": {
+      "enp129s0f0": {
+        "chassis": {
+          "switch-01": {
+            "descr": "Arista EOS 4.31.0F",
+            "mgmt-ip": "10.0.0.1"
+          }
+        },
+        "port": {
+          "id": { "type": "ifname", "value": "Ethernet1" }
+        }
+      }
+    }
+  }
+}

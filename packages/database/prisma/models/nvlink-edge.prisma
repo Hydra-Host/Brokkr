@@ -1,0 +1,22 @@
+// NvlinkEdge — GPU-to-GPU NVLink topology. One row per (sourceGpu, targetGpu)
+// pair — a directed graph, because NVLink generations sometimes report
+// asymmetric link counts. Populated from `gpu_benchmark_diagnostics.nvlink`.
+// Essential for NCCL placement on multi-GPU nodes.
+
+model NvlinkEdge {
+  id       String @id @default(uuid())
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String
+
+  sourceGpuIndex Int
+  targetGpuIndex Int
+  lanes          Int?
+  bandwidthGbps  Decimal?
+  linkStatus     String? // e.g. "Active", "Inactive"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId, sourceGpuIndex, targetGpuIndex])
+  @@index([deviceId])
+}

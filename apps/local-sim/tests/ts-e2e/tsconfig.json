@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noImplicitAny": false,
+    "types": ["vitest/globals", "node"],
+    "paths": {
+      "@repo/database": ["../../../../packages/database/generated/client"],
+      "@repo/api-client/schemas/common": ["../../../../packages/api-client/src/schemas/common.ts"]
+    }
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

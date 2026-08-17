@@ -1,0 +1,11 @@
+[Unit]
+Description=Disable PCIe ACS for GPUDirect RDMA
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c "command -v setpci >/dev/null || { echo 'setpci not found, skipping'; exit 0; }; for BDF in $$(lspci -D | awk '{print $$1}'); do if setpci -s $${BDF} ECAP_ACS+0x6.w > /dev/null 2>&1; then setpci -v -s $${BDF} ECAP_ACS+0x6.w=0000; fi; done"
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Phone Home to Brokkr
+After=network-pre.target
+Before=network.target
+Wants=network-pre.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/phone-home
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

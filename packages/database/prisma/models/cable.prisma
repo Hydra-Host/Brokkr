@@ -1,0 +1,79 @@
+enum CableType {
+  CAT5E
+  CAT6
+  CAT6A
+  MMF_OM3
+  MMF_OM4
+  SMF_OS1
+  SMF_OS2
+  POWER
+  SERIAL
+  USB
+  COAX
+  DAC
+  AOC
+  OTHER
+}
+
+enum CableStatus {
+  CONNECTED
+  PLANNED
+  DECOMMISSIONING
+}
+
+enum CableSide {
+  A
+  B
+}
+
+enum CableTerminationType {
+  INTERFACE
+  CONSOLE_PORT
+  CONSOLE_SERVER_PORT
+  POWER_PORT
+  POWER_OUTLET
+  FRONT_PORT
+  REAR_PORT
+}
+
+enum CableLengthUnit {
+  METERS
+  CENTIMETERS
+  FEET
+  INCHES
+}
+
+model Cable {
+  id          String           @id @default(uuid())
+  type        CableType?
+  status      CableStatus      @default(CONNECTED)
+  label       String?
+  color       String?
+  length      Decimal?
+  lengthUnit  CableLengthUnit?
+  description String?
+
+  cableDetails String?
+
+  terminations CableTermination[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CableTermination {
+  id              String               @id @default(uuid())
+  cableSide       CableSide
+  terminationType CableTerminationType
+  terminationId   String
+
+  cable   Cable  @relation(fields: [cableId], references: [id], onDelete: Cascade)
+  cableId String
+
+  @@unique([cableId, cableSide])
+  // A physical port hosts at most one cable end. Cable has no soft-delete and
+  // terminations cascade-delete with it, so a plain unique index is correct —
+  // deleting a cable frees its ports with no lingering rows.
+  @@unique([terminationType, terminationId])
+  @@index([cableId])
+}

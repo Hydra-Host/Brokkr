@@ -1,0 +1,98 @@
+enum InterfaceType {
+  ETHERNET_1G
+  ETHERNET_10G
+  ETHERNET_25G
+  ETHERNET_40G
+  ETHERNET_50G
+  ETHERNET_100G
+  ETHERNET_200G
+  ETHERNET_400G
+  ETHERNET_800G
+  INFINIBAND_FDR
+  INFINIBAND_EDR
+  INFINIBAND_HDR
+  INFINIBAND_NDR
+  INFINIBAND_XDR
+  IPMI_BMC
+  BOND
+  VIRTUAL
+}
+
+enum InterfaceLinkType {
+  INFINIBAND
+  ETHERNET
+}
+
+enum InterfaceMode {
+  ACCESS
+  TAGGED
+}
+
+model Interface {
+  id            String         @id @default(uuid())
+  name          String
+  type          InterfaceType?
+  enabled       Boolean        @default(true)
+  mtu           Int?
+  macAddress    String?
+  speed         Int?
+  mgmtOnly      Boolean        @default(false)
+  // Operator-set flag — true = treat cable as present even without live LLDP/link signal.
+  markConnected Boolean        @default(false)
+  mode          InterfaceMode?
+  description   String?
+
+  // InfiniBand / RDMA fields
+  linkType     InterfaceLinkType?
+  guid         String?
+  portState    String?
+  maxSpeedGbps Int?
+  pciDeviceId  String?
+
+  // LLDP neighbor fields
+  lldpNeighborName   String?
+  lldpNeighborPort   String?
+  lldpNeighborDescr  String?
+  lldpNeighborMgmtIp String?
+
+  // Discovery-populated: driver + link state
+  driver         String?
+  operstate      String?
+  linkOperUp     Boolean?
+  linkPhysicalUp Boolean?
+
+  // Device FK
+  device   Device @relation(fields: [deviceId], references: [id])
+  deviceId String
+
+  // Self-referential: bond/LAG parent
+  lag        Interface?  @relation("InterfaceLag", fields: [lagId], references: [id])
+  lagId      String?
+  lagMembers Interface[] @relation("InterfaceLag")
+
+  // Self-referential: sub-interface parent (e.g. bond0.100 → bond0)
+  parent   Interface?  @relation("InterfaceParent", fields: [parentId], references: [id])
+  parentId String?
+  children Interface[] @relation("InterfaceParent")
+
+  // VLAN
+  untaggedVlan   Vlan?   @relation(fields: [untaggedVlanId], references: [id])
+  untaggedVlanId String?
+
+  // IP addresses assigned to this interface
+  ipAddresses IpAddress[]
+
+  // Legacy
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // (deviceId, name) uniqueness is enforced only among ACTIVE rows by the partial index
+  // `Interface_active_deviceId_name_unique` (WHERE "deletedAt" IS NULL) — see migration
+  // 20260626120000. A plain `@@unique` spans tombstones, so a soft-deleted (decommissioned) interface
+  // would block re-commissioning the same box. Prisma can't express partial indexes, so this is
+  // intentionally NOT `@@unique`; lookups use findFirst scoped to deletedAt: null.
+  @@index([deviceId])
+  @@index([lagId])
+  @@index([parentId])
+}

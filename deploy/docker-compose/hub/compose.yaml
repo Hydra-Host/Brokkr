@@ -1,0 +1,95 @@
+# Brokkr hub - the control plane. Runs on ONE machine (cloud or a central box).
+#
+# Postgres + Redis + a one-shot DB migration + the customer/operator app
+# (:3000), in LOCAL_SIMULATION_ENABLED mode. Bridges run on separate site
+# machines and connect back to THIS machine's Redis (see ../bridge/). No Vault.
+#
+#   cp .env.example .env        # then edit if needed
+#   docker compose up -d
+#
+# The web UI is not served in this posture (see the NODE_ENV note in .env.example) —
+# interact via the REST API at http://localhost:3000/api/v1 (auth bypass in sim mode).
+#
+# WARNING: sim mode bypasses authentication — never expose :3000 (or Redis :6379) to an
+# untrusted network. See .env.example.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    # Published on loopback so host-side tooling (the local-sim seed/fleet + the
+    # e2e suite) can reach the DB. Not exposed off-box.
+    ports:
+      - '127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432'
+    environment:
+      POSTGRES_USER: thor
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: thor
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U thor -d thor']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    # Published so bridges on OTHER machines can reach the bus. For any
+    # non-private link, lock this down: bind to a private interface and use
+    # rediss:// + a password (see README.md).
+    ports:
+      - '${REDIS_HOST_PORT:-6379}:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # One-shot Prisma migration. The published app image ships the Prisma client
+  # but NOT the migrations directory, so we bind-mount it from the repo checkout
+  # (three levels up: hub -> docker-compose -> deploy -> repo root).
+  migrate:
+    image: ${BROKKR_APP_IMAGE}
+    working_dir: /app/packages/database
+    entrypoint: ['sh', '-c']
+    command: ['/app/node_modules/.bin/prisma migrate deploy']
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    volumes:
+      - ../../../packages/database/prisma:/app/packages/database/prisma:ro
+      - ../../../packages/database/prisma.config.ts:/app/packages/database/prisma.config.ts:ro
+    restart: 'no'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  brokkr-hub:
+    image: ${BROKKR_APP_IMAGE}
+    env_file: .env
+    ports:
+      - '${HUB_HOST_PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/healthcheck').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+volumes:
+  pgdata:
+  redis-data:

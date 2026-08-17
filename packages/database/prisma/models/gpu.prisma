@@ -1,0 +1,48 @@
+enum GpuVendor {
+  NVIDIA
+  AMD
+  INTEL
+}
+
+// NVIDIA Confidential Computing mode (CC). Other vendors report null.
+enum GpuCcMode {
+  OFF
+  ON
+  DEVTOOLS
+}
+
+model Gpu {
+  id             String    @id @default(uuid())
+  index          Int
+  model          String
+  vendor         GpuVendor @default(NVIDIA)
+  uuid           String?
+  vbiosVersion   String?
+  serial         String?
+  pciBusId       String?
+  memoryTotalMb  Int?
+  eccEnabled     Boolean?
+  pcieLinkGen    Int?
+  pcieLinkWidth  Int?
+  powerLimitW    Decimal?
+  powerLimitMaxW Decimal?
+
+  // Populated by nvidia + gpu_benchmark_diagnostics collectors
+  driverVersion     String?
+  computeCapability String? // e.g. "8.0", "9.0"
+  architecture      String? // e.g. "Hopper", "Ada", "Ampere"
+  migMode           Boolean?
+  migProfile        String?
+  ccMode            GpuCcMode?
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId, index])
+  @@index([deviceId])
+  @@index([model])
+  @@index([serial])
+}

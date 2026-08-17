@@ -1,0 +1,6 @@
+{
+  "hardware_platform": { "manufacturer": "Cisco Systems Inc", "model": "CAI-845A-M8", "architecture": "x86_64" },
+  "detected_ports": { "ttyS0": { "hardware_status": "active" } },
+  "bmc_sol_hardware": {},
+  "hardware_recommendations": {}
+}

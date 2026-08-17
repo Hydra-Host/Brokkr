@@ -1,0 +1,18 @@
+// Per-role extension for `Device.role = 'RackBrush'` — rack-mounted brush
+// panels for cable pass-through. Multi-table inheritance, 1:1 with Device.
+// Passive hardware: no power status, no BMC, no network presence — so unlike
+// the other role extensions there is intentionally no `powerStatus` column.
+model RackBrush {
+  id String @id @default(uuid())
+
+  // nylon | polypropylene (placeholder string)
+  brushMaterial  String?
+  // Height of the panel in rack units (U).
+  rackUnitHeight Int?
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

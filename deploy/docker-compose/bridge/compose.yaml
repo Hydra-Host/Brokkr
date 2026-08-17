@@ -1,0 +1,90 @@
+# Brokkr bridge (the "spoke"). Runs on each SITE machine, next to the bare metal.
+#
+# Connects back to the HUB machine's Redis bus (set REDIS_URL in .env) and
+# registers under this site's zone (BROKKR_ZONE_ID). It needs ONLY network
+# reachability to the hub's Redis - no Postgres, no hub HTTP. Crypto enrollment
+# is dormant and Vault is unused in sim mode.
+#
+#   cp .env.example .env        # set REDIS_URL to the hub, and BROKKR_ZONE_ID
+#   docker compose up -d
+
+services:
+  brokkr-bridge:
+    image: ${BROKKR_BRIDGE_IMAGE}
+    # Host networking: this is a single-service stack on the site machine, next to the bare
+    # metal. The bridge drives real hardware — PXE/DHCP/TFTP and the VRRP floating IP must live
+    # on the host's real NICs (an isolated container netns can't serve the site L2), so it
+    # shares the host's network stack. Host mode binds :8000 on the host directly (no `ports:`).
+    network_mode: host
+    # The VRRP reconciler adds the floating IP to a host NIC via `ip addr add`, which needs
+    # CAP_NET_ADMIN (arping's NET_RAW is already in Docker's default cap set).
+    cap_add:
+      - NET_ADMIN
+    # Lets REDIS_URL=redis://host.docker.internal:6379 resolve when trialing the bridge on the
+    # same machine as the hub (under host networking redis://localhost:6379 works too). Harmless
+    # for real cross-machine use.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    environment:
+      ENVIRONMENT: dev
+      LOCAL_SIMULATION_ENABLED: 'true'
+      # This compose has no TLS terminator in front of the bridge gRPC port, so agents dial
+      # plaintext. Dedicated knob, independent of LOCAL_SIMULATION_ENABLED's bypass/seeding flips.
+      GRPC_INSECURE: 'true'
+      PORT: '${BRIDGE_PORT:-8000}'
+      # Bind all interfaces: the bridge defaults to 127.0.0.1 (loopback-only), which
+      # leaves the published port and device gRPC unreachable from outside the container.
+      HOST: '0.0.0.0'
+      GRPC_INTERNAL_HOST: '0.0.0.0'
+      # Base URL the bridge advertises to devices in iPXE chain scripts (kernel/
+      # initrd) and phone-home. It must be reachable FROM the devices, not the
+      # bridge's loopback: the default DNS name suits a real LAN, but a same-box
+      # trial/sim has no DNS for it, so override in .env with the host's
+      # device-facing address (e.g. http://<data-plane-gateway>:8000).
+      BRIDGE_URL: ${BRIDGE_URL:-https://brokkr.lan}
+      # The production entrypoint requires an explicit orchestrator decision; true runs
+      # the leader-election/BullMQ/gRPC startup tasks needed to process jobs.
+      BRIDGE_ORCHESTRATOR_ENABLED: 'true'
+      # At-rest key for device secrets (AES-256). Set + keep stable in .env.
+      BRIDGE_AT_REST_KEY: ${BRIDGE_AT_REST_KEY}
+      REDIS_ENABLED: 'true'
+      REDIS_URL: ${REDIS_URL}
+      REDIS_PREFIX: ${BROKKR_ZONE_ID}
+      BROKKR_ZONE_ID: ${BROKKR_ZONE_ID}
+      BRIDGE_SYNC_ENABLED: ${BRIDGE_SYNC_ENABLED:-false}
+      # --- Discovery-image sync sources (required when BRIDGE_SYNC_ENABLED=true) ---
+      # Where the bridge fetches the brokkr-live discovery OS + OS-customization
+      # layers to PXE-boot/provision real metal. The built-in defaults point at a
+      # non-resolving *.example.com placeholder, so a real sync deployment MUST set
+      # these. The discovery URL is built as
+      #   ${DISCOVERY_BASE_URL}/${BROKKR_LIVE_VERSION}/<arch>
+      # so BROKKR_LIVE_VERSION must be a real published version.
+      # Keep COMMENTED unless syncing: unset falls back to the built-in defaults
+      # (version 1.0.4), whereas a defined-but-empty value builds a broken URL —
+      # so do NOT rewrite these as `${DISCOVERY_BASE_URL:-}` interpolation.
+      # DISCOVERY_BASE_URL: https://assets.example.com/brokkr-live
+      # OS_LAYER_URL: https://assets.example.com/os-layers/blobs
+      # BROKKR_LIVE_VERSION: 1.0.4
+      MTLS_ENABLED: 'false'
+      VPN_ENABLED: 'false'
+      REGISTER_BRIDGE: 'false'
+      HA_ENABLED: 'false'
+      HEARTBEAT_ENABLED: 'true'
+      ANALYTICS_ENABLED: 'false'
+      IPXE_BUILD_ENABLED: 'false'
+      CIFS_ENABLED: 'false'
+      MONITORING_LOGS_ENABLED: 'false'
+      DISABLE_STARTUP_COORDINATION: 'true'
+      IPXE_SKIP_BUILD_LOCKING: 'true'
+      JOB_STORAGE_BACKEND: redis
+      LOG_LEVEL: debug
+      LOG_FORMAT: console
+      # --- DHCP ---
+      # DHCP is configured entirely from the hub via atoms. Configure DHCP subnets
+      # in the hub UI; the bridge applies them automatically on its reconcile loop.
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:${BRIDGE_PORT:-8000}/api/health']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s

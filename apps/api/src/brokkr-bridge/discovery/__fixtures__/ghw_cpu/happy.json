@@ -1,0 +1,24 @@
+{
+  "cpu": {
+    "total_cores": 128,
+    "total_threads": 256,
+    "processors": [
+      {
+        "id": 0,
+        "total_cores": 64,
+        "total_threads": 128,
+        "vendor": "GenuineIntel",
+        "model": "Intel(R) Xeon(R) 6767P",
+        "capabilities": ["fpu", "vme", "vmx", "tdx_guest"]
+      },
+      {
+        "id": 1,
+        "total_cores": 64,
+        "total_threads": 128,
+        "vendor": "GenuineIntel",
+        "model": "Intel(R) Xeon(R) 6767P",
+        "capabilities": ["fpu", "vme", "vmx", "tdx_guest"]
+      }
+    ]
+  }
+}

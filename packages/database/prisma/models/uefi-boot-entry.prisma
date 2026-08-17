@@ -1,0 +1,22 @@
+// UefiBootEntry — mirrors what `efibootmgr -v` reports from UEFI NVRAM.
+// One row per Boot#### variable. Useful for diagnosing iPXE boot-order drift
+// and confirming custom entries persisted between provision passes.
+
+model UefiBootEntry {
+  id       String @id @default(uuid())
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String
+
+  bootOptionReference String // "0000", "0001", ...  (the Boot#### ref from NVRAM)
+  displayName         String
+  uefiDevicePath      String?
+  enabled             Boolean @default(true)
+  bootOrderIndex      Int? // position in BootOrder, null if not in the order
+  isCurrent           Boolean @default(false) // matches BootCurrent
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId, bootOptionReference])
+  @@index([deviceId])
+}

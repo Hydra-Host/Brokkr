@@ -1,0 +1,36 @@
+enum DeviceTestStatus {
+  Completed
+  Running
+}
+
+enum DeviceTestType {
+  GpuBurnIn
+  NcclPerformance
+}
+
+model DeviceTestRun {
+  id               String           @id @default(uuid())
+  // Canonical pointer at the new `Device` model (UUID). Source of truth
+  // for test-run → device joins going forward.
+  deviceId         String
+  // Legacy integer pointer, optional. Kept on existing rows for back-compat
+  // reads; removed entirely in a follow-up migration.
+  deviceMetadataId Int?
+  type             DeviceTestType
+  status           DeviceTestStatus @default(Running)
+  startTime        DateTime         @default(now())
+  endTime          DateTime?
+  durationSeconds  Int?
+  testPassed       Boolean?
+  data             Json?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  device Device @relation(fields: [deviceId], references: [id])
+
+  @@index([deviceId])
+  @@index([deviceMetadataId])
+  @@index([type])
+  @@index([status])
+  @@index([type, status, deviceId, endTime(sort: Desc)], map: "DeviceTestRun_type_status_deviceId_endTime_idx")
+}

@@ -1,0 +1,82 @@
+// DiscoveryRun + DiscoveryRunIssue
+// ---------------------------------
+// First-class record of each discovery pass. Backs the observability model
+// described in docs/discovery-mapping.md §9. Writing a row on every run is
+// what enables fleet-wide queries ("which collector is failing most this
+// week?") and replay-from-S3 workflows.
+
+enum DiscoveryRunStatus {
+  STARTED
+  SUCCEEDED
+  PARTIAL // Ran to completion but at least one collector/composer reported an issue
+  FAILED // Commit or orchestrator-level failure; device state may be stale
+  REJECTED // Ingress rejected (missing deviceId, malformed envelope, no collectors)
+}
+
+enum DiscoveryIssuePhase {
+  INGRESS // Redis drain / envelope validation
+  SCHEMA // Collector Zod parse failure
+  HANDLER // Per-collector handler threw or emitted warnings
+  COMPOSER // Cross-collector composer failed
+  COMMIT // Prisma transaction failure
+}
+
+enum DiscoveryIssueSeverity {
+  INFO
+  WARN
+  ERROR
+}
+
+model DiscoveryRun {
+  id       String @id @default(uuid())
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String
+
+  status     DiscoveryRunStatus @default(STARTED)
+  jobId      String
+  zonePrefix String
+
+  // Versions — so we know which code wrote which data
+  handlerVersion         String // e.g. git sha of the hub at run time
+  bridgeCollectorVersion String? // from collection_metadata.collector_version
+
+  // Summary of what happened
+  collectorsExpected Int?
+  collectorsReceived Int?
+  collectorsApplied  String[] @default([])
+  collectorsSkipped  String[] @default([])
+  composersApplied   String[] @default([])
+
+  // S3 audit pointer
+  // Prefix rather than file path — prod layout is `{deviceId}/{YYYYMMDD-HHMM}/`
+  // with one JSON per collector under it.
+  s3Prefix String?
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  durationMs  Int?
+
+  issues DiscoveryRunIssue[]
+
+  @@index([deviceId, startedAt])
+  @@index([status])
+  @@index([jobId])
+}
+
+model DiscoveryRunIssue {
+  id    String       @id @default(uuid())
+  run   DiscoveryRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId String
+
+  phase     DiscoveryIssuePhase
+  collector String? // null for INGRESS / COMMIT
+  code      String // PARSE_FAILED, HANDLER_THREW, NO_HANDLER, etc.
+  severity  DiscoveryIssueSeverity
+  detail    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([runId])
+  @@index([collector, code])
+  @@index([severity, createdAt])
+}

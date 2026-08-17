@@ -1,0 +1,26 @@
+{
+  "current_cmdline": "vmlinuz initrd=brokkr-live.img boot=casper ro amd_iommu=on intel_iommu=on iommu=pt",
+  "parsed_parameters": {
+    "console": ["console=tty0"],
+    "display": ["nomodeset"],
+    "security": [],
+    "storage": [],
+    "power": [],
+    "network": []
+  },
+  "ubuntu_version": "Ubuntu 22.04.5 LTS",
+  "grub_config": {
+    "cmdline_linux": "quiet splash amd_iommu=on intel_iommu=on iommu=pt",
+    "serial_command": "serial --unit=0 --speed=115200",
+    "terminal": "console serial"
+  },
+  "hardware_analysis": {
+    "gpu_type": "nvidia",
+    "cpu_vendor": "intel",
+    "vtd_support": true,
+    "iommu_status": "enabled",
+    "system_manufacturer": "supermicro"
+  },
+  "issues_detected": [],
+  "recommendations": []
+}

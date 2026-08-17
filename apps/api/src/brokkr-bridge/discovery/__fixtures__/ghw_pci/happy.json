@@ -1,0 +1,34 @@
+{
+  "pci": {
+    "Devices": [
+      {
+        "driver": "",
+        "address": "0000:00:00.0",
+        "vendor": { "id": "1022", "name": "Advanced Micro Devices, Inc. [AMD]" },
+        "product": { "id": "1480", "name": "Starship/Matisse Root Complex" },
+        "revision": "0x00",
+        "subsystem": { "id": "1480", "name": "unknown" },
+        "class": { "id": "06", "name": "Bridge" },
+        "subclass": { "id": "00", "name": "Host bridge" }
+      },
+      {
+        "driver": "nvme",
+        "address": "0000:01:00.0",
+        "vendor": { "id": "144d", "name": "Samsung Electronics Co Ltd" },
+        "product": { "id": "a80a", "name": "NVMe SSD Controller PM9A3" },
+        "class": { "id": "01", "name": "Mass storage controller" },
+        "subclass": { "id": "08", "name": "Non-Volatile memory controller" },
+        "subsystem": { "id": "a801", "name": "unknown" }
+      },
+      {
+        "driver": "nvidia",
+        "address": "0000:0a:00.0",
+        "vendor": { "id": "10de", "name": "NVIDIA Corporation" },
+        "product": { "id": "2330", "name": "GH100 [H100 SXM5 80GB]" },
+        "class": { "id": "03", "name": "Display controller" },
+        "subclass": { "id": "02", "name": "3D controller" },
+        "subsystem": { "id": "16c1", "name": "unknown" }
+      }
+    ]
+  }
+}

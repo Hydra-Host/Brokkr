@@ -1,0 +1,29 @@
+{
+  "_comment": "Scripted gRPC responses for the deprovision saga's dispatch sequence. Like commission, only disk_wipe (storage.wipeDisks) and collect_hardware (collection.collectAll) go over gRPC; efi_cleanup and power steps hit non-gRPC services.",
+  "device_id": "1003",
+  "calls": [
+    {
+      "operation": "storage.wipeDisks",
+      "expected_input_keys": ["disk_layouts", "environment", "job_id"],
+      "response": {
+        "sanitization_report": {
+          "mode": "full",
+          "disks": [
+            { "device": "/dev/sda", "method": "nvme_format_user_data", "status": "success" },
+            { "device": "/dev/sdb", "method": "ata_secure_erase", "status": "success" }
+          ]
+        },
+        "optimal_os_disk": null
+      }
+    },
+    {
+      "operation": "collection.collectAll",
+      "expected_input_keys": [],
+      "response": {
+        "successes": 5,
+        "failures": 0,
+        "collectors": ["cpu", "memory", "network", "storage", "bmc"]
+      }
+    }
+  ]
+}

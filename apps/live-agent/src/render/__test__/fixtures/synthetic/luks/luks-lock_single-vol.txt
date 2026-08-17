@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── LUKS Lock ─────────────────────────────────────────────────────────
+# Unmounts and closes encrypted data volumes.
+# Generated during deployment — volume configuration is baked in.
+#
+# Usage:
+#   sudo luks-lock
+# ──────────────────────────────────────────────────────────────────────
+
+# ── Volume configuration (rendered at provisioning time) ─────────────
+MAPPERS=(  'data0')
+MOUNTPOINTS=(  '/data0')
+
+# ── Helpers ──────────────────────────────────────────────────────────
+die()  { echo "ERROR: $*" >&2; exit 1; }
+info() { echo ":: $*"; }
+
+# ── Preflight checks ────────────────────────────────────────────────
+[[ $EUID -eq 0 ]] || die "Run as root: sudo luks-lock"
+command -v cryptsetup >/dev/null 2>&1 || die "cryptsetup is required"
+[[ ${#MAPPERS[@]} -gt 0 ]] || die "No encrypted volumes configured"
+
+# ── Unmount and close volumes ────────────────────────────────────────
+for i in "${!MAPPERS[@]}"; do
+  mapper="${MAPPERS[$i]}"
+  mountpoint="${MOUNTPOINTS[$i]}"
+
+  if ! [[ -e "/dev/mapper/${mapper}" ]]; then
+    info "/dev/mapper/${mapper} is not open — skipping"
+    continue
+  fi
+
+  # Unmount if mounted
+  if mountpoint -q "$mountpoint" 2>/dev/null; then
+    umount "$mountpoint"
+    info "Unmounted ${mountpoint}"
+  fi
+
+  # Close LUKS container
+  cryptsetup close "$mapper"
+  info "Closed /dev/mapper/${mapper}"
+done
+
+info "All encrypted volumes locked."

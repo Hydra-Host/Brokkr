@@ -1,0 +1,150 @@
+// system.* operations — server-level metadata and EFI boot management.
+//
+// Nullable repeated fields can't express null vs empty in proto3. A
+// companion `has_*` bool distinguishes "firmware reports none" (false +
+// empty list) from "firmware reports an empty list" (true + empty list).
+// Handlers MUST set the bool to true whenever the firmware returned a value.
+//
+// Cross-field constraints (nonnegative int, count == removed.length) are
+// enforced by the agent handler, not by this schema.
+
+syntax = "proto3";
+
+package brokkr.agent.v1.operations;
+
+// ---------------------------------------------------------------------------
+// Reusable types
+// ---------------------------------------------------------------------------
+
+// Normalised kernel architecture.
+enum SystemArchitecture {
+  SYSTEM_ARCHITECTURE_UNSPECIFIED = 0;
+  SYSTEM_ARCHITECTURE_X86_64 = 1;
+  SYSTEM_ARCHITECTURE_AARCH64 = 2;
+  // Returned when the probe did not match a known architecture.
+  SYSTEM_ARCHITECTURE_UNKNOWN = 3;
+}
+
+// A single EFI boot entry from `jc --efibootmgr`. The proto captures the
+// two fields the bridge inspects; extra jc fields go in `extra_fields`.
+message SystemEfiBootOption {
+  // EFI boot option reference, e.g. "Boot0001". Includes the "Boot" prefix.
+  string boot_option_reference = 1;
+
+  // Human-readable boot entry name, e.g. "Ubuntu", "ipxe disk". Used by
+  // cleanup_os_boot_entries for keyword matching.
+  string display_name = 2;
+
+  // Additional jc-parsed fields not covered above.
+  map<string, string> extra_fields = 3;
+}
+
+// ---------------------------------------------------------------------------
+// system.getArchitecture
+// ---------------------------------------------------------------------------
+
+// Input for system.getArchitecture — returns the kernel-reported architecture.
+message SystemGetArchitectureInput {}
+
+message SystemGetArchitectureOutput {
+  // Normalised architecture value.
+  SystemArchitecture arch = 1;
+
+  // Unmodified `uname -m` output, preserved for debugging and for future
+  // arch values.
+  string raw = 2;
+}
+
+// ---------------------------------------------------------------------------
+// system.getEfiBootMenu
+// ---------------------------------------------------------------------------
+
+// Input for system.getEfiBootMenu — runs `efibootmgr | jc --efibootmgr`.
+message SystemGetEfiBootMenuInput {}
+
+message SystemGetEfiBootMenuOutput {
+  // Currently-booted EFI entry id (no "Boot" prefix), e.g. "0001". Absent
+  // when firmware reports none (maps to Zod nullable).
+  optional string boot_current = 1;
+
+  // True when the firmware returned a boot_order value (even if empty).
+  // When false, boot_order is semantically null.
+  bool has_boot_order = 2;
+
+  // Ordered list of EFI entry ids reflecting BootOrder.
+  repeated string boot_order = 3;
+
+  // True when the firmware returned boot_options (even if empty).
+  // When false, boot_options is semantically null.
+  bool has_boot_options = 4;
+
+  // All enumerated boot entries.
+  repeated SystemEfiBootOption boot_options = 5;
+
+  // One-shot BootNext override, if set. Absent when firmware reports none.
+  optional string boot_next = 6;
+}
+
+// ---------------------------------------------------------------------------
+// system.removeEfiBootEntry
+// ---------------------------------------------------------------------------
+
+// Input for system.removeEfiBootEntry — `efibootmgr -B -b <boot_id>`.
+message SystemRemoveEfiBootEntryInput {
+  // Boot entry id to remove, without the "Boot" prefix, e.g. "0001".
+  // Matches the id form the caller uses.
+  string boot_id = 1;
+}
+
+message SystemRemoveEfiBootEntryOutput {
+  // True iff efibootmgr exited 0; false when the entry did not exist or
+  // firmware refused the delete.
+  bool success = 1;
+}
+
+// ---------------------------------------------------------------------------
+// system.cleanupOsBootEntries
+// ---------------------------------------------------------------------------
+
+// Input for system.cleanupOsBootEntries — removes boot entries whose
+// display_name contains "ubuntu", "debian", "proxmox", or "ipxe disk"
+// (case-insensitive).
+message SystemCleanupOsBootEntriesInput {}
+
+message SystemCleanupOsBootEntriesOutput {
+  // Display names of boot entries that were removed, in enumeration order.
+  repeated string removed = 1;
+
+  // Number of entries removed; equals len(removed). Enforced by the
+  // handler, not by proto.
+  int32 count = 2;
+}
+
+// ---------------------------------------------------------------------------
+// system.forceBootDevice
+// ---------------------------------------------------------------------------
+
+// Input for system.forceBootDevice — reads the current boot menu and
+// removes every entry except boot_current.
+//
+// Empty/no-op behavior (missing boot_current or boot_order) returns
+// entries_removed = 0 and a warning log.
+message SystemForceBootDeviceInput {}
+
+message SystemForceBootDeviceOutput {
+  // Pre-cleanup boot_current (see system.getEfiBootMenu). Absent when
+  // firmware reported none.
+  optional string boot_current = 1;
+
+  // True when the firmware returned a boot_order snapshot (even if empty).
+  // When false, boot_order is semantically null (no-op fast path).
+  bool has_boot_order = 2;
+
+  // Pre-cleanup boot_order snapshot.
+  repeated string boot_order = 3;
+
+  // Number of non-current entries removed. Zero when boot_current or
+  // boot_order is missing (no-op fast path). Nonnegative constraint
+  // enforced by handler.
+  int32 entries_removed = 4;
+}

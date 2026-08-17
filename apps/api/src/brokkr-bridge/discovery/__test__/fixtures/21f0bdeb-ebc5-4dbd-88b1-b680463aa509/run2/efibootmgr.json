@@ -1,0 +1,39 @@
+{
+  "boot_current": "0003",
+  "timeout_seconds": 0,
+  "boot_order": ["0001", "0003", "0000", "0002", "0004"],
+  "mirrored_percentage_above_4g": 0,
+  "mirror_memory_below_4gb": false,
+  "boot_options": [
+    {
+      "boot_option_reference": "Boot0000",
+      "display_name": "Integrated NIC 1 Port 2 Partition 1",
+      "uefi_device_path": "VenHw(d227c733-f75f-4341-b749-4d1759ec8538)",
+      "boot_option_enabled": true
+    },
+    {
+      "boot_option_reference": "Boot0001",
+      "display_name": "GRUB",
+      "uefi_device_path": "HD(1,GPT,00a0cdf1-6958-4981-ac6e-8b4dbfec4eee,0x800,0x219800)/File(\\EFI\\ubuntu\\shimx64.efi)",
+      "boot_option_enabled": true
+    },
+    {
+      "boot_option_reference": "Boot0002",
+      "display_name": "Embedded NIC 1 Port 1 Partition 1",
+      "uefi_device_path": "VenHw(56e94a54-7c81-443a-bb9f-c0d240845f54)",
+      "boot_option_enabled": true
+    },
+    {
+      "boot_option_reference": "Boot0003",
+      "display_name": "Embedded NIC 1 Port 1 Partition 1",
+      "uefi_device_path": "VenHw(3a191845-5f86-4e78-8fce-c4cff59f9daa)",
+      "boot_option_enabled": true
+    },
+    {
+      "boot_option_reference": "Boot0004",
+      "display_name": "Embedded NIC 2 Port 1 Partition 1",
+      "uefi_device_path": "VenHw(d5a9b8fe-4303-4bda-a6fc-1aca23b5a2ed)",
+      "boot_option_enabled": true
+    }
+  ]
+}

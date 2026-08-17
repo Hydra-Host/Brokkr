@@ -1,0 +1,6 @@
+# macOS-only dep Nix can't provide on Darwin (grub2 is Linux-only): Docker
+# Desktop runs the linux/amd64 grub-build container that emits bootx64.efi /
+# bootaa64.efi / core.img for the bridge's /api/grub chain-boot path. The rest
+# of the toolchain (qemu/libvirt/dnsmasq/node/pnpm/... + the python env)
+# comes from devenv.nix — Nix qemu is HVF-capable on Darwin.
+cask "docker"

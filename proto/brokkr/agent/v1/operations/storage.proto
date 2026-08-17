@@ -1,0 +1,754 @@
+// storage.* operations — disk discovery, wiping, layout application, and
+// compound orchestrations for bare-metal storage lifecycle.
+//
+// Constraints not expressible in proto3 (regex on DiskName/TargetPath,
+// PreservedDiskInfo mutually-exclusive fields, VerificationResult discriminated
+// variants) are documented in field comments and enforced by the agent handler.
+
+syntax = "proto3";
+
+package brokkr.agent.v1.operations;
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+// Disk media classification used to pick the NIST wipe strategy chain.
+// 'STORAGE_DISK_TYPE_ROTATIONAL' = spinning HDD.
+enum StorageDiskType {
+  STORAGE_DISK_TYPE_UNSPECIFIED = 0;
+  STORAGE_DISK_TYPE_NVME = 1;
+  STORAGE_DISK_TYPE_SSD = 2;
+  STORAGE_DISK_TYPE_ROTATIONAL = 3;
+}
+
+// Wipe-mode toggle authoritative on the bridge. 'DEVELOPMENT' skips the
+// long HDD random-overwrite pass.
+enum StorageEnvironment {
+  STORAGE_ENVIRONMENT_UNSPECIFIED = 0;
+  STORAGE_ENVIRONMENT_PRODUCTION = 1;
+  STORAGE_ENVIRONMENT_DEVELOPMENT = 2;
+}
+
+// Per-disk verification verdict from sector-sampling validation.
+enum StorageValidationResult {
+  STORAGE_VALIDATION_RESULT_UNSPECIFIED = 0;
+  STORAGE_VALIDATION_RESULT_PASS = 1;
+  STORAGE_VALIDATION_RESULT_FAIL = 2;
+  STORAGE_VALIDATION_RESULT_PASS_CRYPTO_ERASE = 3;
+  STORAGE_VALIDATION_RESULT_SKIPPED = 4;
+}
+
+// Media type in the canonical upper-cased report form.
+enum StorageMediaType {
+  STORAGE_MEDIA_TYPE_UNSPECIFIED = 0;
+  STORAGE_MEDIA_TYPE_NVME = 1;
+  STORAGE_MEDIA_TYPE_SSD = 2;
+  STORAGE_MEDIA_TYPE_HDD = 3;
+}
+
+// NIST classification of the sanitization technique used.
+enum StorageSanitizationMethod {
+  STORAGE_SANITIZATION_METHOD_UNSPECIFIED = 0;
+  STORAGE_SANITIZATION_METHOD_PURGE = 1;
+  STORAGE_SANITIZATION_METHOD_CLEAR = 2;
+  STORAGE_SANITIZATION_METHOD_BEST_EFFORT = 3;
+  STORAGE_SANITIZATION_METHOD_NONE = 4;
+  STORAGE_SANITIZATION_METHOD_UNKNOWN = 5;
+}
+
+// Per-disk wipe result verdict rolled up from the verification outcome.
+enum StorageDiskResult {
+  STORAGE_DISK_RESULT_UNSPECIFIED = 0;
+  STORAGE_DISK_RESULT_PASS = 1;
+  STORAGE_DISK_RESULT_FAIL = 2;
+  STORAGE_DISK_RESULT_PASS_CRYPTO_ERASE = 3;
+}
+
+// Sanitization report mode: full wiped every disk; selective only wiped
+// layouts with wipe=true.
+enum StorageWipeMode {
+  STORAGE_WIPE_MODE_UNSPECIFIED = 0;
+  STORAGE_WIPE_MODE_SELECTIVE = 1;
+  STORAGE_WIPE_MODE_FULL = 2;
+}
+
+// Overall sanitization report verdict. Any disk with result=fail pulls the
+// overall to fail.
+enum StorageOverallResult {
+  STORAGE_OVERALL_RESULT_UNSPECIFIED = 0;
+  STORAGE_OVERALL_RESULT_PASS = 1;
+  STORAGE_OVERALL_RESULT_FAIL = 2;
+}
+
+// Optimal OS disk media tier the pick came from (lower-cased form).
+enum StorageOsDiskType {
+  STORAGE_OS_DISK_TYPE_UNSPECIFIED = 0;
+  STORAGE_OS_DISK_TYPE_NVME = 1;
+  STORAGE_OS_DISK_TYPE_SSD = 2;
+  STORAGE_OS_DISK_TYPE_HDD = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Reusable messages
+// ---------------------------------------------------------------------------
+
+// Bridge-provided disk group. Identifiers can be WWN, serial, or device name;
+// the agent resolves them to actual /dev/ paths.
+message StorageDiskLayout {
+  // Disk identifiers (WWN, serial, or device name); agent resolves to
+  // /dev/ paths.
+  repeated string disks = 1;
+
+  // True to sanitize the disks in this group; false to preserve existing data.
+  bool wipe = 2;
+
+  // Where the resolved volume will be mounted after preparation.
+  optional string mountpoint = 3;
+
+  // Filesystem type the layout will be formatted as (e.g. 'ext4', 'xfs').
+  // For preserved-LUKS volumes the agent uses this as the fs_type in the
+  // generated fstab entry, since the LUKS probe can't see inside the
+  // container.
+  optional string fs_type = 4;
+}
+
+// Same shape as StorageDiskLayout but `disks` now holds concrete device names
+// (e.g. 'sda'), plus size of the first disk.
+message StorageResolvedDiskLayout {
+  // Concrete device names (no /dev/ prefix), e.g. 'sda', 'nvme0n1'.
+  repeated string disks = 1;
+
+  // Size of the first disk in the group, in bytes.
+  // int64: disk sizes routinely exceed 2^31 bytes.
+  int64 size_bytes = 2;
+
+  // Echoes the layout wipe flag.
+  bool wipe = 3;
+
+  // Echoes the layout mountpoint.
+  optional string mountpoint = 4;
+
+  // Echoes the layout fs_type.
+  optional string fs_type = 5;
+}
+
+// A single entry from `lsblk -J`. Matches the existing output that
+// DiskWipeService._get_disks returns.
+message StorageBlockDevice {
+  // Device name without /dev/ prefix, e.g. 'sda'.
+  string name = 1;
+
+  // lsblk ROTA flag: true for rotational (HDD), false for flash (SSD/NVMe).
+  bool rota = 2;
+
+  // lsblk TYPE, e.g. 'disk', 'part', 'raid1', 'crypt'.
+  string type = 3;
+
+  // Device size in bytes (lsblk -b). int64: disk sizes exceed 2^31.
+  int64 size = 4;
+
+  // True iff the device is read-only.
+  bool ro = 5;
+
+  // Vendor model string, when reported. Empty string when absent (proto3
+  // does not distinguish null from default for non-optional scalars).
+  // Runtime: treat empty string as null.
+  optional string model = 6;
+
+  // Serial number, when reported. Used as a disk identifier in layouts.
+  // Runtime: treat empty string as null.
+  optional string serial = 7;
+
+  // World-wide name, when reported. Used as a disk identifier in layouts.
+  // Runtime: treat empty string as null.
+  optional string wwn = 8;
+
+  // Transport type, e.g. 'sata', 'nvme', 'usb'.
+  // Runtime: treat empty string as null.
+  optional string tran = 9;
+
+  // Current mountpoints. May contain empty strings representing null entries
+  // in the source JSON array.
+  repeated string mountpoints = 10;
+}
+
+// LUKS volume detected on a preserved disk, or created by curtin during layout
+// application.
+message StorageEncryptedVolume {
+  // dm-crypt mapper name (no /dev/mapper/ prefix).
+  string dm_name = 1;
+
+  // LUKS volume UUID.
+  string luks_uuid = 2;
+
+  // Intended mountpoint for the decrypted filesystem.
+  string mountpoint = 3;
+
+  // Inner filesystem type, e.g. 'xfs', 'ext4'.
+  string fs_type = 4;
+}
+
+// Probed metadata from a preserved disk. Cross-field constraint: either
+// detected_luks is true (luks_uuid set, fs_uuid/fs_type blank) or a plain
+// filesystem was found (fs_type + fs_uuid set, luks_uuid blank). Enforced
+// by agent handler, not proto.
+message StoragePreservedDiskInfo {
+  // True iff a LUKS header was found on the leaf device.
+  bool detected_luks = 1;
+
+  // LUKS UUID when detected; empty string otherwise.
+  string luks_uuid = 2;
+
+  // Plain-filesystem UUID when detected; empty string otherwise.
+  string fs_uuid = 3;
+
+  // Plain-filesystem type when detected; empty string otherwise.
+  string fs_type = 4;
+
+  // Leaf device path the probe ran against, e.g. '/dev/sda1' or '/dev/md0'.
+  string leaf_device = 5;
+
+  // dm-crypt mapper name when detected from an active mapping.
+  optional string dm_name = 6;
+}
+
+// RAID/storage controller detected on the system.
+message StorageRaidController {
+  // PCI address in BDF form, e.g. '0000:04:00.0'.
+  string pci_address = 1;
+
+  // lspci verbose description of the controller.
+  string description = 2;
+
+  // Device names attached to this controller.
+  repeated string attached_disks = 3;
+}
+
+// Verification outcome for a single disk. Discriminated union on the
+// verification_kind oneof: either a full sector-sampling result or a
+// not_validated sentinel.
+//
+// Source Zod uses z.discriminatedUnion('result', [...]) with five variants
+// that share sector_sampling fields (differing only in result enum value)
+// plus one `not_validated` variant. In proto this collapses to a oneof
+// between StorageSectorSamplingResult and StorageNotValidated.
+message StorageVerificationResult {
+  oneof verification_kind {
+    StorageSectorSamplingResult sector_sampling = 1;
+    StorageNotValidated not_validated = 2;
+  }
+}
+
+// Full sector-sampling verification result from validateWipe.
+message StorageSectorSamplingResult {
+  // Total sample points written pre-wipe.
+  int32 sample_count = 1;
+
+  // Total sectors attempted (sample count minus skipped).
+  int32 sectors_checked = 2;
+
+  // Sectors whose 512 bytes read back as all zero.
+  int32 sectors_zeroed = 3;
+
+  // Sectors with at least one non-zero byte.
+  int32 sectors_failed = 4;
+
+  // Sectors that returned EIO / other read errors. A large fraction fails
+  // the attestation.
+  int32 sectors_unreadable = 5;
+
+  // Verdict.
+  StorageValidationResult result = 6;
+
+  // Human-readable context, especially for pass_crypto_erase / skipped /
+  // too-many-unreadable.
+  optional string note = 7;
+}
+
+// Sentinel: no sector-sampling ran for this disk (e.g. pure crypto-erase
+// on a skipped disk).
+message StorageNotValidated {}
+
+// Per-disk wipe result section of the sanitization report. Schema matches
+// DiskWipeService._build_sanitization_report output exactly.
+message StorageDiskReport {
+  // Device name without /dev/ prefix.
+  string name = 1;
+
+  // Full device path, e.g. /dev/sda.
+  string device_path = 2;
+
+  // Media type in the canonical upper-cased report form.
+  StorageMediaType media_type = 3;
+
+  // Vendor model string. Runtime: treat empty string as null.
+  optional string model = 4;
+
+  // Serial number. Runtime: treat empty string as null.
+  optional string serial = 5;
+
+  // World-wide name. Runtime: treat empty string as null.
+  optional string wwn = 6;
+
+  // Transport string from lsblk (sata/nvme/usb/...); empty when unknown.
+  optional string transport = 7;
+
+  // Device size in bytes. int64: disk sizes exceed 2^31.
+  int64 size_bytes = 8;
+
+  // Human-readable size, e.g. '1.8 TB'.
+  string size_human = 9;
+
+  // True for rotational (HDD).
+  bool rotational = 10;
+
+  // NIST classification of the technique used.
+  StorageSanitizationMethod sanitization_method = 11;
+
+  // Exact technique string, e.g. 'NVMe Sanitize Block Erase (Purge)'.
+  string sanitization_technique = 12;
+
+  // Per-disk verdict rolled up from the verification outcome.
+  StorageDiskResult result = 13;
+
+  // Verification outcome.
+  StorageVerificationResult verification = 14;
+
+  // Diagnostic capture when the per-disk wipe call threw — populated only
+  // when result is 'fail' and the wipeDisk handler raised. Absent on success.
+  // Operators should look here before re-running the wipe. optional: present
+  // only on a thrown failure (Zod: nullable + optional).
+  optional StorageWipeError wipe_error = 15;
+}
+
+// Diagnostic capture for a per-disk wipe that threw. Attached to a
+// StorageDiskReport only when result='fail' and the wipeDisk handler raised.
+message StorageWipeError {
+  // Error message captured when the wipeDisk call threw.
+  string message = 1;
+
+  // Subprocess stderr excerpt when the failure surfaced one.
+  optional string stderr = 2;
+}
+
+// Preserved-disk section of the sanitization report.
+message StoragePreservedReport {
+  string name = 1;
+  string device_path = 2;
+  StorageMediaType media_type = 3;
+  optional string model = 4;
+  optional string serial = 5;
+  optional string wwn = 6;
+
+  // Device size in bytes. int64: disk sizes exceed 2^31.
+  int64 size_bytes = 7;
+
+  // Why the disk was preserved, e.g. 'layout.wipe=false'.
+  string reason = 8;
+}
+
+// Skipped-disk section of the sanitization report.
+message StorageSkippedReport {
+  string name = 1;
+
+  // Why the disk was skipped.
+  string reason = 2;
+}
+
+// Tool identifier + version embedded in the sanitization report.
+message StorageToolInfo {
+  // Tool identifier, e.g. 'brokkr-bridge'.
+  string name = 1;
+
+  // Tool version — agent compile-time constant.
+  string version = 2;
+}
+
+// Full sanitization report. Schema matches DiskWipeService._build_sanitization_report
+// output byte-for-byte (field names aligned) so the bridge can surface it
+// verbatim for compliance docs.
+message StorageSanitizationReport {
+  // Report schema version; bumped if/when the shape changes.
+  // Source Zod uses z.literal('1.0'); proto uses a plain string.
+  string version = 1;
+
+  // Standards references the report conforms to, e.g.
+  // ['NIST SP 800-88 Rev.2', 'IEEE 2883-2022'].
+  repeated string standards_reference = 2;
+
+  // Saga job id the wipe was part of; used as the audit trail correlator.
+  string job_id = 3;
+
+  // 'full' wiped every disk; 'selective' only wiped layouts with wipe=true.
+  StorageWipeMode mode = 4;
+
+  // ISO 8601 timestamp at the start of the wipe.
+  string started_at = 5;
+
+  // ISO 8601 timestamp at the end of the wipe.
+  string completed_at = 6;
+
+  // Wall-clock duration of the full wipe pass, in seconds.
+  // int32: max ~68 years; ample for any wipe duration.
+  int32 duration_seconds = 7;
+
+  // Aggregate verdict.
+  StorageOverallResult overall_result = 8;
+
+  // Tool identifier + version.
+  StorageToolInfo tool = 9;
+
+  // Holder teardown results (inline, not a separate message reference —
+  // reuses the same shape as StorageTeardownHoldersOutput).
+  StorageTeardownHoldersOutput holder_teardown = 10;
+
+  // Per-disk wipe result.
+  repeated StorageDiskReport disks = 11;
+
+  // Disks that were preserved, with reason.
+  repeated StoragePreservedReport preserved_disks = 12;
+
+  // Disks skipped during teardown/wipe, with reason.
+  repeated StorageSkippedReport skipped_disks = 13;
+}
+
+// Optimal OS disk picked during the wipe pass by media-tier preference
+// (largest NVMe -> SSD -> HDD).
+message StorageOptimalOsDisk {
+  // Device name.
+  string name = 1;
+
+  // Device size in bytes; absent for tier-preference miss.
+  // Zod: z.number().int().nonnegative().nullable() — optional in proto to
+  // represent the null case.
+  optional int64 size = 2;
+
+  // Media tier the pick came from.
+  StorageOsDiskType type = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Per-operation Input / Output messages
+// ---------------------------------------------------------------------------
+
+// storage.discoverDisks — `lsblk -J -b ...` with USB/floppy filtering.
+message StorageDiscoverDisksInput {}
+
+message StorageDiscoverDisksOutput {
+  // All block devices reported by lsblk, minus USB and floppy drives.
+  repeated StorageBlockDevice blockdevices = 1;
+}
+
+// storage.resolveDisks — WWN/serial -> device name resolution, plus size.
+message StorageResolveDisksInput {
+  // Disk layouts with unresolved identifiers (WWN/serial/device name).
+  repeated StorageDiskLayout disk_layouts = 1;
+}
+
+message StorageResolveDisksOutput {
+  // Layouts with identifiers resolved to concrete device names.
+  repeated StorageResolvedDiskLayout layouts = 1;
+}
+
+// storage.detectUefiMode — checks /sys/firmware/efi existence.
+message StorageDetectUefiModeInput {}
+
+message StorageDetectUefiModeOutput {
+  // True iff /sys/firmware/efi exists on the booted system.
+  bool uefi_mode = 1;
+}
+
+// storage.detectExistingVolumeGroups — `vgs --noheadings -o vg_name`.
+message StorageDetectExistingVolumeGroupsInput {}
+
+message StorageDetectExistingVolumeGroupsOutput {
+  // LVM volume group names active on the system.
+  repeated string volume_group_names = 1;
+}
+
+// storage.detectExistingRaidArrays — in-use md devices from /proc/mdstat.
+message StorageDetectExistingRaidArraysInput {}
+
+message StorageDetectExistingRaidArraysOutput {
+  // Assembled md array names (e.g. 'md0', 'md127') active on the system.
+  repeated string md_device_names = 1;
+}
+
+// storage.detectRaidControllers — PCI BDF mapping from /dev/disk/by-path/
+// plus lspci. Port of RaidDetectionService.load_disk_raid_status.
+message StorageDetectRaidControllersInput {}
+
+message StorageDetectRaidControllersOutput {
+  // Map from device name (e.g. 'sda') to true when behind a RAID/storage
+  // controller; false otherwise.
+  map<string, bool> disk_raid_status = 1;
+
+  // RAID/storage controllers detected on the system.
+  repeated StorageRaidController controllers = 2;
+}
+
+// storage.detectPreservedDiskInfo — probes a single preserved disk for
+// LUKS / filesystem metadata.
+message StorageDetectPreservedDiskInfoInput {
+  // Device name without /dev/ prefix. Runtime constraint: must match
+  // DISK_NAME_PATTERN (^(sd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|md\d+)$).
+  string disk_name = 1;
+
+  // MD devices already claimed by earlier disk groups in this pass;
+  // prevents the md-fallback from double-claiming.
+  repeated string claimed_md_devices = 2;
+}
+
+message StorageDetectPreservedDiskInfoOutput {
+  // Probed disk metadata. Uses the reusable StoragePreservedDiskInfo message.
+  StoragePreservedDiskInfo info = 1;
+}
+
+// storage.unmountDisks — enumerate mounted filesystems and unmount them.
+message StorageUnmountDisksInput {}
+
+message StorageUnmountDisksOutput {
+  // Mountpoint paths that were successfully unmounted.
+  repeated string unmounted_paths = 1;
+}
+
+// storage.wipeDisk — wipe a single disk using the strategy chain appropriate
+// to its type + RAID status + environment. Emits work.progress envelopes
+// during long operations (HDD overwrite passes).
+//
+// NIST SP 800-88r2 / IEEE 2883 chains (first success wins):
+//   NVMe: Sanitize Block Erase -> Crypto Erase -> Format SES=2 -> SES=1 -> blkdiscard
+//   SSD non-raid: ATA Sanitize Crypto Scramble -> Block Erase -> Secure Erase Enhanced -> blkdiscard
+//   SSD raid:     blkdiscard (ATA skipped — RAID HBAs hang)
+//   HDD non-raid prod: ATA Sanitize Overwrite -> Secure Erase Enhanced -> Secure Erase -> dd urandom
+//   HDD raid prod:     dd urandom
+//   HDD dev:           dd zero count=1 (partition-table stamp only)
+message StorageWipeDiskInput {
+  // Device name without /dev/ prefix. Runtime constraint: DISK_NAME_PATTERN.
+  string disk_name = 1;
+
+  // Media classification; selects the strategy chain.
+  StorageDiskType disk_type = 2;
+
+  // Whether the disk sits behind a RAID controller; affects SSD/HDD strategy.
+  bool is_raid_controller = 3;
+
+  // Wipe mode; gates the full-overwrite HDD pass.
+  StorageEnvironment environment = 4;
+}
+
+message StorageWipeDiskOutput {
+  // Exact technique string matching the original port,
+  // e.g. 'NVMe Sanitize Block Erase (Purge)'.
+  string method_used = 1;
+}
+
+// storage.writeValidationMarkers — pre-wipe marker write across the disk.
+// 1000 sample points evenly distributed across the full address space.
+message StorageWriteValidationMarkersInput {
+  // Device name without /dev/ prefix. Runtime constraint: DISK_NAME_PATTERN.
+  string disk_name = 1;
+}
+
+// A pre-wipe marker: the sector offset plus the random bytes written there.
+// validateWipe needs the bytes to verify overwrite-class wipes, whose pass
+// criterion is "the sector changed from the marker", not "reads zero".
+message ValidationMarker {
+  // Sector offset (512-byte units). int64: offsets on large disks exceed 2^31.
+  int64 sector = 1;
+
+  // Hex-encoded 512 random bytes written at this sector pre-wipe.
+  string marker = 2;
+}
+
+message StorageWriteValidationMarkersOutput {
+  // Per-sector random markers written pre-wipe; passed back into validateWipe.
+  repeated ValidationMarker markers = 1;
+}
+
+// storage.validateWipe — post-wipe marker verification. Reads back the
+// markers written by writeValidationMarkers. Overwrite-class methods pass when
+// each sector DIFFERS from its marker; zeroing methods pass on all-zero reads;
+// crypto-erase tolerates non-zero residue.
+message StorageValidateWipeInput {
+  // Device name without /dev/ prefix. Runtime constraint: DISK_NAME_PATTERN.
+  string disk_name = 1;
+
+  // Marker list returned by writeValidationMarkers.
+  repeated ValidationMarker markers = 2;
+
+  // Exact technique string from wipeDisk; classifies whether
+  // residual non-zero data passes or fails.
+  string method = 3;
+}
+
+message StorageValidateWipeOutput {
+  // Validation method used; currently always 'sector_sampling'.
+  string method = 1;
+
+  // Total sample points written pre-wipe.
+  int32 sample_count = 2;
+
+  // Total sectors attempted (sample count minus skipped).
+  int32 sectors_checked = 3;
+
+  // Sectors whose 512 bytes read back as all zero.
+  int32 sectors_zeroed = 4;
+
+  // Sectors with at least one non-zero byte.
+  int32 sectors_failed = 5;
+
+  // Sectors that returned EIO / other read errors.
+  int32 sectors_unreadable = 6;
+
+  // Verdict.
+  StorageValidationResult result = 7;
+
+  // Human-readable context.
+  optional string note = 8;
+}
+
+// storage.teardownHolders — sysfs-walked teardown of virtual storage layers
+// (RAID/LVM/dm-crypt/partitions) on the named disks.
+message StorageTeardownHoldersInput {
+  // Disk names to tear down (no /dev/ prefix).
+  repeated string disks = 1;
+
+  // Disks whose data must be preserved; any array/LV/crypt with a member
+  // here is skipped entirely.
+  repeated string preserve_disks = 2;
+}
+
+message StorageTeardownHoldersOutput {
+  // dm-crypt mappers that were closed.
+  repeated string crypt_closed = 1;
+
+  // Logical volumes that were removed.
+  repeated string lvm_removed = 2;
+
+  // Volume groups that were removed.
+  repeated string vg_removed = 3;
+
+  // MD devices that were stopped.
+  repeated string raid_stopped = 4;
+
+  // Swap devices/files that were deactivated.
+  repeated string swap_deactivated = 5;
+
+  // Partition signatures cleared with wipefs.
+  repeated string signatures_cleared = 6;
+
+  // Entities skipped because they touched a preserved disk.
+  repeated string skipped_preserved = 7;
+}
+
+// storage.clearGpt — `sgdisk -Z` + `wipefs -a` on a disk.
+message StorageClearGptInput {
+  // Device name without /dev/ prefix. Runtime constraint: DISK_NAME_PATTERN.
+  string disk_name = 1;
+}
+
+message StorageClearGptOutput {
+  // True iff sgdisk and wipefs both exited zero.
+  bool success = 1;
+}
+
+// storage.applyStorageLayout — write the bridge-rendered curtin YAML, run
+// `curtin -v block-meta custom`, return the generated fstab.
+message StorageApplyStorageLayoutInput {
+  // Rendered curtin storage YAML; agent writes to /tmp/storage-config.yaml.
+  string curtin_yaml = 1;
+
+  // Chroot root for the install-time operation. Must live under /target
+  // or /mnt. Runtime constraint: TARGET_PATH_PATTERN. Defaults to '/target'.
+  string target_path = 2;
+}
+
+message StorageApplyStorageLayoutOutput {
+  // fstab body curtin generated from the applied layout.
+  string fstab_content = 1;
+
+  // True iff curtin exited zero.
+  bool success = 2;
+
+  // Error text when success=false.
+  optional string error = 3;
+}
+
+// storage.wipeDisks — SAGA CUTOVER POINT. Unified entry for both full
+// (deprovision) and selective (pre-deployment) sanitization.
+//
+// When disk_layouts is empty and disk_layouts_present is false, all disks
+// are wiped. Otherwise only layouts with wipe=true are sanitized.
+//
+// Proto3 does not have nullable repeated fields. To distinguish "null"
+// (full wipe) from "empty array" (no layouts — also full wipe, same
+// semantic), we use a bool flag. The agent checks
+// disk_layouts_present==false → full wipe, else selective.
+message StorageWipeDisksInput {
+  // Disk layouts. When disk_layouts_present is false, this field is ignored
+  // and all disks are wiped.
+  repeated StorageDiskLayout disk_layouts = 1;
+
+  // True when disk_layouts was explicitly provided (selective wipe);
+  // false when null (full wipe).
+  bool disk_layouts_present = 2;
+
+  // Wipe-mode toggle; see StorageEnvironment.
+  StorageEnvironment environment = 3;
+
+  // Saga job_id; surfaced in the report so audit logs can correlate.
+  string job_id = 4;
+
+  // Provision-lifecycle override: force a full (all-disks) wipe regardless of
+  // disk_layouts. PROVISION sanitizes EVERY physical disk so a fresh tenant never
+  // inherits a prior tenant's residual data on secondary/non-enumerated disks;
+  // layouts still drive curtin downstream. Defaults to false (no override).
+  optional bool full_wipe = 5;
+}
+
+message StorageWipeDisksOutput {
+  // Full sanitization report.
+  StorageSanitizationReport sanitization_report = 1;
+
+  // Best OS-disk pick, if any candidate is suitable; absent otherwise.
+  // (Zod: nullable; proto: field presence via optional-like message field.)
+  optional StorageOptimalOsDisk optimal_os_disk = 2;
+}
+
+// storage.prepareStorage — SAGA CUTOVER POINT. Orchestrates disk resolution,
+// UEFI detection, curtin layout application, and preserved-disk probing.
+message StoragePrepareStorageInput {
+  // Full disk layout set for the device.
+  repeated StorageDiskLayout disk_layouts = 1;
+
+  // Chroot root. Runtime constraint: TARGET_PATH_PATTERN. Defaults to
+  // '/target'.
+  string target_path = 2;
+
+  // Pre-built curtin YAML from the bridge's CurtinService.
+  string curtin_yaml = 3;
+}
+
+message StoragePrepareStorageOutput {
+  // Architecture string from `uname -m`.
+  string architecture = 1;
+
+  // UEFI-mode detection.
+  bool uefi = 2;
+
+  // Final /etc/fstab content combining curtin output + preserved-disk
+  // injections.
+  string fstab = 3;
+
+  // Final /etc/crypttab content; empty when there are no encrypted volumes.
+  string crypttab = 4;
+
+  // LUKS volumes detected on preserved disks; bridge passes these to LUKS
+  // script rendering.
+  repeated StorageEncryptedVolume preserved_encrypted_volumes = 5;
+
+  // Layouts with identifiers resolved to concrete device names.
+  repeated StorageResolvedDiskLayout resolved_layouts = 6;
+}

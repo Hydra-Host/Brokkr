@@ -1,0 +1,45 @@
+enum DeviceNetworkType {
+  NAT
+  Public
+}
+
+enum DeviceType {
+  Hypervisor
+  Baremetal
+}
+
+enum DeviceRole {
+  // Legacy values, retained for backward compat with rows from the original
+  // import pipeline. New rows use the canonical Brokkr role values below
+  // (Server, Bridge, Switch, Router, PDU, CDU, RackBrush, PatchPanel).
+  Hypervisor
+  Baremetal
+  Cluster
+  VM
+  Decommissioned
+  DiscoveredHost
+  OffMarketplaceHost
+  // Generic role for fabric devices (leaf/spine/border/oob switches).
+  // Granular role identity isn't tracked; Brokkr only needs to know
+  // "it's a switch".
+  NetworkSwitch
+
+  // Canonical Brokkr roles. Each pairs with a per-role MTI extension
+  // table — Server, Bridge, Switch, Router, Pdu, Cdu, RackBrush,
+  // PatchPanel — that holds the role-specific columns. Adding a new role
+  // here means adding a new extension table.
+  Server
+  Bridge
+  Switch
+  Router
+  PDU
+  CDU
+  RackBrush
+  PatchPanel
+}
+
+model SupplierSKU {
+  id      String   @id @default(uuid())
+  sku     String
+  devices Device[]
+}

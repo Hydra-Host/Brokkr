@@ -1,0 +1,128 @@
+# Brokkr BRIDGE Helm values. Runs on a SITE cluster/node; it only needs to
+# reach the hub's Redis bus. Same contract as the fully-commented
+# deploy/docker-compose/bridge/.env.example.
+
+# ---- image (BROKKR_BRIDGE_IMAGE; override for a private registry) ----
+image:
+  repository: hydrahost/brokkr-bridge
+  # Mutable tag, so pullPolicy is Always (IfNotPresent would silently pin the
+  # node's cached digest). Pin tag to a semver release for production.
+  tag: latest
+  pullPolicy: Always
+imagePullSecrets: []
+
+# One bridge deployment per zone (HA is disabled in this posture).
+replicaCount: 1
+
+config:
+  # REQUIRED. The HUB's Redis, rendered into the Secret (may carry creds).
+  # Same-cluster: redis://<hub-release>-redis.<ns>.svc.cluster.local:6379;
+  # cross-network: rediss:// + a password.
+  REDIS_URL: ''
+
+  # REQUIRED. Zone UUID for THIS site (also REDIS_PREFIX); must match a Zone
+  # created in the hub.
+  BROKKR_ZONE_ID: ''
+
+  # URL advertised to devices (iPXE + phone-home) - must be reachable FROM the
+  # devices, e.g. the node's device-facing http://192.168.200.1:8000. Keep the
+  # port in sync with BRIDGE_PORT.
+  BRIDGE_URL: https://brokkr.lan
+
+  # HTTP port the bridge binds (on the node itself under hostNetwork).
+  # Rendered to the app as its PORT env var.
+  BRIDGE_PORT: 8000
+
+  # "true" pulls discovery images so real metal can PXE-boot/provision - then
+  # also set DISCOVERY_BASE_URL / OS_LAYER_URL / BROKKR_LIVE_VERSION under
+  # `env:` (built-in defaults are non-resolving placeholders).
+  BRIDGE_SYNC_ENABLED: 'false'
+
+secrets:
+  # Replaces the chart-rendered Secret; must carry BRIDGE_AT_REST_KEY + REDIS_URL.
+  existingSecret: ''
+  # REQUIRED. At-rest key for device secrets: openssl rand -base64 32. The
+  # bridge fails closed if unset/invalid; rotating it orphans stored secrets.
+  BRIDGE_AT_REST_KEY: ''
+
+# Stack defaults mirroring the compose environment block; add extra keys here
+# (sync sources, DHCP_* runtime knobs). Keys derived from `config:` always win
+# over same-named entries.
+env:
+  ENVIRONMENT: dev
+  LOCAL_SIMULATION_ENABLED: 'true'
+  # No TLS terminator in front of gRPC here, so agents dial plaintext.
+  GRPC_INSECURE: 'true'
+  # Bind all interfaces (the app defaults to loopback-only).
+  HOST: 0.0.0.0
+  GRPC_INTERNAL_HOST: 0.0.0.0
+  # Required explicit decision: true runs leader-election/BullMQ/gRPC startup.
+  BRIDGE_ORCHESTRATOR_ENABLED: 'true'
+  REDIS_ENABLED: 'true'
+  MTLS_ENABLED: 'false'
+  VPN_ENABLED: 'false'
+  REGISTER_BRIDGE: 'false'
+  HA_ENABLED: 'false'
+  HEARTBEAT_ENABLED: 'true'
+  ANALYTICS_ENABLED: 'false'
+  IPXE_BUILD_ENABLED: 'false'
+  CIFS_ENABLED: 'false'
+  MONITORING_LOGS_ENABLED: 'false'
+  DISABLE_STARTUP_COORDINATION: 'true'
+  IPXE_SKIP_BUILD_LOCKING: 'true'
+  JOB_STORAGE_BACKEND: redis
+  LOG_LEVEL: debug
+  LOG_FORMAT: console
+
+# PXE/DHCP/TFTP and the VRRP floating IP must live on the node's real NICs, so
+# the bridge shares the host network stack (binds BRIDGE_PORT on the node).
+# Disable only for an API-only trial without real metal.
+hostNetwork: true
+
+# VRRP needs CAP_NET_ADMIN (`ip addr add`); no_new_privs blocks setuid
+# escalation without revoking granted capabilities, so DHCP/VRRP still work.
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    add:
+      - NET_ADMIN
+
+# Pin the bridge to the site node wired to the metal, e.g.:
+#   kubernetes.io/hostname: site-node-1
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# initrd/iPXE artifact cache (PERSISTENT_STORAGE_PATH); the entrypoint
+# re-stages on start, so disabled (compose parity) is safe.
+persistence:
+  enabled: false
+  size: 20Gi
+  storageClass: ''
+  mountPath: /brokkr
+
+# Mirrors the compose healthcheck (120s start period, then 12 retries).
+startupProbe:
+  httpGet:
+    path: /api/health
+    port: http
+  periodSeconds: 10
+  failureThreshold: 24
+livenessProbe:
+  httpGet:
+    path: /api/health
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 12
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+resources: {}
+podAnnotations: {}
+podLabels: {}

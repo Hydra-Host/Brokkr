@@ -1,0 +1,30 @@
+[
+  {
+    "mlx5_name": "mlx5_0",
+    "guid": "58a2:e103:00a4:f81e",
+    "speed": "10 Gb/sec (4X SDR)",
+    "speed_kbps": 10000000,
+    "pci_device_id": "0x1021",
+    "max_speed_gbps": 400,
+    "max_speed_kbps": 400000000,
+    "link_type": "InfiniBand",
+    "port_state": "1: DOWN",
+    "port_phys_state": "2: Polling",
+    "link_oper_up": false,
+    "link_physical_up": false
+  },
+  {
+    "mlx5_name": "mlx5_1",
+    "guid": "58a2:e103:00a4:f85e",
+    "speed": "10 Gb/sec (4X SDR)",
+    "speed_kbps": 10000000,
+    "pci_device_id": "0x1021",
+    "max_speed_gbps": 400,
+    "max_speed_kbps": 400000000,
+    "link_type": "InfiniBand",
+    "port_state": "1: DOWN",
+    "port_phys_state": "2: Polling",
+    "link_oper_up": false,
+    "link_physical_up": false
+  }
+]

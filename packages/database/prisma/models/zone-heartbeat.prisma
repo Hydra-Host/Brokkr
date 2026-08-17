@@ -1,0 +1,53 @@
+// Bridge Heartbeat and Device Health Check Schema
+// Stores per-instance bridge presence data captured from Redis registration keys
+// One record per bridge instance per heartbeat cycle (every minute, 7-day retention)
+
+model BridgeHeartbeat {
+  id String @id @default(uuid())
+
+  // Zone relation
+  zone   Zone   @relation(fields: [zoneId], references: [id])
+  zoneId String
+
+  // Bridge instance data (from Redis registration hash)
+  instanceId          String // Hostname of the bridge instance
+  isLeader            Boolean // Whether this instance held the leader lock
+  netbirdIp           String // VPN IP address
+  brokkrWorkerVersion String // bridge-api version
+  brokkrLiveVersion   String // brokkr-live OS version
+  osImageVersion      String // OS image version
+
+  // Metadata
+  receivedAt DateTime @default(now())
+
+  // Indexes for query performance
+  @@index([zoneId, receivedAt(sort: Desc)]) // Most recent per zone
+  @@index([instanceId, receivedAt(sort: Desc)]) // Instance timeline
+  @@index([receivedAt]) // Retention cleanup
+}
+
+model DeviceHealthCheck {
+  id String @id @default(uuid())
+
+  // Device identification
+  device   Device @relation(fields: [deviceId], references: [id])
+  deviceId String
+
+  // Health check results (nullable = test not performed)
+  // null = test skipped (e.g., no BMC), false = test failed, true = test passed
+  primaryReachable    Boolean? // Can ping primary network interface
+  bmcIcmpReachable    Boolean? // Can ping BMC interface
+  bmcIpmiReachable    Boolean? // IPMI protocol accessible
+  bmcRedfishReachable Boolean? // Redfish API accessible
+  bmcCredsValid       Boolean? // BMC credentials validated
+  poweredOn           Boolean? // Device is powered on
+  brokkrLiveRunning   Boolean? // Brokkr Live OS is running
+
+  // Metadata
+  testedAt DateTime @default(now())
+
+  // Indexes for query performance
+  @@index([deviceId, testedAt(sort: Desc)]) // Latest result per device (device health timeline)
+  @@index([testedAt]) // Cleanup queries by age
+  @@index([deviceId, primaryReachable]) // Filter reachable devices
+}

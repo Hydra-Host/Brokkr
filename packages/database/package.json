@@ -1,0 +1,57 @@
+{
+  "name": "@repo/database",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "require": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./pagination": {
+      "types": "./src/pagination/index.ts",
+      "require": "./dist/pagination/index.js",
+      "import": "./dist/pagination/index.js"
+    },
+    "./extensions/mac-address": {
+      "types": "./src/extensions/mac-address.ts",
+      "require": "./dist/extensions/mac-address.js",
+      "import": "./dist/extensions/mac-address.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.nest-exports.json && mkdir -p dist/pagination dist/extensions && echo '{\"type\":\"commonjs\"}' > dist/pagination/package.json && echo '{\"type\":\"commonjs\"}' > dist/extensions/package.json",
+    "db:init": "./scripts/init_db.sh",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:drift": "prisma migrate diff --from-config-datasource --to-schema ./prisma --exit-code",
+    "db:studio": "prisma studio",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.3.0",
+    "@prisma/client": "^7.3.0",
+    "@prisma/client-runtime-utils": "^7.3.0",
+    "@repo/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^22.0.0",
+    "prisma": "^7.3.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.8.2",
+    "vitest": "^4.0.17"
+  },
+  "prisma": {
+    "schema": "./prisma"
+  }
+}

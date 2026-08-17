@@ -1,0 +1,47 @@
+#!/bin/sh -e
+
+PREREQS=""
+
+prereqs() {
+    echo "$PREREQS"
+}
+
+case "$1" in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+# The root filesystem is mounted at /root during init-bottom
+ROOT=/root
+
+log_begin_msg "Starting Brokkr rescue cleanup - removing custom modifications"
+log_end_msg
+
+log_begin_msg "Removing Brokkr..."
+log_end_msg
+rm -rf $ROOT/opt/brokkr 2>/dev/null || true
+
+log_begin_msg "Removing custom Docker configuration..."
+log_end_msg
+rm -f $ROOT/etc/docker/daemon.json 2>/dev/null || true
+
+# Disable services by removing their symlinks (no systemctl in initrd)
+log_begin_msg "Disabling Docker service..."
+log_end_msg
+rm -f $ROOT/etc/systemd/system/multi-user.target.wants/docker.service 2>/dev/null || true
+
+log_begin_msg "Disabling NVIDIA services..."
+log_end_msg
+rm -f $ROOT/etc/systemd/system/multi-user.target.wants/nvidia-fabricmanager.service 2>/dev/null || true
+rm -f $ROOT/etc/systemd/system/multi-user.target.wants/nvidia-persistenced.service 2>/dev/null || true
+
+# Additional cleanup you might want
+log_begin_msg "Removing Brokkr systemd services..."
+log_end_msg
+rm -f $ROOT/etc/systemd/system/brokkr-*.service 2>/dev/null || true
+rm -f $ROOT/etc/systemd/system/multi-user.target.wants/brokkr-*.service 2>/dev/null || true
+
+log_begin_msg "Cleanup complete - system will boot in vanilla state"
+log_end_msg

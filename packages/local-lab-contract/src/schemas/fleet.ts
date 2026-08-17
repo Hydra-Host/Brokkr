@@ -1,0 +1,431 @@
+import { z } from 'zod';
+
+import { CcBuildSchema } from './common';
+
+export const MachineSchema = z.object({
+  name: z.string().describe('Fleet node name (e.g. cpu-1)'),
+  power: z.enum(['on', 'off', 'unknown']).describe('libvirt domain power state'),
+  configured: z
+    .boolean()
+    .describe('In the active fleet config (false = a running domain not in config — rebuild to adopt)'),
+  deviceId: z
+    .string()
+    .nullable()
+    .describe('Index-derived hub Device.id; null for an unconfigured domain, which has no fleet index to derive from'),
+});
+export type Machine = z.infer<typeof MachineSchema>;
+
+export const HostInfoSchema = z.object({
+  os: z.string().describe("Node platform — 'linux' | 'darwin' | …"),
+  arch: z.string().describe("'amd64' | 'arm64' | …"),
+  passthroughSupported: z.boolean().describe('PCI passthrough possible (linux/amd64)'),
+  lanIp: z.string().describe('Best-guess LAN IPv4 for browser links to hub/spoke web UIs'),
+  ccBuild: CcBuildSchema.describe(
+    'Build stamp of the running control-center server: the sha its dist was built from, the live checkout HEAD, and the checkout-skew flag',
+  ),
+});
+export type HostInfo = z.infer<typeof HostInfoSchema>;
+
+export const PciDeviceSchema = z.object({
+  addr: z.string().describe('Host PCI address, e.g. 0000:01:00.0'),
+  type: z.enum(['nvidia-gpu', 'amd-gpu', 'gpu', 'mellanox', 'nic']),
+  label: z.string().describe('Human label incl. [vendor:device]'),
+});
+export type PciDevice = z.infer<typeof PciDeviceSchema>;
+
+export const DiskSpecSchema = z.object({
+  size_gb: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Extra data-disk size in GiB; the engine defaults to 40 when omitted'),
+  type: z
+    .enum(['ssd', 'hdd', 'nvme'])
+    .optional()
+    .describe("Disk backing type; the engine defaults to 'ssd' when omitted"),
+});
+
+export const NicSpecSchema = z.object({
+  mac: z.string(),
+  model: z.enum(['virtio', 'e1000e', 'e1000', 'rtl8139', 'vmxnet3']),
+  mtu: z.number().int().min(1280).max(9000).nullable(),
+  link: z.enum(['up', 'down']),
+});
+export type NicSpec = z.infer<typeof NicSpecSchema>;
+
+export const BmcCredsSchema = z.object({ username: z.string(), password: z.string() });
+export type BmcCreds = z.infer<typeof BmcCredsSchema>;
+
+export const FleetModeSchema = z
+  .enum(['vm', 'baremetal'])
+  .describe(
+    'Active fleet mode: vm = libvirt/qemu simulated machines (current behavior); baremetal = PXE-boot real machines on a host NIC via DHCP proxy.',
+  );
+export type FleetMode = z.infer<typeof FleetModeSchema>;
+
+export const HostNicSchema = z.object({
+  name: z.string().describe('Kernel interface name, e.g. enp35s0'),
+  mac: z.string().describe('Interface hardware (MAC) address'),
+  ipv4: z.string().nullable().describe('Primary IPv4 with prefix, e.g. 192.168.1.42/24; null if the NIC has no IPv4'),
+  up: z.boolean().describe('Link/oper state — true when the NIC is up'),
+});
+export type HostNic = z.infer<typeof HostNicSchema>;
+
+export const BareMetalArchSchema = z
+  .enum(['amd64', 'arm64'])
+  .describe('Machine CPU architecture — drives which discovery images the bridge syncs and serves');
+
+export const BareMetalNodeSchema = z.object({
+  name: z.string().describe('Operator-chosen machine name (unique within the bare-metal fleet)'),
+  bmc_ip: z.string().describe('The real BMC IPv4 the lab talks Redfish to'),
+  bmc_mac: z.string().describe('BMC NIC MAC — required; seeds the IPMI Interface row on the hub'),
+  pxe_mac: z.string().describe('MAC of the data NIC that firmware-PXE-boots — the DHCP proxy allowlist key'),
+  arch: BareMetalArchSchema.nullable().describe('Per-node arch override; null = inherit the fleet default'),
+  system_id: z
+    .string()
+    .nullable()
+    .describe('Optional Redfish System id for multi-System/blade chassis; null = use /redfish/v1/Systems Members[0]'),
+});
+export type BareMetalNode = z.infer<typeof BareMetalNodeSchema>;
+
+export const BareMetalNodeWriteSchema = BareMetalNodeSchema.extend({
+  bmc_user: z
+    .string()
+    .nullable()
+    .describe('Per-node BMC username (write-only); null/blank = inherit the defaults row. Never returned by GET.'),
+  bmc_pass: z
+    .string()
+    .nullable()
+    .describe('Per-node BMC password (write-only); null/blank = inherit the defaults row. Never returned by GET.'),
+});
+export type BareMetalNodeWrite = z.infer<typeof BareMetalNodeWriteSchema>;
+
+export const BareMetalConfigSchema = z.object({
+  nics: z
+    .array(z.string())
+    .describe('Host uplink NIC name(s) the bridge binds DHCP proxy/TFTP to (v1: single-element)'),
+  arch: BareMetalArchSchema.describe('Default architecture of the bare-metal machines'),
+  nodes: z.array(BareMetalNodeSchema).describe('Configured bare-metal machines (no credentials)'),
+});
+export type BareMetalConfig = z.infer<typeof BareMetalConfigSchema>;
+
+export const BareMetalConfigWriteSchema = z.object({
+  nics: z.array(z.string()).describe('Host uplink NIC name(s) to bind DHCP proxy/TFTP to (v1: single-element)'),
+  arch: BareMetalArchSchema.describe('Default architecture of the bare-metal machines'),
+  bmcDefaults: BmcCredsSchema.describe(
+    'Default BMC creds applied to any node that omits its own — stored in the 0600 secrets file, never the overlay',
+  ),
+  nodes: z.array(BareMetalNodeWriteSchema).describe('Bare-metal machines to persist, each with write-only creds'),
+});
+export type BareMetalConfigWrite = z.infer<typeof BareMetalConfigWriteSchema>;
+
+export const BareMetalPowerActionSchema = z
+  .enum(['on', 'off', 'reset', 'powercycle'])
+  .describe('Chassis power action issued to the node BMC over Redfish ComputerSystem.Reset');
+export type BareMetalPowerAction = z.infer<typeof BareMetalPowerActionSchema>;
+
+// Mirrors the simulator loader (local/schema.py, local/derived.py): a console_port outside this
+// range, or one whose effective value collides with another node's, is rejected there at apply time.
+export const CONSOLE_PORT_MIN = 1024;
+export const CONSOLE_PORT_MAX = 65535;
+export const CONSOLE_PORT_BASE = 9300;
+
+export const FleetNodeSchema = z.object({
+  name: z.string(),
+  zone: z.string().describe('Hub Zone.name this node belongs to (e.g. sim-zone1) — drives the per-node zone selector'),
+  ipmi_mac: z.string(),
+  data_mac: z.string(),
+  cpus: z.number().int().positive(),
+  memory_mb: z.number().int().positive(),
+  disk_gb: z.number().int().positive(),
+  disks: z.array(DiskSpecSchema),
+  passthrough: z.array(z.string()),
+  nics: z.array(NicSpecSchema),
+  data_mtu: z.number().int().min(1280).max(9000).nullable(),
+  ip: z.string().nullable().describe('Static data-plane IP override; null = index-derived (.10, .11, …)'),
+  bmc_ip: z
+    .string()
+    .nullable()
+    .describe('Static BMC-plane IP override; null = index-derived. Applies on rebuild (vbmc re-register)'),
+  bmc: BmcCredsSchema.nullable().describe('Per-node BMC creds override; null = inherit defaults.bmc'),
+  console_port: z
+    .number()
+    .int()
+    .min(CONSOLE_PORT_MIN)
+    .max(CONSOLE_PORT_MAX)
+    .nullish()
+    .describe(
+      `Slot-derived serial-console telnet port stamped by the Nix topology for stack slots >= 1, bounded to ${CONSOLE_PORT_MIN}..${CONSOLE_PORT_MAX} (the range the simulator's loader accepts); absent/null on slot 0, which derives ${CONSOLE_PORT_BASE} + index. Must survive a save — dropping it collapses this console onto the slot-0 ${CONSOLE_PORT_BASE} band.`,
+    ),
+  seed_as_server: z
+    .boolean()
+    .optional()
+    .describe(
+      'false → seed this node as a role=NULL commissioning candidate (IPMI-only, DHCP, no server row / static OS) so it can be discovered + commissioned; omitted/true = a normal provisioned server.',
+    ),
+});
+export type FleetNode = z.infer<typeof FleetNodeSchema>;
+
+export const FleetNodeEffectiveSchema = FleetNodeSchema.extend({
+  effective_ip: z
+    .string()
+    .nullable()
+    .describe(
+      'Effective data-plane IP the node will get: the static `ip` override when set, else index-derived from network.cidr (network base + 10 + index) — the same rule as Python derived.effective_node_ip. Null when network.cidr is missing or malformed.',
+    ),
+  effective_bmc_ip: z
+    .string()
+    .nullable()
+    .describe(
+      'Effective BMC-plane IP: the static `bmc_ip` override when set, else index-derived from network.bmcCidr with the same base+10+index rule (derived.effective_bmc_ip). Null when network.bmcCidr is missing or malformed.',
+    ),
+});
+export type FleetNodeEffective = z.infer<typeof FleetNodeEffectiveSchema>;
+
+export const FleetDriftFieldSchema = z.object({
+  field: z.string().describe('Changed node field name (resolved/effective value)'),
+  from: z.string().describe('Applied value, JSON-stringified for display'),
+  to: z.string().describe('Desired value, JSON-stringified for display'),
+});
+
+export const FleetPendingSchema = z.object({
+  inSync: z.boolean().describe('True when the desired topology matches what is instantiated'),
+  severity: z
+    .enum(['in-sync', 'hot-appliable', 'needs-full-rebuild', 'mode-change'])
+    .describe(
+      'Coarse apply class; the apply planner refines it. `mode-change` means the desired fleet mode (vm/baremetal) differs from the applied one — the fleet-mode-apply op, not an incremental/full topology apply.',
+    ),
+  desiredDigest: z.string().describe('sha256 of the desired canonical topology'),
+  appliedDigest: z.string().nullable().describe('sha256 of the last-applied topology; null if never applied'),
+  appliedAt: z.number().nullable().describe('Epoch seconds of the last successful bring-up; null if never applied'),
+  summary: z
+    .object({
+      added: z.number().int().describe('Nodes desired but not yet instantiated'),
+      removed: z.number().int().describe('Nodes instantiated but no longer desired'),
+      changed: z.number().int().describe('Nodes whose instantiation-shaping fields changed'),
+      unchanged: z.number().int().describe('Nodes identical between desired and applied'),
+    })
+    .describe('Counts driving the banner headline'),
+  nodes: z
+    .object({
+      added: z
+        .array(
+          z.object({
+            name: z.string().describe('Node name'),
+            zone: z.string().describe('Hub Zone.name the node belongs to'),
+          }),
+        )
+        .describe('Pending-add nodes'),
+      removed: z
+        .array(
+          z.object({
+            name: z.string().describe('Node name'),
+            zone: z.string().describe('Hub Zone.name the node belonged to'),
+          }),
+        )
+        .describe('Nodes that will drop on apply'),
+      changed: z
+        .array(
+          z.object({
+            name: z.string().describe('Node name'),
+            fields: z.array(FleetDriftFieldSchema).describe('Per-field changes for this node'),
+          }),
+        )
+        .describe('Per-node field-level changes'),
+    })
+    .describe('Per-node drift detail for the expandable view'),
+  network: z
+    .object({
+      changed: z.boolean().describe('Data/BMC CIDR changed — forces a full rebuild'),
+      fields: z.array(z.string()).describe('Which CIDR fields changed'),
+    })
+    .describe('Network-level drift'),
+  note: z.string().nullable().describe('Degraded-mode note, e.g. no applied manifest yet'),
+});
+export type FleetPending = z.infer<typeof FleetPendingSchema>;
+
+export const ApplyActionSchema = z.enum([
+  'noop',
+  'hot-node',
+  'node-disk',
+  'add-node',
+  'remove-terminal-node',
+  'full-rebuild-required',
+]);
+
+export const ApplyPlanSchema = z.object({
+  fallbackFullRebuild: z
+    .boolean()
+    .describe('True when a change shifts node identity; apply collapses to a full nuke→rebuild'),
+  reason: z.string().nullable().describe('Why a full rebuild is forced, when fallbackFullRebuild'),
+  dataLoss: z.boolean().describe('Any item recreates a node disk (wipes that node only)'),
+  etaSec: z.number().describe('Rough total ETA in seconds'),
+  items: z
+    .array(
+      z.object({
+        name: z.string().describe('Node name (or "network")'),
+        action: ApplyActionSchema.describe('Cheapest safe action for this node'),
+        reason: z.string().describe('Why this action / what changed'),
+        fields: z.array(z.string()).describe('Changed field names'),
+        etaSec: z.number().describe('Rough ETA for this item'),
+        dataLoss: z.boolean().describe('This item wipes the node disk'),
+      }),
+    )
+    .describe('Per-node plan items'),
+});
+export type ApplyPlan = z.infer<typeof ApplyPlanSchema>;
+
+export const VerifyStatusSchema = z
+  .enum(['healthy', 'findings', 'no-manifest'])
+  .describe(
+    'Overall fleet-verify outcome: healthy = every applied node checks out; findings = one or more issues; no-manifest = nothing applied yet.',
+  );
+export type VerifyStatus = z.infer<typeof VerifyStatusSchema>;
+
+export const VerifyFindingKindSchema = z
+  .enum([
+    'no-manifest',
+    'domain-undefined',
+    'domain-not-running',
+    'ipmi-sim-down',
+    'sushy-down',
+    'lo-alias-missing',
+    'vmnet-socket-missing',
+    'bootptab-missing',
+    'orphan-domain',
+  ])
+  .describe(
+    'What a verify finding flags. domain-undefined and orphan-domain need an apply/adopt (not auto-healable); the rest are daemon/binding repairs verify --heal can perform.',
+  );
+export type VerifyFindingKind = z.infer<typeof VerifyFindingKindSchema>;
+
+export const VerifyFindingSchema = z.object({
+  node: z
+    .string()
+    .nullable()
+    .describe('Fleet node the finding is about; null for fleet-level findings (e.g. a missing bootptab)'),
+  kind: VerifyFindingKindSchema.describe('Which check failed'),
+  healable: z.boolean().describe('True when verify --heal can repair it in place (vs. needing a rebuild/apply)'),
+  detail: z.string().describe('Human-readable explanation of the finding and its remedy'),
+});
+export type VerifyFinding = z.infer<typeof VerifyFindingSchema>;
+
+export const FleetVerifyReportSchema = z.object({
+  status: VerifyStatusSchema.describe('Overall verify outcome'),
+  mode: FleetModeSchema.or(z.literal('unknown')).describe(
+    "Applied fleet mode ('vm' | 'baremetal'; 'unknown' when no manifest is present)",
+  ),
+  findings: z.array(VerifyFindingSchema).describe('Every issue found, most useful first (node-level then fleet-level)'),
+  summary: z
+    .object({
+      checked: z.number().int().describe('Number of applied vm nodes probed'),
+      ok: z.number().int().describe('Nodes with no node-level findings'),
+      findings: z.number().int().describe('Total finding count (node-level plus fleet-level)'),
+    })
+    .describe('Counts driving the verify headline'),
+});
+export type FleetVerifyReport = z.infer<typeof FleetVerifyReportSchema>;
+
+export const FleetConfigSchema = z.object({
+  source: z
+    .enum(['local', 'default'])
+    .describe("'local' = the stack overlay customizes the fleet; 'default' = the committed base"),
+  mode: FleetModeSchema.describe('Which fleet mode is active — selects the VM vs bare-metal editor'),
+  baremetal: BareMetalConfigSchema.describe(
+    'Persisted bare-metal config (returned even when inactive; empty defaults when never configured). Never carries credentials.',
+  ),
+  bakedChainUrl: z
+    .string()
+    .nullable()
+    .describe('The iPXE chain URL baked into the boot binaries; null when unknown. Drives the stale-bake chip.'),
+  nodes: z.array(FleetNodeEffectiveSchema),
+  zones: z
+    .array(z.string())
+    .describe('Available zone names (Hub Zone.name) in render order — populates the per-node zone selector'),
+  network: z
+    .object({ cidr: z.string(), bmcCidr: z.string() })
+    .describe('Data + BMC CIDRs, so the builder can show derived per-node IPs (base + 10 + index)'),
+  bmcDefaults: BmcCredsSchema.describe(
+    'Default BMC creds (fleet defaults.bmc) — applied to the fleet on rebuild/re-seed',
+  ),
+  pending: FleetPendingSchema.optional().describe(
+    'Desired-vs-applied drift for this fleet (drives the pending banner)',
+  ),
+});
+export type FleetConfig = z.infer<typeof FleetConfigSchema>;
+
+export const ExecResultSchema = z.object({
+  stdout: z.string(),
+  stderr: z.string(),
+  exit_code: z.number().int().describe('255 = ssh transport failure, 124 = lab-side timeout, else remote exit status'),
+  duration_ms: z.number().int(),
+});
+export type ExecResult = z.infer<typeof ExecResultSchema>;
+
+export const ConsoleLogSchema = z.object({
+  content: z.string().describe('Serial-console log slice; tail_bytes-bounded'),
+  bytes: z.number().int().describe('Total file size at read time'),
+  truncated: z.boolean().describe('True if content is the tail of a larger file'),
+});
+
+export const LayersManifestRequireSchema = z
+  .object({
+    group: z.string().describe('Group slug the dependency lives in'),
+    layers: z.array(z.string()).describe('Dependency layer names — any one satisfies the requirement'),
+  })
+  .passthrough();
+export type LayersManifestRequire = z.infer<typeof LayersManifestRequireSchema>;
+
+export const LayersManifestLayerSchema = z
+  .object({
+    name: z.string().describe('Layer name — unique within its group; the dependency-graph node id'),
+    kind: z.string().describe("Layer kind (e.g. 'base' | 'component' | 'legacy') — drives the viewer's kind dot"),
+    group: z.string().describe('Slug of the group this layer belongs to'),
+    arch: z.string().describe('CPU architecture this artifact targets (e.g. amd64, arm64)'),
+    display_name: z.string().optional().describe('Human-friendly label; falls back to name when absent'),
+    version: z.string().nullish().describe('Layer version string; null/absent when unversioned'),
+    os_distro: z.string().optional().describe('OS distro this artifact is built for (e.g. ubuntu)'),
+    os_codename: z.string().optional().describe('OS codename this artifact is built for (e.g. jammy)'),
+    variant: z.string().nullish().describe('Optional build variant tag; null/absent when none'),
+    sha256: z.string().optional().describe('Artifact blob sha256 — the prime/nuke cache key'),
+    size: z.number().optional().describe('Artifact blob size in bytes'),
+    built_at: z.string().optional().describe('Build timestamp of the artifact'),
+    source_version: z
+      .string()
+      .nullish()
+      .describe('Upstream source version the artifact was built from; null/absent when unknown'),
+    requires: z
+      .array(LayersManifestRequireSchema)
+      .optional()
+      .describe('Cross-group dependencies this artifact declares'),
+  })
+  .passthrough();
+export type LayersManifestLayer = z.infer<typeof LayersManifestLayerSchema>;
+
+export const LayersManifestGroupSchema = z
+  .object({
+    slug: z.string().describe('Stable group identifier referenced by layers[].group and requires[].group'),
+    name: z.string().describe('Human-friendly group name shown as the section header'),
+    selection_type: z
+      .string()
+      .describe('How many layers may be chosen from this group (e.g. SINGLE_SELECT | MULTI_SELECT)'),
+  })
+  .passthrough();
+export type LayersManifestGroup = z.infer<typeof LayersManifestGroupSchema>;
+
+export const LayersManifestSchema = z
+  .object({
+    groups: z.array(LayersManifestGroupSchema).describe('Layer groups (dependency-graph partitions) in the release'),
+    layers: z.array(LayersManifestLayerSchema).describe('Every layer artifact in the release'),
+    schema_version: z.number().optional().describe('Manifest schema version'),
+    version: z.string().optional().describe('Release version string'),
+    env: z.string().optional().describe('Environment the release was built for (e.g. dev, prod)'),
+    generated_at: z.string().optional().describe('When the manifest was generated (ISO timestamp)'),
+    pipeline_id: z.number().optional().describe('CI pipeline id that produced the release'),
+  })
+  .passthrough()
+  .describe(
+    'OS-layers release manifest — external pipeline-owned data; only the fields the control center dereferences are typed, everything else passes through',
+  );
+export type LayersManifest = z.infer<typeof LayersManifestSchema>;

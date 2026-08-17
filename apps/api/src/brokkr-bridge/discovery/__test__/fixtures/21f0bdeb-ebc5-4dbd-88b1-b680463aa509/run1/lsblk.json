@@ -1,0 +1,10 @@
+[
+  {
+    "name": "nvme1n1",
+    "size": 800166076416,
+    "rota": false,
+    "serial": "24344AAF9E3C",
+    "wwn": "eui.000000000000000100a075244aaf9e3c",
+    "model": "Dell DC NVMe ISE 7450 MU U.2 800GB"
+  }
+]

@@ -1,0 +1,11 @@
+{
+  "product": {
+    "family": "PowerEdge",
+    "name": "PowerEdge R760xa",
+    "vendor": "Dell Inc.",
+    "serial_number": "TESTSERIAL02",
+    "uuid": "00000000-0000-0000-0000-000000000002",
+    "sku": "SKU=0B72;ModelName=PowerEdge R760xa",
+    "version": ""
+  }
+}

@@ -1,0 +1,249 @@
+// Zone: Consolidated concept replacing separate "data center" and "zone".
+// Brokkr DB is the source of truth.
+
+// FLAT = standard public/NAT zone. VPC = customer-isolated network with
+// its own VRF + IPAM allocations. Keyed off by discovery + VPC flows.
+enum ZoneNetworkType {
+  FLAT
+  VPC
+}
+
+// East-west fabric type. ROCE means RDMA-over-Converged-Ethernet — the
+// netplan generator emits /31 east-west IPs against cable peers when set.
+enum ZoneEastWestNetworkType {
+  ROCE
+  ETHERNET
+}
+
+model Zone {
+  id   String @id @default(uuid())
+  name String
+
+  // Last 5 hex chars of `id`, materialized + @unique so device names derived
+  // per-zone (e.g. gpu-0001-<uuidSuffix>) are globally unique. Set on create
+  // via generate-and-retry on P2002. Nullable because existing rows with a
+  // pre-existing last-5 collision backfill to NULL (Postgres allows many NULLs
+  // under a unique index); every new zone gets a value.
+  uuidSuffix String? @unique
+
+  // Admin-only internal label, searchable in the admin panel; never exposed to tenants.
+  internalName String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime? // soft delete (= deprovisioned)
+
+  // Organization ownership (replaces tenant-based lookups)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  networkType ZoneNetworkType @default(FLAT)
+
+  // East-west fabric type. Read by the netplan generator's deploy template
+  // to decide whether east-west-tagged interfaces participate in the
+  // rendered config (ROCE devices need /31 peer IPs in netplan).
+  eastWestNetworkType ZoneEastWestNetworkType?
+
+  // Used by the commissioning saga to pick the iPXE artefact bridges serve.
+  ipxeBuildTarget  String?
+  ipxeBuildVersion String?
+
+  // Site-wide infra used by cloud-init / rsyslog templates. `proxyGroup` is
+  // the rsyslog/monitoring tag; `siteProxyIp` is the Apt cache / package
+  // mirror IP.
+  proxyGroup  String?
+  siteProxyIp String?
+
+  // Coarse marketplace region, assigned by point-in-polygon of the zone's
+  // primary-address coordinates (RegionAssignmentService). A device inherits
+  // its region from its zone via this link (see DeviceSpecHelper.region).
+  regionId String?
+  region   Region? @relation(fields: [regionId], references: [id])
+
+  // Layer build version this zone is pinned to. NULL = use PlatformSettings default.
+  layerBuildId String?
+  layerBuild   LayerBuild? @relation(fields: [layerBuildId], references: [id])
+
+  // ── Zone-level DNS config (hub-authoritative; bridges consume via Redis atoms) ──
+
+  dnsEnabled              Boolean  @default(false)
+  dnsUpstreamResolvers    String[] @default([])
+  dnsTtlSeconds           Int      @default(60)
+  dnsCacheSize            Int      @default(1000)
+  dnsOwnedDomain          String   @default("lan")
+  dnsUpstreamTimeoutMs    Int      @default(1000)
+  dnsPollMs               Int      @default(2000)
+  dnsTcpMaxConnections    Int?
+  dnsTcpMaxQueriesPerConn Int?
+  dnsTcpIdleTimeoutMs     Int?
+  dnsTcpMaxMessageBytes   Int?
+  dnsMaxTtlSeconds        Int?
+  dnsMaxCacheTtlSeconds   Int?
+  dnsMinCacheTtlSeconds   Int?
+  dnsNegTtlSeconds        Int?
+
+  // ── Zone-level DHCP/VRRP runtime tuning (hub-authoritative; bridges consume via Redis atoms) ──
+
+  dhcpLeaderPollMs          Int @default(2000)
+  dhcpPruneIntervalMs       Int @default(60000)
+  dhcpDeclineBackoffSeconds Int @default(600)
+  vrrpGarpCount             Int @default(5)
+
+  // Optional colocation this zone sits in — carries facility-level contacts.
+  // SetNull, never Cascade: deleting a colocation must not orphan zone rows.
+  colocationId String?
+  colocation   Colocation? @relation(fields: [colocationId], references: [id], onDelete: SetNull)
+
+  // Relations
+  addresses          ZoneAddress[]
+  contacts           Contact[]
+  maintenanceRecords ZoneMaintenance[]
+  devices            Device[] // devices assigned to this zone (includes bridges)
+  racks              Rack[]
+  prefixes           Prefix[]
+  vlans              Vlan[]
+  vlanGroups         VlanGroup[]
+  ipRanges           IpRange[] // ip ranges scoped to this zone
+
+  // Phase 3 FK migration reverse relations
+  zoneRequests        ZoneRequest[]
+  zoneStatuses        ZoneStatus[]
+  bridgeHeartbeats    BridgeHeartbeat[]
+  clusters            Cluster[]
+  circuitTerminations CircuitTermination[]
+  registrationTokens  ZoneRegistrationToken[] // S1 enrollment tokens minted for this zone
+  enrollment          ZoneEnrollment? // S1 current enrollment (zone_pub on hub side)
+  redisCredential     ZoneRedisCredential? // opt-in per-zone Redis ACL credential (hash only)
+  dnsDomains          DnsDomain[]
+
+  @@index([organizationId])
+  @@index([colocationId])
+}
+
+// Tracks each maintenance period for a zone. Active maintenance = disabledAt IS NULL.
+// Full history is preserved by keeping all records — each enable creates a new row.
+
+model ZoneMaintenance {
+  id     String @id @default(uuid())
+  zoneId String
+  zone   Zone   @relation(fields: [zoneId], references: [id])
+
+  reason        String // required internal description for audit
+  message       String? // optional customer-facing message
+  expectedEndAt DateTime? // optional estimated end time
+
+  enabledAt DateTime @default(now())
+  enabledBy String // admin user ID who enabled maintenance
+
+  disabledAt DateTime? // null = currently active
+  disabledBy String? // admin user ID who disabled maintenance
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([zoneId, disabledAt])
+}
+
+// Address for a zone. Designed for international addresses and Radar autocomplete compatibility.
+
+model ZoneAddress {
+  id        String          @id @default(uuid())
+  type      ZoneAddressType
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  deletedAt DateTime? // soft delete
+
+  // Structured address fields (from Radar autocomplete or manual entry)
+  formattedAddress String // Full display string from autocomplete (e.g., "123 Main St, New York, NY 10001, US")
+  addressLineOne   String // Street address (Radar: addressLabel)
+  addressLineTwo   String? // Suite, unit, floor, etc.
+  city             String // City/locality (Radar: city)
+  stateOrProvince  String? // State, province, region — optional for countries without them (Radar: stateCode)
+  postalCode       String? // Postal/ZIP code — optional for countries without them (Radar: postalCode)
+  country          String? // Country display name (Radar: country) — null on manual entry (countryCode is canonical)
+  countryCode      String // ISO 3166-1 alpha-2 code, e.g., "US", "DE", "JP" (Radar: countryCode)
+
+  // Geographic coordinates — only populated via geocoding (Radar). Null for manually
+  // entered addresses; region auto-assignment simply skips a coordinate-less zone.
+  latitude  Float? // -90 to 90
+  longitude Float? // -180 to 180
+  timezone  String // IANA timezone identifier, e.g., "America/New_York"
+
+  zoneId String
+  zone   Zone   @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  @@index([zoneId])
+}
+
+enum ZoneAddressType {
+  PRIMARY
+  SHIPPING
+}
+
+// Unified Contact: zone (with contactType), organization, manufacturer, facility,
+// or colocation (tags).
+// Constraint: exactly one parent via raw CHECK (Prisma cannot express cross-column CHECK).
+
+model Contact {
+  id        String    @id @default(uuid())
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime? // soft delete
+
+  name              String
+  title             String? // optional — external parties may not carry a title
+  email             String
+  phone             String? // E.164 format: +{country}{number}; optional for portal-only parties
+  contactType       ZoneContactType? // zone-scoped role; null for org/manufacturer contacts
+  isShippingContact Boolean          @default(false) // zone-only logistics flag; unused by org/manufacturer contacts
+
+  // Support-channel fields (used mainly by org/supplier and manufacturer contacts)
+  notes              String?
+  slackLink          String?
+  ticketingPortalUrl String?
+  website            String?
+
+  zoneId String?
+  zone   Zone?   @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  manufacturerId String?
+  manufacturer   Manufacturer? @relation(fields: [manufacturerId], references: [id], onDelete: Cascade)
+
+  facilityId String?
+  facility   Facility? @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  colocationId String?
+  colocation   Colocation? @relation(fields: [colocationId], references: [id], onDelete: Cascade)
+
+  tags ContactTag[]
+
+  @@index([zoneId])
+  @@index([organizationId])
+  @@index([manufacturerId])
+  @@index([facilityId])
+  @@index([colocationId])
+}
+
+enum ZoneContactType {
+  Main
+  Technical
+}
+
+// Editable contact role tag; archivedAt retires from picker but keeps on existing contacts.
+// In-use tags cannot be hard-deleted (enforced in service), only archived.
+
+model ContactTag {
+  id         String    @id @default(uuid())
+  // Uniqueness is case-insensitive, enforced by a raw functional unique index on
+  // lower(label) (see migration); Prisma can't express it, so no @unique here.
+  label      String
+  group      String? // picker section, e.g. General | OEM | Connectivity | Site
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  contacts Contact[]
+}

@@ -1,0 +1,316 @@
+---
+version: '3'
+
+vars:
+  # sim engine dir, resolved once. sim/python tasks set `dir: '{{.SIM_DIR}}'` instead of an
+  # inline `cd`; PYTHONPATH is already exported by the devenv shell (devenv.nix enterShell),
+  # so no per-task `export` is needed.
+  SIM_DIR:
+    sh: echo "$DEVENV_ROOT/apps/local-sim"
+
+# Deploy/ops and release-hygiene verbs live in taskfiles/, which is stripped from the public
+# mirror. `optional` keeps the root Taskfile parseable where they are absent; `flatten` keeps
+# the included task names bare (.gitlab-ci.yml invokes several of them unprefixed) and `dir`
+# anchors each task's own relative `dir:` at the repo root rather than at taskfiles/.
+includes:
+  ops:
+    taskfile: ./taskfiles/ops.yml
+    optional: true
+    flatten: true
+    dir: '{{.ROOT_DIR}}'
+  publish:
+    taskfile: ./taskfiles/publish.yml
+    optional: true
+    flatten: true
+    dir: '{{.ROOT_DIR}}'
+
+tasks:
+  # === Local-dev stack lifecycle (devenv) ===
+
+  # Shared tmux helper: attach (or create) a named window under the brokk-local session.
+  _tmux-window:
+    internal: true
+    cmds:
+      - tmux new-session -A -s {{.SESSION}} -t brokk-local \; select-window -t {{.WINDOW}}
+
+  # Hermetic local bring-up sequence shared by `up`. Plain `devenv up -d` — fully hermetic,
+  # no Vault, secrets resolve from secretspec.toml's `local` profile defaults.
+  _up:
+    internal: true
+    preconditions:
+      - &devenv_guard
+        sh: '[ -n "$DEVENV_ROOT" ]'
+        msg: 'Not in the devenv shell. New machine? Run the one-time bootstrap "bash apps/local-sim/provisioning/bootstrap.sh", then "exec $SHELL" and cd back in. Already bootstrapped? Run "direnv allow" (or "devenv shell") to load it.'
+    cmds:
+      - cmd: |
+          set -e
+          BROKK_SETUP_QUIET=1 bash "$DEVENV_ROOT/apps/local-sim/provisioning/bootstrap.sh"
+      - task: sudo:setup
+      # Multi-stack: siblings keep running (each owns a slot's port block) — report them.
+      # Stopping one is an explicit operator call, never a bring-up side effect.
+      - cmd: stack-report-others
+        ignore_error: true
+      # slot claim + preflight gate + devenv up -d + socket wait + reconcile, in the devenv
+      # `stack-up` script so the control center can run the same bring-up without the tty the steps
+      # above need. The preflight lives there and only there: it must run after the slot claim or it
+      # port-scans slot 0's ports.
+      - cmd: stack-up
+      - cmd: |
+          echo ""
+          echo "✓ Stack reconciled."
+          echo "  control center http://localhost:5175 · hub :3000 · spoke :8000"
+          echo "  watch: task logs (TUI) · task status     down: task down"
+
+  up:
+    desc: 'Everything up from nothing: idempotent host bootstrap + passwordless sim sudo + devenv up -d. Re-run to reconcile.'
+    cmds:
+      - task: _up
+
+  local:setup:
+    desc: 'Opt-in onboarding: create SSH key if absent. Run once before the first task up.'
+    aliases: [setup]
+    preconditions:
+      - *devenv_guard
+    cmds:
+      - cd "$DEVENV_ROOT" && devenv tasks run setup:onboard
+      # devenv collapses the oneshot's output, so print the next step from the Taskfile
+      # where it's always visible. Only runs if onboard exited 0 (task stops on failure).
+      - cmd: |
+          echo
+          echo "✓ Onboarding complete. Next: run 'task up' to bring up the stack."
+        silent: true
+
+  # Run the install/remove in the foreground (this terminal-attached shell) so the one sudo prompt
+  # is reliable — `devenv tasks run sudo:setup` can't prompt usably under the task runner on Linux.
+  sudo:setup:
+    desc: 'Install the passwordless sim-sudo drop-in (one prompt; silent thereafter).'
+    preconditions:
+      - *devenv_guard
+    cmds:
+      - bash "$DEVENV_ROOT/devenv/scripts/install-sim-sudoers.sh"
+
+  sudo:teardown:
+    desc: 'Remove the passwordless sim-sudo drop-in (revert to per-op sudo prompts).'
+    preconditions:
+      - *devenv_guard
+    cmds:
+      # the removal logic (and the drop-in path) lives in the devenv sudo-sim-teardown script
+      # (modules/sudo.nix) — same single-source shape as sudo:setup → install-sim-sudoers.sh.
+      - sudo-sim-teardown
+
+  ci:image:build:
+    desc: 'Build the CI toolchain image (devenv/flake.nix#ciImage) locally. Linux-only — dockerTools needs a Linux builder; on macOS the output is absent.'
+    preconditions:
+      - *devenv_guard
+    cmds:
+      - nix build --print-out-paths "$DEVENV_ROOT/devenv#ciImage"
+
+  local:doctor:
+    desc: 'Read-only onboarding report: checkouts, SSH key, Docker, group membership.'
+    aliases: [doctor]
+    preconditions:
+      - *devenv_guard
+    # `devenv tasks run setup:doctor` runs it as a oneshot with show_output=false, which
+    # swallows the entire report — so invoke the underlying stack-doctor script (on the devenv
+    # PATH; modules/polyrepo.nix) directly. The setup:doctor task delegates to the same script.
+    cmds:
+      - stack-doctor
+
+  down:
+    desc: 'Stop the local-dev stack (datastores + hub/spoke + control center + fleet).'
+    preconditions:
+      - *devenv_guard
+    cmds:
+      # Power off the fleet (domains kept defined), stop every supervised process, then reap any
+      # stragglers. All logic lives in the devenv `stack-down` script (mirrors local:reset → stack-reset).
+      - cmd: stack-down
+        ignore_error: true
+
+  down:others:
+    desc: 'Stop every OTHER registered stack (per the host slot registry) without bringing this one up. Opt out with BROKK_KEEP_OTHERS=1.'
+    preconditions:
+      - sh: '[ -n "$DEVENV_ROOT" ]'
+        msg: 'Not in the devenv shell — run direnv allow (or devenv shell) first.'
+    cmds:
+      - cmd: stack-down-others
+        ignore_error: true
+
+  down:all:
+    desc: 'Stop EVERY registered stack on this host (siblings first, this checkout last).'
+    preconditions:
+      - *devenv_guard
+    cmds:
+      - stack-down-all
+
+  purge:all:
+    desc: 'DESTRUCTIVE: down:all + wipe host-global state for every registered slot + clear the registry.'
+    preconditions:
+      - *devenv_guard
+    cmds:
+      - stack-purge-all
+
+  local:reset:
+    desc: 'DESTRUCTIVE: down + wipe datastore data + fleet overlays. Rebuild with task up.'
+    aliases: [reset]
+    preconditions:
+      - *devenv_guard
+    cmds:
+      - stack-reset
+
+  local:purge:
+    desc: 'DESTRUCTIVE: reset + nginx cache + pc logs + task db. Rebuild with task up.'
+    aliases: [purge]
+    preconditions:
+      - *devenv_guard
+    cmds:
+      - stack-purge
+
+  stack:reslot:
+    desc: 'DESTRUCTIVE: migrate this checkout to a newly configured stack slot (down + old-slot fleet nuke + wipe), then rebuild with task up.'
+    preconditions:
+      - *devenv_guard
+    cmds:
+      - stack-reslot
+
+  local:status:
+    desc: 'One-shot health: process-compose processes + fleet status + overrides summary.'
+    aliases: [status]
+    dir: '{{.SIM_DIR}}'
+    cmds:
+      - bash "$DEVENV_ROOT/devenv/scripts/stack-list.sh"
+      - process-compose process list 2>/dev/null || echo "stack down (no process-compose socket — run task up)"
+      - cmd: python -m local.status
+        ignore_error: true
+      - cmd: python -m local.show_env --summary
+        ignore_error: true
+
+  local:config:
+    desc: 'Resolved environment config + sim engine settings. Pass -- --show-secrets to unmask.'
+    aliases: [config]
+    dir: '{{.SIM_DIR}}'
+    cmds:
+      - python -m local.show_env {{.CLI_ARGS}}
+      - python -m local.show_config {{.CLI_ARGS}}
+
+  local:logs:
+    desc: 'Attach the process-compose TUI (status/health + per-process logs; q detaches).'
+    aliases: [logs]
+    cmds:
+      - process-compose attach -U -u "$PC_SOCKET_PATH"
+
+  # --- sim engine operator verbs ---
+
+  sim:setup:
+    desc: 'One-time host bootstrap (auto-detects macOS vs Linux).'
+    dir: '{{.SIM_DIR}}'
+    cmds:
+      - bash provisioning/bootstrap.sh
+
+  sim:fleet:nuke:
+    desc: 'fleet down + delete overlays + NVRAM + sushy configs — the destructive wipe.'
+    dir: '{{.SIM_DIR}}'
+    cmds:
+      - python -m local.fleet nuke
+
+  sim:fleet:diff:
+    desc: 'Show pending (unapplied) fleet config changes (JSON; exit 2 on drift).'
+    dir: '{{.SIM_DIR}}'
+    cmds:
+      - python -m local.fleet diff
+
+  sim:fleet:apply:
+    desc: 'Apply pending fleet config with the minimal ops (falls back to a full rebuild).'
+    dir: '{{.SIM_DIR}}'
+    cmds:
+      - python -m local.fleet apply
+
+  sim:bm:reconcile:
+    desc: 'Reconcile bare-metal Device identity to bm_device_uuid (soft-delete strays + restore canonical Server + purge stale Redis pointers), then re-seed + re-seal BMC creds so the box is fully controllable. DESTRUCTIVE + hermetic-local only (fail-closed on non-loopback DSN).'
+    dir: '{{.SIM_DIR}}'
+    cmds:
+      - python -m local.reconcile_baremetal --yes-destroy
+      - bash scripts/tasks/sql-seed-run.sh
+      - pnpm --filter api seed:baremetal-bmc
+
+  sim:commissioning:add:
+    desc: 'Add 2 commissioning-candidate VMs to the running fleet (role=NULL/DHCP) + seed + boot them, via the control center.'
+    cmds:
+      - |
+        port="${LAB_PORT:-3002}"
+        rid=$(curl -fsS -X POST "http://localhost:${port}/api/stack/runs" \
+          -H 'content-type: application/json' -d '{"opId":"fleet-add-commissioning"}' \
+          | jq -r '.runId // empty')
+        if [ -z "$rid" ]; then echo "failed to start (is the stack up? control center on :$port)"; exit 1; fi
+        echo "started fleet-add-commissioning run=$rid"
+        echo "watch on the control center /fleet page, or stream:"
+        echo "  curl -N http://localhost:${port}/api/stack/runs/$rid/stream"
+
+  sim:node:console:
+    desc: 'Tail a node serial console log. NAME=<node>.'
+    requires:
+      vars: [NAME]
+    cmds:
+      - tail -F "$HOME/.local/share/local/state/logs/{{.NAME}}.log"
+
+  sim:fleet:consoles:
+    desc: 'Tmux window with one pane per VM tailing its serial log.'
+    dir: '{{.SIM_DIR}}'
+    cmds:
+      - bash scripts/tasks/fleet-consoles.sh
+      - task: _tmux-window
+        vars: { SESSION: consoles-view, WINDOW: consoles }
+
+  sim:fleet:shells:
+    desc: 'Tmux window with one pane per VM with an interactive SOL console (via the BMC).'
+    dir: '{{.SIM_DIR}}'
+    cmds:
+      - bash scripts/tasks/fleet-shells.sh
+      - task: _tmux-window
+        vars: { SESSION: shells-view, WINDOW: shells }
+
+  sim:dash:
+    desc: 'Combined consoles+shells operator dashboard.'
+    dir: '{{.SIM_DIR}}'
+    cmds:
+      - bash scripts/tasks/dash.sh
+      - task: _tmux-window
+        vars: { SESSION: stack-view, WINDOW: stack }
+
+  sim:ipmi:
+    desc: 'ipmitool passthrough. Usage: task sim:ipmi -- <node> <cmd>'
+    dir: '{{.SIM_DIR}}'
+    cmds:
+      - bash scripts/tasks/ipmi.sh {{.CLI_ARGS}}
+
+  sim:redfish:
+    desc: 'Redfish curl passthrough. Usage: task sim:redfish -- <node> <verb>'
+    dir: '{{.SIM_DIR}}'
+    cmds:
+      - bash scripts/tasks/redfish.sh {{.CLI_ARGS}}
+
+  # === Release-hygiene gates ===
+
+  secrets:scan:
+    desc: 'Scan the full working tree for secrets (gitleaks --no-git). Complements the staged pre-commit hook.'
+    cmds:
+      - gitleaks detect --no-git --source . --config .gitleaks.toml --redact --no-banner
+
+  secrets:scan:history:
+    desc: 'Full git-history secret scan across all refs (pre-publish gate). NOTE: reports known un-baselined historical findings until they are baselined in .gitleaks.toml — see the CI Secret Detection (full history) job.'
+    cmds:
+      - gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --log-opts=--all
+
+  check:format:
+    desc: 'fail if any file is mis-formatted or fails a lint gate (treefmt --ci: prettier + nix + shell + toml). repo-wide format/lint authority.'
+    cmds:
+      - treefmt --ci --no-cache
+
+  test:devenv:
+    desc: 'Devenv shell tests (bats). Container-safe tier only — no nix, no devenv eval, touches nothing outside its tmpdir. This is the merge-request gate.'
+    cmds:
+      - bats devenv/tests/
+
+  test:devenv:all:
+    desc: 'Every devenv bats test, including tests/nix (needs a nix binary) and tests/checkout (runs devenv eval and mutates this checkout). Local only.'
+    cmds:
+      - bats -r devenv/tests/

@@ -1,0 +1,71 @@
+{
+  "name": "@hydrahost/plugin-hello-world",
+  "version": "0.1.0",
+  "description": "Reference Brokkr plugin. Demonstrates the manifest, owned Postgres schema, SQL migration, ts-rest contract, configSchema, Nest controller, and React frontend slot pattern. Use as a starting point for new plugins.",
+  "license": "Apache-2.0",
+  "main": "./dist/plugin.js",
+  "types": "./plugin.ts",
+  "exports": {
+    ".": {
+      "types": "./plugin.ts",
+      "require": "./dist/plugin.js",
+      "import": "./dist/plugin.js"
+    },
+    "./backend": {
+      "types": "./backend/index.ts",
+      "require": "./dist/backend/index.js",
+      "import": "./dist/backend/index.js"
+    },
+    "./contract": {
+      "types": "./contract.ts",
+      "require": "./dist/contract.js",
+      "import": "./dist/contract.js"
+    },
+    "./frontend": {
+      "types": "./frontend/index.ts",
+      "require": "./dist/frontend/index.js",
+      "import": "./dist/frontend/index.js"
+    },
+    "./frontend-manifest": {
+      "types": "./plugin-frontend.ts",
+      "require": "./dist/plugin-frontend.js",
+      "import": "./dist/plugin-frontend.js"
+    }
+  },
+  "files": [
+    "dist",
+    "database",
+    "plugin.ts",
+    "plugin-frontend.ts",
+    "contract.ts",
+    "schemas.ts",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@hydrahost/plugin-sdk": "workspace:*",
+    "zod": "^3.25.0"
+  },
+  "peerDependencies": {
+    "@nestjs/common": ">=11",
+    "@ts-rest/core": ">=3.51",
+    "@ts-rest/nest": ">=3.51",
+    "react": ">=19"
+  },
+  "devDependencies": {
+    "@nestjs/common": "^11.1.11",
+    "@repo/typescript-config": "workspace:*",
+    "@ts-rest/core": "^3.51.0",
+    "@ts-rest/nest": "^3.51.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.0",
+    "react": "^19.2.0",
+    "typescript": "^5.9.3"
+  }
+}

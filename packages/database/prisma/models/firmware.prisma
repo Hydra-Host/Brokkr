@@ -1,0 +1,26 @@
+enum FirmwareType {
+  BIOS
+  BMC
+  CPLD
+  GPU_DRIVER
+  NIC_FW // Future: requires relaxing @@unique([deviceId, type]) when per-NIC firmware tracking lands.
+  BMC_FW_BUILD // Detailed build/commit identifier paired with the BMC version.
+}
+
+model DeviceFirmware {
+  id      String       @id @default(uuid())
+  type    FirmwareType
+  vendor  String?
+  version String
+  date    String?
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId, type])
+  @@index([deviceId])
+  @@index([type, version])
+}

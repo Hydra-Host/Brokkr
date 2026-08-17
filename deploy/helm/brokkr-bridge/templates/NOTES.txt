@@ -1,0 +1,35 @@
+Brokkr bridge released as {{ include "brokkr-bridge.fullname" . }} in namespace {{ .Release.Namespace }},
+registering under zone {{ include "brokkr-bridge.zoneId" . }}.
+
+The bridge connects to the hub ONLY over the shared Redis bus - no Postgres, no
+hub HTTP. It elects a leader and writes presence under
+{{ include "brokkr-bridge.zoneId" . }}:bridge:instance:* - which the hub's heartbeat monitor scans.
+
+1. Watch it come up (the startup window is generous - it stages initrd artifacts
+   first):
+
+     kubectl -n {{ .Release.Namespace }} logs -f deploy/{{ include "brokkr-bridge.fullname" . }}
+
+2. Confirm registration against the hub's Redis:
+
+     redis-cli -u <hub REDIS_URL> --scan --pattern '{{ include "brokkr-bridge.zoneId" . }}:bridge:instance:*'
+
+{{- if .Values.hostNetwork }}
+
+The pod runs with host networking (PXE/DHCP/TFTP and the VRRP floating IP need
+the node's real NICs) - the bridge API is bound on the node at
+:{{ .Values.config.BRIDGE_PORT }}. Pin the pod to the site node wired to the
+metal via nodeSelector.
+{{- else }}
+
+hostNetwork is disabled - fine for an API-only trial, but PXE/DHCP/TFTP and the
+VRRP floating IP cannot reach the site L2 from an isolated pod network, so real
+provisioning will not work in this mode.
+{{- end }}
+
+{{- if eq .Values.config.BRIDGE_SYNC_ENABLED "false" }}
+
+BRIDGE_SYNC_ENABLED=false: the bridge is self-contained and will not fetch
+discovery images. Real provisioning needs them - set it "true" plus
+DISCOVERY_BASE_URL / OS_LAYER_URL / BROKKR_LIVE_VERSION under `env:`.
+{{- end }}

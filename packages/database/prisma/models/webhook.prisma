@@ -1,0 +1,68 @@
+model Webhook {
+  id            String             @id @default(uuid())
+  endpoint      String
+  description   String?
+  events        WebhookEventType[]
+  secret        String
+  isActive      Boolean            @default(true)
+  failureCount  Int                @default(0)
+  lastFailureAt DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  deliveries WebhookDelivery[]
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+  @@index([isActive])
+}
+
+model WebhookDelivery {
+  id             String           @id @default(uuid())
+  webhookId      String
+  eventType      WebhookEventType
+  payload        Json
+  idempotencyKey String? // For preventing duplicate events
+  status         DeliveryStatus   @default(PENDING)
+  httpStatus     Int?
+  responseBody   String?          @db.Text
+  errorMessage   String?          @db.Text
+  attempts       Int              @default(0)
+  nextRetryAt    DateTime?
+
+  // Distributed locking fields
+  processingLockedBy    String?
+  processingLockedAt    DateTime?
+  processingLockExpires DateTime?
+
+  createdAt   DateTime  @default(now())
+  deliveredAt DateTime?
+
+  webhook Webhook @relation(fields: [webhookId], references: [id])
+
+  @@unique([webhookId, idempotencyKey])
+  @@index([webhookId])
+  @@index([status])
+  @@index([nextRetryAt])
+  @@index([createdAt])
+  @@index([processingLockedBy])
+}
+
+enum DeliveryStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  RETRYING
+}
+
+enum WebhookEventType {
+  DEVICE_LISTING_UPDATED
+  DEVICE_LISTING_CREATED
+  DEVICE_LISTING_DECOMMISSIONED
+  DEPLOYMENT_INTERRUPTED
+  DEPLOYMENT_INTERRUPTION_COMPLETED
+}

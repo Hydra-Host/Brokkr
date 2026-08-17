@@ -1,0 +1,54 @@
+Brokkr hub released as {{ include "brokkr-hub.fullname" . }} in namespace {{ .Release.Namespace }}.
+
+WARNING: sim/trial posture - LOCAL_SIMULATION_ENABLED bypasses authentication, so anyone
+who can reach the hub (or the Redis bus) has full access. Never expose this release to an
+untrusted network.
+
+1. Reach the hub API (:3000):
+
+{{- if .Values.ingress.enabled }}
+
+     https://{{ .Values.ingress.host }}/api/v1
+{{- else }}
+
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "brokkr-hub.fullname" . }} 3000:{{ .Values.service.port }}
+
+   then http://localhost:3000/api/v1
+{{- end }}
+
+   The web UI is not served in this posture (see the NODE_ENV note in values.yaml) -
+   interact via the REST API (auth bypass in sim mode).
+
+2. Create a Zone: sign up, become a supplier, and create a Zone. Its UUID is the
+   BROKKR_ZONE_ID for each bridge you install (one bridge release per zone).
+
+3. Point bridges at THIS release's Redis bus:
+{{- if .Values.redis.enabled }}
+
+   In-cluster bridges:
+
+     redis://{{ include "brokkr-hub.redisHost" . }}.{{ .Release.Namespace }}.svc.cluster.local:6379
+
+{{- if eq .Values.redis.service.type "ClusterIP" }}
+   Bridges OUTSIDE the cluster cannot reach a ClusterIP Service - expose the bus
+   deliberately (redis.service.type=LoadBalancer or NodePort) and lock it down:
+   private network + rediss:// + a password.
+{{- else }}
+   The bus is exposed via a {{ .Values.redis.service.type }} Service:
+
+     kubectl -n {{ .Release.Namespace }} get svc {{ include "brokkr-hub.redisHost" . }}
+
+   For any non-private link, lock it down: private network + rediss:// + a password.
+{{- end }}
+{{- else }}
+
+   The bundled Redis is disabled - bridges use the same external Redis you set in
+   secrets.REDIS_URL.
+{{- end }}
+
+{{- if .Values.redis.enabled }}
+
+4. Confirm a bridge registered (after installing brokkr-bridge):
+
+     kubectl -n {{ .Release.Namespace }} exec {{ include "brokkr-hub.redisHost" . }}-0 -- redis-cli --scan --pattern '*:bridge:instance:*'
+{{- end }}

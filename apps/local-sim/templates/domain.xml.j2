@@ -1,0 +1,172 @@
+{# Libvirt domain template for a PXE-booting sim node. Cross-platform —
+   the `host_os` ('macos' or 'linux') and `host_arch` ('arm64' or 'amd64')
+   render-context vars decide accel backend, machine type, firmware paths,
+   and network plumbing.
+
+   Boot path: qemu direct-loads a per-VM iPXE EFI binary via <kernel>. iPXE
+   DHCPs (or uses the static netplan baked into the discovery initrd),
+   then HTTP-fetches kernel + 3-layer initrd (Ubuntu base,
+   brokkr-discovery-{Device.id}, brokkr-live) directly from bridge. No
+   firmware-side PXE/TFTP — we short-circuit firmware-network-boot by
+   pointing <kernel> at iPXE.
+
+   Networking:
+   - macOS: socket_vmnet daemon owns the data plane; qemu connects to its
+     UNIX socket via `-netdev stream`. virtio-net-pci on pcie.0:0x2.
+   - Linux: a flat L2 kernel bridge ('br-brokkr') created by fleet.py's
+     ensure_data_plane_bridge (no libvirt network, no dnsmasq, no DHCP —
+     VMs use the static netplan baked into the initrd). domain XML attaches
+     via <interface type='bridge'><source bridge='br-brokkr'/>.
+
+   Disk presentation is identical on both: virtio-scsi, sparse raw .img,
+   rotation_rate=1 + discard=unmap so the guest sees an SSD that honors
+   the blkdiscard→zero contract.
+#}
+<domain type='{{ accel }}' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
+  <name>{{ node.name }}</name>
+  <uuid>{{ uuid }}</uuid>
+  <!-- Marks this domain as managed by this stack's slot tag so teardown can find its own
+       sim VMs (incl. orphans from removed fleet nodes) without touching a sibling stack's. -->
+  <metadata>
+    <brokkr:managed xmlns:brokkr='https://brokkr.local/sim/v1'>{{ managed_tag }}</brokkr:managed>
+  </metadata>
+  <memory unit='MiB'>{{ node.memory_mb }}</memory>
+  <currentMemory unit='MiB'>{{ node.memory_mb }}</currentMemory>
+  <vcpu placement='static'>{{ node.cpus }}</vcpu>
+  <os>
+    <type arch='{{ domain_arch }}' machine='{{ machine }}'>hvm</type>
+    <loader readonly='yes' type='pflash' format='raw'>{{ edk2_code_path }}</loader>
+    <nvram template='{{ edk2_vars_template_path }}'>{{ nvram_path }}</nvram>
+    {# Fixed: qemu direct-loads the per-VM iPXE binary every boot. The boot
+       decision (discovery vs grub-from-disk) is the spoke's /api/chain, not a
+       host-side <kernel> swap. #}
+    <kernel>{{ ipxe_path }}</kernel>
+  </os>
+  <features>
+    {# x86_64 q35 + UEFI (OVMF) requires ACPI explicitly — libvirt refuses
+       to define the domain otherwise with "UEFI requires ACPI on this
+       architecture". arm64 virt machine doesn't require this. #}
+    <acpi/>
+    {% if host_arch == "amd64" %}<apic/>{% endif %}
+  </features>
+  <cpu mode='host-passthrough'/>
+  <clock offset='utc'/>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>destroy</on_crash>
+  <devices>
+    <emulator>{{ emulator_path }}</emulator>
+    <controller type='scsi' index='0' model='virtio-scsi'/>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='raw' discard='unmap' detect_zeroes='unmap'/>
+      <source file='{{ overlay_path }}'/>
+      <target dev='sda' bus='scsi' rotation_rate='1'/>
+      <serial>{{ disk_serial }}</serial>
+      <wwn>{{ disk_wwn }}</wwn>
+    </disk>
+{% for d in extra_disks %}
+    {# Extra blank data disk (fleet builder). Discovery picks it up on brokkr-live
+       boot; SSD vs HDD via rotation_rate, same as the OS disk. #}
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='raw' discard='unmap' detect_zeroes='unmap'/>
+      <source file='{{ d.path }}'/>
+      <target dev='{{ d.dev }}' bus='scsi'{% if d.ssd %} rotation_rate='1'{% endif %}/>
+      <serial>{{ d.serial }}</serial>
+      <wwn>{{ d.wwn }}</wwn>
+    </disk>
+{% endfor %}
+    {# append='on': qemu (root, qemu:///system) creates the log mode 0600 only on
+       first creation; on every later domain start it reopens the SAME inode with
+       O_APPEND, preserving the a+r relaxed perms fleet:up sets. With append='off'
+       each reboot recreated the file 0600, re-locking `tail`/`fleet:consoles`.
+       fleet:up pre-creates the log 0644 (or truncates an existing one in place,
+       preserving the inode) before cold boot, so qemu appends to a readable file
+       with no create-after-chmod race and no orphaning of a running qemu. #}
+    <serial type='tcp'>
+      <source mode='bind' host='127.0.0.1' service='{{ console_tcp_port }}'/>
+      <protocol type='telnet'/>
+      <log file='{{ console_log_path }}' append='on'/>
+      {# system-serial is the arm64 virt machine model (PL011);
+         x86_64 q35 needs isa-serial for the COM port equivalent. #}
+      <target type='{{ "system-serial" if host_arch == "arm64" else "isa-serial" }}' port='0'/>
+    </serial>
+{% if host_os == "linux" %}
+    {# Linux: flat L2 kernel bridge, created by fleet.ensure_data_plane_bridge. #}
+    <interface type='bridge'>
+      <mac address='{{ node.data_mac }}'/>
+      <source bridge='{{ data_bridge }}'/>
+      <model type='virtio'/>
+{% if data_mtu %}
+      <mtu size='{{ data_mtu }}'/>
+{% endif %}
+      <address type='pci' domain='0x0000' bus='0x00' slot='0x02' function='0x0'/>
+    </interface>
+{% for nic in extra_nics %}
+    {# Extra data NIC (fleet builder) — plain data-bridge port for guest bonds/VLANs.
+       No <address>: libvirt auto-allocates a slot (nvme is pinned at 0x10+). #}
+    <interface type='bridge'>
+      <mac address='{{ nic.mac }}'/>
+      <source bridge='{{ data_bridge }}'/>
+      <model type='{{ nic.model }}'/>
+{% if nic.mtu %}
+      <mtu size='{{ nic.mtu }}'/>
+{% endif %}
+{% if nic.link == "down" %}
+      <link state='down'/>
+{% endif %}
+    </interface>
+{% endfor %}
+{% endif %}
+{% for p in passthrough %}
+    {# PCI passthrough (VFIO) — fleet builder. Requires the real device on the
+       host (linux/amd64 + IOMMU + vfio-bound); the UI greys this out elsewhere. #}
+    <hostdev mode='subsystem' type='pci' managed='yes'>
+      <source>
+        <address domain='{{ p.domain }}' bus='{{ p.bus }}' slot='{{ p.slot }}' function='{{ p.function }}'/>
+      </source>
+    </hostdev>
+{% endfor %}
+  </devices>
+{% if host_os == "linux" %}
+  {# Linux/AppArmor: the fleet's disks, NVRAM, and per-VM iPXE kernel live under a
+     hidden $HOME path (~/.local/share/local/**). libvirt's virt-aa-helper (root)
+     generates a per-domain AppArmor profile by reading those files, but the stock
+     usr.lib.libvirt.virt-aa-helper profile hard-denies @{HOME}/.*/** (a `deny` an
+     allow can't override), so profile generation fails and qemu dies at "process
+     exited while connecting to monitor". type='none' opts THIS domain out of per-VM
+     confinement (libvirt skips virt-aa-helper for it) while the host's security
+     driver keeps enforcing for everything else. No-op on macOS (qemu:///session has
+     no AppArmor driver). The exec/read of the Nix-store qemu+EDK2 is handled
+     separately by the host bootstrap's apparmor.d/local rules. #}
+  <seclabel type='none'/>
+{% endif %}
+{% if host_os == "macos" or nvme_disks %}
+  {# A single qemu:commandline carries both the macOS socket_vmnet NIC and any
+     emulated NVMe disks (libvirt has no bus='nvme', so NVMe goes through here). #}
+  <qemu:commandline>
+{% if host_os == "macos" %}
+    {# macOS: socket_vmnet bridge fronted by a UNIX socket. virtio-net-pci on
+       pcie.0 slot 2 — iPXE needs a PCI NIC for its native virtio-net driver.
+       Slot 1 is taken by libvirt's auto-allocated pcie-root-port + virtio-scsi-pci.
+       reconnect-ms: qemu dials the socket_vmnet UNIX socket as a client and never
+       re-dials on its own. The per-VM socket_vmnet daemon gets bounced out of band
+       (fleet restarts, re-ups that skip an already-running VM, stream drops) — without
+       auto-reconnect the netdev strands on the dead socket inode half-open (guest virtio
+       stays carrier-up while TX black-holes, iPXE chainload times out forever). qemu
+       re-dials the fresh socket on the next interval so the data plane self-heals. #}
+    <qemu:arg value='-netdev'/>
+    <qemu:arg value='stream,id=net0,addr.type=unix,addr.path={{ vmnet_socket_path }},reconnect-ms=1000'/>
+    <qemu:arg value='-device'/>
+    <qemu:arg value='virtio-net-pci,netdev=net0,mac={{ node.data_mac }},bus=pcie.0,addr=0x2'/>
+{% endif %}
+{% for d in nvme_disks %}
+    {# Emulated NVMe disk (fleet builder) — guest sees /dev/nvme0n1. Blank;
+       discovery picks it up on brokkr-live boot. #}
+    <qemu:arg value='-drive'/>
+    <qemu:arg value='file={{ d.path }},if=none,id={{ d.id }},format=raw,discard=unmap'/>
+    <qemu:arg value='-device'/>
+    <qemu:arg value='nvme,serial={{ d.serial }},drive={{ d.id }},bus=pcie.0,addr={{ d.addr }}'/>
+{% endfor %}
+  </qemu:commandline>
+{% endif %}
+</domain>

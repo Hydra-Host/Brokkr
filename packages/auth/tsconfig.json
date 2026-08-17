@@ -1,0 +1,17 @@
+{
+  "extends": "@repo/typescript-config/base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": false,
+    "declarationMap": false,
+    "esModuleInterop": true
+  },
+  "include": ["src"],
+  "//": "src/rbac is a CommonJS/NestJS surface built separately by tsconfig.rbac.json — excluded from the ESM build.",
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/rbac"]
+}

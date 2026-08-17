@@ -1,0 +1,10 @@
+{
+  "name": "local-sim",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "comment": "Thin wrapper so pnpm/turbo treat the Python sim engine as a workspace member; real logic lives in the Taskfile + uv project. Scripts run from this dir (apps/local-sim).",
+  "scripts": {
+    "build": "echo 'sim: no build step (Python, run via devenv/Taskfile)'"
+  }
+}

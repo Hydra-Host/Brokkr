@@ -1,0 +1,8 @@
+{
+  "//": "Subpath redirector so `@repo/device-domain/testing` resolves under classic `node` moduleResolution (Nest apps), which ignores the package `exports` map. Points at the built CommonJS dist; types come from source.",
+  "name": "@repo/device-domain-testing",
+  "license": "Apache-2.0",
+  "private": true,
+  "main": "../dist/device-spec-columns.fixture.js",
+  "types": "../src/device-spec-columns.fixture.ts"
+}

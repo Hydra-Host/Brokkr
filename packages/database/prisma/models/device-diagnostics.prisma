@@ -1,0 +1,31 @@
+enum DeviceDiagnosticsType {
+  Driver
+  Gpu
+  Nvlink
+  Lspci
+  Services
+  Kernel
+  System
+  Infiniband
+  Storage
+  Thermal
+  Cuda
+  AllDiagnostics
+  Health
+  Fabric
+  Ecc
+}
+
+model DeviceDiagnostics {
+  id           String                @id @default(uuid())
+  deploymentId String
+  type         DeviceDiagnosticsType
+  data         Json?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  deployment Deployment @relation(fields: [deploymentId], references: [id])
+
+  @@index([deploymentId])
+  @@index([type])
+}

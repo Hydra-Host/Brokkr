@@ -1,0 +1,53 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "env": [
+        "ASSETS_DIR",
+        "BRIDGE_API_VERSION",
+        "BRIDGE_HOSTNAME",
+        "BRIDGE_ORCHESTRATOR_ENABLED",
+        "BRIDGE_SSH_PRIVKEY_PATH",
+        "BRIDGE_SSH_PUBKEY_PATH",
+        "BRIDGE_URL",
+        "BROKKR_ENV",
+        "BROKKR_ENVIRONMENT",
+        "BROKKR_LIVE_VERSION",
+        "BROKKR_ZONE_ID",
+        "DISCOVERY_ARCHITECTURES",
+        "ENVIRONMENT",
+        "GRPC_VERBOSITY",
+        "HOST",
+        "HTTPS_DOWNLOAD_TIMEOUT",
+        "HTTPS_RETRY_ATTEMPTS",
+        "HTTPS_RETRY_DELAY",
+        "IPMITOOL_BIN",
+        "LOCAL_SIMULATION_ENABLED",
+        "LOG_SUPPRESS_JOB_ID_PREFIXES",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+        "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+        "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
+        "OTEL_LOGS_EXPORTER",
+        "OTEL_METRICS_EXPORTER",
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "OTEL_SDK_DISABLED",
+        "OTEL_SERVICE_NAME",
+        "OTEL_TRACES_EXPORTER",
+        "OTEL_TRACES_SAMPLER",
+        "OTEL_TRACES_SAMPLER_ARG",
+        "PERSISTENT_STORAGE_PATH",
+        "PORT",
+        "SIM_REDFISH_PORT",
+        "SNMP_MAX_CONCURRENT_OPS",
+        "SSH_KEY_PATH"
+      ]
+    }
+  }
+}

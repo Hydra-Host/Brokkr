@@ -1,0 +1,48 @@
+{{- if .Values.migrate.enabled }}
+{{- if .Values.postgres.enabled }}
+{{- fail "migrate.enabled requires an external database (postgres.enabled=false): Helm hooks run before the bundled Postgres exists. With the bundled Postgres, the hub entrypoint applies migrations on start." }}
+{{- end }}
+{{- if not .Values.secrets.existingSecret }}
+{{- fail "migrate.enabled requires secrets.existingSecret: the hook Job runs before the release's Secret exists, and inlining DATABASE_URL in the pod spec would expose credentials to anyone who can read Jobs/Pods." }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "brokkr-hub.fullname" . }}-migrate
+  labels:
+    {{- include "brokkr-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "brokkr-hub.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ['sh', '-c']
+          args: ['cd /app/packages/database && /app/node_modules/.bin/prisma migrate deploy']
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: DATABASE_URL
+          {{- with .Values.migrate.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

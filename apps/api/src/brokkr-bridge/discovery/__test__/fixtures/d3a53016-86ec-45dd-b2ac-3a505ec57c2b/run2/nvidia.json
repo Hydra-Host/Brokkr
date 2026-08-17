@@ -1,0 +1,28 @@
+{
+  "count": 2,
+  "model": "NVIDIA A30",
+  "gpus": [
+    {
+      "index": 0,
+      "name": "NVIDIA A30",
+      "uuid": "GPU-aecaf7af-ce8b-9f24-0fcb-7f77f00ac570",
+      "temperature.gpu": 26,
+      "utilization.gpu": 0,
+      "memory.used": 0,
+      "memory.total": 24576,
+      "memory.free": 24576,
+      "vbios": "9200660004"
+    },
+    {
+      "index": 1,
+      "name": "NVIDIA A30",
+      "uuid": "GPU-c08f7609-9e53-a2b6-87fc-0ecc7f389f84",
+      "temperature.gpu": 27,
+      "utilization.gpu": 0,
+      "memory.used": 0,
+      "memory.total": 24576,
+      "memory.free": 24576,
+      "vbios": "9200660004"
+    }
+  ]
+}

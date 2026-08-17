@@ -1,0 +1,6 @@
+{%- if bridge_ip %}
+{{ bridge_ip }}	    brokkr.lan
+{%- endif %}
+{%- for entry in bridge_hosts | default([]) %}
+{{ entry.ip }}	    {{ entry.hostname }}
+{%- endfor %}

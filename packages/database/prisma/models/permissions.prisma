@@ -1,0 +1,47 @@
+model Permission {
+  id          String   @id @default(uuid())
+  resource    String
+  action      String
+  description String?
+  createdAt   DateTime @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@unique([resource, action])
+}
+
+model OrganizationMemberRole {
+  id             String    @id @default(uuid())
+  name           String
+  slug           String
+  description    String?
+  isSystem       Boolean   @default(false)
+  organizationId String?
+  templateId     String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  archivedAt     DateTime?
+
+  organization Organization?            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  template     OrganizationMemberRole?  @relation("RoleTemplate", fields: [templateId], references: [id], onDelete: SetNull)
+  derivedRoles OrganizationMemberRole[] @relation("RoleTemplate")
+
+  rolePermissions RolePermission[]
+  members         Member[]
+  invitations     Invitation[]
+
+  @@unique([slug, organizationId])
+  @@index([organizationId])
+}
+
+model RolePermission {
+  id           String @id @default(uuid())
+  roleId       String
+  permissionId String
+
+  role       OrganizationMemberRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission             @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+}

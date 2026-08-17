@@ -1,0 +1,10 @@
+{
+  "chassis": {
+    "asset_tag": "",
+    "serial_number": "TESTSERIAL01",
+    "type": "23",
+    "type_description": "Rack mount chassis",
+    "vendor": "Dell Inc.",
+    "version": ""
+  }
+}

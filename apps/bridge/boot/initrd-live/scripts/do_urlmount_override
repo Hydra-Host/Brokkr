@@ -1,0 +1,180 @@
+#!/bin/sh
+# do_urlmount override implementation - executable code
+# This file contains the custom logic for downloading and mounting ISOs with mTLS support
+# When sourced by the casper do_urlmount function, it executes directly and returns the result
+
+rc=1
+modprobe "${MP_QUIET}" isofs
+
+log_begin_msg "Trying to download and mount ${URL}"
+log_end_msg
+
+# Extract filename from URL query param
+target=$(basename "$URL")
+[ -z "$target" ] && target="downloaded.iso"
+
+# CA pinning is optional. HTTP-only self-hosted deployments ship no CA, so the baked
+# bundle is empty (or absent). Pin --cacert only when a non-empty bundle exists; otherwise
+# curl falls back to its defaults (system trust store for HTTPS, no TLS for HTTP). A bare
+# --cacert pointing at a missing file makes curl abort with exit 2 even for plain HTTP.
+ca_bundle=/etc/ssl/certs/brokkr-ca.crt
+ca_args=""
+if [ -s "$ca_bundle" ]; then
+    ca_args="--cacert $ca_bundle"
+fi
+
+# Build curl args conditionally
+echo
+echo
+log_begin_msg "Downloading ISO ${target}"
+log_end_msg
+curl_args="--show-error --fail --location --http1.1 $ca_args"
+
+# Set up architecture-specific curl binary from kernel environment
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64)
+        if [ -f /usr/bin/curl-amd64 ]; then
+            ln -sf /usr/bin/curl-amd64 /usr/bin/curl
+        fi
+        ;;
+    aarch64)
+        if [ -f /usr/bin/curl-arm64 ]; then
+            ln -sf /usr/bin/curl-arm64 /usr/bin/curl
+        fi
+        ;;
+esac
+chmod +x /usr/bin/curl
+
+# Parse health_check parameter from kernel command line
+health_check_url=""
+for param in $(cat /proc/cmdline); do
+    case "$param" in
+        health_check=*)
+            health_check_url="${param#health_check=}"
+            log_begin_msg "Found health_check parameter: ${health_check_url}"
+            log_end_msg
+            ;;
+    esac
+done
+
+# Perform health check if URL provided
+if [ -n "$health_check_url" ]; then
+    log_begin_msg "Performing health check before ISO download"
+    log_end_msg
+    health_check_max_attempts=12  # 12 attempts × 5 seconds = 60 seconds for health check
+    health_check_attempt=1
+    health_check_passed=0
+
+    # Build health check curl args
+    health_curl_args="--silent --fail --location --http1.1 $ca_args --connect-timeout 5 --max-time 10"
+
+    while [ $health_check_attempt -le $health_check_max_attempts ]; do
+        log_begin_msg "Health check attempt ${health_check_attempt}/${health_check_max_attempts}"
+        log_end_msg
+
+        if /usr/bin/curl $health_curl_args -o /dev/null "$health_check_url"; then
+            log_begin_msg "Health check passed on attempt ${health_check_attempt}"
+            log_end_msg
+            health_check_passed=1
+            break
+        else
+            log_begin_msg "Health check failed on attempt ${health_check_attempt}"
+            log_end_msg
+            if [ $health_check_attempt -lt $health_check_max_attempts ]; then
+                log_begin_msg "Waiting 5 seconds before retry..."
+                log_end_msg
+                sleep 5
+            fi
+        fi
+
+        health_check_attempt=$((health_check_attempt + 1))
+    done
+
+    if [ $health_check_passed -eq 0 ]; then
+        log_begin_msg "ERROR: Health check failed after ${health_check_max_attempts} attempts, aborting download"
+        log_end_msg
+        return $rc
+    else
+        log_begin_msg "Health check successful, proceeding with ISO download"
+        log_end_msg
+    fi
+fi
+
+# retry with resume, anything stuck at ~kiB/s scale is a bad path -abort quickly and resume
+# instead of holding the full max-time; wan-style “slow but valid” is not the target here
+max_attempts=12
+attempt=1
+download_success=0
+
+log_begin_msg "Starting download with resume + stall detection (max ${max_attempts} attempts)"
+log_end_msg
+
+# Check if partial download exists
+partial_size=0
+
+while [ $attempt -le $max_attempts ]; do
+    log_begin_msg "Download attempt ${attempt}/${max_attempts}"
+    log_end_msg
+
+    if [ -f "$target" ]; then
+        partial_size=$(stat -c%s "$target" 2>/dev/null || echo 0)
+        if [ "$partial_size" -gt 0 ]; then
+            log_begin_msg "Found partial download: ${target} (${partial_size} bytes), will resume"
+            log_end_msg
+        else
+            # Empty or invalid file, remove it
+            rm -f "$target"
+            partial_size=0
+        fi
+    fi
+
+    # Build curl command with resume support if partial file exists
+    resume_args=""
+    if [ "$partial_size" -gt 0 ]; then
+        resume_args="--continue-at -"
+        log_begin_msg "Resuming download from byte ${partial_size}"
+        log_end_msg
+    fi
+
+    # speed-limit + speed-time: treat sustained below-limit as stall
+    # keepalive-time: fewer idle mid-transfer drops
+    if /usr/bin/curl $curl_args --connect-timeout 30 --max-time 900 \
+        --speed-limit 2048 --speed-time 10 \
+        --keepalive-time 30 \
+        $resume_args --output "$target" "$URL"; then
+        log_begin_msg "Download successful on attempt ${attempt}"
+        log_end_msg
+        download_success=1
+        break
+    else
+        curl_exit_code=$?
+        log_begin_msg "Download failed on attempt ${attempt} (exit code: ${curl_exit_code})"
+        log_end_msg
+
+        # Only sleep if not on last attempt
+        if [ $attempt -lt $max_attempts ]; then
+            log_begin_msg "Waiting 5 seconds before retry..."
+            log_end_msg
+            sleep 5
+        fi
+    fi
+
+    attempt=$((attempt + 1))
+done
+
+# Check if download was successful and try to mount
+if [ $download_success -eq 1 ]; then
+    if mount -o ro "$target" "$mountpoint"; then
+        if is_casper_path "$mountpoint" && matches_uuid "$mountpoint"; then
+            rc=0
+        else
+            umount "$mountpoint"
+        fi
+    fi
+else
+    log_begin_msg "Download failed after ${max_attempts} attempts"
+    log_end_msg
+fi
+
+return $rc

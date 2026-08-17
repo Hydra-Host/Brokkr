@@ -1,0 +1,10 @@
+{
+  "chassis": {
+    "asset_tag": "Chassis Asset Tag",
+    "serial_number": "J52S574",
+    "type": "23",
+    "type_description": "Rack mount chassis",
+    "vendor": "Dell Inc.",
+    "version": ""
+  }
+}

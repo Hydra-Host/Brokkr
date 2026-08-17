@@ -1,0 +1,19 @@
+model SanitizationReport {
+  id          String   @id @default(uuid())
+  deviceId    String
+  device      Device   @relation(fields: [deviceId], references: [id])
+  jobId       String
+  actionType  String // saga that triggered the wipe: "deprovision", "commission", "provision"
+  mode        String // "full" or "selective"
+  result      String // "pass" or "fail"
+  startedAt   DateTime
+  completedAt DateTime
+  duration    Float // seconds (wipe tooling emits fractional seconds)
+  report      Json // full NIST SP 800-88r2 sanitization report
+  createdAt   DateTime @default(now())
+
+  @@unique([deviceId, jobId])
+  @@index([jobId])
+  @@index([actionType])
+  @@map("sanitization_reports")
+}

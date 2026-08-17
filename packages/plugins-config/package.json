@@ -1,0 +1,55 @@
+{
+  "name": "@hydrahost/plugins-config",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "description": "Brokkr plugin registry. The single edit point for installing, configuring, and disabling plugins. Imported by both apps/api and apps/web so backend and frontend stay in sync.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js"
+    },
+    "./frontend": {
+      "types": "./dist/frontend.d.ts",
+      "require": "./dist/frontend.js",
+      "import": "./dist/frontend.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "generate": "node scripts/generate-optional-frontend.mjs",
+    "build": "pnpm generate && tsc",
+    "dev": "pnpm generate && tsc --watch",
+    "typecheck": "pnpm generate && tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@hydrahost/plugin-sdk": "workspace:*",
+    "@hydrahost/plugin-webvm-terminal": "workspace:*"
+  },
+  "optionalDependencies": {
+    "@hydrahost/managed-edition": "workspace:*",
+    "@hydrahost/plugin-analytics": "workspace:*",
+    "@hydrahost/plugin-email-mailgun": "workspace:*",
+    "@hydrahost/plugin-google-maps-geocoding": "workspace:*",
+    "@hydrahost/plugin-helpdesk-pylon": "workspace:*",
+    "@hydrahost/plugin-hubspot-leads": "workspace:*",
+    "@hydrahost/plugin-operator-bridge-requests": "workspace:*",
+    "@hydrahost/plugin-operator-hub": "workspace:*",
+    "@hydrahost/plugin-operator-lifecycle": "workspace:*",
+    "@hydrahost/plugin-radar-geocoding": "workspace:*",
+    "@hydrahost/plugin-salesforce-leads": "workspace:*"
+  },
+  "devDependencies": {
+    "@nestjs/common": "^11.1.11",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,2 @@
+# Suppressions live in .gitleaks.toml [allowlist] (path-scoped, stable). No fingerprints here —
+# the old file:rule:line pins drifted off their lines and silently un-suppressed.

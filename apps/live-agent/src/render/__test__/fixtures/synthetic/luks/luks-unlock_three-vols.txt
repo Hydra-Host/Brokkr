@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── LUKS Unlock ───────────────────────────────────────────────────────
+# Opens encrypted data volumes and mounts them via fstab.
+# Generated during deployment — volume configuration is baked in.
+#
+# Usage:
+#   Interactive:      sudo luks-unlock                                   (preferred)
+#   Env passphrase:   LUKS_PASSPHRASE="secret" sudo luks-unlock
+#   CLI passphrase:   sudo luks-unlock --passphrase "secret"  (exposed via /proc cmdline)
+# ──────────────────────────────────────────────────────────────────────
+
+# ── Volume configuration (rendered at provisioning time) ─────────────
+DEVICES=(  '/dev/md0'  '/dev/md1'  '/dev/md2')
+MAPPERS=(  'data0'  'data1'  'data2')
+MOUNTPOINTS=(  '/data0'  '/data1'  '/data2')
+# Stored LUKS UUID per volume (empty for newly-provisioned). Lets resolve_device
+# pair a baked mapper to ITS OWN array by UUID instead of glob order.
+LUKS_UUIDS=(  ''  ''  '')
+
+# ── Helpers ──────────────────────────────────────────────────────────
+die()  { echo "ERROR: $*" >&2; exit 1; }
+info() { echo ":: $*"; }
+
+# True if needle equals any element of the remaining args.
+_array_contains() {
+  local needle="$1"; shift
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+# Resolve a block device path. Handles two instability problems:
+# 1. RAID arrays: /dev/mdX numbers change between curtin and runtime
+# 2. NVMe disks: /dev/nvmeXnY names change between reboots
+# Each baked md volume must resolve to a DISTINCT LUKS array not already claimed
+# by an earlier resolve (RESOLVED_DEVICES). When the volume's stored LUKS UUID is
+# known ($2), prefer the unclaimed array whose `cryptsetup luksUUID` matches it,
+# so a baked mapper pairs to ITS OWN array (fstab/crypttab key by that UUID) even
+# when >1 preserved array exists and mdadm renumbered them. A stored UUID is
+# AUTHORITATIVE: when want_uuid is set but no unclaimed array matches it, FAIL the
+# volume rather than fall back — falling back to the first unclaimed LUKS array
+# could claim/open a DIFFERENT preserved volume's array under the wrong mapper. The
+# first-unclaimed fallback is correct ONLY for new volumes (want_uuid empty). There
+# is NO fallback to a non-LUKS array — opening a wrong device would abort unlock
+# or mount the wrong volume.
+resolve_device() {
+  local device="$1"
+  local want_uuid="${2:-}"
+  if [[ "$device" == /dev/md* ]]; then
+    for candidate in /dev/md[0-9]*; do
+      [[ -b "$candidate" ]] || continue
+      _array_contains "$candidate" "${RESOLVED_DEVICES[@]:-}" && continue
+      cryptsetup isLuks "$candidate" 2>/dev/null || continue
+      if [[ -n "$want_uuid" ]]; then
+        if [[ "$(cryptsetup luksUUID "$candidate" 2>/dev/null)" == "$want_uuid" ]]; then
+          echo ":: Resolved ${device} -> ${candidate} (LUKS UUID ${want_uuid})" >&2
+          echo "$candidate" && return 0
+        fi
+        continue
+      fi
+      # New volume (no stored UUID): the first unclaimed LUKS array is the target.
+      echo ":: Resolved ${device} -> ${candidate} (no stored UUID; first unclaimed LUKS array)" >&2
+      echo "$candidate" && return 0
+    done
+    # No exact UUID match for a UUID-bearing volume: fail closed (do NOT cross-map).
+    if [[ -n "$want_uuid" ]]; then
+      echo ":: No unclaimed LUKS array matches UUID ${want_uuid} for ${device}" >&2
+    fi
+    echo "$device" && return 1
+  fi
+  [[ -b "$device" ]] && echo "$device" && return 0
+  echo "$device" && return 1
+}
+
+# ── Parse arguments ──────────────────────────────────────────────────
+PASSPHRASE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --passphrase|-p) PASSPHRASE="${2:-}"; shift 2 ;;
+    --help|-h)
+      echo "Usage: sudo luks-unlock [--passphrase <pass>]"
+      echo ""
+      echo "Options:"
+      echo "  -p, --passphrase  LUKS passphrase. WARNING: visible to any local user via"
+      echo "                    /proc/<pid>/cmdline while running; prefer the interactive"
+      echo "                    prompt or LUKS_PASSPHRASE env var for sensitive use."
+      exit 0
+      ;;
+    *) die "Unknown option: $1 (try --help)" ;;
+  esac
+done
+
+# ── Preflight checks ────────────────────────────────────────────────
+[[ $EUID -eq 0 ]] || die "Run as root: sudo luks-unlock"
+command -v cryptsetup >/dev/null 2>&1 || die "cryptsetup is required"
+[[ ${#DEVICES[@]} -gt 0 ]] || die "No encrypted volumes configured"
+
+# ── Resolve passphrase: arg > env > interactive prompt ───────────────
+if [[ -z "$PASSPHRASE" ]]; then
+  PASSPHRASE="${LUKS_PASSPHRASE:-}"
+fi
+
+if [[ -z "$PASSPHRASE" ]]; then
+  read -r -s -p "Enter LUKS passphrase: " PASSPHRASE; echo
+  [[ -n "$PASSPHRASE" ]] || die "Passphrase cannot be empty."
+fi
+
+# ── Open volumes ─────────────────────────────────────────────────────
+opened=0
+skipped=0
+failed=0
+RESOLVED_DEVICES=()
+
+for i in "${!DEVICES[@]}"; do
+  mapper="${MAPPERS[$i]}"
+  mountpoint="${MOUNTPOINTS[$i]}"
+  want_uuid="${LUKS_UUIDS[$i]:-}"
+
+  if [[ -e "/dev/mapper/${mapper}" ]]; then
+    info "${DEVICES[$i]} already open as /dev/mapper/${mapper} — skipping"
+    # Claim its array (by UUID when known) so a still-locked volume doesn't
+    # resolve onto it and fail.
+    if claimed=$(resolve_device "${DEVICES[$i]}" "$want_uuid"); then
+      RESOLVED_DEVICES+=("$claimed")
+    fi
+    skipped=$((skipped + 1))
+    continue
+  fi
+
+  # A configured volume that never resolves to a block device is a real reattach
+  # failure (count as failed, not skipped) so the partial-failure exit guard fires
+  # instead of reporting success with a preserved volume left unattached.
+  device=$(resolve_device "${DEVICES[$i]}" "$want_uuid") \
+    || { info "Block device not found: ${DEVICES[$i]} — continuing with remaining volumes"; failed=$((failed + 1)); continue; }
+
+  [[ -b "$device" ]] || { info "Block device not found: ${device} — continuing with remaining volumes"; failed=$((failed + 1)); continue; }
+
+  # Claim this array so the next volume resolves to a DIFFERENT one.
+  RESOLVED_DEVICES+=("$device")
+
+  # Guard the open: under set -e a single failed/duplicate open would abort the
+  # whole script and strand the remaining preserved volumes. Warn and continue so
+  # every other baked volume still gets a chance to reattach.
+  if printf '%s' "$PASSPHRASE" | cryptsetup open \
+    --batch-mode \
+    --key-file - \
+    "$device" \
+    "$mapper"; then
+    info "Opened ${device} as /dev/mapper/${mapper}"
+    opened=$((opened + 1))
+  else
+    info "Failed to open ${device} as /dev/mapper/${mapper} — continuing with remaining volumes"
+    failed=$((failed + 1))
+  fi
+done
+
+unset PASSPHRASE
+
+if [[ $opened -eq 0 && $skipped -eq ${#DEVICES[@]} ]]; then
+  info "All volumes already open."
+fi
+
+# ── Mount via fstab ──────────────────────────────────────────────────
+info "Mounting volumes via fstab..."
+mount -a
+
+info "Done. opened=${opened} skipped=${skipped} failed=${failed}"
+echo ""
+echo "Mounted volumes:"
+for i in "${!DEVICES[@]}"; do
+  df -h "${MOUNTPOINTS[$i]}" 2>/dev/null | tail -1 || true
+done
+
+# Surface partial failure: some volumes did not reattach.
+[[ $failed -eq 0 ]] || exit 1

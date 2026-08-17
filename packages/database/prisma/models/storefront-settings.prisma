@@ -1,0 +1,11 @@
+model StorefrontSettings {
+  organizationId String
+  slug           String
+  logoFileName   String
+  stylesFileName String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId])
+  @@unique([slug])
+}

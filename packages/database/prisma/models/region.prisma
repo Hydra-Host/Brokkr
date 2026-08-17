@@ -1,0 +1,32 @@
+// Coarse, marketplace-level geographic region (e.g. "Europe", "North America")
+// used to group zones/devices for latency + availability. Brokkr-owned; not tied
+// to political borders. A zone is assigned to a region by point-in-polygon of its
+// primary address coordinates against `boundary` (see RegionAssignmentService).
+model Region {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  slug        String  @unique
+  description String?
+
+  // Custom geographic boundary as GeoJSON MultiPolygon geometry
+  // ({ type: "MultiPolygon", coordinates: [...] }). Drives both point-in-polygon
+  // zone assignment and map rendering — one source of truth for both.
+  boundary Json
+
+  // Anchor point: label placement on the map + nearest-region fallback when a
+  // zone's coordinates fall outside every region boundary.
+  centroidLat Float
+  centroidLng Float
+
+  // Tiebreak when a point falls inside multiple overlapping boundaries: lowest
+  // priority wins (lets a smaller region nest inside a larger one).
+  priority Int @default(100)
+
+  // Hex color (e.g. "#3b82f6") for map rendering.
+  color String?
+
+  zones Zone[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

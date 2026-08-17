@@ -1,0 +1,130 @@
+// Per-role extension table for Device rows where `role = 'Server'` —
+// the compute/marketplace/discovered hosts Brokkr rents to customers.
+//
+// Multi-table inheritance per
+// https://www.prisma.io/docs/orm/prisma-schema/data-model/table-inheritance —
+// own `id` primary key + unique `deviceId` foreign key, 1:1 with Device.
+// Other Device roles (Bridge, Switch, Router, PDU, CDU, RackBrush,
+// PatchPanel) get their own extensions; they intentionally do NOT share
+// this table.
+//
+// Principle: this row holds "what THIS host is set up to do" (DC inventory
+// + observed state + capabilities). Per-rental customer choices live on
+// `Deployment` (selected OS, layers, cloud-init blocks, VPC IPs, etc.).
+// Operational lifecycle of a Server-role host — the granular provisioning /
+// health state the bridge pipeline drives. Orthogonal to the base
+// `Device.status` (PLANNED / STAGED / ACTIVE / MAINTENANCE), which is the
+// coarse, role-agnostic lifecycle every device shares. Only Servers carry this
+// operational detail today; other roles have no provisioning pipeline.
+enum ServerLifecycleStatus {
+  INVENTORY // discovered, not yet provisioned / not on the marketplace
+  PROVISIONING // commissioning / install in progress
+  PROVISIONED // installed, online, and available
+  OFFLINE // unreachable / powered down
+  FAILED // provisioning or health check failed
+  DEPROVISIONING // being torn down / removed from service
+}
+
+// Observed hardware power state of a Server-role host. Distinct from both the
+// coarse `Device.status` and the operational `ServerLifecycleStatus`: this is
+// purely "is the box powered on right now". Servers carry the transitional
+// states (PoweringOn / PoweringOff / Rebooting) the bridge power-control saga
+// drives; the field is nullable to mean "power state unknown" (never observed).
+enum ServerPowerStatus {
+  On
+  Off
+  PoweringOn
+  PoweringOff
+  Rebooting
+}
+
+// Hardware TEE (Trusted Execution Environment) capability, set at discovery by
+// `TeeComposer`. Distinct from `Server.teeEnabled` (the live on/off BMC state):
+// this answers "can this host do TEE", that answers "is TEE switched on now".
+//   TRUE       — capable and fully verified (CPU + vendor BIOS + CPLD + NVIDIA vBIOS attestation)
+//   PATCH      — capable hardware, but BIOS/CPLD/vBIOS needs patching to reach TRUE
+//   FALSE      — not TEE-capable hardware
+//   UNVERIFIED — not yet evaluated by discovery
+enum TeeCapability {
+  UNVERIFIED
+  FALSE
+  PATCH
+  TRUE
+}
+
+model Server {
+  id String @id @default(uuid())
+
+  // ── Lifecycle ──────────────────────────────────────────────────────
+  // Granular operational state driven by the provisioning / discovery /
+  // health pipeline. Independent of the base `Device.status` (the coarse
+  // PLANNED / STAGED / ACTIVE / MAINTENANCE shared by every role).
+  lifecycleStatus ServerLifecycleStatus @default(INVENTORY)
+
+  // Observed power state. Null = unknown (never reported by the bridge/BMC).
+  powerStatus ServerPowerStatus?
+
+  // ── Provisioning setup ─────────────────────────────────────────────
+  // Which brokkr-live build the host fetches at boot.
+  ipxeBuildTarget  String?
+  ipxeBuildVersion String?
+  // Wipe leftover serial-console tty entries before/after install.
+  purgeTtys        Boolean?
+
+  // ── Customer-OS provisioning input ─────────────────────────────────
+  // Layout options surfaced for unrented + reprov boxes during
+  // provisioning. The actual per-rental chosen layout lives on
+  // `Deployment.cloudInitStorageBlock`.
+  storageLayouts  Json    @default("{}")
+  // DC operator-supplied netplan YAML. When set, the netplan generator
+  // emits this verbatim and skips its own rendering.
+  netplanOverride String?
+
+  // ── Boot state (observed by discovery) ─────────────────────────────
+  // Full /proc/cmdline as seen by the running OS. Discovery-written.
+  kernelCmdline String?
+
+  // ── Host capabilities ──────────────────────────────────────────────
+  // Whether this host can be placed in a customer VPC.
+  vpcCapable Boolean?      @default(false)
+  // Live BMC TEE on/off state, reconciled per-provision.
+  teeEnabled Boolean       @default(false)
+  // Hardware TEE capability, set at discovery by `TeeComposer`.
+  teeCapable TeeCapability @default(UNVERIFIED)
+
+  // ── Operational management ─────────────────────────────────────────
+  // Reduced-power policy applied to this host.
+  ecoMode Boolean @default(false)
+
+  // ── Marketplace pricing ────────────────────────────────────────────
+  hourlyPrice      Decimal?
+  floorHourlyPrice Decimal?
+  isListed         Boolean  @default(false)
+  isInterruptible  Boolean  @default(false)
+
+  // ── Relations ──────────────────────────────────────────────────────
+  // 1:1 with Device. Cascade delete so the row vanishes with the chassis.
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String @unique
+
+  // Per-host config template. Null = render-time fall back to the
+  // purpose-tagged default. SetNull on delete so a template can be
+  // retired without orphaning hosts.
+  configTemplate   ConfigTemplate? @relation(fields: [configTemplateId], references: [id], onDelete: SetNull)
+  configTemplateId String?
+
+  // ── Rental / billing / reservation back-relations ──────────────────
+  // Migrated from `Device` in `20260527213000_move_rentals_to_server`.
+  // Every row in these tables references a Server.id, not a Device.id —
+  // the DB-level FK enforces that rentals/reservations can only attach to a
+  // host-shaped Device (one with a Server row).
+  deployments                Deployment[]
+  interruptibleClaims        InterruptibleClaim[]
+  serversInReservation       ServersInReservation[]
+  serversInReservationInvite ServersInReservationInvite[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([configTemplateId])
+}

@@ -1,0 +1,232 @@
+diff --git a/lanserv/bmc.h b/lanserv/bmc.h
+index bf77174e..fe31120f 100644
+--- a/lanserv/bmc.h
++++ b/lanserv/bmc.h
+@@ -57,7 +57,11 @@
+ #define __BMC_H_
+ 
+ #include <stdint.h>
++#ifdef __APPLE__
++#include "macos_sem_compat.h"
++#else
+ #include <semaphore.h>
++#endif
+ #include <OpenIPMI/mcserv.h>
+ #include "emu.h"
+ 
+diff --git a/lanserv/bmc_app.c b/lanserv/bmc_app.c
+index 460a2ad8..25304bd2 100644
+--- a/lanserv/bmc_app.c
++++ b/lanserv/bmc_app.c
+@@ -50,7 +50,11 @@
+ #include "bmc.h"
+ 
+ #include <errno.h>
++#if defined(__APPLE__) || defined(__FreeBSD__)
++#include <stdlib.h>
++#else
+ #include <malloc.h>
++#endif
+ #include <string.h>
+ 
+ #include <OpenIPMI/ipmi_err.h>
+diff --git a/lanserv/bmc_picmg.c b/lanserv/bmc_picmg.c
+index a4a31b49..20be4edb 100644
+--- a/lanserv/bmc_picmg.c
++++ b/lanserv/bmc_picmg.c
+@@ -50,7 +50,11 @@
+ #include "bmc.h"
+ 
+ #include <errno.h>
++#if defined(__APPLE__) || defined(__FreeBSD__)
++#include <stdlib.h>
++#else
+ #include <malloc.h>
++#endif
+ #include <string.h>
+ 
+ #include <OpenIPMI/ipmi_err.h>
+diff --git a/lanserv/bmc_sensor.c b/lanserv/bmc_sensor.c
+index 03a8aef4..600e4294 100644
+--- a/lanserv/bmc_sensor.c
++++ b/lanserv/bmc_sensor.c
+@@ -53,7 +53,11 @@
+ #include <string.h>
+ #include <ctype.h>
+ #include <stdlib.h>
++#if defined(__APPLE__) || defined(__FreeBSD__)
++#include <stdlib.h>
++#else
+ #include <malloc.h>
++#endif
+ #include <unistd.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
+diff --git a/lanserv/bmc_storage.c b/lanserv/bmc_storage.c
+index 528bbfe7..c636d22e 100644
+--- a/lanserv/bmc_storage.c
++++ b/lanserv/bmc_storage.c
+@@ -50,7 +50,11 @@
+ #include "bmc.h"
+ 
+ #include <errno.h>
++#if defined(__APPLE__) || defined(__FreeBSD__)
++#include <stdlib.h>
++#else
+ #include <malloc.h>
++#endif
+ #include <string.h>
+ #include <unistd.h>
+ #include <sys/types.h>
+diff --git a/lanserv/extcmd.c b/lanserv/extcmd.c
+index deb503ba..eda79bbd 100644
+--- a/lanserv/extcmd.c
++++ b/lanserv/extcmd.c
+@@ -60,6 +60,8 @@
+ #include <netinet/ether.h>
+ #elif defined(HAVE_SYS_ETHERNET_H)
+ #include <sys/ethernet.h>
++#elif defined(__APPLE__)
++#include <net/ethernet.h>
+ #else
+ #error "either netinet/ether.h or sys/ethernet.h must exist."
+ #endif
+@@ -67,9 +69,29 @@
+ #include <string.h>
+ #include <errno.h>
+ #include <stdio.h>
+-#include <malloc.h>
+ #include <stdlib.h>
+ 
++#ifdef __APPLE__
++/* macOS provides only the non-reentrant ether_aton/ether_ntoa; shim the _r
++ * variants the lanserv code uses on top of them. */
++static inline struct ether_addr *ether_aton_r(const char *s, struct ether_addr *addr)
++{
++    struct ether_addr *r = ether_aton(s);
++    if (!r)
++	return NULL;
++    *addr = *r;
++    return addr;
++}
++static inline char *ether_ntoa_r(const struct ether_addr *addr, char *buf)
++{
++    char *r = ether_ntoa(addr);
++    if (!r)
++	return NULL;
++    strcpy(buf, r);
++    return buf;
++}
++#endif
++
+ #include <OpenIPMI/serv.h>
+ #include <OpenIPMI/extcmd.h>
+ 
+diff --git a/lanserv/macos_sem_compat.h b/lanserv/macos_sem_compat.h
+new file mode 100644
+index 00000000..36b1b288
+--- /dev/null
++++ b/lanserv/macos_sem_compat.h
+@@ -0,0 +1,72 @@
++/*
++ * macos_sem_compat.h — POSIX unnamed-semaphore shim for macOS.
++ *
++ * macOS does not implement POSIX unnamed semaphores: sem_init() fails at
++ * runtime with ENOSYS, and sem_timedwait() is not provided at all (link
++ * error). lanserv uses an unnamed binary semaphore per FRU (bmc_storage.c),
++ * so emulate the small subset it needs with GCD dispatch semaphores, which
++ * are native, support an absolute-time wait, and need no extra linkage.
++ *
++ * Semantics match the POSIX functions (return 0 on success, -1 + errno on
++ * failure) so the calling code behaves identically to the Linux build.
++ */
++#ifndef MACOS_SEM_COMPAT_H
++#define MACOS_SEM_COMPAT_H
++
++#include <dispatch/dispatch.h>
++#include <errno.h>
++#include <time.h>
++
++typedef dispatch_semaphore_t sem_t;
++
++static inline int sem_init(sem_t *s, int pshared, unsigned int value)
++{
++    (void) pshared; /* no cross-process support — lanserv only needs in-process */
++    *s = dispatch_semaphore_create(value);
++    if (!*s) {
++	errno = ENOMEM;
++	return -1;
++    }
++    return 0;
++}
++
++static inline int sem_destroy(sem_t *s)
++{
++    if (*s)
++	dispatch_release(*s);
++    *s = NULL;
++    return 0;
++}
++
++static inline int sem_wait(sem_t *s)
++{
++    dispatch_semaphore_wait(*s, DISPATCH_TIME_FOREVER);
++    return 0;
++}
++
++static inline int sem_post(sem_t *s)
++{
++    dispatch_semaphore_signal(*s);
++    return 0;
++}
++
++static inline int sem_trywait(sem_t *s)
++{
++    if (dispatch_semaphore_wait(*s, DISPATCH_TIME_NOW) != 0) {
++	errno = EAGAIN;
++	return -1;
++    }
++    return 0;
++}
++
++static inline int sem_timedwait(sem_t *s, const struct timespec *abs_timeout)
++{
++    dispatch_time_t t = dispatch_walltime(abs_timeout, 0);
++    if (dispatch_semaphore_wait(*s, t) != 0) {
++	errno = ETIMEDOUT;
++	return -1;
++    }
++    return 0;
++}
++
++#endif /* MACOS_SEM_COMPAT_H */
+diff --git a/lanserv/sdrcomp/sdrcomp.c b/lanserv/sdrcomp/sdrcomp.c
+index 5596cf58..fed6892e 100644
+--- a/lanserv/sdrcomp/sdrcomp.c
++++ b/lanserv/sdrcomp/sdrcomp.c
+@@ -36,7 +36,11 @@
+ #include <ctype.h>
+ #include <unistd.h>
+ #include <stdlib.h>
++#if defined(__APPLE__) || defined(__FreeBSD__)
++#include <stdlib.h>
++#else
+ #include <malloc.h>
++#endif
+ #include <math.h>
+ #include <time.h>
+ 
+diff --git a/unix/selector.c b/unix/selector.c
+index d6cea65c..5a2fdf19 100644
+--- a/unix/selector.c
++++ b/unix/selector.c
+@@ -459,7 +459,9 @@ i_sel_clear_fd_handler(struct selector_s *sel, int fd, int imm)
+ 	fdc->state = NULL;
+ 
+ 	sel_update_epoll(sel, fd, EPOLL_CTL_DEL, 0);
++#ifdef HAVE_EPOLL_PWAIT
+ 	fdc->saved_events = 0;
++#endif
+     }
+ 
+     init_fd(fdc);

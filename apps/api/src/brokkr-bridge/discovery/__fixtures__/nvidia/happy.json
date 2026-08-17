@@ -1,0 +1,30 @@
+{
+  "count": 8,
+  "model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "gpus": [
+    {
+      "index": 0,
+      "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+      "uuid": "GPU-daf80822-3f20-4f71-9842-ac5073bb2d43",
+      "temperature.gpu": 24,
+      "utilization.gpu": 0,
+      "memory.used": 0,
+      "memory.total": 183359,
+      "memory.free": 183359,
+      "vbios": "970088000f",
+      "serial": "1650724000001"
+    },
+    {
+      "index": 1,
+      "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+      "uuid": "GPU-106de680-9ca6-07e2-cd11-026fc7f3292d",
+      "temperature.gpu": 25,
+      "utilization.gpu": 0,
+      "memory.used": 0,
+      "memory.total": 183359,
+      "memory.free": 183359,
+      "vbios": "970088000f",
+      "serial": "1650724000002"
+    }
+  ]
+}

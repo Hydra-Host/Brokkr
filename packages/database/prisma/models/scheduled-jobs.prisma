@@ -1,0 +1,44 @@
+model ScheduledJob {
+  id             Int                @id @default(autoincrement())
+  name           String             @db.Text
+  payload        Json?              @db.JsonB
+  scheduledAt    DateTime           @db.Timestamptz
+  attempts       Int                @default(0)
+  maxAttempts    Int                @default(3)
+  status         ScheduledJobStatus @default(PENDING)
+  priority       Int                @default(0)
+  queue          String             @default("default") @db.VarChar(100)
+  isRecurring    Boolean            @default(false)
+  cronExpression String?            @db.VarChar(255)
+
+  // Distributed locking fields
+  lockedBy      String?   @db.Text
+  lockedAt      DateTime? @db.Timestamptz
+  lockExpiresAt DateTime? @db.Timestamptz
+
+  // Execution tracking
+  startedAt    DateTime? @db.Timestamptz
+  completedAt  DateTime? @db.Timestamptz
+  errorMessage String?   @db.Text
+
+  // Audit fields
+  createdAt DateTime  @default(now()) @db.Timestamptz
+  updatedAt DateTime? @updatedAt @db.Timestamptz
+
+  // Retry configuration
+  retryDelay         Int     @default(60)
+  exponentialBackoff Boolean @default(true)
+
+  @@index([scheduledAt, status], name: "idx_scheduled_jobs_scheduled_status")
+  @@index([queue, priority, scheduledAt], name: "idx_scheduled_jobs_queue_priority")
+  @@index([lockedBy], name: "idx_scheduled_jobs_locked_by")
+  @@index([lockExpiresAt], name: "idx_scheduled_jobs_lock_expires")
+}
+
+enum ScheduledJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}

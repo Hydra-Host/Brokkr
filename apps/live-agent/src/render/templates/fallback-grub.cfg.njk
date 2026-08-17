@@ -1,0 +1,46 @@
+set default=0
+set timeout=5
+
+insmod part_gpt
+insmod fat
+insmod ext2
+insmod xfs
+insmod lvm
+insmod mdraid09
+insmod mdraid1x
+insmod chain
+insmod search
+insmod search_fs_file
+insmod configfile
+insmod normal
+
+{% if arch == "arm64" %}{% set suffix = "aa64" %}{% else %}{% set suffix = "x64" %}{% endif %}
+menuentry 'Chainload {{ distro }} bootloader' {
+    # Chainload the first OS bootloader that exists, wherever the ESP landed.
+    # bootloader-id dir and signed shim vary by distro/layer, so don't hardcode
+    # a single per-distro path -- a missing one must not strand the boot.
+    for bootloader in \
+            {{ distro }}/shim{{ suffix }}.efi \
+            {{ distro }}/grub{{ suffix }}.efi \
+            ubuntu/shim{{ suffix }}.efi \
+            ubuntu/grub{{ suffix }}.efi \
+            debian/shim{{ suffix }}.efi \
+            debian/grub{{ suffix }}.efi; do
+        if search --no-floppy --file --set=root /EFI/$bootloader; then
+            chainloader /EFI/$bootloader
+            boot
+        fi
+    done
+
+    # No on-ESP EFI binary -- run the installed grub.cfg directly off the boot
+    # partition (the embedded fs modules above can read it without a chainload).
+    if search --no-floppy --file --set=root /grub/grub.cfg; then
+        configfile /grub/grub.cfg
+    fi
+    if search --no-floppy --file --set=root /boot/grub/grub.cfg; then
+        configfile /boot/grub/grub.cfg
+    fi
+
+    echo 'Fallback GRUB: no {{ distro }} bootloader or grub.cfg found on disk'
+    sleep --interruptible 10
+}

@@ -1,0 +1,47 @@
+// A group of machines connected via east/west networking. Vendor-neutral: the
+// SDN implementation (Netris, and future Netris-like products) lives in a
+// plugin, identified by `provider`. The plugin owns its vendor-specific state
+// (tenant/vpc/vnet ids, etc.) in its own Postgres schema and links back to this
+// row; `providerClusterId` is the plugin's opaque reference to that state.
+model Cluster {
+  id          String    @id @default(uuid())
+  dateCreated DateTime  @default(now())
+  dateUpdated DateTime  @updatedAt
+  dateDeleted DateTime?
+
+  name String
+
+  // SDN provider id owning this cluster's networking (e.g. "netris"). Matches a
+  // plugin id; free-form so a new SDN plugin needs no core migration/enum change.
+  provider String
+
+  // Opaque reference to the provider plugin's own cluster record. Null until the
+  // plugin has provisioned its vendor-side state.
+  providerClusterId String?
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  zoneId String?
+  zone   Zone?   @relation(fields: [zoneId], references: [id])
+
+  deployments ClusterDeployment[]
+
+  @@index([organizationId])
+  @@index([zoneId])
+}
+
+model ClusterDeployment {
+  id          String   @id @default(uuid())
+  dateCreated DateTime @default(now())
+
+  clusterId String
+  cluster   Cluster @relation(fields: [clusterId], references: [id])
+
+  deploymentId String
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+
+  @@unique([clusterId, deploymentId])
+  @@index([clusterId])
+  @@index([deploymentId])
+}

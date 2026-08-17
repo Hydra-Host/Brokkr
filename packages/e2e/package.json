@@ -1,0 +1,29 @@
+{
+  "name": "@repo/e2e",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "tsx scripts/run-playwright.ts",
+    "test:auth": "tsx scripts/run-playwright.ts specs/auth",
+    "test:admin": "tsx scripts/run-playwright.ts --project admin-panel",
+    "test:e2e": "tsx scripts/run-playwright.ts",
+    "test:playwright": "tsx scripts/run-playwright.ts",
+    "seed": "tsx seed/index.ts",
+    "seed:clean": "tsx seed/cleanup.ts",
+    "report": "playwright show-report",
+    "e2e:db:clean": "tsx scripts/clean-e2e-databases.ts",
+    "e2e:db:list": "tsx scripts/clean-e2e-databases.ts --list"
+  },
+  "dependencies": {
+    "@repo/database": "workspace:*",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0",
+    "@types/pg": "^8.11.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.8.0"
+  }
+}

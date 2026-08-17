@@ -1,0 +1,7 @@
+{
+  // Split build like operator-hub: plugin.ts compiles to CJS (consumed by the
+  // api-side registry via require); the frontend compiles to ESM + bundler
+  // resolution (consumed by apps/web's Vite).
+  "files": [],
+  "references": [{ "path": "./tsconfig.backend.json" }, { "path": "./tsconfig.frontend.json" }]
+}

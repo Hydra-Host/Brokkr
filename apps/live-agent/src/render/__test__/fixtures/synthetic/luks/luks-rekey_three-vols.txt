@@ -1,0 +1,328 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── LUKS Rekey ────────────────────────────────────────────────────────
+# Initializes LUKS encryption on provisioned data volumes.
+# Generated during deployment — volume configuration is baked in.
+#
+# Usage:
+#   Interactive:      sudo luks-rekey                                    (preferred)
+#   Env passphrase:   LUKS_PASSPHRASE="secret" sudo luks-rekey
+#   CLI passphrase:   sudo luks-rekey --passphrase "secret"  (exposed via /proc cmdline)
+#   Skip prompts:     LUKS_PASSPHRASE="secret" sudo luks-rekey --yes
+#   Re-rekey:         sudo luks-rekey --force
+# ──────────────────────────────────────────────────────────────────────
+
+# ── Rekey guard (modified by this script after successful rekey) ─────
+ALREADY_KEYED=0
+
+# ── Volume configuration (rendered at provisioning time) ─────────────
+DEVICES=(  '/dev/md0'  '/dev/md1'  '/dev/md2')
+MAPPERS=(  'data0'  'data1'  'data2')
+MOUNTPOINTS=(  '/data0'  '/data1'  '/data2')
+FS_TYPES=(  'xfs'  'ext4'  'xfs')
+FS_LABELS=(  'data0'  'data1'  'data2')
+# LUKS-header UUIDs of PRESERVED arrays (recorded at detection). These are the
+# ONLY already-LUKS arrays a rekey must refuse: a NEW RAID-backed volume was
+# luksFormatted by curtin before boot (random key, to be replaced here) so it is
+# ALSO isLuks — refusing it by isLuks alone would strand its data under curtin's
+# discarded key. Membership in this set, NOT isLuks, distinguishes preserved.
+PRESERVED_LUKS_UUIDS=()
+
+# ── Helpers ──────────────────────────────────────────────────────────
+die()  { echo "ERROR: $*" >&2; exit 1; }
+info() { echo ":: $*"; }
+
+# Resolve the md array for a NEW (about-to-be-rekeyed) volume. mdadm renumbers
+# arrays between curtin and runtime (e.g. md0 -> md127), so the baked-in path
+# may not exist.
+#
+# curtin luksFormats EVERY new encrypted volume (including a RAID /dev/mdN) with
+# a random key before boot, so a NEW array is ALSO `cryptsetup isLuks` true at
+# runtime. isLuks therefore CANNOT distinguish a new array from a preserved one;
+# refusing every isLuks md array (an over-broad earlier fix) strands the new
+# volume keyed under curtin's discarded random key — data permanently lost. The
+# correct discriminator is the LUKS-header UUID: a preserved array's UUID is in
+# PRESERVED_LUKS_UUIDS (recorded at detection); a new array's curtin-minted UUID
+# is not. So ACCEPT an isLuks md array whose UUID is NOT preserved (the rekey
+# target) and REFUSE one whose UUID IS preserved (luksFormat would destroy it).
+#
+# For a nested raid50/raid60 the runtime stack is N inner raid5/raid6 arrays
+# (each its own /dev/mdX) striped by an outer raid0 (/dev/mdY), so the scan must
+# also skip any md array that is a MEMBER of another assembled array — picking an
+# inner member would luksFormat an active member of the outer raid0 (EBUSY under
+# set -e, aborting rekey), or corrupt the outer data path. Only the OUTER array
+# is top-level; the inner arrays are listed as members of it.
+resolve_device() {
+  local device="$1"
+  # For md devices the baked path can, after mdadm renumbering, land on a
+  # PRESERVED array OR an inner member array; the fast path must apply the same
+  # preserved-UUID refusal and membership skip the scan branch enforces.
+  if [[ "$device" == /dev/md* ]]; then
+    if [[ -b "$device" ]] && cryptsetup isLuks "$device" 2>/dev/null \
+      && ! _is_preserved_luks "$device" && ! _is_md_member "$device"; then
+      echo "$device" && return 0
+    fi
+  elif [[ -b "$device" ]]; then
+    # Non-md baked path exists: use it directly.
+    echo "$device" && return 0
+  fi
+  # For md devices, scan active md arrays for an unclaimed, top-level candidate that
+  # is a curtin-minted LUKS array (cryptsetup isLuks — luksFormat would destroy a
+  # plain data array, so require a LUKS header), is NOT a preserved array (its UUID
+  # is in the preserved set), and is NOT an inner member array of a nested raid50/60.
+  if [[ "$device" == /dev/md* ]]; then
+    for candidate in /dev/md[0-9]*; do
+      [[ -b "$candidate" ]] || continue
+      _array_contains "$candidate" "${RESOLVED_DEVICES[@]:-}" && continue
+      if ! cryptsetup isLuks "$candidate" 2>/dev/null; then
+        echo ":: Skipping ${candidate} for ${device}: not a LUKS array (no curtin LUKS header)" >&2
+        continue
+      fi
+      if _is_preserved_luks "$candidate"; then
+        echo ":: Skipping ${candidate} for ${device}: preserved LUKS array (UUID in preserved set)" >&2
+        continue
+      fi
+      if _is_md_member "$candidate"; then
+        echo ":: Skipping ${candidate} for ${device}: inner member of another array (nested RAID50/60)" >&2
+        continue
+      fi
+      echo ":: Resolved ${device} -> ${candidate} (top-level non-preserved LUKS md, eligible for rekey)" >&2
+      echo "$candidate" && return 0
+    done
+  fi
+  echo "$device" && return 1
+}
+
+# True if the array carries a LUKS header whose UUID is in PRESERVED_LUKS_UUIDS.
+# A non-LUKS array (no header) and a NEW curtin-LUKS array (header UUID not in
+# the set) both return false — only operator-preserved arrays are refused.
+_is_preserved_luks() {
+  local arr="$1" uuid
+  cryptsetup isLuks "$arr" 2>/dev/null || return 1
+  uuid=$(cryptsetup luksUUID "$arr" 2>/dev/null || true)
+  [[ -n "$uuid" ]] || return 1
+  _array_contains "$uuid" "${PRESERVED_LUKS_UUIDS[@]:-}"
+}
+
+# True if needle equals any element of the remaining args.
+_array_contains() {
+  local needle="$1"; shift
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+# True if the given md array is a MEMBER of another assembled array — i.e. an
+# inner raid5/raid6 of a nested raid50/60 whose outer raid0 has it as a device.
+# Mirrors teardownHolders' member-aware logic: walk every OTHER active array's
+# `mdadm --detail` device list; if our array path appears there, it is an inner
+# member and must not be a rekey target (the outer is the one to encrypt).
+_is_md_member() {
+  local arr="$1" other detail
+  for other in /dev/md[0-9]*; do
+    [[ -b "$other" ]] || continue
+    [[ "$other" == "$arr" ]] && continue
+    # Capture then match — never pipe into `grep -q`: an early match closes the
+    # pipe and SIGPIPEs mdadm, which `set -o pipefail` reads back as a false
+    # negative (an inner member then slips through as a rekey target). The
+    # `if … :` lets a degraded array's non-zero exit through set -e while still
+    # matching the members it printed.
+    if detail=$(mdadm --detail "$other" 2>/dev/null); then :; fi
+    if grep -qw -- "$arr" <<<"$detail"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# ── Parse arguments ──────────────────────────────────────────────────
+PASSPHRASE=""
+AUTO_YES=false
+FORCE=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --passphrase|-p) PASSPHRASE="${2:-}"; shift 2 ;;
+    --yes|-y)        AUTO_YES=true; shift ;;
+    --force|-f)      FORCE=true; shift ;;
+    --help|-h)
+      echo "Usage: sudo luks-rekey [--passphrase <pass>] [--yes] [--force]"
+      echo ""
+      echo "Options:"
+      echo "  -p, --passphrase  LUKS passphrase. WARNING: visible to any local user via"
+      echo "                    /proc/<pid>/cmdline while running; prefer the interactive"
+      echo "                    prompt or LUKS_PASSPHRASE env var for sensitive use."
+      echo "  -y, --yes         Skip confirmation prompts"
+      echo "  -f, --force       Re-rekey volumes that have already been keyed"
+      exit 0
+      ;;
+    *) die "Unknown option: $1 (try --help)" ;;
+  esac
+done
+
+# ── Preflight checks ────────────────────────────────────────────────
+[[ $EUID -eq 0 ]] || die "Run as root: sudo luks-rekey"
+
+if [[ "$ALREADY_KEYED" == "1" && "$FORCE" != true ]]; then
+  die "Volumes have already been keyed. Running this again will DESTROY all data. Use --force to proceed."
+fi
+
+for cmd in cryptsetup mkfs.ext4 mkfs.xfs; do
+  command -v "$cmd" >/dev/null 2>&1 || die "$cmd is required"
+done
+
+[[ ${#DEVICES[@]} -gt 0 ]] || die "No encrypted volumes configured"
+
+# ── Resolve passphrase: arg > env > interactive prompt ───────────────
+if [[ -z "$PASSPHRASE" ]]; then
+  PASSPHRASE="${LUKS_PASSPHRASE:-}"
+fi
+
+if [[ -z "$PASSPHRASE" ]]; then
+  # Interactive prompt with confirmation
+  while true; do
+    read -r -s -p "Enter new LUKS passphrase: " PASSPHRASE; echo
+    [[ -n "$PASSPHRASE" ]] || { echo "Passphrase cannot be empty."; continue; }
+    read -r -s -p "Confirm passphrase: " CONFIRM_PASS; echo
+    [[ "$PASSPHRASE" == "$CONFIRM_PASS" ]] || { echo "Passphrases do not match."; continue; }
+    unset CONFIRM_PASS
+    break
+  done
+fi
+
+# ── Resolve and validate volumes ─────────────────────────────────────
+RESOLVED_DEVICES=()
+info "Volumes to initialize:"
+echo ""
+for i in "${!DEVICES[@]}"; do
+  resolved=$(resolve_device "${DEVICES[$i]}") \
+    || die "Block device not found: ${DEVICES[$i]}"
+  RESOLVED_DEVICES+=("$resolved")
+
+  printf "  %-30s -> /dev/mapper/%-12s -> %s\n" \
+    "$resolved" "${MAPPERS[$i]}" "${MOUNTPOINTS[$i]}"
+
+  [[ -b "$resolved" ]] || die "Block device not found: $resolved"
+
+  if [[ -e "/dev/mapper/${MAPPERS[$i]}" ]]; then
+    die "/dev/mapper/${MAPPERS[$i]} is already open. Close it first: cryptsetup close ${MAPPERS[$i]}"
+  fi
+done
+echo ""
+
+# ── Confirmation ─────────────────────────────────────────────────────
+if [[ "$AUTO_YES" != true ]]; then
+  echo "This will DESTROY all data on the volumes listed above."
+  read -r -p "Type REKEY to continue: " CONFIRM
+  [[ "$CONFIRM" == "REKEY" ]] || die "Aborted."
+  echo ""
+fi
+
+# ── Cleanup on exit ──────────────────────────────────────────────────
+cleanup() {
+  set +e
+  for mapper in "${MAPPERS[@]}"; do
+    if cryptsetup status "$mapper" >/dev/null 2>&1; then
+      cryptsetup close "$mapper" >/dev/null 2>&1 || true
+    fi
+  done
+  unset PASSPHRASE
+}
+trap cleanup EXIT
+
+# ── Process each volume ──────────────────────────────────────────────
+for i in "${!DEVICES[@]}"; do
+  device="${RESOLVED_DEVICES[$i]}"
+  mapper="${MAPPERS[$i]}"
+  mountpoint="${MOUNTPOINTS[$i]}"
+  fs_type="${FS_TYPES[$i]}"
+  label="${FS_LABELS[$i]}"
+
+  info "[$((i + 1))/${#DEVICES[@]}] ${device}"
+
+  # Capture the LUKS-HEADER UUID before rekey. crypttab is keyed by the header
+  # UUID, so this is the value crypttab references (NOT fstab — see below).
+  old_header_uuid=$(blkid -o value -s UUID "$device" 2>/dev/null || true)
+
+  # Capture the curtin-era inner FILESYSTEM UUID that /etc/fstab references for
+  # this mountpoint. curtin writes fstab fs_spec = the ext4/xfs filesystem UUID
+  # inside the mapper, NOT the LUKS-header UUID. mkfs below will mint a fresh
+  # random fs UUID, so we must rewrite that fstab entry to the new fs UUID
+  # afterwards or `mount -a` can't resolve the volume.
+  old_fs_uuid=$(awk -v mp="$mountpoint" '$1 !~ /^#/ && $2 == mp { print $1 }' /etc/fstab \
+    | sed -n 's/^UUID=//p' | head -n1)
+
+  # Format LUKS
+  printf '%s' "$PASSPHRASE" | cryptsetup luksFormat \
+    --type luks2 \
+    --batch-mode \
+    --key-file - \
+    "$device"
+  info "  LUKS2 header written"
+
+  # Capture the new LUKS-header UUID for crypttab.
+  new_header_uuid=$(blkid -o value -s UUID "$device")
+
+  # Update crypttab with the new HEADER UUID (crypttab is header-keyed; correct).
+  if [[ -f /etc/crypttab && -n "$old_header_uuid" && -n "$new_header_uuid" ]]; then
+    sed -i "s/${old_header_uuid}/${new_header_uuid}/g" /etc/crypttab
+    info "  Updated crypttab: ${old_header_uuid} -> ${new_header_uuid}"
+  fi
+
+  # Open
+  printf '%s' "$PASSPHRASE" | cryptsetup open \
+    --batch-mode \
+    --key-file - \
+    "$device" \
+    "$mapper"
+  info "  Opened as /dev/mapper/${mapper}"
+
+  # Create filesystem
+  case "$fs_type" in
+    xfs) mkfs.xfs -f -L "$label" "/dev/mapper/$mapper" ;;
+    *)   mkfs.ext4 -L "$label" -m 0 "/dev/mapper/$mapper" ;;
+  esac
+  info "  Formatted ${fs_type} (label: ${label})"
+
+  # Read the NEW inner filesystem UUID off the opened mapper and rewrite the
+  # fstab entry from the old (curtin-era) fs UUID to the new one. Keyed on the
+  # FILESYSTEM UUID, not the LUKS-header UUID — fstab points at the mapper's fs.
+  new_fs_uuid=$(blkid -o value -s UUID "/dev/mapper/$mapper")
+  if [[ -n "$old_fs_uuid" && -n "$new_fs_uuid" ]]; then
+    sed -i "s/${old_fs_uuid}/${new_fs_uuid}/g" /etc/fstab
+    info "  Updated fstab: ${old_fs_uuid} -> ${new_fs_uuid}"
+  elif [[ -n "$new_fs_uuid" ]]; then
+    info "  WARNING: no fstab UUID entry for ${mountpoint}; leaving fstab unchanged"
+  fi
+
+  echo ""
+done
+
+# ── Mark as keyed ────────────────────────────────────────────────────
+# Best-effort self-rewrite of the re-run guard. Tolerate a non-writable/non-seekable
+# $0 (read-only mount, piped exec) so a failed write cannot abort under set -e and
+# leave the just-rekeyed volumes unmounted before the mount -a below.
+if [[ -w "$0" ]]; then
+  sed -i 's/^ALREADY_KEYED=0$/ALREADY_KEYED=1/' "$0" \
+    || info "WARNING: could not update re-run guard in $0 (re-running may re-rekey)"
+else
+  info "WARNING: $0 is not writable; re-run guard left unset (re-running may re-rekey)"
+fi
+
+# ── Mount via fstab ──────────────────────────────────────────────────
+# Volumes are now open and fstab has been updated with new UUIDs.
+trap - EXIT
+unset PASSPHRASE
+
+info "Mounting volumes via fstab..."
+mount -a
+info "Rekey complete."
+echo ""
+
+echo "Mounted volumes:"
+for i in "${!DEVICES[@]}"; do
+  df -h "${MOUNTPOINTS[$i]}" 2>/dev/null | tail -1 || true
+done

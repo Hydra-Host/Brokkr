@@ -1,0 +1,4 @@
+# The internal .gitlab/CODEOWNERS names individual GitLab accounts, which do not
+# resolve on GitHub; the mirror routes every path to one maintainers team instead.
+
+* @Hydra-Host/brokkr-maintainers

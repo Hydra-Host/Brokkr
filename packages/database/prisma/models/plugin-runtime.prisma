@@ -1,0 +1,15 @@
+/// Tracks which SQL migrations from each installed plugin have been
+/// applied to the database. Written by the plugin-runtime migrator at
+/// app boot; the application never reads or writes these rows through
+/// the Prisma client. Modeled here only so `prisma migrate` knows the
+/// table exists and does not flag it as drift.
+model BrokkrPluginMigration {
+  pluginId  String   @map("plugin_id")
+  version   String
+  name      String
+  checksum  String
+  appliedAt DateTime @default(now()) @map("applied_at") @db.Timestamptz()
+
+  @@id([pluginId, version])
+  @@map("_brokkr_plugin_migrations")
+}

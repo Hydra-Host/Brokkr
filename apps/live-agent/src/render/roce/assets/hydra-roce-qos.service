@@ -1,0 +1,12 @@
+[Unit]
+Description=Configure RoCE QoS on Mellanox ConnectX NICs
+After=network-online.target systemd-modules-load.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c "command -v mst >/dev/null || { echo 'mst not found, skipping'; exit 0; }; command -v mlnx_qos >/dev/null || { echo 'mlnx_qos not found, skipping'; exit 0; }; mst start && mst status -v | grep 4131 | awk '{print $$5}' | sed 's/net-//' | while read i; do mlnx_qos -i $$i --trust dscp; mlnx_qos -i $$i --pfc 0,0,0,1,0,0,0,0; mlnx_qos -i $$i --cable_len 50; done"
+
+[Install]
+WantedBy=multi-user.target

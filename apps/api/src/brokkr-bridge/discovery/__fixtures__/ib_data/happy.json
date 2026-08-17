@@ -1,0 +1,30 @@
+[
+  {
+    "mlx5_name": "mlx5_0",
+    "guid": "c470:bd03:0033:649a",
+    "speed": "400 Gb/sec (4X NDR)",
+    "speed_kbps": 400000000,
+    "pci_device_id": "0xa2dc",
+    "max_speed_gbps": 400,
+    "max_speed_kbps": 400000000,
+    "link_type": "Ethernet",
+    "port_state": "4: ACTIVE",
+    "port_phys_state": "5: LinkUp",
+    "link_oper_up": true,
+    "link_physical_up": true
+  },
+  {
+    "mlx5_name": "mlx5_1",
+    "guid": "c470:bd03:0033:83cc",
+    "speed": "200 Gb/sec (2X NDR)",
+    "speed_kbps": 200000000,
+    "pci_device_id": "0xa2dc",
+    "max_speed_gbps": null,
+    "max_speed_kbps": null,
+    "link_type": "InfiniBand",
+    "port_state": "4: ACTIVE",
+    "port_phys_state": "5: LinkUp",
+    "link_oper_up": true,
+    "link_physical_up": true
+  }
+]

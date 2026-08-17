@@ -1,0 +1,42 @@
+[
+  {
+    "slug": "ubuntu-rescue-os",
+    "name": "Ubuntu Rescue OS",
+    "kind": "LIVE",
+    "group": "liveOS",
+    "family": "live",
+    "osDistribution": "Ubuntu",
+    "osVersion": "22.04",
+    "description": "Ubuntu Rescue OS for device recovery and maintenance."
+  },
+  {
+    "slug": "brokkr-discovery",
+    "name": "Brokkr Live (discovery)",
+    "kind": "LIVE",
+    "group": "liveOS",
+    "family": "live",
+    "osDistribution": "brokkr",
+    "osVersion": "discovery",
+    "description": "Internal discovery OS (brokkr-live); PXE-booted during provision/deprovision."
+  },
+  {
+    "slug": "ipxe-custom",
+    "name": "iPXE Custom",
+    "kind": "BASE",
+    "group": "baseOS",
+    "family": "base",
+    "osDistribution": "ipxe",
+    "osVersion": "custom",
+    "description": "Custom iPXE boot — chainloads a user-supplied iPXE script URL."
+  },
+  {
+    "slug": "ipxe-custom-tee",
+    "name": "iPXE Custom (TEE)",
+    "kind": "BASE",
+    "group": "baseOS",
+    "family": "base",
+    "osDistribution": "ipxe",
+    "osVersion": "custom-tee",
+    "description": "Custom iPXE boot with TEE — chainloads a user-supplied iPXE script URL with TEE enabled."
+  }
+]

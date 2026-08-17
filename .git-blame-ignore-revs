@@ -1,0 +1,18 @@
+# Bulk formatting commits — skipped by `git blame` so line attribution points at the
+# prior substantive change, not the mechanical reformat. Auto-enabled per-worktree by
+# devenv on shell entry (devenv/modules/dx.nix); GitLab honors this file automatically.
+#
+# NOTE: these SHAs track the reformat commits on this branch; if the branch is rebased
+# again before merge (which rewrites them), refresh this list to the new SHAs.
+
+# style: apply prettier across the repo
+2c9f54a8d74ee2d11dd4a1221fff8996362f205b
+# style(nix): format with nixfmt-rfc-style and statix/deadnix autofixes
+9fec0151d7007064a65d88fee993f17a4a87fb43
+# style(shell): format with shfmt and resolve shellcheck findings
+ee43ea001127c85893838ff6f99ee320ba1b2320
+# style(toml): format with taplo
+001e9e7365af42526fa5b12f1737cfdf921645c9
+
+# refactor(live-agent): strip .js extensions from relative imports
+7d121fa204dd7687dba125c7dfcdd8aa6d6145ac

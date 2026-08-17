@@ -1,0 +1,19 @@
+{
+  "extends": "@repo/typescript-config/nestjs.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": ".",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "plugin.ts",
+    "plugin-frontend.ts",
+    "contract.ts",
+    "schemas.ts",
+    "backend/**/*.ts",
+    "frontend/**/*.ts",
+    "frontend/**/*.tsx"
+  ],
+  "exclude": ["node_modules", "dist", "database"]
+}

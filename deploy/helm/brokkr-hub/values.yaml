@@ -1,0 +1,223 @@
+# Brokkr HUB Helm values. WARNING: sim/trial posture - auth is bypassed; never
+# expose to an untrusted network. Same contract as the fully-commented
+# deploy/docker-compose/hub/.env.example; every key must stay PRESENT (empty ok).
+
+# ---- image (BROKKR_APP_IMAGE; override for a private registry) ----
+image:
+  repository: hydrahost/brokkr-hub
+  # Mutable tag, so pullPolicy is Always (IfNotPresent would silently pin the
+  # node's cached digest). Pin tag to a semver release for production.
+  tag: latest
+  pullPolicy: Always
+imagePullSecrets: []
+
+replicaCount: 1
+
+# ---- bundled datastores (the two hard dependencies) ----
+postgres:
+  # Set false to bring your own Postgres - then set secrets.DATABASE_URL.
+  enabled: true
+  image: postgres:16-alpine
+  auth:
+    username: thor
+    password: password
+    database: thor
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ''
+  resources: {}
+
+redis:
+  # Set false to bring your own Redis - then set secrets.REDIS_URL.
+  enabled: true
+  image: redis:7-alpine
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ''
+  # Cross-network bridges need this exposed (LoadBalancer/NodePort) and locked
+  # down: private network + rediss:// + a password. See README.md.
+  service:
+    type: ClusterIP
+    annotations: {}
+    # nodePort: 30679   # honored when type is NodePort
+  resources: {}
+
+# ---- migrations: the image entrypoint runs `prisma migrate deploy` on every
+# start (idempotent, advisory-locked) - that IS the migrate component here.
+# enabled=true adds a hook Job (external DB + secrets.existingSecret only).
+migrate:
+  enabled: false
+  backoffLimit: 6
+  resources: {}
+
+# ---- secret-typed contract keys (rendered into a Secret, never the ConfigMap).
+# existingSecret replaces the chart-rendered Secret; it must then carry EVERY
+# key below - the app requires each key present, empty values are fine.
+secrets:
+  existingSecret: ''
+  # Session signing secret - the defaults are sim-only placeholders.
+  BETTER_AUTH_SECRET: local-sim-dev-better-auth-secret-do-not-use-anywhere-real
+  DEVICE_TOKEN_PEPPER: local-sim-dev-device-token-pepper-do-not-use-anywhere-real
+  # Datastores. Leave empty with the bundled postgres/redis enabled - the chart derives
+  # them from the Service names. Required when the matching bundle is disabled.
+  DATABASE_URL: ''
+  # Defaults to DATABASE_URL when empty (no pgbouncer in this posture).
+  PGBOUNCER_CONNECTION_STRING: ''
+  REDIS_URL: ''
+  PG_TOKEN: ''
+  # Inert in sim mode (see the Vault note under env:).
+  VAULT_SECRET_ID: unused
+  CLICKHOUSE_USER: ''
+  CLICKHOUSE_PASSWORD: ''
+  # Non-empty on purpose: svix validates the whsec_<base64> format at boot.
+  OPENMETER_WEBHOOK_SECRET: whsec_cGxhY2Vob2xkZXItbm90LWZvci1yZWFsLXVzZQ==
+  OPENMETER_API_KEY: ''
+  # Optional integration credentials: keep present, leave empty to disable.
+  AIVEN_THANOS_USERNAME: ''
+  AIVEN_THANOS_PASSWORD: ''
+  GRAVWELL_API_TOKEN: ''
+  HUBSPOT_ACCESS_TOKEN: ''
+  KAFKA_USERNAME: ''
+  KAFKA_SERVICE_URI: ''
+  KAFKA_PASSWORD: ''
+  KAFKA_ACCESS_KEY: ''
+  KAFKA_ACCESS_CERT: ''
+  KAFKA_CA_CERT: ''
+  SMTP_USER: ''
+  SMTP_PASS: ''
+  MAILGUN_API_KEY: ''
+  RESEND_API_KEY: ''
+  NETBOX_API_TOKEN: ''
+  PYLON_API_TOKEN: ''
+  S3_ACCESS_KEY_ID: ''
+  S3_SECRET_ACCESS_KEY: ''
+  TURNSTILE_SECRET_KEY: ''
+  STRIPE_API_SECRET: ''
+  STRIPE_CONNECT_WEBHOOK_SECRET: ''
+  STRIPE_ACCOUNT_WEBHOOK_SECRET: ''
+  STRIPE_WEBHOOK_SECRET: ''
+  SENTRY_AUTH_TOKEN: ''
+  SF_COMPUTE_API_KEY: ''
+
+# ---- plain contract keys (rendered into a ConfigMap, verbatim) ----
+env:
+  # ---- core ----
+  HH_ENV: dev
+  # Must NOT be "production": LOCAL_SIMULATION_ENABLED is refused there (hard
+  # kill-switch). Trade-off: the static SPA is only served under production, so
+  # interact via the REST API in this mode.
+  NODE_ENV: development
+  IS_LOCAL: 'true'
+  LOG_LEVEL: debug
+  LOCAL_SIMULATION_ENABLED: 'true'
+  # Sim mode is honored only while HH_ENV is in AUTH_BYPASS_ALLOWED_ENVS
+  # (app default "dev", matching HH_ENV above).
+  VITE_LOCAL_SIMULATION_ENABLED: 'true'
+
+  # Public URL of the hub. Update to your Ingress URL when ingress is enabled.
+  BASE_URL: http://localhost:3000
+
+  HYDRAHOST_ORGANIZATION_ID: 00000000-0000-0000-0000-000000000000
+
+  # Path to a CA file for rediss:// (mount the cert into the pod; the app reads the file).
+  REDIS_CA_CERT: ''
+
+  # Inert placeholders - no Vault runs here and it is never contacted; Vault-only
+  # features are unavailable. VAULT_SECRET_ID lives under `secrets:`.
+  VAULT_ADDR: http://localhost:8200
+  VAULT_APP_ROLE_ID: unused
+  VAULT_SKIP_VERIFY: 'true'
+
+  # Sim-only toggles.
+  ENABLE_BRIDGE_API_MTLS: 'false'
+  KAFKA_ENABLED: 'false'
+  HEARTBEAT_MONITOR_ENABLED: 'false'
+  # DANGER: disables TLS verification for ALL outbound Node HTTPS. Sim default
+  # (mirrors .env.example); set "1" if anything talks to real TLS endpoints.
+  NODE_TLS_REJECT_UNAUTHORIZED: '0'
+  NOMAD_ADDR: ''
+
+  # Browser-safe SPA keys (entrypoint writes these into env-config.js).
+  STRIPE_PUBLISHABLE_KEY: ''
+  TURNSTILE_SITE_KEY: ''
+  RADAR_PUBLISHABLE_KEY: ''
+
+  # Non-empty on purpose: analytics wraps the host as https://HOST:8443 and the
+  # clickhouse client rejects an empty host. Credentials live under `secrets:`.
+  CLICKHOUSE_HOST: localhost
+
+  # ---- optional integrations: keep present, leave empty to disable ----
+  # (credential-typed keys for these integrations live under `secrets:`)
+  AIVEN_THANOS_BASE_URL: ''
+  GRAVWELL_BASE_URL: ''
+  HUBSPOT_CONTACT_OWNER_ID: ''
+  HUBSPOT_FORM_ID_DEMAND_REQUEST: ''
+  HUBSPOT_DEMAND_REQUEST_OBJECT_TYPE_ID: ''
+  HUBSPOT_PORTAL_ID: ''
+  HYPERVISOR_ROLE_ID: ''
+  HYPERVISOR_DEVICE_TYPE_ID: ''
+  KAFKA_BROKER: ''
+  KAFKA_LOG_TOPIC: ''
+  SMTP_HOST: ''
+  SMTP_PORT: ''
+  SMTP_SECURE: ''
+  EMAIL_FROM: ''
+  MAILGUN_API_URL: ''
+  NETBOX_API_URL: ''
+  PYLON_ACCOUNT_ID: ''
+  S3_ENDPOINT_URL: ''
+  S3_BUCKET: ''
+  VITE_TURNSTILE_SITE_KEY: ''
+  STRIPE_PMC_ID: ''
+  VITE_STRIPE_PUBLISHABLE_KEY: ''
+
+# Extra container env entries (raw EnvVar objects) appended to the hub container -
+# these win over `env:`/`secrets:` keys of the same name.
+extraEnv: []
+
+# ---- exposure ----
+service:
+  type: ClusterIP
+  port: 3000
+
+ingress:
+  enabled: false
+  className: ''
+  annotations: {}
+  host: brokkr.example.com
+  tls: []
+  # tls:
+  #   - { secretName: brokkr-hub-tls, hosts: [brokkr.example.com] }
+
+# ---- pod tuning ----
+# First boot applies migrations and seeds the OS-layer catalog before listening,
+# hence the generous startup window (mirrors the compose start_period).
+startupProbe:
+  httpGet:
+    path: /healthcheck
+    port: http
+  periodSeconds: 5
+  failureThreshold: 60
+livenessProbe:
+  httpGet:
+    path: /healthcheck
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 10
+readinessProbe:
+  httpGet:
+    path: /healthcheck
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+resources: {}
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

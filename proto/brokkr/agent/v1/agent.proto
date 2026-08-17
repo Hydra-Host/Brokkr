@@ -1,0 +1,400 @@
+// AgentService — the RPC surface a bridge exposes to device agents.
+//
+// Wire model: split streams.
+//   * OpenSession         — long-lived server-streaming RPC. Agent opens
+//                           once per bridge it attaches to (N bridges =
+//                           N concurrent sessions). Bridge pushes work
+//                           and control messages down.
+//   * ReportResult        — unary. Agent reports terminal work outcomes.
+//   * ReportProgress      — unary. Mid-op progress for operator UIs.
+//   * ReportPartialResult — unary. Per-sub-unit results for compound ops.
+//
+// The agent→bridge direction is intentionally NOT a stream: each report
+// is an independent unary RPC that can land on any bridge replica, with
+// the receiving bridge persisting to shared Redis. This enables stateless
+// master/master bridge topology (any bridge can dispatch, any bridge can
+// collect results, BullMQ coordinates via the shared result queue).
+//
+// Registration failures surface as gRPC stream-terminating status codes;
+// the structured Rejection metadata is attached as a google.rpc.Status
+// detail so clients can distinguish permanent from transient failures
+// without relying on free-text messages. Code mapping:
+//   INVALID_ARGUMENT     → invalid_registration   (permanent)
+//   NOT_FOUND            → unknown_device         (permanent)
+//   UNAUTHENTICATED      → auth_failed            (permanent)
+//   FAILED_PRECONDITION  → version_unsupported    (permanent)
+//   UNAVAILABLE          → bridge_overloaded      (transient)
+//   ABORTED              → registration_race      (transient)
+//   INTERNAL             → internal_error         (transient)
+
+syntax = "proto3";
+
+package brokkr.agent.v1;
+
+import "brokkr/agent/v1/work.proto";
+import "google/protobuf/timestamp.proto";
+
+// Wire-protocol version. Bumped on breaking envelope changes. Currently 1.
+// Carried on the first registration so mismatched agent/bridge bundles
+// fail loud instead of silently drifting on ambiguous future schemas.
+// When bumping: retain the old value in a client-side fallback for one
+// rollout window.
+//
+// NOTE: proto doesn't have a literal constant construct; this is enforced
+// at the application layer. Expected value: 1.
+//   message AgentRegistration { uint32 protocol_version = 1; ... }
+
+service AgentService {
+  // OpenSession — agent "attaches" to a bridge. Server streams work and
+  // control messages until either side closes.
+  //
+  // Message flow on the returned stream:
+  //   1. ServerMessage{session_accepted} — always first, confirms registration
+  //      and carries current bridge topology.
+  //   2. ServerMessage{work_request | topology_update | cancel_work} — pushed
+  //      as the bridge needs, until the session ends.
+  //
+  // Cancellation: agent cancels the RPC to signal graceful disconnect
+  // (upgrade, shutdown). Bridge cancels to evict (maintenance, re-registration).
+  rpc OpenSession(AgentRegistration) returns (stream ServerMessage);
+
+  // ReportResult — terminal outcome of a WorkRequest. Idempotent by work_id;
+  // duplicate reports (from retry, from cross-bridge redelivery) are
+  // deduplicated at the Redis layer. Safe to retry on transient failure.
+  rpc ReportResult(WorkResponse) returns (ReportResultAck);
+
+  // ReportProgress — mid-operation progress update. Best-effort; silently
+  // dropped messages are acceptable. Bridge may rate-limit; agents should
+  // not require delivery confirmation to continue work.
+  rpc ReportProgress(WorkProgress) returns (ReportProgressAck);
+
+  // ReportPartialResult — per-sub-unit output in a compound operation.
+  // Persisted incrementally by the receiving bridge. Idempotent per
+  // (work_id, unit) pair.
+  rpc ReportPartialResult(PartialResult) returns (ReportPartialResultAck);
+
+  // FetchBundle — server-streams a self-upgrade artifact (the agent's main.js
+  // bundle or its systemd unit file) in chunks over the existing gRPC
+  // session. Replaces the legacy HTTP + signed-URL channel: the agent
+  // receiving ``agent.upgrade`` dispatches this RPC on any of its live
+  // sessions, verifies the SHA-256 over the concatenated chunks, and does
+  // the atomic swap. No URL signing, no separate auth path, no separate
+  // nginx location — reuses the session's TLS + bearer-token auth.
+  //
+  // The bridge only serves an artifact whose SHA-256 matches the current
+  // on-disk bundle/unit — protects against historical-bundle walks even
+  // though the bearer-token auth interceptor already gates who can call
+  // this RPC.
+  rpc FetchBundle(BundleRequest) returns (stream BundleChunk);
+
+  // ReportLogs — agent ships structured log entries to the bridge so they
+  // land in the bridge's existing observability pipeline (journald → Nomad
+  // → hub). Batched unary. Expected cadence is low — agents log mostly
+  // around dispatched work.
+  rpc ReportLogs(LogBatch) returns (ReportLogsAck);
+
+  // ReportTraces — agent ships a pre-serialized OTLP trace batch. The bridge
+  // authenticates the device and forwards the bytes verbatim over HTTP to its
+  // own configured OTLP traces endpoint. Best-effort: a bridge with telemetry
+  // disabled drops the batch and acks, so devices never need collector
+  // reachability or OTLP credentials.
+  rpc ReportTraces(TraceBatch) returns (ReportTracesAck);
+
+  // RenewToken — agent explicitly refreshes its device-bound bearer token's
+  // TTL. The auth interceptor identifies the caller from the token attached
+  // to this RPC; the bridge slides both Redis indices forward by a full
+  // device_ttl_s and returns the new expires-in as a convenience so agents
+  // can log it.
+  //
+  // Discovery tokens (device_id="0", pre-commissioning) are NOT renewable —
+  // the bridge returns PERMISSION_DENIED for discovery callers. Discovery
+  // sessions must exchange for a real device token via the normal
+  // commissioning flow instead of extending their brief 24h window.
+  //
+  // Agents call this on a fixed cadence (default: every hour) via any of
+  // their live bridge sessions; the renewal is idempotent, so multiple
+  // bridges observing the same device write the same payload.
+  rpc RenewToken(RenewTokenRequest) returns (RenewTokenAck);
+
+  // PhoneHome — a brokkr-live / rescue agent signals "I'm up in the live
+  // image" over its existing session. Replaces the HTTP phone-home for the
+  // live OS: the gRPC session's TLS + device-bearer token already authenticate
+  // the caller, so no encrypted cipher/signature has to be baked into the
+  // brokkr-live initrd. The bridge forwards this to the hub's results queue as
+  // a brokkr-live callback (never "provisioned"). The deployed OS still phones
+  // home over HTTP — that path remains the sole signal that a real customer OS
+  // booted.
+  rpc PhoneHome(PhoneHomeRequest) returns (PhoneHomeAck);
+}
+
+// PhoneHomeRequest — brokkr-live/rescue agent boot callback. Identity comes
+// from the session's bearer token; device_id is echoed for the bridge's logs
+// and the hub-bound results payload. boot_id lets the hub dedup repeat
+// callbacks within one boot.
+message PhoneHomeRequest {
+  string device_id = 1;
+  string boot_id = 2;
+}
+
+message PhoneHomeAck {}
+
+// LogBatch — batch of structured log entries shipped from one agent session.
+message LogBatch {
+  // Device the entries came from. Re-emitted as a field on the bridge's
+  // own log line so operators can grep / filter.
+  string device_id = 1;
+
+  repeated LogEntry entries = 2;
+}
+
+// LogEntry — one structured line. Shape matches what the agent's logger
+// already writes to stdout; the bridge just re-emits it through its own
+// log_info/warn/error so the line shows up in journald alongside bridge
+// output.
+message LogEntry {
+  google.protobuf.Timestamp timestamp = 1;
+
+  // Lowercase level name: debug, info, warn, error.
+  string level = 2;
+
+  string message = 3;
+
+  // Structured fields serialized as JSON — kept as a string so the proto
+  // stays flat and the bridge can forward verbatim into its logger.
+  string fields_json = 4;
+}
+
+message ReportLogsAck {}
+
+// TraceBatch — one export batch of agent spans, pre-serialized as an OTLP
+// opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest (the
+// OTLP/HTTP protobuf body). Opaque to the bridge; forwarded verbatim so the
+// agent's resource attributes (service.name=brokkr-agent, device_id, zone)
+// survive intact.
+message TraceBatch {
+  // Device the spans came from. Must match the authenticated device token.
+  string device_id = 1;
+
+  bytes otlp_traces = 2;
+}
+
+message ReportTracesAck {}
+
+// RenewTokenRequest — empty; the auth interceptor identifies the caller
+// from the bearer token attached to this RPC.
+message RenewTokenRequest {}
+
+// RenewTokenAck — informational. Agents can log new_expires_in_s to trace
+// renewal behaviour; the cadence is driven by agent-side config, not by
+// this response.
+message RenewTokenAck {
+  // Seconds until the token expires, as of the server's write. Matches
+  // the configured device_ttl_s (24h default) under normal conditions.
+  uint32 new_expires_in_s = 1;
+}
+
+// BundleRequest — unary request asking the bridge to stream one of the
+// agent self-upgrade artifacts currently installed on disk.
+message BundleRequest {
+  // Expected SHA-256 (lowercase hex, 64 chars). Bridge returns
+  // NOT_FOUND if the requested artifact's on-disk SHA doesn't match
+  // (the agent got the SHA from the enclosing ``agent.upgrade`` dispatch;
+  // mismatch means the bridge has since replaced the artifact with a
+  // different version — the caller should re-dispatch from scratch).
+  string sha256 = 1;
+
+  // Which artifact to fetch.
+  Artifact artifact = 2;
+
+  enum Artifact {
+    ARTIFACT_UNSPECIFIED = 0;
+    // main.js — the agent's JavaScript bundle at /opt/brokkr/agent/main.js.
+    ARTIFACT_BUNDLE = 1;
+    // brokkr-bridge-agent.service — the systemd unit at
+    // /etc/systemd/system/brokkr-bridge-agent.service. Optional part of an upgrade.
+    ARTIFACT_UNIT = 2;
+    // agent.yaml — the per-device config at /opt/brokkr/agent.yaml. Optional
+    // part of an upgrade; the bridge renders fresh bytes (including bearer
+    // token, phone-home creds, sentry block, etc.) at dispatch time and
+    // caches them in Redis keyed by sha256. The agent fetches by sha256 and
+    // atomically swaps the file alongside the bundle. Replaces "schema-
+    // changes to agent.yaml never reach in-flight devices on gRPC upgrade"
+    // with "every upgrade is a full refresh."
+    ARTIFACT_CONFIG = 3;
+  }
+}
+
+// BundleChunk — one piece of the server-streamed artifact. The stream
+// terminates with a clean close once the last chunk is sent; the agent
+// concatenates all ``data`` bytes in order and verifies the SHA.
+message BundleChunk {
+  bytes data = 1;
+}
+
+// AgentRegistration — unary request payload of OpenSession. Identifies the
+// device + agent version + zone.
+message AgentRegistration {
+  // Wire-protocol version (see constant note above). 1 for the initial
+  // release. Bridge rejects mismatched values with FAILED_PRECONDITION.
+  uint32 protocol_version = 1;
+
+  // Device identifier the agent claims to be. Bridge validates (e.g. against
+  // the hub's device registry) and maps the session to this ID. Must be
+  // unique per session — two live sessions for the same device_id is the
+  // "registration race" condition (older one is evicted with ABORTED).
+  string device_id = 2;
+
+  // Zone triple. All three must be non-empty.
+  ZoneInfo zone = 3;
+
+  // Agent build version (semver). Compared against the bridge's expected
+  // version; drift triggers an agent.upgrade work request.
+  string agent_version = 4;
+
+  // Primary NIC MAC address, when known. Informational.
+  string mac = 5;
+
+  // Agent IP address, when known. Informational.
+  string ip = 6;
+
+  // CPU architecture the agent was built for.
+  Arch arch = 7;
+
+  // Self-reported readiness at registration time. Bridge surfaces this to
+  // operators and uses it as a hint when scheduling heavy jobs.
+  Readiness readiness = 8;
+}
+
+// ServerMessage — the oneof yielded by the OpenSession server-stream.
+//
+// Rationale for multiplexing control + work on one stream instead of
+// separate RPCs: all kinds here are strictly server→agent push with no
+// individual acknowledgement semantics. A single stream keeps connection
+// count constant per session (one per bridge per agent). Agent→server
+// traffic is split into per-event unary RPCs where independent delivery
+// semantics matter.
+message ServerMessage {
+  oneof kind {
+    // Session acknowledgement + initial topology snapshot. Always the first
+    // message from the server on a successful OpenSession.
+    SessionAccepted session_accepted = 1;
+
+    // Bridge dispatches work to the agent.
+    WorkRequest work_request = 2;
+
+    // Bridge informs the agent of the current bridge topology for its zone.
+    // Emitted on registration (inside session_accepted) and whenever the
+    // topology changes (scale events, rolling restart, etc.).
+    TopologyUpdate topology_update = 3;
+
+    // Bridge requests cancellation of an in-flight operation. Agent
+    // cooperates best-effort; operations that cannot be safely cancelled
+    // (mid-wipe, mid-deploy) run to completion and report final status.
+    CancelWork cancel_work = 4;
+  }
+}
+
+// SessionAccepted — first message on the OpenSession stream. Confirms
+// registration and carries the bridge's view of current fleet topology.
+message SessionAccepted {
+  // Stable identifier of the bridge instance the agent just attached to.
+  string bridge_id = 1;
+
+  // Current full bridge set for the zone. Agent reconciles its connection
+  // pool: opens sessions to bridges it doesn't yet have a session to;
+  // retains existing sessions; optionally prunes sessions to bridges not
+  // in the list.
+  repeated BridgeEndpoint topology = 2;
+
+  // Version the BRIDGE considers authoritative for the agent at this
+  // device_id. Under normal conditions this matches what the agent sent
+  // in AgentRegistration. A mismatch means version drift — the bridge's
+  // dispatcher will trigger ``agent.upgrade`` via the regular work path
+  // the next time it sees traffic for this device. The agent logs the
+  // drift on receipt for observability but does NOT fail the session:
+  // keeping the session alive lets the upgrade dispatch land.
+  string agent_version = 3;
+}
+
+// TopologyUpdate — standalone topology refresh pushed outside of registration.
+message TopologyUpdate {
+  repeated BridgeEndpoint bridges = 1;
+  // Per-session subnet-matched /etc/hosts rows. Empty list when the bridge
+  // doesn't know the agent's peer IP (graceful degrade — agent skips the
+  // rewrite). Older bridges that don't set this field still push successfully;
+  // older agents see field absent and skip the rewrite.
+  repeated HostsEntry hosts_entries = 2;
+}
+
+// CancelWork — bridge-initiated cancellation of a dispatched work_id.
+message CancelWork {
+  string work_id = 1;
+
+  // Optional reason for operator logs ("operator_cancel", "job_timeout",
+  // "device_deprovisioned", etc.).
+  string reason = 2;
+}
+
+// HostsEntry — one row to be written into /etc/hosts on the device by
+// the agent's topology-update handler. ``ip`` is the subnet-matched
+// bridge IP for this agent's network position; ``hostname`` is the bare
+// hostname registered in the bridge service registry.
+message HostsEntry {
+  string ip = 1;
+  string hostname = 2;
+}
+
+// BridgeEndpoint — identity + address for one bridge.
+message BridgeEndpoint {
+  // Bare host:port — the agent's gRPC client prepends the transport
+  // scheme (https://) via deriveGrpcAddress before opening the stream.
+  // Do NOT include a scheme here; the bridge currently emits this in
+  // host:port form (see bridge/servicers/topology_broadcaster.py
+  // build_endpoints), and a value with a scheme would be
+  // double-prefixed by the agent and produce an invalid URL.
+  // Example: "bridge-a.zone-42.example:443".
+  string address = 1;
+
+  // Stable per-instance bridge identifier used in topology diffs.
+  string bridge_id = 2;
+}
+
+// ZoneInfo — tenant identifier for an agent's zone. site_id/location_id were
+// removed; their field numbers are reserved to keep the wire format stable.
+message ZoneInfo {
+  string tenant_id = 1;
+  reserved 2, 3;
+  reserved "site_id", "location_id";
+}
+
+// Arch — CPU architecture the agent was built for.
+enum Arch {
+  ARCH_UNSPECIFIED = 0;
+  ARCH_AMD64 = 1;
+  ARCH_ARM64 = 2;
+}
+
+// Readiness — agent's self-reported ability to accept new dispatches.
+enum Readiness {
+  READINESS_UNSPECIFIED = 0;
+
+  // Idle and available for any dispatch.
+  READINESS_READY = 1;
+
+  // Currently executing work; new dispatches may queue (per-device lock)
+  // or be rejected depending on the operation.
+  READINESS_BUSY = 2;
+
+  // Agent is up but one or more capability areas are broken (missing
+  // binary, unreadable /dev, failed self-test). Bridge can still dispatch
+  // but should expect some operations to fail; useful for observability
+  // and for the hub to mark the device accordingly.
+  READINESS_DEGRADED = 3;
+}
+
+// Empty acks — reserved for future per-report metadata without a protocol
+// bump (TTL overrides, compaction hints, downstream error codes).
+
+message ReportResultAck {}
+message ReportProgressAck {}
+message ReportPartialResultAck {}

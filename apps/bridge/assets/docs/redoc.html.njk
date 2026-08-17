@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ api_title }} - API Documentation</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #100b09;
+        color: #fff3ce;
+      }
+      * { border-radius: 0 !important; }
+      .redoc-wrap { background-color: #100b09; }
+      [data-section-id],
+      div[class*="apiContentWrap"],
+      div[class*="menu-content"],
+      div[class*="api-content"],
+      div[class*="dropdown-panel"] {
+        background-color: #100b09 !important;
+      }
+      .token.string { color: #6fec4f !important; }
+      .token.number { color: #60a5fa !important; }
+      .token.boolean { color: #fbd424 !important; }
+      .token.property { color: #ffdc75 !important; }
+      span[class*="token property"] { color: #ffdc75 !important; }
+      .required { color: #ff383b !important; }
+
+      div[class*="response-schema"],
+      div[class*="response-schema"] div {
+        background-color: #100b09 !important;
+      }
+      div[class*="response-schema"] span {
+        background-color: transparent !important;
+      }
+      div[class*="response-schema"] h5,
+      div[class*="response-schema"] p,
+      div[class*="response-schema"] span,
+      h5[class*="sc-"],
+      h5[class*="sc-"] > span[class*="sc-"] {
+        color: #fff3ce !important;
+      }
+      div[class*="response-schema"] .token.property { color: #ffdc75 !important; }
+      div[class*="response-schema"] .token.string { color: #6fec4f !important; }
+      div[class*="response-schema"] .token.number { color: #60a5fa !important; }
+      div[class*="response-schema"] .token.boolean { color: #fbd424 !important; }
+      div[class*="response-schema"] .required { color: #ff383b !important; }
+      span[class*="property-name"] { color: #ffdc75 !important; }
+
+      [class*="http-verb"] {
+        border-radius: 0 !important;
+        font-family: JetBrains Mono, monospace !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.05em;
+      }
+
+      li[class*="react-tabs__tab"],
+      li[class*="tab-"] {
+        color: #100b09 !important;
+      }
+      li[class*="react-tabs__tab--selected"],
+      li[class*="tab-"][class*="active"] {
+        color: #100b09 !important;
+      }
+
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: #100b09; }
+      ::-webkit-scrollbar-thumb { background: #3f3430; }
+      ::-webkit-scrollbar-thumb:hover { background: #978243; }
+    </style>
+</head>
+<body>
+    <div id="redoc-container"></div>
+    <script src="https://cdn.jsdelivr.net/npm/redoc@{{ redoc_version }}/bundles/redoc.standalone.js"></script>
+    <script>
+        Redoc.init(
+            '/apispec.json',
+            {
+                theme: {{ redoc_theme_json | safe }},
+                ...{{ redoc_options_json | safe }}
+            },
+            document.getElementById('redoc-container')
+        );
+    </script>
+</body>
+</html>

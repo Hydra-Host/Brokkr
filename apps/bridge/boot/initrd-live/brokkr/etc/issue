@@ -1,0 +1,19 @@
+______________________________________________________________________________
+
+    B r o k k r  L i v e  O S
+______________________________________________________________________________
+
+    Waiting for lifecycle job to start...
+
+    If you dont see this screen update within 2 minutes of boot...
+    - Check Netplan in /run/netplan/zz-brokkr.yaml.
+    - Check /etc/hosts to ensure brokkr.lan pointing to Bridge API.
+    - Check bridge services are all healthy.
+    - Check DCIM records for accuracy.
+    - Check IPAM records for accuracy.
+    - Check Bridge API logs for errors.
+
+______________________________________________________________________________
+
+
+

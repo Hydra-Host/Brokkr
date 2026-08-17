@@ -1,0 +1,4 @@
+export const PICKUP_TIMEOUT_MS = 10_000;
+export const POLL_INTERVAL_MS = 1_000;
+
+export const NETWORK_SCAN_RESULT_TTL_SECONDS = 3600;

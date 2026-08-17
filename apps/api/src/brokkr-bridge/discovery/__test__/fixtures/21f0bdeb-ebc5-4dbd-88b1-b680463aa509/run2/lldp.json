@@ -1,0 +1,139 @@
+{
+  "lldp": {
+    "interface": [
+      {
+        "eno8303": {
+          "via": "LLDP",
+          "rid": "1",
+          "age": "2 days, 18:57:33",
+          "chassis": {
+            "c129-r1-u40-leaf": {
+              "id": {
+                "type": "mac",
+                "value": "28:99:3a:bc:aa:a0"
+              },
+              "descr": "Arista Networks EOS version 4.25.2F running on an Arista Networks DCS-7160-48YC6",
+              "mgmt-ip": "172.16.0.21",
+              "mgmt-iface": "999001",
+              "capability": [
+                {
+                  "type": "Bridge",
+                  "enabled": true
+                },
+                {
+                  "type": "Router",
+                  "enabled": true
+                }
+              ]
+            }
+          },
+          "port": {
+            "id": {
+              "type": "ifname",
+              "value": "Ethernet17"
+            },
+            "ttl": "120",
+            "mfs": "9236"
+          },
+          "vlan": {
+            "vlan-id": "40",
+            "pvid": true
+          }
+        }
+      },
+      {
+        "eno8403": {
+          "via": "LLDP",
+          "rid": "2",
+          "age": "2 days, 18:57:12",
+          "chassis": {
+            "cumulus": {
+              "id": {
+                "type": "mac",
+                "value": "fc:6a:1c:00:ff:f8"
+              },
+              "descr": "Cumulus Linux version 5.16.0 running on NVIDIA SN2201",
+              "mgmt-ip": ["127.0.1.1", "fe80::fe6a:1cff:fe00:fff8"],
+              "mgmt-iface": ["57", "2"],
+              "capability": [
+                {
+                  "type": "Bridge",
+                  "enabled": false
+                },
+                {
+                  "type": "Router",
+                  "enabled": true
+                }
+              ]
+            }
+          },
+          "port": {
+            "id": {
+              "type": "ifname",
+              "value": "swp17"
+            },
+            "descr": "swp17",
+            "ttl": "120",
+            "mfs": "9216",
+            "auto-negotiation": {
+              "supported": true,
+              "enabled": true,
+              "advertised": [
+                {
+                  "type": "10Base-T",
+                  "hd": true,
+                  "fd": true
+                },
+                {
+                  "type": "100Base-TX",
+                  "hd": true,
+                  "fd": true
+                },
+                {
+                  "type": "1000Base-X",
+                  "hd": false,
+                  "fd": true
+                },
+                {
+                  "type": "1000Base-T",
+                  "hd": false,
+                  "fd": true
+                }
+              ],
+              "current": "1000BaseTFD - Four-pair Category 5 UTP, full duplex mode"
+            }
+          },
+          "lldp-med": {
+            "device-type": "Network Connectivity Device",
+            "capability": [
+              {
+                "type": "Capabilities",
+                "available": true
+              },
+              {
+                "type": "Policy",
+                "available": true
+              },
+              {
+                "type": "Location",
+                "available": true
+              },
+              {
+                "type": "MDI/PSE",
+                "available": true
+              },
+              {
+                "type": "MDI/PD",
+                "available": true
+              },
+              {
+                "type": "Inventory",
+                "available": true
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

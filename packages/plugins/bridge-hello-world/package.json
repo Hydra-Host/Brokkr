@@ -1,0 +1,46 @@
+{
+  "name": "@hydrahost/bridge-plugin-hello-world",
+  "version": "0.1.0",
+  "description": "Reference Brokkr bridge plugin. Demonstrates the bridge manifest, configSchema, event subscriptions, and the namespaced plugin KV. Use as a starting point for new bridge plugins.",
+  "license": "Apache-2.0",
+  "main": "./dist/plugin.js",
+  "types": "./plugin.ts",
+  "exports": {
+    ".": {
+      "types": "./plugin.ts",
+      "require": "./dist/plugin.js",
+      "import": "./dist/plugin.js"
+    },
+    "./agent": {
+      "types": "./agent/index.ts",
+      "require": "./dist/agent/index.js",
+      "import": "./dist/agent/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "plugin.ts",
+    "schemas.ts",
+    "backend",
+    "agent"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@hydrahost/plugin-sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "@nestjs/common": ">=11",
+    "zod": ">=3.24"
+  },
+  "devDependencies": {
+    "@nestjs/common": "^11.1.11",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3",
+    "zod": "^3.25.0"
+  }
+}

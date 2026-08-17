@@ -1,0 +1,65 @@
+# Example agent.yaml for local dev. Copy to /opt/brokkr/agent.yaml or pass
+# as the first CLI argument: `node dist/main.js ./example-agent.yaml`
+# In production this file is rendered by the bridge and injected via initrd.
+
+device_id: 'dev-device-001'
+
+zone_id: '00000000-0000-0000-0000-000000000000'
+
+# Dial bridges over plaintext h2c (http://) instead of TLS (https://). The
+# bridge renders this true when it runs without a TLS front (GRPC_INSECURE or
+# local sim). `address` stays scheme-less; the agent derives the scheme from
+# this flag. Per-bridge `grpc_address` still overrides.
+insecure: false
+
+# Bridges: one entry per bridge endpoint the agent should connect to.
+# `address` is bare `host:port` — no scheme. The agent derives the dial URL
+# via deriveGrpcAddress (`https://<address>`, or `http://` when `insecure` is
+# set above). Do NOT include a scheme here; values like `ws://...` or
+# `https://host:port` get double-prefixed and produce invalid URLs.
+#
+# For local dev on the same box: with a TLS front on :443 use "127.0.0.1:443";
+# for plaintext set `insecure: true` and point at the gRPC listener, e.g.
+# "127.0.0.1:9082".
+#
+# In stg/prod the bridge renders this from the live registry, e.g.:
+#   - address: "bridge-a.<zone>.example.com:443"
+bridges:
+  - address: 'bridge-a.<zone>.example.com:443'
+
+tls:
+  reject_unauthorized: false # local dev only; production uses default (true)
+
+# Auth: per-device bearer token minted by the bridge's
+# AgentTokenService and rendered into this file by the bootstrap or
+# initrd-build path. Local-dev fallback: mint one with
+# `task agent:mint-token DEVICE_ID=dev-device-001`.
+auth:
+  token: 'REPLACE_WITH_DEVICE_TOKEN'
+
+agent:
+  heartbeat_interval_ms: 30000
+  heartbeat_timeout_ms: 90000
+  reconnect_backoff_initial_ms: 1000
+  reconnect_backoff_max_ms: 60000
+  # Per-dispatch timeout the agent applies when the bridge omits
+  # WorkRequest.deadline. The dispatcher catches the operation if it
+  # runs longer than this, sending SIGTERM to any child subprocess.
+  work_timeout_default_ms: 300000
+  # Bearer-token TTL renewal cadence. The bridge default device-token
+  # TTL is 90d; renewing every hour gives 24x safety margin against
+  # transient bridge/network blips.
+  token_renew_interval_ms: 3600000
+  log_level: debug
+
+# Phone-home creds baked in by the bridge at agent.yaml render time.
+# The agent renders cloud-init-phone-home.sh from these every startup
+# and runs it fire-and-forget. Phone-home targets the hub directly —
+# not the bridge — so it has its own retry+wait-for-network loop and
+# does not depend on bridge gRPC reachability. For local dev, leave
+# these as placeholders unless you actually want to exercise the
+# hub-side phone-home path.
+phone_home:
+  cipher: 'REPLACE_WITH_HUB_ISSUED_CIPHER'
+  signature: 'REPLACE_WITH_HUB_ISSUED_SIGNATURE'
+  endpoint: 'https://brokkr.stg.example.com/api/v1/bmc/phone-home'

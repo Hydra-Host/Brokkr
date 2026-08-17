@@ -1,0 +1,7 @@
+@import 'tailwindcss';
+@import '@repo/ui/styles/brokkr.css';
+@plugin "tailwindcss-animate";
+@source "../node_modules/@repo/ui";
+/* The webvm-terminal plugin's popup document uses design-token utilities; its
+   source lives outside apps/web so Tailwind must be pointed at it explicitly. */
+@source "../node_modules/@hydrahost/plugin-webvm-terminal/frontend";

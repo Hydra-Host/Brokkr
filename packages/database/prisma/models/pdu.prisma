@@ -1,0 +1,32 @@
+// Per-role extension for `Device.role = 'PDU'` — power distribution
+// units. Multi-table inheritance, 1:1 with Device. Distinct from CDU
+// despite both being facility infrastructure (different vendors, monitoring,
+// failure modes).
+
+// Observed power state of a PDU-role device; on/off only. Distinct from the
+// coarse `Device.status`. The `Pdu.powerStatus` field is nullable to mean
+// "power state unknown" (never observed).
+enum PduPowerStatus {
+  On
+  Off
+}
+
+model Pdu {
+  id String @id @default(uuid())
+
+  // Total switched outlets on the unit.
+  outletCount   Int?
+  // Total rated amperage at the inlet.
+  ratedAmperage Int?
+  // 120V | 208V | 240V | 400V (placeholder string)
+  voltageType   String?
+
+  // Observed power state. Null = unknown (never reported by the bridge/BMC).
+  powerStatus PduPowerStatus?
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

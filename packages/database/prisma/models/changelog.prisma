@@ -1,0 +1,19 @@
+model Changelog {
+  id             String         @id @default(uuid())
+  tableName      String
+  pk             String         @db.Uuid
+  before         Json
+  after          Json
+  diff           Json
+  // Tenant + actor attribution. Nullable: pre-release table, and not every
+  // writer has a resolvable org/principal (e.g. device/system writes).
+  organizationId String?
+  actorId        String?
+  actorType      RequestSource?
+  createdAt      DateTime       @default(now())
+
+  @@index([tableName])
+  @@index([pk])
+  @@index([createdAt])
+  @@index([organizationId])
+}

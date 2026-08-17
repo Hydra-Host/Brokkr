@@ -1,0 +1,14 @@
+{
+  "name": "afpacket-addon",
+  "version": "0.0.1",
+  "license": "Apache-2.0",
+  "private": true,
+  "description": "Raw Ethernet frame send/receive N-API addon (Linux AF_PACKET + macOS BPF)",
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

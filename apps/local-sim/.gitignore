@@ -1,0 +1,35 @@
+# --- Python (uv project) ---
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Env / secrets ---
+.env
+certs/
+
+# --- Generated / build output ---
+# sql-seed generators print SQL to stdout, captured here then applied (see CLAUDE.md §10)
+sql-seed/_generated/
+build/
+dist/
+docs/
+
+# --- User custom configs (custom-config-first overrides) ---
+# fleet.local.yml — non-devenv escape hatch (config.py:_default_fleet_path); inside devenv
+# the fleet is rendered from modules/fleet-topology.nix and read via LOCAL_FLEET_PATH instead.
+fleet.local.yml
+# stack.local.json — control-center Stack-tab env/count knobs (personal, not committed).
+stack.local.json
+
+# --- Runtime / OS ---
+# Sim runtime state (overlays, boot artifacts, rendered XML, logs, pidfiles) lives
+# OUTSIDE the repo under ~/.local/share/local/ (LOCAL_STATE) — nothing to ignore here.
+.DS_Store
+*.log
+*.pid

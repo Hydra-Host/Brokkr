@@ -1,0 +1,107 @@
+enum CircuitStatus {
+  ACTIVE
+  PLANNED
+  OFFLINE
+  DEPROVISIONING
+  DECOMMISSIONED
+}
+
+enum CircuitTerminationSide {
+  A
+  Z
+}
+
+model Provider {
+  id          String  @id @default(uuid())
+  name        String
+  slug        String  @unique
+  description String?
+  comments    String?
+
+  circuits Circuit[]
+  networks ProviderNetwork[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ProviderNetwork {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+  comments    String?
+
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  providerId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([providerId, name])
+  @@index([providerId])
+}
+
+model CircuitType {
+  id          String  @id @default(uuid())
+  name        String
+  slug        String  @unique
+  color       String?
+  description String?
+
+  circuits Circuit[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Circuit {
+  id              String        @id @default(uuid())
+  cid             String        @unique
+  status          CircuitStatus @default(ACTIVE)
+  installDate     DateTime?
+  terminationDate DateTime?
+  commitRate      Int?
+  description     String?
+  comments        String?
+
+  provider   Provider @relation(fields: [providerId], references: [id])
+  providerId String
+
+  circuitType   CircuitType @relation(fields: [circuitTypeId], references: [id])
+  circuitTypeId String
+
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  organizationId String?
+
+  terminations CircuitTermination[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([providerId])
+  @@index([circuitTypeId])
+  @@index([organizationId])
+  @@index([status])
+}
+
+model CircuitTermination {
+  id            String                 @id @default(uuid())
+  termSide      CircuitTerminationSide
+  portSpeed     Int?
+  upstreamSpeed Int?
+  xconnectId    String?
+  description   String?
+
+  circuit   Circuit @relation(fields: [circuitId], references: [id], onDelete: Cascade)
+  circuitId String
+
+  zone   Zone?   @relation(fields: [zoneId], references: [id])
+  zoneId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([circuitId, termSide])
+  @@index([circuitId])
+  @@index([zoneId])
+}

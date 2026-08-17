@@ -1,0 +1,95 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "ui": "tui",
+  "remoteCache": {
+    "signature": true
+  },
+  "globalDependencies": ["**/.env.*local"],
+  "globalEnv": [
+    "NODE_ENV",
+    "LOG_LEVEL",
+    "HH_ENV",
+    "REDIS_URL",
+    "IS_LOCAL",
+    "BRIDGE_API_URL",
+    "ZONE_PREFIX",
+    "LOCAL_SIMULATION_ENABLED",
+    "BRIDGE_PLUGIN_HELLO_WORLD_ENABLED",
+    "GRPC_INSECURE",
+    "AUTH_BYPASS_ALLOWED_ENVS",
+    "LOCAL_FLEET_PATH",
+    "LOCAL_FLEET_SOURCE"
+  ],
+  "tasks": {
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "envMode": "loose"
+    },
+    "gen": {
+      "inputs": ["$TURBO_ROOT$/proto/**", "$TURBO_ROOT$/buf.gen.yaml", "$TURBO_ROOT$/buf.yaml"],
+      "outputs": ["src/gen/**"]
+    },
+    "build": {
+      "dependsOn": ["^build", "gen"],
+      "outputs": ["dist/**"],
+      "env": ["AGENT_VERSION"]
+    },
+    "@repo/database#build": {
+      "dependsOn": ["^build", "gen", "@repo/database#db:generate"],
+      "outputs": ["dist/**"]
+    },
+    "local-lab#build": {
+      "dependsOn": ["^build", "gen"],
+      "cache": false,
+      "env": ["AGENT_VERSION"]
+    },
+    "db:generate": {
+      "inputs": ["prisma/**", "prisma.config.ts", "package.json", "$TURBO_ROOT$/pnpm-lock.yaml"],
+      "outputs": ["generated/**"]
+    },
+    "db:push": {
+      "cache": false
+    },
+    "db:migrate": {
+      "cache": false
+    },
+    "lint": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "eslint.config.mjs",
+        "src/**",
+        "{backend,frontend}/**/*.{ts,tsx}",
+        "*.{ts,tsx,mjs,cjs,js}",
+        "$TURBO_ROOT$/packages/eslint-config/**",
+        "!$TURBO_ROOT$/packages/eslint-config/node_modules/**",
+        "$TURBO_ROOT$/packages/typescript-config/**",
+        "!$TURBO_ROOT$/packages/typescript-config/node_modules/**"
+      ],
+      "outputs": []
+    },
+    "typecheck": {
+      "dependsOn": ["^build", "gen", "@repo/database#db:generate"]
+    },
+    "test": {
+      "dependsOn": ["^build", "gen", "@repo/database#db:generate"],
+      "env": ["DATABASE_URL", "E2E_DATABASE_SERVER_URL"],
+      "passThroughEnv": ["DATABASE_URL", "PGBOUNCER_CONNECTION_STRING"]
+    },
+    "test:int": {
+      "dependsOn": ["^build", "gen", "@repo/database#db:generate"],
+      "cache": false,
+      "env": ["DATABASE_URL", "E2E_DATABASE_SERVER_URL"],
+      "passThroughEnv": ["DATABASE_URL", "PGBOUNCER_CONNECTION_STRING"]
+    },
+    "test:e2e": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "passThroughEnv": ["DATABASE_URL", "PGBOUNCER_CONNECTION_STRING"]
+    },
+    "test:playwright": {
+      "dependsOn": ["^build"],
+      "cache": false
+    }
+  }
+}

@@ -1,0 +1,21 @@
+model DeviceModel {
+  id           String  @id @default(uuid())
+  manufacturer String
+  model        String
+  // URL-safe identifier (e.g. "ipmi"). Callers filter device types by slug.
+  slug         String? @unique
+  formFactor   String?
+  description  String?
+  isFullDepth  Boolean @default(true)
+  heightU      Int?
+  maxPowerW    Int?
+
+  // Relations
+  devices Device[]
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([manufacturer, model])
+}

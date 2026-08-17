@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "WebhookEventType" ADD VALUE 'DEPLOYMENT_INTERRUPTED';

@@ -1,0 +1,79 @@
+// benchmark.* operations — GPU validation.
+//
+// Long-running ops (30+ min gpu-burn + NCCL) emit work.progress envelopes
+// at phase boundaries so saga logs show liveness.
+//
+// Defaults: zero-value benchmark_type → BENCHMARK_TYPE_ALL; zero-value
+// duration ("") → "30m". Applied by the agent handler.
+
+syntax = "proto3";
+
+package brokkr.agent.v1.operations;
+
+// BenchmarkType — 'all' runs both gpu-burn and NCCL; the singles skip
+// the other. Agent MUST treat UNSPECIFIED as ALL.
+enum BenchmarkType {
+  BENCHMARK_TYPE_UNSPECIFIED = 0;
+  BENCHMARK_TYPE_ALL = 1;
+  BENCHMARK_TYPE_GPU_BURN = 2;
+  BENCHMARK_TYPE_NCCL = 3;
+}
+
+// benchmark.checkCcMode — detects NVIDIA Confidential Compute mode.
+// CC-enabled GPUs can't run the benchmarks; the saga skips them when
+// cc_enabled is true. CC-probe failures are non-fatal — cc_check_error is
+// set and the saga proceeds with cc_enabled=false.
+message BenchmarkCheckCcModeInput {}
+
+// BenchmarkCheckCcModeOutput — CC probe result.
+message BenchmarkCheckCcModeOutput {
+  // True iff any detected NVIDIA GPU reports Confidential Compute enabled.
+  // Benchmarks must be skipped when true.
+  bool cc_enabled = 1;
+
+  // Convenience flag mirroring cc_enabled; set so callers don't need to
+  // re-derive the decision.
+  optional bool skip_benchmarks = 2;
+
+  // Error message when the CC probe itself failed to run. Non-fatal — the
+  // saga treats cc_enabled as false and proceeds.
+  optional string cc_check_error = 3;
+}
+
+// benchmark.runBenchmarks — compound operation. Orchestrates:
+//   1. gpu-burn binary (duration-bounded, e.g. '30m')
+//   2. NCCL all-reduce test
+// Emits work.progress envelopes at phase boundaries:
+//   - gpu_burn_start, gpu_burn_done
+//   - nccl_start, nccl_done
+// (upload + hub-report stay on the bridge — no envelope for them.)
+
+// BenchmarkRunBenchmarksInput — parameters for the benchmark suite.
+message BenchmarkRunBenchmarksInput {
+  // Which benchmark(s) to run. See BenchmarkType.
+  // Agent MUST treat BENCHMARK_TYPE_UNSPECIFIED as BENCHMARK_TYPE_ALL
+  // (Zod source default).
+  BenchmarkType benchmark_type = 1;
+
+  // Duration string passed to gpu-burn, e.g. '30m', '1h'. NCCL duration is
+  // fixed per-iteration.
+  // Agent MUST treat empty string as "30m" (Zod source default).
+  string duration = 2;
+}
+
+// BenchmarkRunBenchmarksOutput — combined result of the benchmark suite.
+message BenchmarkRunBenchmarksOutput {
+  // Echoes the input benchmark_type for downstream result classification.
+  string benchmark_type = 1;
+
+  // Merged per-benchmark result dict, e.g. { "gpu_burn": {...}, "nccl": {...} }.
+  // Opaque shape — hub consumes as JSON. JSON-encoded bytes to match the
+  // work.proto convention for opaque payloads.
+  bytes gpu_benchmarks = 2;
+
+  // Overall gpu-burn pass/fail verdict; false when skipped.
+  bool gpu_burn_passed = 3;
+
+  // Overall NCCL pass/fail verdict; false when skipped.
+  bool nccl_passed = 4;
+}

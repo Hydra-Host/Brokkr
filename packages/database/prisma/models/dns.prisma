@@ -1,0 +1,64 @@
+// Named 'DnsDomain' (not 'DnsZone') to avoid collision with the datacenter Zone concept.
+
+enum DnsDomainType {
+  FORWARD
+  REVERSE
+}
+
+enum DnsRecordType {
+  A
+  AAAA
+  PTR
+}
+
+enum DnsRecordSource {
+  MANUAL
+  AUTO
+}
+
+model DnsDomain {
+  id   String        @id @default(uuid())
+  name String
+  type DnsDomainType @default(FORWARD)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  zoneId String
+  zone   Zone   @relation(fields: [zoneId], references: [id])
+
+  records DnsRecord[]
+
+  // Partial unique on (zoneId, name) enforced by migration (Prisma limitation — cannot express WHERE deletedAt IS NULL).
+  // Queries must use findFirst({ where: { deletedAt: null } }) instead of @unique.
+  @@index([zoneId])
+}
+
+model DnsRecord {
+  id     String          @id @default(uuid())
+  name   String
+  type   DnsRecordType
+  value  String
+  source DnsRecordSource @default(MANUAL)
+
+  ttlOverride Int?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  domainId String
+  domain   DnsDomain @relation(fields: [domainId], references: [id], onDelete: Restrict)
+
+  deviceId    String?
+  device      Device?    @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  ipAddressId String?
+  ipAddress   IpAddress? @relation(fields: [ipAddressId], references: [id], onDelete: SetNull)
+
+  // (domainId, name, type, value) uniqueness enforced among ACTIVE rows only — partial index
+  // `DnsRecord_active_domainId_name_type_value_unique`, same pattern as DnsDomain above.
+  @@index([domainId])
+  @@index([deviceId])
+  @@index([ipAddressId])
+}

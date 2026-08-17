@@ -1,0 +1,43 @@
+model ReservationInvite {
+  id                    String        @id @default(uuid())
+  inviteeEmail          String?
+  inviterEmail          String        @default("")
+  inviteeOrganizationId String?
+  inviteeOrganization   Organization? @relation("inviteeOrganization", fields: [inviteeOrganizationId], references: [id], map: "ReservationInvite_inviteeOrganizationId_fkey")
+
+  price                     Int              @default(0)
+  billingFrequency          BillingFrequency @default(MONTHLY)
+  manualBilling             Boolean          @default(false)
+  // Stored in milliseconds
+  interruptibleNoticePeriod Int?
+  notes                     String?
+
+  dateAccepted DateTime?
+  dateCreated  DateTime  @default(now())
+  dateDeleted  DateTime?
+  dateExpires  DateTime
+  dateUpdated  DateTime? @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  reservationId              String?                      @unique
+  reservation                Reservation?                 @relation(fields: [reservationId], references: [id])
+  // Back-relation field renamed from `devicesInReservationInvite: DevicesInReservationInvite[]`
+  // when the join table moved from Device to Server in
+  // `20260527213000_move_rentals_to_server`.
+  serversInReservationInvite ServersInReservationInvite[]
+}
+
+// Per-ReservationInvite membership of Servers. Renamed from
+// `DevicesInReservationInvite` in `20260527213000_move_rentals_to_server`
+// when the join table's FK moved from Device.id to Server.id.
+// Composite PK rebuilt as (serverId, reservationInviteId).
+model ServersInReservationInvite {
+  serverId            String
+  server              Server            @relation(fields: [serverId], references: [id])
+  reservationInviteId String
+  reservationInvite   ReservationInvite @relation(fields: [reservationInviteId], references: [id])
+
+  @@id([serverId, reservationInviteId])
+}

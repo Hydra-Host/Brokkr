@@ -1,0 +1,33 @@
+// Per-socket CPU inventory. Mirrors the normalization shape of Gpu /
+// StorageDrive — discovery's `ghw_cpu` collector reports per-socket
+// detail (model, vendor, core/thread counts, capability flags) that the
+// denormalized `Device.cpu*` scalars collapse away. Adding this table
+// lets us stop discarding per-socket data and is the first step toward
+// dropping those scalars from `Device`.
+model Cpu {
+  id          String @id @default(uuid())
+  socketIndex Int
+
+  // Identity (from ghw_cpu.processors[])
+  model        String
+  vendor       String?
+  architecture String?
+
+  // Topology
+  coreCount   Int?
+  threadCount Int?
+
+  // CPU feature flags from ghw_cpu (e.g. sgx, sev, tdx, avx512). Used by
+  // TEE-detection composers and downstream provisioning checks.
+  capabilities String[] @default([])
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId, socketIndex])
+  @@index([deviceId])
+  @@index([model])
+}

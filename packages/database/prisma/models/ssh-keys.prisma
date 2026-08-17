@@ -1,0 +1,12 @@
+model SshKeys {
+  id          String    @id @default(uuid())
+  dateCreated DateTime  @default(now())
+  dateDeleted DateTime?
+  name        String
+  fingerprint String
+  key         String
+  userId      String
+
+  user           User                @relation(fields: [userId], references: [id])
+  deploymentKeys DeploymentSshKeys[]
+}

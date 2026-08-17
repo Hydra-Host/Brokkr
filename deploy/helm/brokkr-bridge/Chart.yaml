@@ -1,0 +1,15 @@
+apiVersion: v2
+name: brokkr-bridge
+description: >-
+  Brokkr bridge (the "spoke"). Runs at each site, next to the bare metal, and
+  connects back to the hub's Redis bus. One bridge release per zone.
+type: application
+version: 0.1.0
+appVersion: latest
+home: https://github.com/Hydra-Host/Brokkr
+sources:
+  - https://github.com/Hydra-Host/Brokkr
+keywords:
+  - brokkr
+  - bare-metal
+  - bridge

@@ -1,0 +1,68 @@
+enum DeviceTokenContext {
+  BROKKR_LIVE
+  DEPLOYMENT_OS
+}
+
+enum DeviceTokenStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum DeviceTokenRevocationReason {
+  DEPLOYMENT_ENDED
+  REPROVISION
+  MANUAL
+  ROTATION
+  SUSPECTED_LEAK
+}
+
+enum DeviceTokenAuditEventType {
+  ISSUED
+  REVOKED
+  ROTATED
+  USED_AFTER_REVOKE
+  USED_AFTER_EXPIRY
+}
+
+model DeviceToken {
+  id                 String                       @id @default(uuid()) @db.Uuid
+  deviceId           String
+  device             Device                       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deploymentId       String?
+  deployment         Deployment?                  @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
+  context            DeviceTokenContext
+  tokenHash          String                       @unique
+  displayId          String
+  status             DeviceTokenStatus            @default(ACTIVE)
+  rotationGeneration Int                          @default(0)
+  expiresAt          DateTime?
+  lastUsedAt         DateTime?
+  lastUsedIp         String?
+  revokedAt          DateTime?
+  revokedReason      DeviceTokenRevocationReason?
+  revokedNote        String?
+  issuedBy           String?
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+  auditEvents        DeviceTokenAuditEvent[]
+
+  // Migration adds a partial unique index (WHERE status='ACTIVE') enforcing one active token per device+context+deployment.
+  @@index([deviceId, context, status])
+  @@index([deploymentId])
+  @@index([status, expiresAt])
+}
+
+model DeviceTokenAuditEvent {
+  id        String                    @id @default(uuid()) @db.Uuid
+  tokenId   String                    @db.Uuid
+  token     DeviceToken               @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  event     DeviceTokenAuditEventType
+  actor     String?
+  ip        String?
+  userAgent String?
+  payload   Json?
+  createdAt DateTime                  @default(now())
+
+  @@index([tokenId, createdAt])
+  @@index([event, createdAt])
+}

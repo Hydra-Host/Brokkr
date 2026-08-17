@@ -1,0 +1,2 @@
+# Build-time generated; never commit. Globbed so an earlier name left in a stale worktree stays ignored.
+src/*.generated.ts

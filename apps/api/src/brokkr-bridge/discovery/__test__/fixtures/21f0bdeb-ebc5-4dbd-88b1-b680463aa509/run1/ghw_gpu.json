@@ -1,0 +1,2357 @@
+{
+  "gpu": {
+    "cards": [
+      {
+        "address": "simple-framebuffer.0",
+        "index": 0,
+        "pci": null,
+        "node": {
+          "id": 0,
+          "cores": [
+            {
+              "id": 0,
+              "total_threads": 2,
+              "logical_processors": [0, 64]
+            },
+            {
+              "id": 22,
+              "total_threads": 2,
+              "logical_processors": [10, 74]
+            },
+            {
+              "id": 10,
+              "total_threads": 2,
+              "logical_processors": [100, 36]
+            },
+            {
+              "id": 31,
+              "total_threads": 2,
+              "logical_processors": [102, 38]
+            },
+            {
+              "id": 6,
+              "total_threads": 2,
+              "logical_processors": [104, 40]
+            },
+            {
+              "id": 24,
+              "total_threads": 2,
+              "logical_processors": [106, 42]
+            },
+            {
+              "id": 14,
+              "total_threads": 2,
+              "logical_processors": [108, 44]
+            },
+            {
+              "id": 26,
+              "total_threads": 2,
+              "logical_processors": [110, 46]
+            },
+            {
+              "id": 2,
+              "total_threads": 2,
+              "logical_processors": [112, 48]
+            },
+            {
+              "id": 17,
+              "total_threads": 2,
+              "logical_processors": [114, 50]
+            },
+            {
+              "id": 11,
+              "total_threads": 2,
+              "logical_processors": [116, 52]
+            },
+            {
+              "id": 23,
+              "total_threads": 2,
+              "logical_processors": [118, 54]
+            },
+            {
+              "id": 12,
+              "total_threads": 2,
+              "logical_processors": [12, 76]
+            },
+            {
+              "id": 7,
+              "total_threads": 2,
+              "logical_processors": [120, 56]
+            },
+            {
+              "id": 20,
+              "total_threads": 2,
+              "logical_processors": [122, 58]
+            },
+            {
+              "id": 15,
+              "total_threads": 2,
+              "logical_processors": [124, 60]
+            },
+            {
+              "id": 16,
+              "total_threads": 2,
+              "logical_processors": [126, 62]
+            },
+            {
+              "id": 30,
+              "total_threads": 2,
+              "logical_processors": [14, 78]
+            },
+            {
+              "id": 5,
+              "total_threads": 2,
+              "logical_processors": [16, 80]
+            },
+            {
+              "id": 25,
+              "total_threads": 2,
+              "logical_processors": [18, 82]
+            },
+            {
+              "id": 19,
+              "total_threads": 2,
+              "logical_processors": [2, 66]
+            },
+            {
+              "id": 9,
+              "total_threads": 2,
+              "logical_processors": [20, 84]
+            },
+            {
+              "id": 27,
+              "total_threads": 2,
+              "logical_processors": [22, 86]
+            },
+            {
+              "id": 1,
+              "total_threads": 2,
+              "logical_processors": [24, 88]
+            },
+            {
+              "id": 18,
+              "total_threads": 2,
+              "logical_processors": [26, 90]
+            },
+            {
+              "id": 13,
+              "total_threads": 2,
+              "logical_processors": [28, 92]
+            },
+            {
+              "id": 29,
+              "total_threads": 2,
+              "logical_processors": [30, 94]
+            },
+            {
+              "id": 4,
+              "total_threads": 2,
+              "logical_processors": [32, 96]
+            },
+            {
+              "id": 21,
+              "total_threads": 2,
+              "logical_processors": [34, 98]
+            },
+            {
+              "id": 8,
+              "total_threads": 2,
+              "logical_processors": [4, 68]
+            },
+            {
+              "id": 28,
+              "total_threads": 2,
+              "logical_processors": [6, 70]
+            },
+            {
+              "id": 3,
+              "total_threads": 2,
+              "logical_processors": [72, 8]
+            }
+          ],
+          "caches": [
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [0, 64]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [2, 66]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [4, 68]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [6, 70]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [8, 72]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [10, 74]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [12, 76]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [14, 78]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [16, 80]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [18, 82]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [20, 84]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [22, 86]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [24, 88]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [26, 90]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [28, 92]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [30, 94]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [32, 96]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [34, 98]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [36, 100]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [38, 102]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [40, 104]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [42, 106]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [44, 108]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [46, 110]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [48, 112]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [50, 114]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [52, 116]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [54, 118]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [56, 120]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [58, 122]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [60, 124]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [62, 126]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [0, 64]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [2, 66]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [4, 68]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [6, 70]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [8, 72]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [10, 74]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [12, 76]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [14, 78]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [16, 80]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [18, 82]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [20, 84]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [22, 86]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [24, 88]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [26, 90]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [28, 92]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [30, 94]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [32, 96]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [34, 98]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [36, 100]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [38, 102]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [40, 104]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [42, 106]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [44, 108]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [46, 110]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [48, 112]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [50, 114]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [52, 116]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [54, 118]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [56, 120]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [58, 122]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [60, 124]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [62, 126]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [0, 64]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [2, 66]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [4, 68]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [6, 70]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [8, 72]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [10, 74]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [12, 76]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [14, 78]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [16, 80]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [18, 82]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [20, 84]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [22, 86]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [24, 88]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [26, 90]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [28, 92]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [30, 94]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [32, 96]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [34, 98]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [36, 100]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [38, 102]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [40, 104]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [42, 106]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [44, 108]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [46, 110]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [48, 112]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [50, 114]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [52, 116]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [54, 118]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [56, 120]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [58, 122]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [60, 124]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [62, 126]
+            },
+            {
+              "level": 3,
+              "type": "unified",
+              "size_bytes": 62914560,
+              "logical_processors": [
+                0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52,
+                54, 56, 58, 60, 62, 64, 66, 68, 70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92, 94, 96, 98, 100, 102,
+                104, 106, 108, 110, 112, 114, 116, 118, 120, 122, 124, 126
+              ]
+            }
+          ],
+          "distances": [10, 21],
+          "memory": {
+            "total_physical_bytes": 137438953472,
+            "total_usable_bytes": 134613938176,
+            "supported_page_sizes": [1073741824, 2097152],
+            "modules": null
+          }
+        }
+      },
+      {
+        "address": "0000:ca:00.0",
+        "index": 1,
+        "pci": {
+          "driver": "nvidia",
+          "address": "0000:ca:00.0",
+          "vendor": {
+            "id": "10de",
+            "name": "NVIDIA Corporation"
+          },
+          "product": {
+            "id": "20b7",
+            "name": "GA100GL [A30 PCIe]"
+          },
+          "revision": "0xa1",
+          "subsystem": {
+            "id": "1532",
+            "name": "unknown"
+          },
+          "class": {
+            "id": "03",
+            "name": "Display controller"
+          },
+          "subclass": {
+            "id": "02",
+            "name": "3D controller"
+          },
+          "programming_interface": {
+            "id": "00",
+            "name": "unknown"
+          }
+        },
+        "node": {
+          "id": 1,
+          "cores": [
+            {
+              "id": 0,
+              "total_threads": 2,
+              "logical_processors": [1, 65]
+            },
+            {
+              "id": 10,
+              "total_threads": 2,
+              "logical_processors": [101, 37]
+            },
+            {
+              "id": 28,
+              "total_threads": 2,
+              "logical_processors": [103, 39]
+            },
+            {
+              "id": 6,
+              "total_threads": 2,
+              "logical_processors": [105, 41]
+            },
+            {
+              "id": 17,
+              "total_threads": 2,
+              "logical_processors": [107, 43]
+            },
+            {
+              "id": 14,
+              "total_threads": 2,
+              "logical_processors": [109, 45]
+            },
+            {
+              "id": 24,
+              "total_threads": 2,
+              "logical_processors": [11, 75]
+            },
+            {
+              "id": 30,
+              "total_threads": 2,
+              "logical_processors": [111, 47]
+            },
+            {
+              "id": 2,
+              "total_threads": 2,
+              "logical_processors": [113, 49]
+            },
+            {
+              "id": 19,
+              "total_threads": 2,
+              "logical_processors": [115, 51]
+            },
+            {
+              "id": 11,
+              "total_threads": 2,
+              "logical_processors": [117, 53]
+            },
+            {
+              "id": 25,
+              "total_threads": 2,
+              "logical_processors": [119, 55]
+            },
+            {
+              "id": 7,
+              "total_threads": 2,
+              "logical_processors": [121, 57]
+            },
+            {
+              "id": 16,
+              "total_threads": 2,
+              "logical_processors": [123, 59]
+            },
+            {
+              "id": 15,
+              "total_threads": 2,
+              "logical_processors": [125, 61]
+            },
+            {
+              "id": 22,
+              "total_threads": 2,
+              "logical_processors": [127, 63]
+            },
+            {
+              "id": 12,
+              "total_threads": 2,
+              "logical_processors": [13, 77]
+            },
+            {
+              "id": 29,
+              "total_threads": 2,
+              "logical_processors": [15, 79]
+            },
+            {
+              "id": 5,
+              "total_threads": 2,
+              "logical_processors": [17, 81]
+            },
+            {
+              "id": 18,
+              "total_threads": 2,
+              "logical_processors": [19, 83]
+            },
+            {
+              "id": 9,
+              "total_threads": 2,
+              "logical_processors": [21, 85]
+            },
+            {
+              "id": 31,
+              "total_threads": 2,
+              "logical_processors": [23, 87]
+            },
+            {
+              "id": 1,
+              "total_threads": 2,
+              "logical_processors": [25, 89]
+            },
+            {
+              "id": 20,
+              "total_threads": 2,
+              "logical_processors": [27, 91]
+            },
+            {
+              "id": 13,
+              "total_threads": 2,
+              "logical_processors": [29, 93]
+            },
+            {
+              "id": 21,
+              "total_threads": 2,
+              "logical_processors": [3, 67]
+            },
+            {
+              "id": 26,
+              "total_threads": 2,
+              "logical_processors": [31, 95]
+            },
+            {
+              "id": 4,
+              "total_threads": 2,
+              "logical_processors": [33, 97]
+            },
+            {
+              "id": 23,
+              "total_threads": 2,
+              "logical_processors": [35, 99]
+            },
+            {
+              "id": 8,
+              "total_threads": 2,
+              "logical_processors": [5, 69]
+            },
+            {
+              "id": 27,
+              "total_threads": 2,
+              "logical_processors": [7, 71]
+            },
+            {
+              "id": 3,
+              "total_threads": 2,
+              "logical_processors": [73, 9]
+            }
+          ],
+          "caches": [
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [1, 65]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [3, 67]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [5, 69]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [7, 71]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [9, 73]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [11, 75]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [13, 77]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [15, 79]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [17, 81]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [19, 83]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [21, 85]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [23, 87]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [25, 89]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [27, 91]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [29, 93]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [31, 95]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [33, 97]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [35, 99]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [37, 101]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [39, 103]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [41, 105]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [43, 107]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [45, 109]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [47, 111]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [49, 113]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [51, 115]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [53, 117]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [55, 119]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [57, 121]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [59, 123]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [61, 125]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [63, 127]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [1, 65]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [3, 67]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [5, 69]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [7, 71]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [9, 73]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [11, 75]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [13, 77]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [15, 79]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [17, 81]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [19, 83]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [21, 85]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [23, 87]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [25, 89]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [27, 91]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [29, 93]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [31, 95]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [33, 97]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [35, 99]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [37, 101]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [39, 103]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [41, 105]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [43, 107]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [45, 109]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [47, 111]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [49, 113]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [51, 115]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [53, 117]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [55, 119]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [57, 121]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [59, 123]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [61, 125]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [63, 127]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [1, 65]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [3, 67]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [5, 69]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [7, 71]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [9, 73]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [11, 75]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [13, 77]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [15, 79]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [17, 81]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [19, 83]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [21, 85]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [23, 87]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [25, 89]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [27, 91]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [29, 93]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [31, 95]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [33, 97]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [35, 99]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [37, 101]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [39, 103]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [41, 105]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [43, 107]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [45, 109]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [47, 111]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [49, 113]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [51, 115]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [53, 117]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [55, 119]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [57, 121]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [59, 123]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [61, 125]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [63, 127]
+            },
+            {
+              "level": 3,
+              "type": "unified",
+              "size_bytes": 62914560,
+              "logical_processors": [
+                1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53,
+                55, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 77, 79, 81, 83, 85, 87, 89, 91, 93, 95, 97, 99, 101, 103,
+                105, 107, 109, 111, 113, 115, 117, 119, 121, 123, 125, 127
+              ]
+            }
+          ],
+          "distances": [21, 10],
+          "memory": {
+            "total_physical_bytes": 137438953472,
+            "total_usable_bytes": 135261057024,
+            "supported_page_sizes": [1073741824, 2097152],
+            "modules": null
+          }
+        }
+      },
+      {
+        "address": "0000:e1:00.0",
+        "index": 2,
+        "pci": {
+          "driver": "nvidia",
+          "address": "0000:e1:00.0",
+          "vendor": {
+            "id": "10de",
+            "name": "NVIDIA Corporation"
+          },
+          "product": {
+            "id": "20b7",
+            "name": "GA100GL [A30 PCIe]"
+          },
+          "revision": "0xa1",
+          "subsystem": {
+            "id": "1532",
+            "name": "unknown"
+          },
+          "class": {
+            "id": "03",
+            "name": "Display controller"
+          },
+          "subclass": {
+            "id": "02",
+            "name": "3D controller"
+          },
+          "programming_interface": {
+            "id": "00",
+            "name": "unknown"
+          }
+        },
+        "node": {
+          "id": 1,
+          "cores": [
+            {
+              "id": 0,
+              "total_threads": 2,
+              "logical_processors": [1, 65]
+            },
+            {
+              "id": 10,
+              "total_threads": 2,
+              "logical_processors": [101, 37]
+            },
+            {
+              "id": 28,
+              "total_threads": 2,
+              "logical_processors": [103, 39]
+            },
+            {
+              "id": 6,
+              "total_threads": 2,
+              "logical_processors": [105, 41]
+            },
+            {
+              "id": 17,
+              "total_threads": 2,
+              "logical_processors": [107, 43]
+            },
+            {
+              "id": 14,
+              "total_threads": 2,
+              "logical_processors": [109, 45]
+            },
+            {
+              "id": 24,
+              "total_threads": 2,
+              "logical_processors": [11, 75]
+            },
+            {
+              "id": 30,
+              "total_threads": 2,
+              "logical_processors": [111, 47]
+            },
+            {
+              "id": 2,
+              "total_threads": 2,
+              "logical_processors": [113, 49]
+            },
+            {
+              "id": 19,
+              "total_threads": 2,
+              "logical_processors": [115, 51]
+            },
+            {
+              "id": 11,
+              "total_threads": 2,
+              "logical_processors": [117, 53]
+            },
+            {
+              "id": 25,
+              "total_threads": 2,
+              "logical_processors": [119, 55]
+            },
+            {
+              "id": 7,
+              "total_threads": 2,
+              "logical_processors": [121, 57]
+            },
+            {
+              "id": 16,
+              "total_threads": 2,
+              "logical_processors": [123, 59]
+            },
+            {
+              "id": 15,
+              "total_threads": 2,
+              "logical_processors": [125, 61]
+            },
+            {
+              "id": 22,
+              "total_threads": 2,
+              "logical_processors": [127, 63]
+            },
+            {
+              "id": 12,
+              "total_threads": 2,
+              "logical_processors": [13, 77]
+            },
+            {
+              "id": 29,
+              "total_threads": 2,
+              "logical_processors": [15, 79]
+            },
+            {
+              "id": 5,
+              "total_threads": 2,
+              "logical_processors": [17, 81]
+            },
+            {
+              "id": 18,
+              "total_threads": 2,
+              "logical_processors": [19, 83]
+            },
+            {
+              "id": 9,
+              "total_threads": 2,
+              "logical_processors": [21, 85]
+            },
+            {
+              "id": 31,
+              "total_threads": 2,
+              "logical_processors": [23, 87]
+            },
+            {
+              "id": 1,
+              "total_threads": 2,
+              "logical_processors": [25, 89]
+            },
+            {
+              "id": 20,
+              "total_threads": 2,
+              "logical_processors": [27, 91]
+            },
+            {
+              "id": 13,
+              "total_threads": 2,
+              "logical_processors": [29, 93]
+            },
+            {
+              "id": 21,
+              "total_threads": 2,
+              "logical_processors": [3, 67]
+            },
+            {
+              "id": 26,
+              "total_threads": 2,
+              "logical_processors": [31, 95]
+            },
+            {
+              "id": 4,
+              "total_threads": 2,
+              "logical_processors": [33, 97]
+            },
+            {
+              "id": 23,
+              "total_threads": 2,
+              "logical_processors": [35, 99]
+            },
+            {
+              "id": 8,
+              "total_threads": 2,
+              "logical_processors": [5, 69]
+            },
+            {
+              "id": 27,
+              "total_threads": 2,
+              "logical_processors": [7, 71]
+            },
+            {
+              "id": 3,
+              "total_threads": 2,
+              "logical_processors": [73, 9]
+            }
+          ],
+          "caches": [
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [1, 65]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [3, 67]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [5, 69]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [7, 71]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [9, 73]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [11, 75]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [13, 77]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [15, 79]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [17, 81]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [19, 83]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [21, 85]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [23, 87]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [25, 89]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [27, 91]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [29, 93]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [31, 95]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [33, 97]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [35, 99]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [37, 101]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [39, 103]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [41, 105]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [43, 107]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [45, 109]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [47, 111]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [49, 113]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [51, 115]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [53, 117]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [55, 119]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [57, 121]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [59, 123]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [61, 125]
+            },
+            {
+              "level": 1,
+              "type": "instruction",
+              "size_bytes": 32768,
+              "logical_processors": [63, 127]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [1, 65]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [3, 67]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [5, 69]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [7, 71]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [9, 73]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [11, 75]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [13, 77]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [15, 79]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [17, 81]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [19, 83]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [21, 85]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [23, 87]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [25, 89]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [27, 91]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [29, 93]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [31, 95]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [33, 97]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [35, 99]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [37, 101]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [39, 103]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [41, 105]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [43, 107]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [45, 109]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [47, 111]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [49, 113]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [51, 115]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [53, 117]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [55, 119]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [57, 121]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [59, 123]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [61, 125]
+            },
+            {
+              "level": 1,
+              "type": "data",
+              "size_bytes": 32768,
+              "logical_processors": [63, 127]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [1, 65]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [3, 67]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [5, 69]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [7, 71]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [9, 73]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [11, 75]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [13, 77]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [15, 79]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [17, 81]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [19, 83]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [21, 85]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [23, 87]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [25, 89]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [27, 91]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [29, 93]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [31, 95]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [33, 97]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [35, 99]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [37, 101]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [39, 103]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [41, 105]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [43, 107]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [45, 109]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [47, 111]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [49, 113]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [51, 115]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [53, 117]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [55, 119]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [57, 121]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [59, 123]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [61, 125]
+            },
+            {
+              "level": 2,
+              "type": "unified",
+              "size_bytes": 2097152,
+              "logical_processors": [63, 127]
+            },
+            {
+              "level": 3,
+              "type": "unified",
+              "size_bytes": 62914560,
+              "logical_processors": [
+                1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53,
+                55, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 77, 79, 81, 83, 85, 87, 89, 91, 93, 95, 97, 99, 101, 103,
+                105, 107, 109, 111, 113, 115, 117, 119, 121, 123, 125, 127
+              ]
+            }
+          ],
+          "distances": [21, 10],
+          "memory": {
+            "total_physical_bytes": 137438953472,
+            "total_usable_bytes": 135261057024,
+            "supported_page_sizes": [1073741824, 2097152],
+            "modules": null
+          }
+        }
+      }
+    ]
+  }
+}

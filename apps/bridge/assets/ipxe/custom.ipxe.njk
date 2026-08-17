@@ -1,0 +1,19 @@
+#!ipxe
+
+# Build bearer-authenticated phone home request
+echo Device ID {{ device_id }}
+echo Phone home endpoint {{ phone_home_endpoint }}
+echo Chainload URL {{ ipxe_url }}
+
+params
+param --header Authorization Bearer {{ brokkr_live_token }}
+param --header x-brokkr-job-id {{ job_id }}
+
+# Phone home with bearer token
+imgfetch --name=custom.ipxe {{ phone_home_endpoint }}##params || goto phone_done
+
+# Chain load custom iPXE URL
+:phone_done
+imgfree
+echo Chainload URL {{ ipxe_url }}
+chain {{ ipxe_url }}

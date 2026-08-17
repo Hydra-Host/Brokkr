@@ -1,0 +1,130 @@
+"""Literal-rendering helpers for the ``sql-seed/`` generators that emit SQL text to stdout.
+
+No DB connection; quoting is done correctly regardless of input trust.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Sequence
+from typing import Any
+
+_BARE_IDENT = re.compile(r"[a-z][a-z0-9]*\Z")
+
+# Emitted clause lists wrap here so a generated .sql file stays readable in a diff.
+_WIDTH = 120
+
+
+def q(value: Any) -> str:
+    """Render a SQL string literal (``NULL`` for ``None``); doubles quotes."""
+    if value is None:
+        return "NULL"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def qj(value: Any) -> str:
+    """Render a JSON value as a quoted ``::jsonb`` literal."""
+    return q(json.dumps(value, separators=(",", ":"))) + "::jsonb"
+
+
+def qe(value: Any, pg_type: str) -> str:
+    """Render a quoted literal cast to a named Postgres type (enums)."""
+    return f'{q(value)}::"{pg_type}"'
+
+
+def logs_to_stderr() -> None:
+    """Route the shared logger to stderr so a generator's stdout stays pure SQL.
+
+    Call in a generator's ``__main__`` before printing — imported code logs through
+    the same singleton, else its diagnostics land in the captured ``.sql`` file.
+    """
+    from local.logger import log
+
+    log.use_stderr_only()
+
+
+def ident(name: str) -> str:
+    """Quote a column name unless it is all-lowercase — Postgres folds unquoted mixed case."""
+    return name if _BARE_IDENT.match(name) else f'"{name}"'
+
+
+def _wrap(parts: Sequence[str], opener: str, closer: str, indent: str = "    ") -> str:
+    """Greedy-wrap a comma-separated list at :data:`_WIDTH`; continuation lines get ``indent``."""
+    if not parts:
+        return opener + closer
+    pieces = [f"{p}{closer}" if i == len(parts) - 1 else f"{p}," for i, p in enumerate(parts)]
+    lines = [pieces[0]]
+    for piece in pieces[1:]:
+        prefix = opener if len(lines) == 1 else indent
+        if len(prefix) + len(lines[-1]) + 1 + len(piece) <= _WIDTH:
+            lines[-1] = f"{lines[-1]} {piece}"
+        else:
+            lines.append(piece)
+    return "\n".join((opener if i == 0 else indent) + line for i, line in enumerate(lines))
+
+
+def emit_upsert(
+    table: str,
+    cols: str,
+    values: Sequence[Any],
+    conflict: str,
+    *,
+    update: str | None = None,
+    where: str | None = None,
+    do_nothing: bool = False,
+    updated_at: bool = True,
+) -> str:
+    """Build one idempotent ``INSERT … ON CONFLICT`` statement from column/value data.
+
+    ``cols``, ``conflict`` and ``update`` are space-separated column names, quoted per :func:`ident`.
+    ``values`` holds one already-rendered literal per column, in ``cols`` order (``q``/``qe``/``qj``).
+
+    ``update`` names the columns the conflict path refreshes, defaulting to every column but ``id``
+    and the conflict target. ``where`` supplies a partial-index conflict predicate (``"deletedAt" IS
+    NULL``), ``do_nothing`` swaps ``DO UPDATE`` for ``DO NOTHING``, and ``updated_at`` appends the
+    ``"updatedAt"`` column as ``NOW()`` on both the insert and the refresh path.
+    """
+    names = cols.split()
+    rendered = [str(v) for v in values]
+    if len(rendered) != len(names):
+        raise ValueError(f"{table}: {len(names)} columns but {len(rendered)} values")
+    if updated_at:
+        names.append("updatedAt")
+        rendered.append("NOW()")
+
+    insert = _wrap([ident(n) for n in names], f'INSERT INTO "{table}" (', ")")
+    values_sql = _wrap(rendered, "VALUES (", ")")
+
+    target = ", ".join(ident(n) for n in conflict.split())
+    on_conflict = f"ON CONFLICT ({target})" + (f" WHERE {where}" if where else "")
+    if do_nothing:
+        if update is not None:
+            raise ValueError(f"{table}: do_nothing would discard update={update!r}")
+        return f"{insert}\n{values_sql}\n{on_conflict} DO NOTHING;"
+
+    if update is None:
+        refreshed = [n for n in names if n not in {"id", "updatedAt", *conflict.split()}]
+    else:
+        refreshed = update.split()
+        # EXCLUDED carries every table column, so refreshing an un-inserted one silently NULLs it.
+        unknown = [n for n in refreshed if n not in names]
+        if unknown:
+            raise ValueError(f"{table}: refresh columns absent from the insert list: {' '.join(unknown)}")
+        if updated_at and "updatedAt" in refreshed:
+            raise ValueError(f'{table}: "updatedAt" is appended automatically; drop it from update')
+    assigns = [f"{ident(n)} = EXCLUDED.{ident(n)}" for n in refreshed]
+    if updated_at:
+        assigns.append('"updatedAt" = NOW()')
+    if not assigns:
+        raise ValueError(f"{table}: nothing to refresh on conflict — pass do_nothing=True instead")
+    return f"{insert}\n{values_sql}\n{on_conflict} DO UPDATE SET\n{_wrap(assigns, '    ', ';')}"
+
+
+def header(name: str) -> str:
+    """Standard banner for a generated file — marks it machine-written."""
+    return (
+        f"-- GENERATED by sql-seed/{name} — do not edit by hand.\n"
+        f"-- Regenerate via `task sql-seed:run` (or run the generator directly).\n"
+        f"-- Idempotent: safe to re-apply on every bring-up.\n"
+    )

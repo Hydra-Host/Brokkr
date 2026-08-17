@@ -1,0 +1,35 @@
+// Per-role extension for `Device.role = 'Switch'` — leaf / spine /
+// management / serial-console switches across both east-west and
+// north-south fabrics. Multi-table inheritance, 1:1 with Device.
+//
+// `switchRole` and `fabric` are placeholder strings (leaf|spine|management|
+// serial-console and east-west|north-south respectively). Promote to
+// enums once the value set stabilizes.
+
+// Observed power state of a Switch-role device; on/off only. Distinct from the
+// coarse `Device.status`. The `Switch.powerStatus` field is nullable to mean
+// "power state unknown" (never observed).
+enum SwitchPowerStatus {
+  On
+  Off
+}
+
+model Switch {
+  id String @id @default(uuid())
+
+  // leaf | spine | management | serial-console
+  switchRole String?
+  // east-west | north-south
+  fabric     String?
+  // Physical port count on the chassis.
+  portCount  Int?
+
+  // Observed power state. Null = unknown (never reported by the bridge/BMC).
+  powerStatus SwitchPowerStatus?
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

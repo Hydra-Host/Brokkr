@@ -1,0 +1,14 @@
+{
+  "extends": "@repo/typescript-config/nestjs.json",
+  "compilerOptions": {
+    "outDir": "./dist/cjs",
+    "rootDir": ".",
+    "composite": true,
+    "lib": ["ES2022"],
+    "tsBuildInfoFile": "./tsconfig.backend.tsbuildinfo",
+    "module": "commonjs",
+    "moduleResolution": "node"
+  },
+  "include": ["plugin.ts", "server-config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

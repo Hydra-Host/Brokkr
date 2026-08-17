@@ -1,0 +1,76 @@
+enum EventOutcome {
+  SUCCEEDED
+  FAILED
+  DENIED
+}
+
+enum EventTier {
+  EVIDENCE
+  ACTIVITY
+}
+
+/// Durability actually achieved for the row, not the durability intended. ATOMIC is the only
+/// compliance-grade class: POST_COMMIT loses the row if the process dies after the external mutation.
+enum EventDurability {
+  ATOMIC
+  POST_COMMIT
+  BEST_EFFORT
+}
+
+model EventLog {
+  id             String @id @default(uuid())
+  organizationId String
+
+  tier       EventTier
+  durability EventDurability
+  resource   String
+  action     String
+  actionKey  String
+
+  actorType   RequestSource
+  actorId     String?
+  actorLabel  String?
+  // API-key requests resolve actorId to the owning human, so without these a key's
+  // actions are indistinguishable from its owner's UI actions. Labels are denormalized
+  // because there is no FK and keys get renamed and deleted.
+  apiKeyId    String?
+  apiKeyLabel String?
+
+  targetId    String?
+  targetLabel String?
+
+  outcome   EventOutcome
+  errorCode String?
+
+  requestId String?
+  method    String?
+  path      String?
+  ipAddress String?
+  userAgent String?
+
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  // Both directions carry `id` so the sort is a total order; without it offset pages
+  // skip and duplicate rows whenever timestamps tie. Descending serves the UI browse,
+  // ascending serves the export cursor. Explicit names required: Prisma derives index
+  // names without sort direction, so these two would collide.
+  @@index([organizationId, createdAt(sort: Desc), id(sort: Desc)], map: "EventLog_org_createdAt_id_desc_idx")
+  @@index([organizationId, createdAt, id], map: "EventLog_org_createdAt_id_asc_idx")
+  @@index([organizationId, actorId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([organizationId, actionKey, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([organizationId, resource, targetId, createdAt(sort: Desc), id(sort: Desc)])
+}
+
+/// The unique constraint IS the access throttle — a read-then-write check races under
+/// concurrent requests. actorKey is prefixed by identity kind (`user:` / `api-key:`) so
+/// ids from different domains cannot collide.
+model EventLogAccessBucket {
+  id             String   @id @default(uuid())
+  organizationId String
+  actorKey       String
+  hourBucket     DateTime
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, actorKey, hourBucket])
+}

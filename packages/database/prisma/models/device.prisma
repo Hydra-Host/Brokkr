@@ -1,0 +1,239 @@
+// Coarse, role-agnostic lifecycle status every Device shares; orthogonal to
+// `role` (what kind of device it is). The granular server provisioning /
+// health states (INVENTORY, PROVISIONING, PROVISIONED, OFFLINE, FAILED,
+// DEPROVISIONING) live on `Server.lifecycleStatus` (ServerLifecycleStatus),
+// not here — only Servers have an operational pipeline.
+enum DeviceStatus {
+  PLANNED
+  STAGED
+  ACTIVE
+  MAINTENANCE
+}
+
+// Netplan render family. The renderer normally derives this from role + zone
+// (`derivePopulation()`); this enum exists so `Device.netplanPopulation` can
+// pin a device the derivation gets wrong. The families differ in load-bearing
+// ways — route metrics, DNS fallbacks, bond MAC selection, VRF resolution —
+// so picking the wrong one is a routing change, not a cosmetic one.
+enum NetplanPopulation {
+  FLAT
+  VPC
+  VPC_ROCE
+  BRIDGE_DEFAULT
+  BRIDGE_BONDED
+  BRIDGE_SANS_VRF
+}
+
+// Canonical Device table. Replaces the earlier `DeviceV2` exploration —
+// the multi-table-inheritance extensions (`Server`, `Bridge`, `Switch`,
+// `Router`, `Pdu`, `Cdu`, `RackBrush`, `PatchPanel`) live next to this model
+// and key off `role`.
+model Device {
+  id String @id @default(uuid())
+
+  // ── Identity ───────────────────────────────────────────────────────
+  name            String
+  nickname        String?
+  // Admin-only internal label, searchable in the admin panel; never exposed to
+  // tenants. Uniqueness is enforced by partial expression index
+  // `Device_active_internalName_ci_unique` (LOWER(internalName) WHERE deletedAt
+  // IS NULL) — a plain @unique would span tombstones and be case-sensitive.
+  // Prisma can't express that index, so this field is intentionally NOT @unique.
+  internalName    String?
+  // Two manufacturer-assigned serials, both optional:
+  //  - `systemSerial`  — board/system-level identifier (SMBIOS "System
+  //                      Serial"). Stable per logical machine; what most
+  //                      callers mean when they say "the device's serial".
+  //  - `chassisSerial` — physical enclosure identifier (SMBIOS "Chassis
+  //                      Serial"). Diverges from `systemSerial` on
+  //                      blade/sled hardware where a single chassis hosts
+  //                      multiple swappable systems.
+  systemSerial    String?
+  chassisSerial   String?
+  // Legacy single-serial column, kept for backward compat. Mirrors
+  // `systemSerial` for new writes; readers should prefer `systemSerial`.
+  serial          String?
+  // Baseboard serial reported by discovery (`ghw_baseboard`). Legacy field
+  // — most callers should treat `systemSerial` as the canonical identifier.
+  baseboardSerial String?
+
+  // ── Classification ─────────────────────────────────────────────────
+  // Every device must carry a lifecycle status. New rows default to PLANNED
+  // (pre-commissioning) when a caller doesn't set one. `role` stays nullable — an
+  // unassigned device is a real, expected state (assign-role flow).
+  status     DeviceStatus @default(PLANNED)
+  // Power state lives on the per-role extension tables (`Server.powerStatus`,
+  // `Bridge.powerStatus`, …) — the base Device no longer carries it.
+  role       DeviceRole?
+  deviceType DeviceType?
+
+  // Network
+  networkType DeviceNetworkType?
+
+  // Operator-supplied netplan YAML. When set, the netplan generator emits
+  // this verbatim and skips its own rendering.
+  netplanOverride String?
+
+  // Pins the netplan render family, overriding `derivePopulation()`. Null on
+  // essentially every row — it is an exception list, not per-device tracking.
+  // Exists because the derivation keys on role + zone, which provably cannot
+  // express every device: an operator can choose a family per device over
+  // time, and no signal in the data recovers that choice.
+  netplanPopulation NetplanPopulation?
+
+  // Identity fields populated by discovery (ghw_product / ghw_chassis / ghw_baseboard)
+  // Uniqueness is enforced by the PARTIAL index `Device_active_systemUuid_unique`
+  // (WHERE "deletedAt" IS NULL) — see migration 20260625150000. A plain `@unique` would
+  // span tombstones, so re-commissioning a soft-deleted box would collide on its SMBIOS UUID.
+  // Prisma can't express partial indexes, so this field is intentionally NOT `@unique`.
+  systemUuid String?
+  productSku String?
+  assetTag   String?
+
+  // Firmware / boot mode (efi + efivars + kernel_params)
+  secureBootEnabled Boolean?
+  // CPU architecture. Discovery's ArchitectureHandler writes raw `uname -m`
+  // (x86_64 / aarch64). Values can be either uname-m style (x86_64/aarch64) or
+  // Debian style (amd64/arm64) for legacy-backfilled rows; `normalizeArchForArtifact`
+  // in @repo/utils accepts both spellings before joining LayerArtifact.arch.
+  architecture      String?
+
+  // True when the device boots via UEFI (separate from secureBootEnabled —
+  // a system can be UEFI without secure boot). Drives whether autoinstall
+  // emits an EFI System Partition.
+  uefiBoot Boolean?
+
+  // Virtualization extensions exposed to the host (virtualization collector)
+  iommuEnabled Boolean?
+  sriovEnabled Boolean?
+
+  // Foreign keys
+  zone          Zone?         @relation(fields: [zoneId], references: [id])
+  zoneId        String?
+  supplier      Organization? @relation("DeviceSupplier", fields: [supplierId], references: [id])
+  supplierId    String?
+  sku           SupplierSKU?  @relation(fields: [skuId], references: [id])
+  skuId         String?
+  deviceModel   DeviceModel?  @relation(fields: [deviceModelId], references: [id])
+  deviceModelId String?
+
+  // ── Tenant ─────────────────────────────────────────────────────────
+  // Denormalized from `zone.organizationId` so per-org reads don't need to
+  // join Zone. Invariant: `organizationId` MUST equal `zone.organizationId`
+  // at all times for any row that has a zone. Write paths derive this from
+  // the zone and re-derive whenever `zoneId` changes. Nullable for legacy
+  // rows that may pre-date zone assignment.
+  organization   Organization? @relation("DeviceOrganization", fields: [organizationId], references: [id])
+  organizationId String?
+
+  // Per-device config template link. Null means "fall back to the
+  // purpose-tagged default" — the renderer resolves this at render time,
+  // not here.
+  configTemplate   ConfigTemplate? @relation(fields: [configTemplateId], references: [id], onDelete: SetNull)
+  configTemplateId String?
+
+  // Last lifecycle/saga plan id dispatched for this device — correlation token
+  // matched against bridge job results.
+  lastJobId              String?
+  // Operator override for the IPMI boot device; lifecycle ops fall back to "pxe".
+  ipmiBootDeviceOverride String?
+
+  // Per-device PXE boot firmware override. Consumed end-to-end: DhcpDerivationService joins it
+  // onto each reservation, the DHCP atom carries it per-reservation, and the bridge engine serves
+  // that device's bootfile (bootfileFor) to the matching MAC. Null = inherit prefix.ipxeBuildTarget.
+  ipxeBuildTarget IpxeBuildTarget?
+  bootFilename    String?
+
+  // ── Multi-table inheritance extensions ────────────────────────────
+  // Per-role extension tables. 1:1, populated when `role` matches the
+  // extension's domain. The repository for each enforces the invariant
+  // (Prisma's MTI guide notes there's no DB-level constraint linking
+  // `role` to the corresponding extension table).
+  server     Server?
+  bridge     Bridge?
+  switch     Switch?
+  router     Router?
+  pdu        Pdu?
+  cdu        Cdu?
+  rackBrush  RackBrush?
+  patchPanel PatchPanel?
+
+  // Hardware component relations
+  cpus            Cpu[]
+  gpus            Gpu[]
+  storageDrives   StorageDrive[]
+  memoryConfig    MemoryConfig?
+  firmwares       DeviceFirmware[]
+  pciDevices      PciDevice[]
+  uefiBootEntries UefiBootEntry[]
+  nvlinkEdges     NvlinkEdge[]
+  solConfig       DeviceSolConfig?
+
+  // Discovery pipeline
+  discoveryRuns DiscoveryRun[]
+
+  // Relations
+  deviceDocuments     DeviceDocument[]
+  interfaces          Interface[]
+  rackAssignment      DeviceRackAssignment?
+  consolePorts        ConsolePort[]
+  consoleServerPorts  ConsoleServerPort[]
+  powerPorts          PowerPort[]
+  powerOutlets        PowerOutlet[]
+  frontPorts          FrontPort[]
+  rearPorts           RearPort[]
+  bgpSessions         BgpSession[]
+  deviceTokens        DeviceToken[]
+  jobs                Job[]
+  lifecycleJobs       LifecycleJob[]
+  deviceHealthChecks  DeviceHealthCheck[]
+  deviceTestRuns      DeviceTestRun[]
+  sanitizationReports SanitizationReport[]
+  deviceSecrets       DeviceSecret[]
+  // Per-bridge VRRP VIP bindings (this device, when role=Bridge, binds a prefix's
+  // VIP on the named iface). See PrefixVrrpBinding.
+  vrrpBindings        PrefixVrrpBinding[]
+  dnsRecords          DnsRecord[]
+  maintenance         DeviceMaintenance[]
+
+  // Timestamps
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  // Soft-delete tombstone. NULL = live row, non-null timestamp = deleted.
+  // All reads must filter `deletedAt: null` to exclude tombstones.
+  deletedAt DateTime?
+
+  @@unique([id, zoneId])
+  @@index([zoneId])
+  @@index([organizationId])
+  @@index([configTemplateId])
+  @@index([deletedAt])
+  @@index([role])
+}
+
+// Tracks each maintenance period for a device. Active maintenance = disabledAt IS NULL.
+// Full history is preserved by keeping all records — each enable creates a new row.
+// At most one active row per device is enforced by the partial unique index
+// `DeviceMaintenance_deviceId_active_unique` (WHERE "disabledAt" IS NULL). Prisma can't
+// express partial indexes, so it lives in the migration SQL only.
+
+model DeviceMaintenance {
+  id       String @id @default(uuid())
+  deviceId String
+  device   Device @relation(fields: [deviceId], references: [id])
+
+  reason        String // required internal description for audit
+  message       String? // optional customer-facing message
+  expectedEndAt DateTime? // optional estimated end time
+
+  enabledAt DateTime @default(now())
+  enabledBy String // admin user ID who enabled maintenance
+
+  disabledAt DateTime? // null = currently active
+  disabledBy String? // admin user ID who disabled maintenance
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([deviceId, disabledAt])
+}

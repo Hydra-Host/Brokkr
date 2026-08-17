@@ -1,0 +1,33 @@
+{
+  "lldp": {
+    "interface": [
+      {
+        "ens11f0np0": {
+          "chassis": {
+            "JP01-1-P1-TAN-LEAF-1": {
+              "descr": "Cumulus Linux version 5.12.0 running on Nvidia SN5600",
+              "mgmt-ip": ["10.0.0.253", "fe80::b2cf:eff:feae:47ff"]
+            }
+          },
+          "port": {
+            "id": { "type": "ifname", "value": "swp9s3" },
+            "descr": "jcsi2a1wg1psg36-11/1"
+          }
+        }
+      },
+      {
+        "ens11f1np1": {
+          "chassis": {
+            "JP01-1-P1-TAN-LEAF-2": {
+              "descr": "Cumulus Linux version 5.12.0 running on Nvidia SN5600",
+              "mgmt-ip": ["10.0.0.252"]
+            }
+          },
+          "port": {
+            "id": { "type": "ifname", "value": "swp10s3" }
+          }
+        }
+      }
+    ]
+  }
+}

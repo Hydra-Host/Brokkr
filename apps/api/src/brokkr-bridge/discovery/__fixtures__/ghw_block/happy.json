@@ -1,0 +1,43 @@
+{
+  "block": {
+    "total_size_bytes": 30736740136960,
+    "disks": [
+      {
+        "name": "loop0",
+        "size_bytes": 5408819200,
+        "physical_block_size_bytes": 512,
+        "drive_type": "ssd",
+        "storage_controller": "loop",
+        "bus_path": "unknown",
+        "vendor": "unknown",
+        "model": "unknown",
+        "serial_number": "unknown",
+        "wwn": "unknown"
+      },
+      {
+        "name": "nvme1n1",
+        "size_bytes": 3840755982336,
+        "physical_block_size_bytes": 4096,
+        "drive_type": "ssd",
+        "storage_controller": "nvme",
+        "bus_path": "pci-0000:9a:00.0-nvme-1",
+        "vendor": "unknown",
+        "model": "Dell DC NVMe ISE 7450 RI U.2 3.84TB",
+        "serial_number": "24294A08B844",
+        "wwn": "eui.000000000000000100a075244a08b844"
+      },
+      {
+        "name": "sda",
+        "size_bytes": 240057409536,
+        "physical_block_size_bytes": 512,
+        "drive_type": "hdd",
+        "storage_controller": "sata",
+        "bus_path": "pci-0000:00:17.0-ata-1",
+        "vendor": "unknown",
+        "model": "TOSHIBA MG07",
+        "serial_number": "HDD-SERIAL-001",
+        "wwn": "0x50000000000000aa"
+      }
+    ]
+  }
+}

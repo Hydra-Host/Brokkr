@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Curtin does not have any capability to add custom directives such as --assume-clean
+# this wrapper allows this flag to be added to array creations to speed up the process.
+
+if [[ "$1" == "--create" ]]; then
+    # Check if "--assume-clean" is already in the arguments
+    if [[ "$@" =~ "--assume-clean" ]]; then
+        # Run without adding --assume-clean
+        /sbin/mdadm "$@"
+    else
+        # Add --assume-clean
+        /sbin/mdadm "$@" --assume-clean
+    fi
+else
+    /sbin/mdadm "$@"
+fi

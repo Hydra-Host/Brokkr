@@ -1,0 +1,16 @@
+[
+  {
+    "handle": "0x0000",
+    "type": 0,
+    "bytes": 26,
+    "description": "BIOS Information",
+    "values": { "vendor": "Dell Inc.", "version": "2.15.2", "release_date": "09/10/2024" }
+  },
+  {
+    "handle": "0x0001",
+    "type": 1,
+    "bytes": 27,
+    "description": "System Information",
+    "values": { "manufacturer": "Dell Inc.", "product_name": "PowerEdge R750", "serial_number": "ABC12345" }
+  }
+]

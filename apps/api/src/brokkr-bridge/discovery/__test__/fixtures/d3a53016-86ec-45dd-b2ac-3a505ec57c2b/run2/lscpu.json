@@ -1,0 +1,9 @@
+{
+  "total_cpu_sockets": 2,
+  "total_cpu_cores": 64,
+  "total_cpu_threads": 128,
+  "per_cpu_cores": 32,
+  "per_cpu_threads": 64,
+  "cpu_family": "6",
+  "cpu_model": "207"
+}

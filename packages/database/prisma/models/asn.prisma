@@ -1,0 +1,34 @@
+model Asn {
+  id          String  @id @default(uuid())
+  asn         Int     @unique
+  description String?
+
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  organizationId String?
+
+  localAsnSessions  BgpSession[] @relation("localAsn")
+  remoteAsnSessions BgpSession[] @relation("remoteAsn")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model VlanGroup {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+  minVid      Int     @default(2)
+  maxVid      Int     @default(4094)
+
+  zone   Zone?   @relation(fields: [zoneId], references: [id])
+  zoneId String?
+
+  vlans Vlan[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([zoneId])
+}

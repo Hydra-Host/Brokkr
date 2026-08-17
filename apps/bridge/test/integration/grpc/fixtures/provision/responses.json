@@ -1,0 +1,64 @@
+{
+  "_comment": "Scripted gRPC responses for the provision saga's dispatch sequence. The provision saga emits these operations in order via the bridge Dispatcher; the fake servicer replies with the matching scripted output for each work_id. See test_dispatch_replay.py::PROVISION_SEQUENCE for the corresponding call-sequence assertion.",
+  "device_id": "1001",
+  "calls": [
+    {
+      "operation": "storage.wipeDisks",
+      "expected_input_keys": ["disk_layouts", "environment", "job_id"],
+      "response": {
+        "sanitization_report": {
+          "mode": "full",
+          "disks": [{ "device": "/dev/sda", "method": "nvme_format_user_data", "status": "success" }]
+        },
+        "optimal_os_disk": "/dev/sda"
+      }
+    },
+    {
+      "operation": "storage.detectExistingVolumeGroups",
+      "expected_input_keys": [],
+      "response": {
+        "volume_group_names": []
+      }
+    },
+    {
+      "operation": "storage.resolveDisks",
+      "expected_input_keys": ["disk_layouts"],
+      "response": {
+        "layouts": [
+          {
+            "mountpoint": "/",
+            "disks": ["sda"],
+            "size_bytes": 500107862016
+          }
+        ]
+      }
+    },
+    {
+      "operation": "storage.detectUefiMode",
+      "expected_input_keys": [],
+      "response": {
+        "uefi_mode": true
+      }
+    },
+    {
+      "operation": "storage.prepareStorage",
+      "expected_input_keys": ["disk_layouts", "target_path", "curtin_yaml"],
+      "response": {
+        "architecture": "amd64",
+        "uefi": true,
+        "fstab": "/dev/sda2 / ext4 defaults 0 1\n",
+        "crypttab": "",
+        "resolved_layouts": [{ "mountpoint": "/", "disks": ["sda"], "size_bytes": 500107862016 }],
+        "preserved_encrypted_volumes": []
+      }
+    },
+    {
+      "operation": "deploy.deployOS",
+      "expected_input_keys": ["target_path"],
+      "response": {
+        "deployed": true,
+        "deploy_target": "/target"
+      }
+    }
+  ]
+}

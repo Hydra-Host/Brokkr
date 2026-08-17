@@ -1,0 +1,62 @@
+enum RackStatus {
+  ACTIVE
+  PLANNED
+  RESERVED
+  DEPRECATED
+}
+
+enum RackRole {
+  COMPUTE
+  NETWORK
+  STORAGE
+  MIXED
+  POWER
+}
+
+enum RackFace {
+  FRONT
+  REAR
+}
+
+model Rack {
+  id           String     @id @default(uuid())
+  name         String
+  status       RackStatus @default(ACTIVE)
+  role         RackRole?
+  heightU      Int        @default(42)
+  startingUnit Int        @default(1)
+  description  String?
+  serial       String?
+  assetTag     String?
+
+  zone           Zone          @relation(fields: [zoneId], references: [id])
+  zoneId         String
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  organizationId String?
+
+  assignments DeviceRackAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([zoneId, name])
+  @@index([zoneId])
+}
+
+model DeviceRackAssignment {
+  id       String   @id @default(uuid())
+  position Decimal
+  face     RackFace
+  heightU  Int
+
+  device   Device @relation(fields: [deviceId], references: [id])
+  deviceId String @unique
+  rack     Rack   @relation(fields: [rackId], references: [id])
+  rackId   String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([rackId, position, face])
+  @@index([rackId])
+}

@@ -1,0 +1,12 @@
+model IpamPrefixVlanRole {
+  id          String  @id @default(uuid())
+  name        String
+  slug        String  @unique
+  weight      Int     @default(1000)
+  description String?
+
+  prefixes Prefix[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

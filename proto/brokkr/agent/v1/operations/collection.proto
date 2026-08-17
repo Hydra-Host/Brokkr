@@ -1,0 +1,784 @@
+// collection.* operations — hardware fact collectors.
+//
+// Each collector returns `{ <name>: <parsed> }`; the orchestrator merges to
+// `{ architecture: {...}, version: {...}, ... }`. A few collectors (efi,
+// is_virtual, ghw) break the convention and add top-level fields instead.
+//
+// Cross-field refinements not expressible in proto3, enforced by the handler:
+//   - collectAll.output: successes + failures <= collectors_run.length
+//   - nvidia / nvidia_detailed: "either all-empty or all-populated" union
+//   - serial_ports.bmc_sol_hardware: closed in proto; new fields require evolution
+
+syntax = "proto3";
+
+package brokkr.agent.v1.operations;
+
+// ---------------------------------------------------------------------------
+// collection.collectAll — orchestrator
+// ---------------------------------------------------------------------------
+
+// Runs all requested collectors concurrently. Emits one collection.result
+// envelope message per completed collector (success or failure). The
+// WorkResponse at the end carries only a summary.
+message CollectionCollectAllInput {
+  // Explicit collector subset to run. Omit to run DEFAULT_COLLECTORS.
+  // Unknown names produce a collection.result with status=failure.
+  repeated string collectors = 1;
+}
+
+message CollectionCollectAllOutput {
+  // Collector names actually dispatched, in registration order.
+  repeated string collectors_run = 1;
+  // Count of collectors that emitted status=success.
+  int32 successes = 2;
+  // Count of collectors that emitted status=failure.
+  int32 failures = 3;
+  // Wall-clock duration from dispatch start to last result, in milliseconds.
+  int64 total_duration_ms = 4;
+}
+
+// ---------------------------------------------------------------------------
+// collection.architecture — `uname -m`
+// ---------------------------------------------------------------------------
+
+message CollectionArchitectureInput {}
+
+message CollectionArchitectureOutput {
+  // Wrapper preserved for backward compatibility; matches the hub-consumed shape.
+  CollectionArchitecture architecture = 1;
+}
+
+message CollectionArchitecture {
+  // Kernel-reported machine architecture, e.g. 'x86_64', 'aarch64'.
+  string machine = 1;
+}
+
+// ---------------------------------------------------------------------------
+// collection.version — agent/ISO version metadata
+// ---------------------------------------------------------------------------
+
+message CollectionVersionInput {}
+
+message CollectionVersionOutput {
+  CollectionVersionInfo version = 1;
+}
+
+message CollectionVersionInfo {
+  // Agent version string. The bridge overlays its own __version__ here for
+  // Backward compatibility.
+  string collector_version = 1;
+  // brokkr-live ISO version, when detectable from disk metadata.
+  optional string iso_version = 2;
+}
+
+// ---------------------------------------------------------------------------
+// collection.efi — /sys/firmware/efi existence check
+// ---------------------------------------------------------------------------
+
+message CollectionEfiInput {}
+
+message CollectionEfiOutput {
+  // Top-level shortcut: 'efi' iff /sys/firmware/efi exists, else 'bios'.
+  CollectionFirmwareType firmware_type = 1;
+  // Nested efi block preserved for hub consumers.
+  CollectionEfiDetection efi = 2;
+}
+
+enum CollectionFirmwareType {
+  COLLECTION_FIRMWARE_TYPE_UNSPECIFIED = 0;
+  COLLECTION_FIRMWARE_TYPE_EFI = 1;
+  COLLECTION_FIRMWARE_TYPE_BIOS = 2;
+}
+
+message CollectionEfiDetection {
+  // Duplicates firmware_type == EFI; preserved for hub consumers.
+  bool detected = 1;
+}
+
+// ---------------------------------------------------------------------------
+// collection.ip — `ip --json a`
+// ---------------------------------------------------------------------------
+
+message CollectionIpInput {}
+
+message CollectionIpOutput {
+  // Unmodified `ip --json a` output; opaque to the hub-facing layer.
+  // JSON-encoded bytes because the shape is whatever iproute2 emits.
+  bytes ip_a = 1;
+}
+
+// ---------------------------------------------------------------------------
+// collection.is_virtual — systemd-detect-virt
+// ---------------------------------------------------------------------------
+
+message CollectionIsVirtualInput {}
+
+message CollectionIsVirtualOutput {
+  // True iff systemd-detect-virt returned anything other than 'none'.
+  bool is_virtual = 1;
+  // systemd-detect-virt output string, e.g. 'kvm', 'vmware', or 'none'.
+  string virt_type = 2;
+}
+
+// ---------------------------------------------------------------------------
+// collection.lshw — `lshw -json`
+// ---------------------------------------------------------------------------
+
+message CollectionLshwInput {}
+
+message CollectionLshwOutput {
+  // Unmodified `lshw -json` output; deeply nested, opaque to this layer.
+  // JSON-encoded bytes.
+  bytes lshw = 1;
+}
+
+// ---------------------------------------------------------------------------
+// collection.lstopo — `lstopo-no-graphics --of xml --whole-system`
+// ---------------------------------------------------------------------------
+
+message CollectionLstopoInput {}
+
+message CollectionLstopoOutput {
+  // `lstopo-no-graphics --of xml --whole-system` piped through `jc --xml`.
+  // Full hwloc topology — NUMA, caches, PCI bus / bridges, I/O devices.
+  // Deeply nested, opaque to this layer. JSON-encoded bytes.
+  bytes lstopo = 1;
+}
+
+// ---------------------------------------------------------------------------
+// collection.lldp — `lldpctl -f json`
+// ---------------------------------------------------------------------------
+
+message CollectionLldpInput {}
+
+message CollectionLldpOutput {
+  // lldpctl JSON output or a graceful-degradation stub { status, error? }.
+  // Opaque to this layer. JSON-encoded bytes.
+  bytes lldp = 1;
+}
+
+// ---------------------------------------------------------------------------
+// collection.bdi — kernel cmdline params starting with `bdi.`
+// ---------------------------------------------------------------------------
+
+message CollectionBdiInput {}
+
+message CollectionBdiOutput {
+  // Kernel cmdline parameters whose key starts with `bdi.`; values always
+  // kept as strings.
+  map<string, string> bdi = 1;
+}
+
+// ---------------------------------------------------------------------------
+// collection.lsblk — block devices (filtered to exclude loop/sr)
+// ---------------------------------------------------------------------------
+
+message CollectionLsblkInput {}
+
+message CollectionLsblkOutput {
+  // Filtered `lsblk -J` output (loop/sr excluded). Opaque to this layer.
+  // JSON-encoded bytes.
+  bytes lsblk = 1;
+}
+
+// ---------------------------------------------------------------------------
+// collection.lscpu — aggregate CPU counts
+// ---------------------------------------------------------------------------
+
+message CollectionLscpuInput {}
+
+message CollectionLscpuOutput {
+  CollectionLscpuData lscpu = 1;
+}
+
+message CollectionLscpuData {
+  // Total CPU socket count.
+  int32 total_cpu_sockets = 1;
+  // Total physical core count across all sockets.
+  int32 total_cpu_cores = 2;
+  // Total hardware thread count (cores x SMT).
+  int32 total_cpu_threads = 3;
+  // Cores per socket.
+  int32 per_cpu_cores = 4;
+  // Threads per socket.
+  int32 per_cpu_threads = 5;
+  // x86 CPU family number as a string, or absent if unreported.
+  // Zod source uses nullable(); absence in proto3 optional = null.
+  optional string cpu_family = 6;
+  // x86 CPU model identifier as a string, or absent if unreported.
+  optional string cpu_model = 7;
+}
+
+// ---------------------------------------------------------------------------
+// collection.public_ip — external IPv4/IPv6 via HTTP check
+// ---------------------------------------------------------------------------
+
+message CollectionPublicIpInput {
+  // Optional override for the HTTPS check endpoint.
+  optional string check_url = 1;
+}
+
+message CollectionPublicIpOutput {
+  CollectionPublicIpData public_ip = 1;
+}
+
+message CollectionPublicIpData {
+  // Observed public IPv4, or absent when the probe failed.
+  optional string ipv4 = 1;
+  // Observed public IPv6, or absent when the probe failed.
+  optional string ipv6 = 2;
+  // The URL actually used for the probe.
+  string check_url = 3;
+}
+
+// ---------------------------------------------------------------------------
+// collection.route — parsed `route -n` output
+// ---------------------------------------------------------------------------
+
+message CollectionRouteInput {}
+
+message CollectionRouteOutput {
+  // Routing table entries, matching the jc-parsed route shape
+  // parity.
+  repeated CollectionRouteEntry route = 1;
+}
+
+message CollectionRouteEntry {
+  // Destination network/host.
+  string destination = 1;
+  // Next-hop gateway.
+  string gateway = 2;
+  // Generic netmask.
+  string genmask = 3;
+  // Raw routing flags, e.g. "UG", "UH".
+  string flags = 4;
+  // Flags expanded to human-readable labels.
+  repeated string flags_pretty = 5;
+  // Routing metric.
+  int32 metric = 6;
+  // Reference count.
+  int32 ref = 7;
+  // Usage count.
+  int32 use = 8;
+  // Interface name.
+  string iface = 9;
+}
+
+// ---------------------------------------------------------------------------
+// collection.virtualization — CPU hypervisor + IOMMU + SR-IOV
+// ---------------------------------------------------------------------------
+
+message CollectionVirtualizationInput {}
+
+message CollectionVirtualizationOutput {
+  CollectionVirtualizationData virtualization = 1;
+}
+
+message CollectionVirtualizationData {
+  // True iff CPU flags include hypervisor extensions (vmx/svm).
+  bool hypervisor_enabled = 1;
+  // True iff /sys/kernel/iommu_groups/ has populated entries.
+  bool iommu_groups_enabled = 2;
+  // True iff any PCI device exposes sriov_totalvfs != 0.
+  bool sriov_bios_enabled = 3;
+}
+
+// ---------------------------------------------------------------------------
+// collection.bmc — IPMI LAN config (ipv4/mac/ipv6)
+// ---------------------------------------------------------------------------
+
+message CollectionBmcInput {}
+
+message CollectionBmcOutput {
+  CollectionBmcData bmc = 1;
+}
+
+message CollectionBmcData {
+  // BMC IPv4 address; absent when missing or probe failed.
+  optional string ipv4 = 1;
+  // BMC MAC address; absent when missing or probe failed.
+  optional string mac = 2;
+  // BMC IPv6 address; absent when missing or probe failed.
+  optional string ipv6 = 3;
+  // Graceful-degradation marker when the probe could not run.
+  optional CollectionBmcStatus status = 4;
+  // Error text when status == BMC_STATUS_ERROR.
+  optional string error = 5;
+}
+
+enum CollectionBmcStatus {
+  COLLECTION_BMC_STATUS_UNSPECIFIED = 0;
+  COLLECTION_BMC_STATUS_NO_DEVICE = 1;
+  COLLECTION_BMC_STATUS_ERROR = 2;
+}
+
+// ---------------------------------------------------------------------------
+// collection.ghw — ghwc binary output for 10 hardware fact types
+// ---------------------------------------------------------------------------
+
+// Unusual: top-level ghw_* keys, no namespace wrapper (matches hub-consumed shape).
+message CollectionGhwInput {}
+
+message CollectionGhwOutput {
+  // Each field is JSON-encoded bytes because ghwc output shapes are opaque.
+  // Absent (optional not set) when ghwc is not present on the system.
+  optional bytes ghw_baseboard = 1;
+  optional bytes ghw_bios = 2;
+  optional bytes ghw_block = 3;
+  optional bytes ghw_chassis = 4;
+  optional bytes ghw_cpu = 5;
+  optional bytes ghw_gpu = 6;
+  optional bytes ghw_memory = 7;
+  optional bytes ghw_net = 8;
+  optional bytes ghw_pci = 9;
+  optional bytes ghw_product = 10;
+}
+
+// ---------------------------------------------------------------------------
+// collection.ib_data — InfiniBand devices from /sys/class/infiniband
+// ---------------------------------------------------------------------------
+
+message CollectionIbDataInput {}
+
+message CollectionIbDataOutput {
+  // Per-InfiniBand-port records. Empty when the system has no IB adapters.
+  repeated CollectionIbDevice ib_data = 1;
+}
+
+message CollectionIbDevice {
+  // Mellanox driver-assigned device name (e.g. mlx5_0).
+  string mlx5_name = 1;
+  // Port GUID; absent when unreadable.
+  optional string guid = 2;
+  // Port speed string (e.g. "100 Gb/sec (4X EDR)"). Absent when unreadable.
+  optional string speed = 3;
+  // Parsed speed in kbps; 0 when not extractable.
+  int64 speed_kbps = 4;
+  // Link type (IB / Ethernet). Absent when unreadable.
+  optional string link_type = 5;
+  // Port state string. Absent when unreadable.
+  optional string port_state = 6;
+  // True iff the port_state reports ACTIVE.
+  bool link_oper_up = 7;
+  // Physical state string. Absent when unreadable.
+  optional string port_phys_state = 8;
+  // True iff the physical state reports LinkUp.
+  bool link_physical_up = 9;
+  // PCI device identifier. Absent when unreadable.
+  optional string pci_device_id = 10;
+  // Max speed in Gbps; absent when unreadable.
+  optional int32 max_speed_gbps = 11;
+  // Max speed in kbps.
+  int64 max_speed_kbps = 12;
+}
+
+// ---------------------------------------------------------------------------
+// collection.nvidia — GPU info from nvidia-smi + /proc/driver/nvidia
+// ---------------------------------------------------------------------------
+
+// The Zod source uses z.union([emptyObj, populatedObj]). Proto cannot express
+// a "one of two message shapes" union cleanly, so we use a single message
+// with optional fields. Handler must enforce: either all fields absent
+// (no-GPU) or count + gpus are populated.
+message CollectionNvidiaInput {}
+
+message CollectionNvidiaOutput {
+  CollectionNvidiaData nvidia = 1;
+}
+
+message CollectionNvidiaData {
+  // GPU count. 0 (default) on no-GPU systems.
+  int32 count = 1;
+  // Model string when all GPUs share one; absent otherwise.
+  optional string model = 2;
+  // Per-GPU records. Empty on no-GPU systems.
+  repeated CollectionNvidiaGpu gpus = 3;
+}
+
+message CollectionNvidiaGpu {
+  // GPU index (nvidia-smi order).
+  int32 index = 1;
+  // GPU product name.
+  string name = 2;
+  // GPU UUID.
+  string uuid = 3;
+  // GPU temperature in C; absent when unavailable.
+  // Source field name: "temperature.gpu" — dots not allowed in proto field
+  // names; serialization layer must map.
+  optional int32 temperature_gpu = 4;
+  // GPU utilisation percent; absent when unavailable.
+  // Source field name: "utilization.gpu"
+  optional int32 utilization_gpu = 5;
+  // Used GPU memory in MiB; absent when unavailable.
+  // Source field name: "memory.used"
+  optional int32 memory_used = 6;
+  // Total GPU memory in MiB; absent when unavailable.
+  // Source field name: "memory.total"
+  optional int32 memory_total = 7;
+  // Free GPU memory in MiB; absent when unavailable.
+  // Source field name: "memory.free"
+  optional int32 memory_free = 8;
+  // vbios_version when available.
+  optional string vbios = 9;
+  // Board serial; absent on GPUs that report none.
+  optional string serial = 10;
+}
+
+// ---------------------------------------------------------------------------
+// collection.dmidecode — `dmidecode | jc --dmidecode`
+// ---------------------------------------------------------------------------
+
+message CollectionDmidecodeInput {}
+
+message CollectionDmidecodeOutput {
+  // jc-parsed dmidecode output; opaque to this layer. JSON-encoded bytes.
+  bytes dmidecode = 1;
+}
+
+// ---------------------------------------------------------------------------
+// collection.efibootmgr — `efibootmgr -v | jc --efibootmgr`
+// ---------------------------------------------------------------------------
+
+message CollectionEfibootmgrInput {}
+
+message CollectionEfibootmgrOutput {
+  // jc-parsed efibootmgr output; opaque to this layer. JSON-encoded bytes.
+  bytes efibootmgr = 1;
+}
+
+// ---------------------------------------------------------------------------
+// collection.memory — `dmidecode -t memory | jc --dmidecode`
+// ---------------------------------------------------------------------------
+
+// Output key is intentionally 'dmidecode_memory' (not 'memory') to
+// distinguish from the full dmidecode output.
+message CollectionMemoryInput {}
+
+message CollectionMemoryOutput {
+  // jc-parsed `dmidecode -t memory` output; opaque to this layer.
+  // JSON-encoded bytes.
+  bytes dmidecode_memory = 1;
+}
+
+// ---------------------------------------------------------------------------
+// collection.kernel_params — /proc/cmdline parser + HW analysis
+// ---------------------------------------------------------------------------
+
+message CollectionKernelParamsInput {}
+
+message CollectionKernelParamsOutput {
+  CollectionKernelParamsData kernel_params = 1;
+}
+
+message CollectionKernelParamsData {
+  // Raw /proc/cmdline content.
+  string current_cmdline = 1;
+  // /proc/cmdline params bucketed by functional category.
+  CollectionParsedParameters parsed_parameters = 2;
+  // Ubuntu version string when detectable from /etc/os-release.
+  optional string ubuntu_version = 3;
+  // Relevant keys read from /etc/default/grub.
+  CollectionGrubConfig grub_config = 4;
+  // Derived hardware-context analysis that informs issues/recommendations.
+  CollectionHardwareAnalysis hardware_analysis = 5;
+  // Issues matched against current cmdline and hardware.
+  repeated CollectionKernelParamsIssue issues_detected = 6;
+  // Actionable recommendations paired to detected issues.
+  repeated CollectionKernelParamsRecommendation recommendations = 7;
+}
+
+message CollectionParsedParameters {
+  repeated string console = 1;
+  repeated string display = 2;
+  repeated string security = 3;
+  repeated string network = 4;
+  repeated string storage = 5;
+  repeated string power = 6;
+  repeated string hardware = 7;
+  repeated string other = 8;
+}
+
+message CollectionGrubConfig {
+  // GRUB_CMDLINE_LINUX_DEFAULT value.
+  optional string cmdline_linux = 1;
+  // GRUB_TERMINAL setting.
+  optional string terminal = 2;
+  // GRUB_SERIAL_COMMAND setting.
+  optional string serial_command = 3;
+}
+
+message CollectionHardwareAnalysis {
+  // Detected GPU vendor.
+  CollectionGpuType gpu_type = 1;
+  // Whether cmdline already has the GPU-compatible args.
+  optional CollectionGpuCompatibility gpu_compatibility = 2;
+  // CPU vendor family.
+  CollectionCpuVendor cpu_vendor = 3;
+  // Intel VT-d support detected in cmdline or CPU flags.
+  bool vtd_support = 4;
+  // IOMMU activation state.
+  CollectionIommuStatus iommu_status = 5;
+  // dmidecode system manufacturer.
+  string system_manufacturer = 6;
+}
+
+enum CollectionGpuType {
+  COLLECTION_GPU_TYPE_UNSPECIFIED = 0;
+  COLLECTION_GPU_TYPE_NVIDIA = 1;
+  COLLECTION_GPU_TYPE_AMD = 2;
+  COLLECTION_GPU_TYPE_NONE = 3;
+  COLLECTION_GPU_TYPE_UNKNOWN = 4;
+}
+
+enum CollectionGpuCompatibility {
+  COLLECTION_GPU_COMPATIBILITY_UNSPECIFIED = 0;
+  COLLECTION_GPU_COMPATIBILITY_CONFIGURED = 1;
+  COLLECTION_GPU_COMPATIBILITY_NEEDS_NOMODESET = 2;
+}
+
+enum CollectionCpuVendor {
+  COLLECTION_CPU_VENDOR_UNSPECIFIED = 0;
+  COLLECTION_CPU_VENDOR_INTEL = 1;
+  COLLECTION_CPU_VENDOR_AMD = 2;
+  COLLECTION_CPU_VENDOR_UNKNOWN = 3;
+}
+
+enum CollectionIommuStatus {
+  COLLECTION_IOMMU_STATUS_UNSPECIFIED = 0;
+  COLLECTION_IOMMU_STATUS_ENABLED = 1;
+  COLLECTION_IOMMU_STATUS_DISABLED_BUT_SUPPORTED = 2;
+  COLLECTION_IOMMU_STATUS_NOT_SUPPORTED = 3;
+  COLLECTION_IOMMU_STATUS_UNKNOWN = 4;
+}
+
+message CollectionKernelParamsIssue {
+  // Severity tag, e.g. "high", "medium", "low".
+  string severity = 1;
+  // Human-readable description of the issue.
+  string message = 2;
+}
+
+message CollectionKernelParamsRecommendation {
+  // What to do, e.g. 'add', 'remove', 'set'.
+  string action = 1;
+  // Cmdline parameter name the action targets.
+  string parameter = 2;
+  // Why this recommendation is issued.
+  string reason = 3;
+}
+
+// ---------------------------------------------------------------------------
+// collection.nvidia_detailed — extended GPU info, PCIe, lspci
+// ---------------------------------------------------------------------------
+
+// Same union pattern as nvidia: Zod uses z.union([emptyObj, populated]).
+// Proto uses a single message with optional fields; handler must enforce
+// the "all-empty or all-populated" invariant.
+message CollectionNvidiaDetailedInput {}
+
+message CollectionNvidiaDetailedOutput {
+  CollectionNvidiaDetailedData nvidia_detailed = 1;
+}
+
+message CollectionNvidiaDetailedData {
+  // GPU count. 0 (default) on no-GPU systems.
+  int32 count = 1;
+  // Shared model string; absent when mixed or unavailable.
+  optional string model = 2;
+  // Per-GPU nvidia-smi CSV rows. Values are not coerced, so every
+  // field stays string. Each entry is a string-to-string map.
+  repeated CollectionNvidiaDetailedGpuRow gpus = 3;
+  // Per-GPU PCIe generation.
+  repeated CollectionNvidiaDetailedPcie pcie = 4;
+  // Per-GPU lspci regex-extracted cap/status speeds and widths.
+  repeated CollectionNvidiaDetailedLspci lspci = 5;
+}
+
+message CollectionNvidiaDetailedGpuRow {
+  // Arbitrary nvidia-smi CSV key-value pairs, all kept as strings.
+  map<string, string> fields = 1;
+}
+
+message CollectionNvidiaDetailedPcie {
+  // GPU index.
+  int32 index = 1;
+  // Current PCIe generation.
+  // Source field name: "pcie.link.gen.current" — dots not allowed in proto.
+  string pcie_link_gen_current = 2;
+  // Max supported PCIe generation.
+  // Source field name: "pcie.link.gen.max"
+  string pcie_link_gen_max = 3;
+}
+
+message CollectionNvidiaDetailedLspci {
+  // PCI BDF address.
+  string bus_id = 1;
+  optional string device = 2;
+  optional string link_cap_speed = 3;
+  optional string link_cap_width = 4;
+  optional string link_sta_speed = 5;
+  optional string link_sta_width = 6;
+  optional bool trans_pending = 7;
+  // lspci parse error text when the row could not be extracted.
+  optional string error = 8;
+}
+
+// ---------------------------------------------------------------------------
+// collection.serial_ports — ttyS scan + SOL config + recommendations
+// ---------------------------------------------------------------------------
+
+message CollectionSerialPortsInput {}
+
+message CollectionSerialPortsOutput {
+  CollectionSerialPortsData serial_ports = 1;
+}
+
+message CollectionSerialPortsData {
+  // Platform identity used to select recommendation tables.
+  CollectionHardwarePlatform hardware_platform = 1;
+  // Detected serial ports keyed by device name (e.g. 'ttyS0').
+  map<string, CollectionDetectedPort> detected_ports = 2;
+  // BMC SOL capability + current configuration.
+  // Note: source uses .passthrough(); any new fields require schema evolution.
+  CollectionBmcSolHardware bmc_sol_hardware = 3;
+  // Per-platform recommendations the hub surfaces to the operator.
+  CollectionHardwareRecommendations hardware_recommendations = 4;
+}
+
+message CollectionHardwarePlatform {
+  // dmidecode system manufacturer; absent when unreadable.
+  optional string manufacturer = 1;
+  // dmidecode product name; absent when unreadable.
+  optional string model = 2;
+  // Architecture string; absent when unreadable.
+  optional string architecture = 3;
+}
+
+message CollectionDetectedPort {
+  // Line number reported by /proc/tty/driver/serial.
+  int32 hardware_line = 1;
+  // UART chip family.
+  optional string uart_type = 2;
+  // I/O port address.
+  optional string hardware_address = 3;
+  // IRQ number.
+  optional int32 irq = 4;
+  // Port status from /proc.
+  optional CollectionPortHardwareStatus hardware_status = 5;
+  // Base baud rate used to derive compatible baud rates.
+  optional int32 base_baud = 6;
+  // Whether the port corresponds to a physical rear-panel connector.
+  optional bool physically_accessible = 7;
+}
+
+enum CollectionPortHardwareStatus {
+  COLLECTION_PORT_HARDWARE_STATUS_UNSPECIFIED = 0;
+  COLLECTION_PORT_HARDWARE_STATUS_ACTIVE = 1;
+  COLLECTION_PORT_HARDWARE_STATUS_INACTIVE = 2;
+  COLLECTION_PORT_HARDWARE_STATUS_UNKNOWN = 3;
+}
+
+message CollectionBmcSolHardware {
+  // True iff the BMC advertises Serial-over-LAN capability.
+  bool sol_capable = 1;
+  // True iff SOL is enabled in the BMC payload config.
+  optional bool sol_enabled = 2;
+  // IPMI channel the BMC exposes for SOL.
+  optional int32 hardware_channel = 3;
+  // BMC-configured SOL baud rate.
+  optional int32 hardware_baud_rate = 4;
+  // BMC-configured SOL port.
+  optional int32 hardware_port = 5;
+  // True iff encryption is available on the SOL channel.
+  optional bool encryption_capable = 6;
+  // True iff authentication is available on the SOL channel.
+  optional bool authentication_capable = 7;
+}
+
+message CollectionHardwareRecommendations {
+  // Recommended serial port name, e.g. 'ttyS0'.
+  string optimal_port = 1;
+  // Human-readable rationale for the optimal_port choice.
+  string hardware_reasoning = 2;
+  // Platform-specific advisory notes.
+  repeated string platform_notes = 3;
+  // Recommended baud rate.
+  int32 recommended_baud = 4;
+  // Mapping note describing how the host port maps to the BMC SOL channel.
+  string bmc_channel_mapping = 5;
+}
+
+// ---------------------------------------------------------------------------
+// collection.secure_boot — UEFI Secure Boot + MOK + firmware-key-database
+// inventory snapshot fact bundle. Hub uses the per-store
+// fingerprint lists to decide which trust chain a chassis can ship a signed
+// payload through, without re-collecting.
+//
+// Bios-firmware short-circuit: only `firmware` and `sb_enabled` are set;
+// all other fields are absent. Enforced at runtime by the handler — proto
+// cannot express the "either bios-shape or efi-shape" invariant.
+// ---------------------------------------------------------------------------
+
+message CollectionSecureBootInput {}
+
+message CollectionSecureBootOutput {
+  CollectionSecureBootData secure_boot = 1;
+}
+
+message CollectionSecureBootData {
+  // 'efi' iff /sys/firmware/efi exists, else 'bios'.
+  CollectionFirmwareType firmware = 1;
+  // Whether mokutil resolved on PATH. Absent on bios short-circuit.
+  optional CollectionSecureBootTooling tooling = 2;
+  // true/false from `mokutil --sb-state` or SecureBoot efivar fallback;
+  // null when undetermined (no signal from either source).
+  optional bool sb_enabled = 3;
+  // Raw `mokutil --sb-state` output.
+  optional string sb_state_raw = 4;
+  // Raw `mokutil --sb-version` output (shim version).
+  optional string sb_version_raw = 5;
+  // SetupMode EFI flag; true when firmware is in factory setup mode.
+  optional bool setup_mode = 6;
+  // AuditMode EFI flag.
+  optional bool audit_mode = 7;
+  // `mokutil --list-enrolled`.
+  optional CollectionSecureBootStore enrolled_mok = 8;
+  // `mokutil --list-new`.
+  optional CollectionSecureBootStore pending_mok = 9;
+  // Platform Key store — `mokutil --pk`.
+  optional CollectionSecureBootStore pk = 10;
+  // Key Exchange Key store — `mokutil --kek`.
+  optional CollectionSecureBootStore kek = 11;
+  // Allowed signatures db — `mokutil --db`.
+  optional CollectionSecureBootStore db = 12;
+  // Forbidden signatures dbx — `mokutil --dbx`.
+  optional CollectionSecureBootStore dbx = 13;
+  // Raw `mokutil --list-revoked` output, capped at 8 KiB.
+  optional string revoked_raw = 14;
+}
+
+enum CollectionSecureBootTooling {
+  COLLECTION_SECURE_BOOT_TOOLING_UNSPECIFIED = 0;
+  COLLECTION_SECURE_BOOT_TOOLING_MOKUTIL_PRESENT = 1;
+  COLLECTION_SECURE_BOOT_TOOLING_MOKUTIL_ABSENT = 2;
+}
+
+message CollectionSecureBootStore {
+  // Max of fingerprint / subject counts; 0 when store is empty.
+  int32 count = 1;
+  // Hex-lowercase SHA-1 fingerprints (no colons), from mokutil's
+  // `SHA1 Fingerprint:` lines.
+  repeated string sha1_fingerprints = 2;
+  // Hex-lowercase SHA-256 fingerprints (no colons). Empty when mokutil emits
+  // only SHA-1; the handler then derives SHA-256 from any PEM blocks it can
+  // decode.
+  repeated string sha256_fingerprints = 3;
+  // Subject DNs in the order encountered.
+  repeated string subjects = 4;
+  // Issuer DNs in the order encountered.
+  repeated string issuers = 5;
+  // Not-After date strings in the order encountered.
+  repeated string not_after = 6;
+  // Raw stdout from the mokutil store dump, capped at 8 KiB.
+  string raw_excerpt = 7;
+}

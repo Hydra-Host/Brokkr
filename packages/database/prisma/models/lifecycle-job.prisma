@@ -1,0 +1,85 @@
+/// One lifecycle operation (provision, deprovision, reboot, ...) against one
+/// device. `id` is the `plan_id` correlation key sent to bridges. `phase` is
+/// the engine-owned state-machine position, advanced from request through the
+/// async bridge round-trip to a terminal phase.
+model LifecycleJob {
+  id      String            @id @default(uuid())
+  jobType JobType
+  phase   LifecycleJobPhase @default(REQUESTED)
+  payload Json
+
+  deviceId String?
+  device   Device? @relation(fields: [deviceId], references: [id])
+
+  deploymentId String?
+  deployment   Deployment? @relation(fields: [deploymentId], references: [id])
+
+  // Tenant scope for the active-record LifecycleJobRecord. Nullable because
+  // internal/system flows may act outside a single organization.
+  organizationId String?
+
+  source      RequestSource
+  performedBy String?
+
+  // Grace deadline for interruptible ops (phase SCHEDULED).
+  scheduledAt       DateTime?
+  // Watchdog deadline while AWAITING_PHONE_HOME; missing the callback fails the job.
+  phoneHomeDeadline DateTime?
+
+  // Interruptible provision chains two jobs: set on the outgoing Deprovision to
+  // point at the incoming Provision parked in REQUESTED. When the deprovision
+  // reaches COMPLETED, inbound starts the linked provision.
+  linkedJobId String? @unique
+
+  error  String?
+  events LifecycleJobEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([phase])
+  @@index([deviceId, createdAt])
+  @@index([deploymentId])
+}
+
+/// Append-only audit of every inbound bridge message and engine transition for
+/// a job. Persists step-level progress that otherwise lives only transiently in
+/// Redis, giving one queryable timeline per job.
+model LifecycleJobEvent {
+  id         String       @id @default(uuid())
+  jobId      String
+  job        LifecycleJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  sagaName   String
+  stepName   String
+  eventType  String
+  status     String
+  result     Json?
+  error      String?
+  attempt    Int          @default(0)
+  // Bridge-supplied event time; recordedAt is hub ingest time.
+  occurredAt DateTime
+  recordedAt DateTime     @default(now())
+
+  // Dedupe key for at-least-once delivery: a redelivered bridge message
+  // (identical in every bridge-supplied field) must not append twice.
+  // Bridge-supplied `occurredAt` is stable across redeliveries; engine-stamped
+  // events (phone_home, watchdogs, sweep) are phase-guarded by their callers.
+  @@unique([jobId, sagaName, stepName, eventType, status, attempt, occurredAt], map: "LifecycleJobEvent_dedupe_key")
+  @@index([jobId, recordedAt])
+  @@index([jobId, sagaName])
+}
+
+enum LifecycleJobPhase {
+  REQUESTED
+  AUTHORIZING
+  SCHEDULED
+  // Parked by a plugin gate's LifecycleGateDeferral pending out-of-band resolution
+  // (e.g. human approval). Resumed/aborted via the PluginLifecycleControl surface.
+  DEFERRED
+  DISPATCHED
+  RUNNING
+  AWAITING_PHONE_HOME
+  COMPLETED
+  FAILED
+  ABORTED
+}

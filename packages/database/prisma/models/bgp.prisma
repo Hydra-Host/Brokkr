@@ -1,0 +1,98 @@
+enum BgpSessionStatus {
+  ACTIVE
+  PLANNED
+  OFFLINE
+  DECOMMISSIONING
+}
+
+model BgpPeerGroup {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  organizationId String?
+
+  sessions BgpSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+model PrefixList {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+  family      String?
+
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  organizationId String?
+
+  rules               PrefixListRule[]
+  inboundBgpSessions  BgpSession[]     @relation("prefixListIn")
+  outboundBgpSessions BgpSession[]     @relation("prefixListOut")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model PrefixListRule {
+  id       String  @id @default(uuid())
+  action   String
+  prefix   String?
+  ge       Int?
+  le       Int?
+  sequence Int
+
+  prefixList   PrefixList @relation(fields: [prefixListId], references: [id], onDelete: Cascade)
+  prefixListId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([prefixListId, sequence])
+}
+
+model BgpSession {
+  id          String           @id @default(uuid())
+  name        String
+  status      BgpSessionStatus @default(ACTIVE)
+  description String?
+
+  device   Device? @relation(fields: [deviceId], references: [id])
+  deviceId String?
+
+  localAsn    Asn?    @relation("localAsn", fields: [localAsnId], references: [id])
+  localAsnId  String?
+  remoteAsn   Asn?    @relation("remoteAsn", fields: [remoteAsnId], references: [id])
+  remoteAsnId String?
+
+  localAddress    IpAddress? @relation("bgpLocalAddress", fields: [localAddressId], references: [id])
+  localAddressId  String?
+  remoteAddress   IpAddress? @relation("bgpRemoteAddress", fields: [remoteAddressId], references: [id])
+  remoteAddressId String?
+
+  peerGroup   BgpPeerGroup? @relation(fields: [peerGroupId], references: [id])
+  peerGroupId String?
+
+  prefixListIn    PrefixList? @relation("prefixListIn", fields: [prefixListInId], references: [id])
+  prefixListInId  String?
+  prefixListOut   PrefixList? @relation("prefixListOut", fields: [prefixListOutId], references: [id])
+  prefixListOutId String?
+
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  organizationId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([deviceId])
+  @@index([peerGroupId])
+  @@index([organizationId])
+}

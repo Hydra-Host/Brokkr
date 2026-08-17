@@ -1,0 +1,89 @@
+#!ipxe
+# Embedded autoexec — pulled into the EFI binary at compile time by
+# Dockerfile.ipxe (EMBED=autoexec.ipxe). Brings up IPMI for fallback
+# identifiers, configures the NIC via DHCP, echoes network/device/IPMI
+# info for boot-time debugging, then chainloads from the bridge.
+#
+# The chain host resolves via DHCP-supplied DNS to the env's bridge. The chain base URL is baked in
+# at build time from CHAIN_BASE_URL (Dockerfile): plain HTTP to the local bridge by default (no TLS,
+# no trust anchors), or an HTTPS host for hosted envs. When HTTPS is used, the iPXE build must carry
+# the matching CA via TRUST= or the handshake fails (iPXE error 0216eb8f, "Permission denied").
+
+set max_attempts 8
+
+:ipmi
+# Populate ${ipmi/mac}, ${ipmi/ip}, ${ipmi/tag} for fallback identification
+# when the NIC MAC isn't yet registered in Brokkr.
+ipmi lan || goto start
+ipmi tag || goto start
+
+:start
+set attempt 0
+set backoff 5
+
+:attempt
+echo Brokkr Bridge iPXE
+echo
+echo Attempting DHCP configuration
+dhcp netX || dhcp || goto retry
+
+echo
+echo Network Information:
+echo   MAC Address:  ${netX/mac}
+echo   IP Address:   ${netX/ip}
+echo   Gateway:      ${netX/gateway}
+echo   Netmask:      ${netX/netmask}
+echo   Nameserver:   ${netX/dns}
+echo   DHCP Server:  ${netX/dhcp-server}
+echo   Next Server:  ${next-server}
+echo
+echo Build Information:
+echo   Architecture: ${buildarch}
+echo   Platform:     ${platform}
+echo
+echo Device Information:
+echo   Manufacturer:   ${manufacturer}
+echo   Serial Number:  ${serial}
+echo   Board Serial:   ${board-serial}
+echo   Chassis Serial: ${chassis-serial}
+echo   System UUID:    ${uuid}
+echo
+echo IPMI:
+echo   IP:  ${ipmi/ip}
+echo   MAC: ${ipmi/mac}
+echo   TAG: ${ipmi/tag}
+echo
+
+params
+param platform ${platform}
+param buildarch ${buildarch}
+param ip ${netX/ip}
+param mac ${netX/mac:hexhyp}
+param serial ${serial}
+param manufacturer ${manufacturer}
+param ipmi_mac ${ipmi/mac}
+param ipmi_ip ${ipmi/ip}
+param ipmi_tag ${ipmi/tag}
+param board_serial ${board-serial}
+param chassis_serial ${chassis-serial}
+param system_uuid ${uuid}
+
+chain --autofree https://brokkr.lan/api/chain##params || goto retry
+
+:retry
+inc attempt
+iseq ${attempt} ${max_attempts} || goto retry_wait
+goto unreachable
+
+:retry_wait
+echo Chainload failed (attempt ${attempt}/${max_attempts}); retrying in ${backoff}s...
+sleep ${backoff}
+inc backoff ${backoff}
+goto attempt
+
+:unreachable
+echo Chain unreachable after ${max_attempts} attempts; beaconing next-server ${next-server}
+imgfetch --name beacon "http://${next-server}/api/chain-unreachable?mac=${netX/mac:hexhyp}&attempts=${max_attempts}" || echo Beacon failed
+imgfree beacon || echo
+echo Dropping to iPXE shell for operator intervention.
+shell

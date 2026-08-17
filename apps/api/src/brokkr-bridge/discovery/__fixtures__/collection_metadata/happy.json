@@ -1,0 +1,9 @@
+{
+  "collectors_total": 20,
+  "collectors_successful": 20,
+  "fact_categories": 30,
+  "collection_mode": "memory_based",
+  "collector_version": "comprehensive_cli",
+  "collection_count": 1,
+  "timestamp": "2026-02-26T01:14:43.477602+00:00"
+}

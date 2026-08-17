@@ -1,0 +1,49 @@
+{
+  "name": "@hydrahost/plugin-sdk",
+  "version": "0.2.0",
+  "description": "Contract types and helpers for Brokkr plugin authors. Used by both plugins and the host runtime.",
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "peerDependencies": {
+    "@nestjs/common": ">=11",
+    "@ts-rest/core": ">=3.51",
+    "react": ">=19",
+    "zod": ">=3.24"
+  },
+  "peerDependenciesMeta": {
+    "@nestjs/common": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@nestjs/common": "^11.1.11",
+    "@repo/typescript-config": "workspace:*",
+    "@ts-rest/core": "^3.51.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.0",
+    "react": "^19.2.0",
+    "typescript": "^5.9.3",
+    "zod": "^3.25.0"
+  }
+}

@@ -1,0 +1,42 @@
+// DeviceSolConfig — normalised Serial-over-LAN configuration, sourced from the
+// `serial_ports` discovery collector. Two tiers of data:
+//   - hardware/recommendation fields (`solCapable`…`bmcChannelMapping`) — the
+//     static facts + heuristic suggestion the agent reports.
+//   - `resolved*` fields — the bridge's empirical SOL probe answer (which ttyS
+//     actually surfaced on the BMC SOL session), strictly better than the
+//     recommendation. `resolvedSource` records provenance (probed/modem_hint/
+//     vendor_table/none) and `resolvedConfirmed` whether the probe matched.
+//     Consumers prefer the resolved port/baud when confirmed, else fall back to
+//     `optimalPort`/`baudRate`.
+// Replaces the opaque `Device.serialPorts` Json, which was dropped from `Device`
+// in Phase 7 — serial-port data now lives solely here in `DeviceSolConfig`.
+
+enum SolResolvedSource {
+  probed
+  modem_hint
+  vendor_table
+  none
+}
+
+model DeviceSolConfig {
+  deviceId String @id
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  solCapable        Boolean?
+  solEnabled        Boolean?
+  hardwareChannel   Int?
+  baudRate          Int?
+  port              Int?
+  encryptionCapable Boolean?
+  optimalPort       String? // e.g. "ttyS1"
+  bmcChannelMapping String?
+
+  resolvedPort      String? // empirically-probed console port, e.g. "ttyS1"
+  resolvedBaud      Int?
+  resolvedSource    SolResolvedSource?
+  resolvedConfirmed Boolean?
+  availablePorts    String[]           @default([]) // ttyS device names seen in the probe's `ports` map
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

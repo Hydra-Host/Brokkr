@@ -1,0 +1,31 @@
+model Job {
+  id                String    @id @default(uuid())
+  job               Json
+  jobType           JobType
+  deviceId          String?
+  device            Device?   @relation(fields: [deviceId], references: [id])
+  status            JobStatus @default(Pending)
+  lastCompletedStep String?
+  error             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+enum JobType {
+  Provision
+  Reprovision
+  Reboot
+  PowerOn
+  PowerOff
+  Deprovision
+  Interrupted
+  Commission
+  Decommission
+}
+
+enum JobStatus {
+  Pending
+  InProgress
+  Completed
+  Failed
+}

@@ -1,0 +1,94 @@
+#!/bin/bash
+
+# Bridge-supplied values, bound as shell-quoted literals (see renderPhoneHomeScript):
+# single-quoting disables all shell interpolation, so they cannot break out of
+# the curl invocation below regardless of their contents.
+DEPLOYMENT_OS_TOKEN='brk_dev_os_fixture_token'
+PHONE_HOME_ENDPOINT='https://brokkr.stg.example.com/api/v1/bmc/phone-home'
+
+# Function to print timestamped messages
+log_message() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+# Function to display network interface information
+show_network_info() {
+    echo "=== Network Interface Information ==="
+    if command -v ip >/dev/null 2>&1; then
+        echo "Network interfaces (ip a):"
+        ip a
+        echo
+        echo "Routing table (ip r):"
+        ip r
+    else
+        echo "Network interfaces (ifconfig):"
+        ifconfig 2>/dev/null || echo "ifconfig not available"
+        echo
+        echo "Routing table (route -n):"
+        route -n 2>/dev/null || echo "route command not available"
+    fi
+    echo "=== End Network Information ==="
+}
+
+# NOTE: no pre-flight public-internet check. The phone-home target is the hub
+# (PHONE_HOME_ENDPOINT), reachable on the internal/zone network even in air-gapped
+# or isolated deployments that have no public internet — pinging 1.1.1.1/8.8.8.8 to
+# gate a call to a *private* endpoint is a false precondition that strands those
+# hosts (the old check exit 1'd after 5 min, before phone_home ever ran). phone_home()
+# below already retries the real endpoint for up to an hour, which also covers
+# "networking not up yet" against the correct target.
+
+# Function to perform the phone home API call
+phone_home() {
+    local max_attempts=60  # Try for 1 hour (60 attempts at 1 minute intervals)
+    local attempt=0
+    local response_code
+    local retry_interval=60  # seconds between retries
+
+    log_message "Will attempt phone home up to $max_attempts times over 1 hour..."
+
+    while [ "$attempt" -lt "$max_attempts" ]; do
+        attempt=$((attempt + 1))
+        log_message "[Attempt $attempt/$max_attempts] Initiating phone home request..."
+
+        response_code=$(curl -s -o /dev/null -w "%{http_code}" -X GET \
+            -H "Authorization: Bearer ${DEPLOYMENT_OS_TOKEN}" \
+            "${PHONE_HOME_ENDPOINT}")
+
+        if [ "$response_code" -eq 200 ]; then
+            log_message "Phone home request succeeded with HTTP code 200."
+            return 0
+        else
+            log_message "Phone home request failed with HTTP code $response_code."
+
+            # Show network info on first failure and every 10th attempt
+            if [ "$attempt" -eq 1 ] || [ $((attempt % 10)) -eq 0 ]; then
+                echo
+                show_network_info
+                echo
+            fi
+
+            if [ "$attempt" -lt "$max_attempts" ]; then
+                log_message "Retrying in $retry_interval seconds..."
+                sleep $retry_interval
+            else
+                log_message "Maximum attempts reached. Phone home failed after $max_attempts attempts over 1 hour."
+                echo
+                show_network_info
+                return 1
+            fi
+        fi
+    done
+}
+
+# Main script execution
+log_message "Starting phone home script..."
+
+# Perform phone home request with retries
+if phone_home; then
+    log_message "Phone home script completed successfully."
+    exit 0
+else
+    log_message "Phone home script failed after all retry attempts."
+    exit 1
+fi

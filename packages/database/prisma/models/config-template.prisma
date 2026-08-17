@@ -1,0 +1,36 @@
+// Brokkr owns the template content and renders it at device attach time.
+
+// Selects which precomputed context shape gets handed to the Jinja
+// renderer. Each kind has a paired context builder service in the API.
+enum ConfigTemplateKind {
+  DEVICE_INFRASTRUCTURE
+}
+
+// Optional purpose marker. When set, this template is the canonical
+// renderer for the named purpose (e.g. the active netplan template the
+// admin device-preview tab renders against). Unique so only one template
+// at a time owns each purpose.
+enum ConfigTemplatePurpose {
+  NETPLAN
+}
+
+model ConfigTemplate {
+  id                String  @id @default(uuid())
+  name              String  @unique
+  description       String?
+  templateCode      String
+  environmentParams Json?
+
+  kind    ConfigTemplateKind     @default(DEVICE_INFRASTRUCTURE)
+  purpose ConfigTemplatePurpose? @unique
+
+  // Devices linked to this template. Per-device assignment; device-role
+  // layering is intentionally unsupported for now.
+  devices Device[]
+  // Servers (Device host MTI extension) linked to this template. Dual-tracked
+  // with `Device.configTemplateId` until that column is dropped.
+  servers Server[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

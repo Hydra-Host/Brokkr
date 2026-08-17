@@ -1,0 +1,32 @@
+// Per-role extension for `Device.role = 'Bridge'` — the Brokkr Bridge
+// remote agents that live in each DC zone and execute physical operations
+// against hardware (provisioning, power control, discovery, heartbeats).
+// Multi-table inheritance, 1:1 with Device.
+
+// Observed power state of a Bridge-role device; on/off only. Distinct from the
+// coarse `Device.status`. The `Bridge.powerStatus` field is nullable to mean
+// "power state unknown" (never observed).
+enum BridgePowerStatus {
+  On
+  Off
+}
+
+model Bridge {
+  id String @id @default(uuid())
+
+  // Software build the bridge process is currently running.
+  bridgeVersion    String?
+  // BullMQ queue prefix this bridge listens on — the Zone UUID (`REDIS_PREFIX`).
+  redisQueuePrefix String?
+  // Last successful heartbeat (`heartbeat` job from the bridge to the hub).
+  lastSeenAt       DateTime?
+
+  // Observed power state. Null = unknown (never reported by the bridge/BMC).
+  powerStatus BridgePowerStatus?
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

@@ -1,0 +1,19 @@
+[
+  { "ifindex": 1, "ifname": "lo", "link_type": "loopback", "operstate": "UNKNOWN", "flags": ["LOOPBACK", "UP"] },
+  {
+    "ifindex": 2,
+    "ifname": "enp41s0f0np0",
+    "link_type": "ether",
+    "operstate": "UP",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "address": "90:e3:17:61:42:82"
+  },
+  {
+    "ifindex": 3,
+    "ifname": "enp175s0f0np0",
+    "link_type": "ether",
+    "operstate": "DOWN",
+    "flags": ["NO-CARRIER", "BROADCAST", "MULTICAST", "UP"],
+    "address": "30:3e:a7:32:a4:f0"
+  }
+]

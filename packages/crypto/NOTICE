@@ -1,0 +1,23 @@
+@repo/crypto
+Copyright 2026 Hydrahost, Inc.
+
+Licensed under the Apache License, Version 2.0. See the root LICENSE file.
+
+## Export Control Classification
+
+This package implements cryptography (X25519 ECDH key agreement, AES-256-GCM
+authenticated encryption, and HKDF-SHA256 key derivation, via Node.js
+`node:crypto`) and is therefore subject to the U.S. Export Administration
+Regulations (EAR).
+
+As publicly available open-source encryption source code, this package is
+classified under ECCN 5D002 and is eligible for export under License
+Exception ENC / the publicly-available open-source carve-out (EAR §742.15(b)
+and §734.7). No license is required to download or redistribute it, but a
+notification of its public availability is provided to BIS and the ENC
+Encryption Request Coordinator (EAR §742.15(b)(1)).
+
+Other countries may restrict the import, use, or re-export of encryption
+software. By using or redistributing this package you accept responsibility
+for compliance with applicable export-control and import laws in your
+jurisdiction.

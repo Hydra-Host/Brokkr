@@ -1,0 +1,15 @@
+{
+  "//": "The rbac subtree is a NestJS DI surface (@repo/auth/rbac) — it must compile CommonJS + decorator metadata so apps/api can require() it, unlike auth's own ESM source. See package.json build.",
+  "extends": "@repo/typescript-config/nestjs.json",
+  "compilerOptions": {
+    "outDir": "dist/rbac",
+    "rootDir": "src/rbac",
+    "declaration": true,
+    "declarationMap": true,
+    // Always fully emit — the build's marker-writing step (dist/rbac/package.json) must not be
+    // skipped by an incremental no-emit when dist was deleted but the buildinfo kept.
+    "incremental": false
+  },
+  "include": ["src/rbac"],
+  "exclude": ["node_modules", "dist"]
+}

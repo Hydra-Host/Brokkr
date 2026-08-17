@@ -1,0 +1,56 @@
+{
+  "hardware_platform": {
+    "manufacturer": "Dell Inc.",
+    "model": "PowerEdge R760xa",
+    "architecture": "x86_64"
+  },
+  "detected_ports": {
+    "ttyS0": {
+      "hardware_line": 0,
+      "uart_type": "16550A",
+      "hardware_address": "0x03f8",
+      "irq": 4,
+      "hardware_status": "active",
+      "base_baud": 115200,
+      "device_permissions": "620",
+      "physically_accessible": false
+    },
+    "ttyS1": {
+      "hardware_line": 1,
+      "uart_type": "16550A",
+      "hardware_address": "0x02f8",
+      "irq": 3,
+      "hardware_status": "active",
+      "base_baud": 115200,
+      "device_permissions": "620",
+      "physically_accessible": false
+    },
+    "ttyS2": {
+      "hardware_line": 2,
+      "uart_type": "unknown",
+      "hardware_address": "0x03e8",
+      "irq": 4,
+      "base_baud": 115200,
+      "hardware_status": "inactive",
+      "device_permissions": "660",
+      "physically_accessible": false
+    },
+    "ttyS3": {
+      "hardware_line": 3,
+      "uart_type": "unknown",
+      "hardware_address": "0x02e8",
+      "irq": 3,
+      "base_baud": 115200,
+      "hardware_status": "inactive",
+      "device_permissions": "660",
+      "physically_accessible": false
+    }
+  },
+  "bmc_sol_hardware": {},
+  "hardware_recommendations": {
+    "optimal_port": "ttyS1",
+    "hardware_reasoning": "Platform standard ttyS1 detected but may not be accessible",
+    "hardware_warnings": ["ttyS1 hardware issues detected"],
+    "platform_notes": ["Dell PowerEdge servers typically use ttyS1 for IPMI SOL"]
+  }
+}

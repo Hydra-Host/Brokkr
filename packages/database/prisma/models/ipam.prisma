@@ -1,0 +1,345 @@
+model Vrf {
+  id          String    @id @default(uuid())
+  name        String
+  rd          String? // Route Distinguisher (for example, "65000:1")
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  prefixes Prefix[]
+  ips      IpAddress[]
+  vlans    Vlan[]
+  ipRanges IpRange[]
+  gateways Gateway[]
+
+  @@index([organizationId, name])
+  @@index([organizationId, rd])
+  @@index([organizationId])
+}
+
+enum IpamRole {
+  ALLOCATION
+  COMMON
+  LOOPBACK
+  MANAGEMENT
+  NAT
+  PRIMARY
+}
+
+model Prefix {
+  id     String              @id @default(uuid())
+  prefix Unsupported("cidr")
+  status PrefixStatus        @default(ACTIVE)
+  isPool Boolean             @default(false)
+  role   IpamRole?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  vrfId String?
+  vrf   Vrf?    @relation(fields: [vrfId], references: [id], onDelete: SetNull)
+
+  zoneId String?
+  zone   Zone?   @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+
+  // Static parent/child hierarchy (optional). Containment checks should still use CIDR SQL operators.
+  parentId String?
+  parent   Prefix?  @relation("PrefixHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Prefix[] @relation("PrefixHierarchy")
+
+  vlanId String?
+  vlan   Vlan?   @relation(fields: [vlanId], references: [id], onDelete: SetNull)
+
+  gatewayIpId String?
+  gatewayIp   IpAddress? @relation("PrefixGatewayIp", fields: [gatewayIpId], references: [id], onDelete: SetNull)
+
+  // VRRP floating IP advertised to the zone's bridges for this subnet. The hub
+  // is the authoritative source: setting it publishes per-bridge Redis atoms the
+  // bridge reconcilers bind; clearing it deletes them. Modeled as a tracked
+  // IpAddress (like gatewayIp) so the VIP gets IPAM containment/VRF validation
+  // and conflict detection rather than living as an opaque string. The per-bridge
+  // NIC to bind it on lives in PrefixVrrpBinding (bridges in a zone can name the
+  // VIP-facing NIC differently, so the iface can't be a single zone-wide string).
+  vrrpVipId    String?
+  vrrpVip      IpAddress?          @relation("PrefixVrrpVip", fields: [vrrpVipId], references: [id], onDelete: SetNull)
+  vrrpBindings PrefixVrrpBinding[]
+
+  associatedPrefixId  String?
+  associatedPrefix    Prefix?  @relation("PrefixAssociation", fields: [associatedPrefixId], references: [id], onDelete: SetNull)
+  associatedPrefixFor Prefix[] @relation("PrefixAssociation")
+
+  // Per-prefix bond parameters consumed by the netplan builder for bonded interfaces.
+  bondParameters Json?
+
+  // When true, prefixes carry a VLAN tag in netplan regardless of device role.
+  enableVlanTag Boolean @default(false)
+
+  // ── Per-prefix DHCP policy (stored; pools/routers/reservations DERIVE from IPAM) ──
+
+  // Null = DHCP not served on this prefix; set to configure the bridge's DHCP engine.
+  dhcpMode DhcpMode?
+
+  // Per-prefix lease duration in seconds. Null = code default. Renew (T1=50%)
+  // and rebind (T2=87.5%) timers derive from this value at render time.
+  dhcpLeaseTtlSeconds Int?
+
+  // Operator DHCP options as [{code:int, value:hex-string}]. Same Json precedent
+  // as bondParameters. Null = no extra options.
+  dhcpOptions Json?
+
+  // PXE boot firmware flavor; always materialized so the published atom carries a concrete target.
+  ipxeBuildTarget IpxeBuildTarget @default(IPXE)
+
+  // Operator-added MACs allowed to PXE-boot in PROXY mode, on top of the prefix's known devices
+  // (auto-allowed by derivation). Empty = only known devices boot. String[] with a default because
+  // Prisma has no optional list fields (String[]? is a P1012 validation error).
+  dhcpProxyAllowedMacs String[] @default([])
+
+  // Operator declaration that an external authoritative DHCP server owns this segment while the
+  // bridge runs PROXY mode — silences the bridge's no-lease-authority (PXE-04) warning.
+  dhcpProxyPeerAuthoritative Boolean @default(false)
+
+  dhcpRelayAgentIp String? @db.Inet
+
+  // ── Per-prefix DNS overrides (nullable = inherit from zone) ──
+
+  dnsServeDns         Boolean?
+  dnsUpstreamOverride String[] @default([])
+
+  // Integer location id this prefix belongs to. Used to correlate prefixes
+  // with locations.
+  locationPrefix Int?
+
+  // Free-form prefix role (slugs: allocation, common, loopback, management,
+  // nat, primary, ...). Replaces use of the legacy `role: IpamRole?` enum for
+  // netplan rendering, which only carried a small fixed set of values.
+  prefixRoleId String?
+  prefixRole   IpamPrefixVlanRole? @relation(fields: [prefixRoleId], references: [id], onDelete: SetNull)
+
+  ipRanges IpRange[]
+  gateways Gateway[] @relation("GatewayPrefix")
+  // NB: dhcpMode is indexed by a PARTIAL index (WHERE "dhcpMode" IS NOT NULL) in
+  // migration 20260714000000. Prisma can't express a partial index, so it is
+  // intentionally NOT declared as @@index here — declaring it would make Prisma manage a
+  // conflicting FULL index with the same name. The migration is the source of truth.
+
+  @@index([vrfId, prefix])
+  @@index([organizationId])
+  @@index([vrfId])
+  @@index([parentId])
+  @@index([vlanId])
+  @@index([gatewayIpId])
+  @@index([vrrpVipId])
+  @@index([zoneId])
+  @@index([status])
+  @@index([isPool])
+  @@index([associatedPrefixId])
+  @@index([prefixRoleId])
+}
+
+model IpAddress {
+  id      String   @id @default(uuid())
+  address String   @db.Inet
+  status  IpStatus @default(ACTIVE)
+  dnsName String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  vrfId String?
+  vrf   Vrf?    @relation(fields: [vrfId], references: [id], onDelete: SetNull)
+
+  assignedObjectType AssignedObjectType?
+  assignedObjectId   String?
+
+  // Direct FK to Interface (replaces polymorphic pattern during migration)
+  interface   Interface? @relation(fields: [interfaceId], references: [id], onDelete: SetNull)
+  interfaceId String?
+
+  // NAT mapping. Set on the OUTSIDE (public) IP, pointing at the INSIDE
+  // (private) IP it NATs to. FK, not 1:1 —
+  // one inside IP may have several outside IPs. Independent of interface
+  // assignment: the outside IP is typically unattached to any host interface.
+  natInsideId String?
+  natInside   IpAddress?  @relation("IpNat", fields: [natInsideId], references: [id], onDelete: SetNull)
+  natOutside  IpAddress[] @relation("IpNat")
+
+  // CIDR this IP routes traffic toward. Combined with the
+  // `l3-route-not-needed` tag on sibling IPs in the same prefix to add
+  // static routes during netplan rendering.
+  routingPrefix Unsupported("cidr")?
+
+  gatewayForPrefixes     Prefix[]     @relation("PrefixGatewayIp")
+  vrrpForPrefixes        Prefix[]     @relation("PrefixVrrpVip")
+  bgpLocalSessions       BgpSession[] @relation("bgpLocalAddress")
+  bgpRemoteSessions      BgpSession[] @relation("bgpRemoteAddress")
+  deploymentsAsPublicIp  Deployment[] @relation("DeploymentPublicIp")
+  deploymentsAsPrivateIp Deployment[] @relation("DeploymentPrivateIp")
+  gateways               Gateway[]    @relation("GatewayIpAddress")
+  dnsRecords             DnsRecord[]
+
+  @@index([vrfId, address])
+  @@index([organizationId])
+  @@index([vrfId])
+  @@index([status])
+  @@index([dnsName])
+  @@index([assignedObjectType, assignedObjectId])
+  @@index([interfaceId])
+  @@index([natInsideId])
+}
+
+model Vlan {
+  id          String     @id @default(uuid())
+  name        String
+  /// 802.1Q VLAN ID. Valid stored range is 2-4094, enforced by the
+  /// Vlan_vid_range_check DB constraint. VID 1 (the reserved default/native
+  /// global VLAN) is intentionally excluded, as are 0 and 4095 (802.1Q reserved).
+  vid         Int
+  description String?
+  status      VlanStatus @default(ACTIVE)
+  role        IpamRole?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  vrfId String?
+  vrf   Vrf?    @relation(fields: [vrfId], references: [id], onDelete: SetNull)
+
+  zoneId String?
+  zone   Zone?   @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+
+  vlanGroupId String?
+  vlanGroup   VlanGroup? @relation(fields: [vlanGroupId], references: [id], onDelete: SetNull)
+
+  prefixes   Prefix[]
+  interfaces Interface[]
+
+  @@index([organizationId])
+  @@index([vrfId])
+  @@index([zoneId])
+  @@index([vlanGroupId])
+  @@index([status])
+  @@index([organizationId, vrfId, vid])
+}
+
+model IpRange {
+  id      String        @id @default(uuid())
+  start   String        @db.Inet
+  end     String        @db.Inet
+  status  IpRangeStatus @default(ACTIVE)
+  purpose String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  prefixId String
+  prefix   Prefix @relation(fields: [prefixId], references: [id], onDelete: Cascade)
+
+  vrfId String?
+  vrf   Vrf?    @relation(fields: [vrfId], references: [id], onDelete: SetNull)
+
+  zoneId String?
+  zone   Zone?   @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([prefixId])
+  @@index([vrfId])
+  @@index([zoneId])
+  @@index([status])
+  @@index([start, end])
+}
+
+enum PrefixStatus {
+  CONTAINER
+  ACTIVE
+  RESERVED
+  DEPRECATED
+}
+
+enum IpStatus {
+  ACTIVE
+  RESERVED
+  DEPRECATED
+  DHCP
+}
+
+enum AssignedObjectType {
+  Interface
+  VirtualMachine
+  Device
+}
+
+enum VlanStatus {
+  ACTIVE
+  RESERVED
+  DEPRECATED
+}
+
+enum IpRangeStatus {
+  ACTIVE
+  RESERVED
+  DEPRECATED
+}
+
+// DHCP serving mode for a prefix. Null on Prefix means DHCP is not served.
+enum DhcpMode {
+  AUTHORITATIVE // this bridge is the sole DHCP server for the subnet
+  PROXY // offer boot info only (PXE proxy DHCP); another server assigns IPs
+  OFF // explicitly disabled (distinct from null = unconfigured)
+}
+
+// PXE boot firmware flavor the bridge serves via iPXE. The iPXE VERSION is
+// decided by the bridge (it serves whatever build it has); this enum selects
+// only the firmware variant.
+enum IpxeBuildTarget {
+  IPXE // standard iPXE (legacy BIOS + UEFI HTTP)
+  SNP // UEFI SNP chainload
+  SNPONLY // pure SNP (no legacy BIOS fallback)
+}
+
+// Per-bridge NIC binding for a prefix's VRRP VIP. A zone's bridges can name the
+// VIP-facing interface differently (heterogeneous hardware/images), and a bridge
+// may hold the VIP on a dedicated interface with no in-subnet address — so the
+// iface is chosen explicitly per bridge, not derived or shared zone-wide. The hub
+// folds these rows into the single per-prefix atom at prefix:{prefixId}:config:vrrp as an
+// `ifaceByBridge` map keyed by Device.name; a bridge absent from the map never binds the VIP.
+model PrefixVrrpBinding {
+  id String @id @default(uuid())
+
+  prefixId String
+  prefix   Prefix @relation(fields: [prefixId], references: [id], onDelete: Cascade)
+
+  // The bridge (a Device with role=Bridge) that binds the VIP. getBridges returns
+  // Device.id; Device.name is the bridge instanceId used in the atom key.
+  bridgeId String
+  bridge   Device @relation(fields: [bridgeId], references: [id], onDelete: Cascade)
+
+  // The bridge's own NIC name to bind the VIP on (e.g. "eth0.100").
+  iface String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([prefixId, bridgeId])
+  @@index([bridgeId])
+}

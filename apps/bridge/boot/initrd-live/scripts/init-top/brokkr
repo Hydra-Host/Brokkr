@@ -1,0 +1,51 @@
+#!/bin/sh
+# Brokkr Casper Override - Modify casper script before it's sourced
+# This script runs in init-top to ensure casper script modifications
+# happen before the casper script is sourced during the mount phase
+
+CASPER_SCRIPT="/scripts/casper"
+URLMOUNT_OVERRIDE="/scripts/do_urlmount_override"
+NETWORKING_OVERRIDE="/scripts/configure_networking_override"
+
+# Override do_urlmount in casper script
+if [ -f "$CASPER_SCRIPT" ] && [ -f "$URLMOUNT_OVERRIDE" ]; then
+    # Check if already appended (idempotent operation)
+    if ! grep -q "# BROKKR URLMOUNT OVERRIDE APPENDED" "$CASPER_SCRIPT"; then
+        # Create backup of original casper script
+        cp "$CASPER_SCRIPT" "${CASPER_SCRIPT}.brokkr-backup"
+
+        # Append a simple wrapper function that sources our executable code
+        # This approach sources the file which executes our custom logic directly
+        {
+            echo ""
+            echo "# BROKKR URLMOUNT OVERRIDE APPENDED - Function override below"
+            echo "# Override do_urlmount to execute external Brokkr implementation"
+            echo ""
+            echo "do_urlmount() {"
+            echo "    # Source and execute the Brokkr implementation directly"
+            echo "    . $URLMOUNT_OVERRIDE"
+            echo "}"
+        } >> "$CASPER_SCRIPT"
+    fi
+fi
+
+# Override configure_networking in CASPER script (not functions!)
+# NOTE: functions is sourced BEFORE init-top runs, so appending there doesn't work.
+# Casper is sourced AFTER init-top, so we append the override there.
+if [ -f "$CASPER_SCRIPT" ] && [ -f "$NETWORKING_OVERRIDE" ]; then
+    # Check if already appended (idempotent operation)
+    if ! grep -q "# BROKKR NETWORKING OVERRIDE APPENDED" "$CASPER_SCRIPT"; then
+        # Append a wrapper function that sources our executable code
+        # This redefines configure_networking after casper is sourced
+        {
+            echo ""
+            echo "# BROKKR NETWORKING OVERRIDE APPENDED - Function override below"
+            echo "# Override configure_networking to handle multiple ip= parameters"
+            echo ""
+            echo "configure_networking() {"
+            echo "    # Source and execute the Brokkr implementation directly"
+            echo "    . $NETWORKING_OVERRIDE"
+            echo "}"
+        } >> "$CASPER_SCRIPT"
+    fi
+fi

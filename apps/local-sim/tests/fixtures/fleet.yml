@@ -1,0 +1,33 @@
+# Hermetic test fixture for the sql-seed generator tests (test_sql_generators.py).
+# The running stack no longer reads a committed fleet.yml — devenv renders it from
+# modules/fleet-topology.nix and points LOCAL_FLEET_PATH at the result. But tests/conftest.py's
+# isolate_config fixture scrubs LOCAL_* for hermeticity, so generator tests pin this
+# representative 4-node fleet explicitly via LOCAL_FLEET_PATH. Must mirror the
+# modules/fleet-topology.nix config.fleet base (kept in sync by hand — no eval in unit tests).
+network:
+  name: brokkr-net
+  cidr: 192.168.200.0/24
+  domain: sim.local
+  bmc_cidr: 192.168.105.0/24
+
+defaults:
+  cpus: 2
+  memory_mb: 2048
+  disk_gb: 40
+  bmc:
+    username: admin
+    password: admin
+
+nodes:
+  - name: cpu-1
+    ipmi_mac: "52:54:00:bc:00:01"
+    data_mac: "52:54:00:da:00:01"
+  - name: cpu-2
+    ipmi_mac: "52:54:00:bc:00:02"
+    data_mac: "52:54:00:da:00:02"
+  - name: cpu-3
+    ipmi_mac: "52:54:00:bc:00:03"
+    data_mac: "52:54:00:da:00:03"
+  - name: cpu-4
+    ipmi_mac: "52:54:00:bc:00:04"
+    data_mac: "52:54:00:da:00:04"

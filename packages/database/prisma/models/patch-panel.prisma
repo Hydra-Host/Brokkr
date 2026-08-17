@@ -1,0 +1,74 @@
+// Per-role extension for `Device.role = 'PatchPanel'` — rack-mounted patch
+// panels terminating structured cabling. Multi-table inheritance, 1:1 with
+// Device. Passive hardware: no power status, no BMC, no network presence —
+// so like RackBrush there is intentionally no `powerStatus` column. The
+// panel's individual port positions are the FrontPort/RearPort rows below,
+// which attach to any Device and are not PatchPanel-specific.
+model PatchPanel {
+  id String @id @default(uuid())
+
+  // fiber | copper (placeholder string)
+  panelType      String?
+  // Total front-port positions on the panel.
+  portCount      Int?
+  // Height of the panel in rack units (U).
+  rackUnitHeight Int?
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum PortType {
+  RJ45
+  FC
+  LC
+  SC
+  ST
+  MPO
+  CS
+  SN
+  OTHER
+}
+
+model FrontPort {
+  id               String   @id @default(uuid())
+  name             String
+  type             PortType
+  rearPortPosition Int      @default(1)
+  description      String?
+
+  device     Device   @relation(fields: [deviceId], references: [id])
+  deviceId   String
+  rearPort   RearPort @relation(fields: [rearPortId], references: [id])
+  rearPortId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId, name])
+  @@unique([rearPortId, rearPortPosition])
+  @@index([deviceId])
+  @@index([rearPortId])
+}
+
+model RearPort {
+  id          String   @id @default(uuid())
+  name        String
+  type        PortType
+  positions   Int      @default(1)
+  description String?
+
+  device   Device @relation(fields: [deviceId], references: [id])
+  deviceId String
+
+  frontPorts FrontPort[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId, name])
+  @@index([deviceId])
+}

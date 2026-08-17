@@ -1,0 +1,136 @@
+enum DeploymentType {
+  SELF_SERVICE
+  OFF_BROKKR
+}
+
+enum RequestSource {
+  UI
+  API
+  DEVICE
+  ADMIN
+  // Headless actors (cron, saga, plugin host) that run under ContextService.runAsSystem
+  // and therefore resolve to no identity.
+  SYSTEM
+}
+
+enum DeploymentLifecycleActionType {
+  Provision
+  Reprovision
+  Reboot
+  PowerOn
+  PowerOff
+  Deprovision
+}
+
+model Deployment {
+  id                        String              @id @default(uuid())
+  nickname                  String              @default("")
+  customIpxeScript          Boolean             @default(false)
+  startDate                 DateTime
+  endDate                   DateTime?
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime?           @updatedAt
+  type                      DeploymentType
+  // Migrated from `deviceId` -> `serverId` in
+  // `20260527213000_move_rentals_to_server`. Deployments now bind to
+  // the host's `Server` row, not the raw `Device` row.
+  serverId                  String
+  server                    Server              @relation(fields: [serverId], references: [id])
+  deploymentKeys            DeploymentSshKeys[]
+  reservation               Reservation?        @relation(fields: [reservationId], references: [id])
+  reservationId             String?
+  scheduledInterruptionTime DateTime?
+  // Per-deployment interruptible tenancy. Re-homes the legacy
+  // ContractTerm.contractType===INTERRUPTIBLE signal now that billing/reservations
+  // are gone: a host may carry an on-demand OR interruptible tenancy, so this is
+  // a per-deployment fact, not a Server capability.
+  isInterruptible           Boolean             @default(false)
+  // Grace window (ms) granted before eviction; null on non-interruptible tenancies.
+  interruptibleNoticePeriod Int?
+  isLocked                  Boolean             @default(false)
+
+  // Per-deploy autoinstall / cloud-init intent. Stored on Deployment because
+  // each provision can pick different values (encrypted vs not, VPC vs flat
+  // network, etc.).
+  cloudInitStorageBlock String?
+  cloudInitNetworkBlock String?
+  cloudInitLateCommands String?
+  diskEncryptionEnabled Boolean @default(false)
+  gpuDriversEnabled     Boolean @default(false)
+
+  publicIpAddressId  String?
+  publicIpAddress    IpAddress? @relation("DeploymentPublicIp", fields: [publicIpAddressId], references: [id])
+  privateIpAddressId String?
+  privateIpAddress   IpAddress? @relation("DeploymentPrivateIp", fields: [privateIpAddressId], references: [id])
+
+  deployerId String
+  deployer   User   @relation(fields: [deployerId], references: [id])
+
+  customerId String
+  customer   Organization @relation(fields: [customerId], references: [id])
+
+  // Base OS (kind=BASE or LEGACY) and the transient boot override
+  // (kind=LIVE, used for rescue/discovery), replacing the removed OperatingSystem FKs.
+  baseLayerId   String?
+  baseLayer     Layer?  @relation("deploymentBaseLayer", fields: [baseLayerId], references: [id], onDelete: Restrict)
+  rescueLayerId String?
+  rescueLayer   Layer?  @relation("deploymentRescueLayer", fields: [rescueLayerId], references: [id], onDelete: SetNull)
+
+  lifecycleActions    DeploymentLifecycleAction[]
+  lifecycleJobs       LifecycleJob[]
+  lifecycleRequests   AdminLifecycleRequest[]
+  deploymentProject   DeploymentProject?          @relation(fields: [deploymentProjectId], references: [id])
+  deploymentProjectId String?
+  clusterDeployments  ClusterDeployment[]
+  deviceDiagnostics   DeviceDiagnostics[]
+  deploymentLayers    DeploymentLayer[]
+  deviceTokens        DeviceToken[]
+
+  @@index([serverId])
+  @@index([baseLayerId])
+  @@index([rescueLayerId])
+}
+
+model DeploymentLifecycleAction {
+  id           String                        @id @default(uuid())
+  deploymentId String
+  deployment   Deployment                    @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  actionType   DeploymentLifecycleActionType
+  source       RequestSource
+  performedBy  String
+  performedAt  DateTime                      @default(now())
+
+  user User? @relation(fields: [performedBy], references: [id])
+
+  @@index([deploymentId, performedAt]) // Get actions for a deployment ordered by time
+  @@index([deploymentId, actionType]) // Get specific action types for a deployment
+  @@index([deploymentId, actionType, performedAt]) // Get specific actions for deployment ordered by time
+  @@index([performedBy, performedAt]) // Get user's actions ordered by time
+  @@index([actionType, performedAt]) // Get all actions of a type ordered by time
+  @@index([source, actionType]) // Get actions by source and type
+  @@index([performedAt])
+}
+
+model DeploymentSshKeys {
+  id           String     @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sshKey       SshKeys    @relation(fields: [sshKeyId], references: [id])
+  sshKeyId     String
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+
+  @@id([deploymentId, sshKeyId])
+}
+
+model DeploymentProject {
+  id             String       @id @default(uuid())
+  name           String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  deployments    Deployment[]
+  isDefault      Boolean      @default(false)
+  deletedAt      DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime?    @updatedAt
+
+  @@index([organizationId, isDefault])
+}

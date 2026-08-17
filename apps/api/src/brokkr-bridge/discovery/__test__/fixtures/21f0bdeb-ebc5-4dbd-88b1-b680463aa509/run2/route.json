@@ -1,0 +1,46 @@
+[
+  {
+    "destination": "0.0.0.0",
+    "gateway": "10.0.99.254",
+    "genmask": "0.0.0.0",
+    "flags": "UG",
+    "metric": 100,
+    "ref": 0,
+    "use": 0,
+    "iface": "eno8303",
+    "flags_pretty": ["UP", "GATEWAY"]
+  },
+  {
+    "destination": "100.110.0.0",
+    "gateway": "0.0.0.0",
+    "genmask": "255.255.0.0",
+    "flags": "U",
+    "metric": 0,
+    "ref": 0,
+    "use": 0,
+    "iface": "wt0",
+    "flags_pretty": ["UP"]
+  },
+  {
+    "destination": "172.16.12.0",
+    "gateway": "0.0.0.0",
+    "genmask": "255.255.252.0",
+    "flags": "U",
+    "metric": 0,
+    "ref": 0,
+    "use": 0,
+    "iface": "eno8303",
+    "flags_pretty": ["UP"]
+  },
+  {
+    "destination": "172.17.0.0",
+    "gateway": "0.0.0.0",
+    "genmask": "255.255.0.0",
+    "flags": "U",
+    "metric": 0,
+    "ref": 0,
+    "use": 0,
+    "iface": "docker0",
+    "flags_pretty": ["UP"]
+  }
+]

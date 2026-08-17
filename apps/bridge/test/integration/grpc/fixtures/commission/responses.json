@@ -1,0 +1,26 @@
+{
+  "_comment": "Scripted gRPC responses for the commission saga's dispatch sequence. Only steps that dispatch over gRPC are scripted here — disk_wipe and collect_hardware. Other commission steps (IPMI validate, redfish standardize, power control, etc.) hit non-gRPC services and are not in scope for this replay suite.",
+  "device_id": "1002",
+  "calls": [
+    {
+      "operation": "storage.wipeDisks",
+      "expected_input_keys": ["disk_layouts", "environment", "job_id"],
+      "response": {
+        "sanitization_report": {
+          "mode": "full",
+          "disks": [{ "device": "/dev/sda", "method": "nvme_format_user_data", "status": "success" }]
+        },
+        "optimal_os_disk": "/dev/sda"
+      }
+    },
+    {
+      "operation": "collection.collectAll",
+      "expected_input_keys": [],
+      "response": {
+        "successes": 5,
+        "failures": 0,
+        "collectors": ["cpu", "memory", "network", "storage", "bmc"]
+      }
+    }
+  ]
+}

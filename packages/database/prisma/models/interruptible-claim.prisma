@@ -1,0 +1,32 @@
+enum InterruptibleClaimStatus {
+  Pending
+  Complete
+}
+
+model InterruptibleClaim {
+  id             String                   @id @default(uuid())
+  deploymentName String
+  status         InterruptibleClaimStatus
+  interruptAt    DateTime
+
+  // Migrated from `deviceId` -> `serverId` in
+  // `20260527213000_move_rentals_to_server`. The partial unique index
+  // that guards "one pending claim per host" was rebuilt on serverId
+  // in the same migration; semantics are identical (Server-Device 1:1).
+  serverId       String
+  server         Server       @relation(fields: [serverId], references: [id])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  userId         String
+  user           User         @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  // Partial unique index (WHERE status = 'Pending') prevents race conditions.
+  // Only one pending claim per server allowed; multiple completed claims are fine.
+  // Defined via raw SQL in migration: 20260527213000_move_rentals_to_server
+  // (originally as InterruptibleClaim_deviceId_pending_unique in
+  // 20260122180000_fix_interruptible_claim_unique_index, rebuilt on serverId).
+
+  @@index([serverId])
+}

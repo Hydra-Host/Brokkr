@@ -1,0 +1,3 @@
+# Static Curl
+AMD64: https://github.com/moparisthebest/static-curl/releases/download/v8.11.0/curl-amd64
+ARM64: https://github.com/moparisthebest/static-curl/releases/download/v8.11.0/curl-aarch64

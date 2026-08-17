@@ -1,0 +1,8 @@
+{
+  "memory": {
+    "total_physical_bytes": 551903297536,
+    "total_usable_bytes": 540788027392,
+    "supported_page_sizes": [1073741824, 2097152],
+    "modules": null
+  }
+}

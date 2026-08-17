@@ -1,0 +1,31 @@
+{
+  "boot_current": "0008",
+  "timeout_seconds": 5,
+  "boot_order": ["0008", "0009", "000A"],
+  "boot_options": [
+    {
+      "boot_option_reference": "Boot0008",
+      "display_name": "PXE IPv4",
+      "uefi_device_path": "PciRoot(0x1)/...",
+      "boot_option_enabled": true
+    },
+    {
+      "boot_option_reference": "Boot0009",
+      "display_name": "UEFI Shell",
+      "uefi_device_path": "VenMedia(...)",
+      "boot_option_enabled": true
+    },
+    {
+      "boot_option_reference": "Boot000A",
+      "display_name": "PXE IPv4 2",
+      "uefi_device_path": "PciRoot(0x2)/...",
+      "boot_option_enabled": true
+    },
+    {
+      "boot_option_reference": "Boot000F",
+      "display_name": "Orphan entry",
+      "uefi_device_path": null,
+      "boot_option_enabled": false
+    }
+  ]
+}

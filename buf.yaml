@@ -1,0 +1,23 @@
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+  except:
+    # The split-stream protocol intentionally reuses envelope types
+    # (WorkResponse) across directions and names request/response types
+    # by their wire semantic (AgentRegistration, ServerMessage) rather
+    # than by the RPC they belong to. These rules conflict with those
+    # locked design decisions.
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    # Operation protos live under operations/ and are message-only
+    # (no services). The ".operations" sub-package is sufficient; a
+    # further ".v1" suffix would be redundant with the parent
+    # brokkr.agent.v1 namespace.
+    - PACKAGE_VERSION_SUFFIX
+breaking:
+  use:
+    - FILE

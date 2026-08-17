@@ -1,0 +1,46 @@
+// Per-role extension for `Device.role = 'CDU'` — coolant distribution
+// units. Multi-table inheritance, 1:1 with Device. Kept separate from
+// Pdu — different vendors, monitoring stack, and failure modes.
+model Cdu {
+  id String @id @default(uuid())
+
+  // water | glycol | refrigerant (placeholder string)
+  coolantType            String?
+  // Rated flow at design conditions (liters per minute).
+  ratedFlowRateLpm       Float?
+  // Rated heat-rejection capacity in kilowatts.
+  ratedThermalCapacityKw Int?
+  // Direction air/coolant moves through the unit. Required for every CDU —
+  // `@default(FrontToRear)` keeps machine-generated rows (the device-extension
+  // backfill, which inserts an FK-only row) valid; operator-facing create
+  // flows force an explicit pick.
+  airflow                Airflow @default(FrontToRear)
+
+  // Observed power state. Null = unknown (never reported by the bridge/BMC).
+  powerStatus CduPowerStatus?
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Airflow direction through a chassis.
+enum Airflow {
+  FrontToRear
+  RearToFront
+  LeftToRight
+  RightToLeft
+  SideToRear
+  Passive
+  Mixed
+}
+
+// Observed power state of a CDU-role device; on/off only. Distinct from the
+// coarse `Device.status`. The `Cdu.powerStatus` field is nullable to mean
+// "power state unknown" (never observed).
+enum CduPowerStatus {
+  On
+  Off
+}

@@ -1,0 +1,106 @@
+// test.* operations — hardware validation test suites.
+//
+// Output values are opaque JSON bytes (each sub-test builds its own nested
+// shape with many optional fields). Defaults:
+//   - duration zero-value ("") → agent applies "30m".
+//   - intensity TEST_INTENSITY_UNSPECIFIED → agent applies NORMAL.
+
+syntax = "proto3";
+
+package brokkr.agent.v1.operations;
+
+// TestIntensity — load intensity level for stress and benchmark tests.
+// `low` is a quick sanity pass; `high` approaches the hardware ceiling.
+enum TestIntensity {
+  TEST_INTENSITY_UNSPECIFIED = 0;
+  TEST_INTENSITY_LOW = 1;
+  TEST_INTENSITY_NORMAL = 2;
+  TEST_INTENSITY_HIGH = 3;
+}
+
+// ---------------------------------------------------------------------------
+// test.connectivity — network/BMC/LLDP/internet/DNS reachability.
+// ---------------------------------------------------------------------------
+
+// No input fields; the agent runs all connectivity probes unconditionally.
+message TestConnectivityInput {}
+
+message TestConnectivityOutput {
+  // Nested result dict: per-probe status (BMC, LLDP, internet, DNS, etc.)
+  // plus an overall verdict. Each value is a JSON-encoded blob. Hub-opaque.
+  map<string, bytes> connectivity = 1;
+}
+
+// ---------------------------------------------------------------------------
+// test.stress — CPU/memory/storage/network under sustained load.
+// ---------------------------------------------------------------------------
+
+message TestStressInput {
+  // Duration string, e.g. "5m", "30m", "1h". Applied per sub-test that
+  // respects it. Agent default: "30m".
+  string duration = 1;
+
+  // Load intensity level. Agent treats UNSPECIFIED as NORMAL.
+  TestIntensity intensity = 2;
+}
+
+message TestStressOutput {
+  // Nested result dict: per-subsystem load results (cpu, memory, storage,
+  // network) with status/error fields. Each value is a JSON-encoded blob.
+  // Hub-opaque.
+  map<string, bytes> stress = 1;
+}
+
+// ---------------------------------------------------------------------------
+// test.performance — CPU/memory/storage/network benchmarks.
+// ---------------------------------------------------------------------------
+
+message TestPerformanceInput {
+  // Duration string, e.g. "5m", "30m", "1h". Applied per sub-test that
+  // respects it. Agent default: "30m".
+  string duration = 1;
+}
+
+message TestPerformanceOutput {
+  // Nested result dict: per-subsystem benchmark numbers and pass/fail
+  // verdicts. Each value is a JSON-encoded blob. Hub-opaque.
+  map<string, bytes> performance = 1;
+}
+
+// ---------------------------------------------------------------------------
+// test.security — TDX / TEE / TPM / secure boot / memory encryption / certs.
+// ---------------------------------------------------------------------------
+
+// No input fields; the agent runs all security probes unconditionally.
+message TestSecurityInput {}
+
+message TestSecurityOutput {
+  // Nested result dict: per-probe security posture checks (TDX, TEE, TPM,
+  // secure boot, memory encryption, certs). Each value is a JSON-encoded
+  // blob. Hub-opaque.
+  map<string, bytes> security = 1;
+}
+
+// ---------------------------------------------------------------------------
+// test.runTestSuite — compound orchestrator.
+//
+// Runs connectivity + stress + performance + security + gpu_burn + nccl
+// concurrently, merges results, and appends a testing_metadata summary
+// block. Output is a flat merged dict keyed by sub-test name.
+// ---------------------------------------------------------------------------
+
+message TestRunTestSuiteInput {
+  // Duration string, e.g. "5m", "30m", "1h". Applied per sub-test that
+  // respects it. Agent default: "30m".
+  string duration = 1;
+
+  // Load intensity level. Agent treats UNSPECIFIED as NORMAL.
+  TestIntensity intensity = 2;
+}
+
+message TestRunTestSuiteOutput {
+  // Flat merged record keyed by sub-test name (connectivity, gpu_burn_in,
+  // nccl, performance, security, stress) plus a `testing_metadata` tail
+  // block. Each value is a JSON-encoded blob.
+  map<string, bytes> results = 1;
+}

@@ -1,0 +1,29 @@
+// Per-role extension for `Device.role = 'Router'` — edge routers
+// today, with room for core / border / internal variants behind a
+// `routerType` custom field. Multi-table inheritance, 1:1 with Device.
+
+// Observed power state of a Router-role device; on/off only. Distinct from the
+// coarse `Device.status`. The `Router.powerStatus` field is nullable to mean
+// "power state unknown" (never observed).
+enum RouterPowerStatus {
+  On
+  Off
+}
+
+model Router {
+  id String @id @default(uuid())
+
+  // edge | core | border | internal (placeholder; promote to enum later)
+  routerType String?
+  // BGP autonomous system number this router announces from.
+  bgpAsn     Int?
+
+  // Observed power state. Null = unknown (never reported by the bridge/BMC).
+  powerStatus RouterPowerStatus?
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

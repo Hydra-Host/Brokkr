@@ -1,0 +1,717 @@
+#!/bin/sh
+# configure_networking override implementation - executable code
+# This file contains the custom logic for configuring multiple network interfaces
+# When sourced by the configure_networking function, it executes directly
+
+if [ -n "${BOOTIF}" ]; then
+	# pxelinux sets BOOTIF to a value based on the mac address of the
+	# network card used to PXE boot, so use this value for DEVICE rather
+	# than a hard-coded device name from initramfs.conf. this facilitates
+	# network booting when machines may have multiple network cards.
+	# pxelinux sets BOOTIF to 01-$mac_address
+	#
+	# Most hosts: PXE and url/root networking use the same NIC — BOOTIF matches reality.
+	# VPC-style DCs: PXE on one port (e.g. commission/mgmt), ip= targets bond+VLAN on SFP.
+	# In that case ip= field 6 below overrides DEVICE so Casper/url mount uses the bond.
+
+	# strip off the leading "01-", which isn't part of the mac
+	# address
+	temp_mac=${BOOTIF#*-}
+
+	# convert to typical mac address format by replacing "-" with ":"
+	bootif_mac=""
+	IFS='-'
+	for x in $temp_mac ; do
+		if [ -z "$bootif_mac" ]; then
+			bootif_mac="$x"
+		else
+			bootif_mac="$bootif_mac:$x"
+		fi
+	done
+	unset IFS
+
+	# look for devices with matching mac address, and set DEVICE to
+	# appropriate value if match is found.
+	for device in /sys/class/net/* ; do
+		if [ -f "$device/address" ]; then
+			current_mac=$(cat "$device/address")
+			if [ "$bootif_mac" = "$current_mac" ]; then
+				DEVICE=${device##*/}
+				DEVICE6=${device##*/}
+				break
+			fi
+		fi
+	done
+fi
+
+_handle_device_vs_ip
+
+# Static ip=…:bond0.122:… must drive DEVICE for Casper/urlmount even when PXE uses another NIC.
+_brokkr_first_ip=""
+for _brokkr_tok in $(cat /proc/cmdline); do
+	case "$_brokkr_tok" in
+	ip=*)
+		_brokkr_first_ip="${_brokkr_tok#ip=}"
+		break
+		;;
+	esac
+done
+if [ -n "$_brokkr_first_ip" ]; then
+	IFS=:
+	set -f
+	set -- $_brokkr_first_ip
+	set +f
+	unset IFS
+	if [ -n "${6-}" ]; then
+		DEVICE="$6"
+		DEVICE6="$6"
+	fi
+fi
+
+if [ -n "${DEVICE}" ] && [ -e "/run/net-${DEVICE}.conf" ]; then
+	log_begin_msg "BROKKR: Using existing /run/net-${DEVICE}.conf (skip duplicate setup)"
+	log_end_msg
+	for conf in /run/"net-$DEVICE.conf" /run/net-*.conf; do
+		if [ -e "$conf" ]; then
+			. "$conf"
+			break
+		fi
+	done
+	netinfo_to_resolv_conf /etc/resolv.conf \
+		/run/"net-${DEVICE}.conf" /run/net-*.conf /run/net6-*.conf
+	netinfo_to_netplan /run/netplan \
+		/run/"net-${DEVICE}.conf" /run/net-*.conf /run/net6-*.conf
+	return
+fi
+
+# Parsed once: Casper $VLAN loop must not touch bond masters before bond= creates them.
+_brokkr_bonds=""
+_brokkr_vlans=""
+_brokkr_bond_masters=""
+_brokkr_net_race=0
+for _brokkr_tok in $(cat /proc/cmdline); do
+	case "$_brokkr_tok" in
+	bond=*)
+		_brokkr_spec="${_brokkr_tok#bond=}"
+		_brokkr_bonds="$_brokkr_bonds ${_brokkr_spec}"
+		_brokkr_bond_masters="$_brokkr_bond_masters ${_brokkr_spec%%:*}"
+		;;
+	vlan=*)
+		_brokkr_vlans="$_brokkr_vlans ${_brokkr_tok#vlan=}"
+		;;
+	brokkr_net_race|brokkr_net_race=1)
+		_brokkr_net_race=1
+		;;
+	esac
+done
+
+_brokkr_wants_dhcp=0
+case "${IP}" in
+""|on|any|dhcp|bootp|both)
+	_brokkr_wants_dhcp=1
+	;;
+esac
+
+for v in $VLAN; do
+	VLAN_LINK="$VLAN_LINK ${v##*:}"
+	VLAN_NAMES="$VLAN_NAMES ${v%:*}"
+done
+
+# activate non-autoconfigured s390x devices
+for dev in $DEVICE $DEVICE6 $IP6 $VLAN_LINK; do
+	# do not chzdev $dev if it is a not-yet-created vlan interface
+	for vlan_name in $VLAN_NAMES; do
+		if [ "$dev" = "$vlan_name" ]; then
+			continue 2
+		fi
+	done
+	case ${dev} in
+	enc*)
+		zdev=${dev#enc}
+		chzdev -e "$zdev" || true
+		;;
+	esac
+done
+
+for v in $VLAN; do
+	vlink=${v##*:}
+	vname=${v%:*}
+	vid=${vname#*.}
+	_brokkr_skip_vlan=0
+	for _brokkr_bm in $_brokkr_bond_masters; do
+		if [ "$vlink" = "$_brokkr_bm" ]; then
+			_brokkr_skip_vlan=1
+			break
+		fi
+	done
+	if [ "$_brokkr_skip_vlan" -eq 1 ]; then
+		continue
+	fi
+	ip link set up dev "$vlink"
+	ip link add name "$vname" link "$vlink" type vlan id "$vid"
+done
+
+wait_for_udev 10
+
+if [ -n "$_brokkr_bonds" ]; then
+	udevadm settle --timeout=45 2>/dev/null || true
+fi
+
+# ============================================================
+# BROKKR: Enforce ifname= MAC-to-name mappings for all interfaces
+# Must run before bond enslavement so slaves match bond= names.
+# ============================================================
+
+for _brokkr_tok in $(cat /proc/cmdline); do
+	case "$_brokkr_tok" in
+		ifname=*)
+			_brokkr_ifspec="${_brokkr_tok#ifname=}"
+			_brokkr_want_name="${_brokkr_ifspec%%:*}"
+			_brokkr_want_mac="${_brokkr_ifspec#*:}"
+
+			# Skip if already correct
+			if [ -e "/sys/class/net/${_brokkr_want_name}" ]; then
+				_brokkr_cur_mac=$(cat "/sys/class/net/${_brokkr_want_name}/address" 2>/dev/null)
+				if [ "$_brokkr_cur_mac" = "$_brokkr_want_mac" ]; then
+					continue
+				fi
+			fi
+
+			# Find by MAC and rename
+			for _brokkr_dev in /sys/class/net/*; do
+				[ -f "$_brokkr_dev/address" ] || continue
+				_brokkr_dev_mac=$(cat "$_brokkr_dev/address")
+				if [ "$_brokkr_dev_mac" = "$_brokkr_want_mac" ]; then
+					_brokkr_cur_name="${_brokkr_dev##*/}"
+					if [ "$_brokkr_cur_name" != "$_brokkr_want_name" ]; then
+						log_begin_msg "BROKKR: Renaming ${_brokkr_cur_name} (${_brokkr_want_mac}) to ${_brokkr_want_name}"
+						log_end_msg
+						ip link set "$_brokkr_cur_name" down 2>/dev/null || true
+						if ip link set "$_brokkr_cur_name" name "$_brokkr_want_name" 2>/dev/null; then
+							ip link set "$_brokkr_want_name" up 2>/dev/null || true
+						else
+							log_begin_msg "BROKKR: WARN rename ${_brokkr_cur_name} to ${_brokkr_want_name} failed"
+							log_end_msg
+							ip link set "$_brokkr_cur_name" up 2>/dev/null || true
+						fi
+					fi
+					break
+				fi
+			done
+			;;
+	esac
+done
+
+# ============================================================
+# BROKKR: Bond and VLAN creation from kernel parameters
+# Runs after ifname= renames; bond masters exist before vlan= on bond.
+# ============================================================
+
+if [ -n "$_brokkr_bonds$_brokkr_vlans" ]; then
+	log_begin_msg "BROKKR: Bond/VLAN parameters detected, setting up interfaces"
+	log_end_msg
+
+	# Load required kernel modules
+	modprobe bonding 2>/dev/null || true
+	modprobe 8021q 2>/dev/null || true
+	modprobe mlx5_core 2>/dev/null || true
+
+	# --- Create bonds ---
+	for _brokkr_bspec in $_brokkr_bonds; do
+		_brokkr_bname="${_brokkr_bspec%%:*}"
+		_brokkr_brest="${_brokkr_bspec#*:}"
+		_brokkr_bslaves="${_brokkr_brest%%:*}"
+		_brokkr_bopts="${_brokkr_brest#*:}"
+		[ "$_brokkr_bopts" = "$_brokkr_bslaves" ] && _brokkr_bopts=""
+
+		log_begin_msg "BROKKR: Creating bond $_brokkr_bname with slaves $_brokkr_bslaves"
+		log_end_msg
+
+		# Create bond master interface
+		if [ ! -d "/sys/class/net/$_brokkr_bname" ]; then
+			if [ -w /sys/class/net/bonding_masters ]; then
+				echo "+$_brokkr_bname" > /sys/class/net/bonding_masters
+			else
+				ip link add "$_brokkr_bname" type bond 2>/dev/null || true
+			fi
+		fi
+
+		ip link set "$_brokkr_bname" down 2>/dev/null || true
+
+		# First pass: set mode (must be set before enslaving for 802.3ad)
+		_brokkr_req_mode=""
+		IFS=,
+		for _brokkr_kv in $_brokkr_bopts; do
+			[ -z "$_brokkr_kv" ] && continue
+			_brokkr_k="${_brokkr_kv%%=*}"
+			_brokkr_v="${_brokkr_kv#*=}"
+			if [ "$_brokkr_k" = "mode" ] && [ -w "/sys/class/net/$_brokkr_bname/bonding/mode" ]; then
+				_brokkr_req_mode="$_brokkr_v"
+				if ! echo "$_brokkr_v" > "/sys/class/net/$_brokkr_bname/bonding/mode" 2>/dev/null; then
+					log_begin_msg "BROKKR: WARN bond mode write failed for $_brokkr_v, trying numeric 802.3ad"
+					log_end_msg
+					case "$_brokkr_v" in
+					802.3ad|802\.3ad)
+						echo 4 > "/sys/class/net/$_brokkr_bname/bonding/mode" 2>/dev/null || true
+						;;
+					esac
+				fi
+				log_begin_msg "BROKKR: Set bond mode=$_brokkr_v"
+				log_end_msg
+			fi
+		done
+		unset IFS
+
+		if [ -r "/sys/class/net/$_brokkr_bname/bonding/mode" ]; then
+			_brokkr_act_mode=$(awk '{print $1}' "/sys/class/net/$_brokkr_bname/bonding/mode")
+			log_begin_msg "BROKKR: Bond $_brokkr_bname effective mode=${_brokkr_act_mode}"
+			log_end_msg
+			case "${_brokkr_req_mode}:${_brokkr_act_mode}" in
+			802.3ad:active-backup|802\.3ad:active-backup|4:active-backup)
+				log_begin_msg "BROKKR: WARN wanted LACP (802.3ad) but got active-backup; retrying mode"
+				log_end_msg
+				echo 802.3ad > "/sys/class/net/$_brokkr_bname/bonding/mode" 2>/dev/null || echo 4 > "/sys/class/net/$_brokkr_bname/bonding/mode" 2>/dev/null || true
+				;;
+			esac
+		fi
+
+		# Second pass: set other bonding options
+		IFS=,
+		for _brokkr_kv in $_brokkr_bopts; do
+			[ -z "$_brokkr_kv" ] && continue
+			_brokkr_k="${_brokkr_kv%%=*}"
+			_brokkr_v="${_brokkr_kv#*=}"
+			[ "$_brokkr_k" = "mode" ] && continue
+			_brokkr_sysfs="/sys/class/net/$_brokkr_bname/bonding/$_brokkr_k"
+			if [ -w "$_brokkr_sysfs" ]; then
+				echo "$_brokkr_v" > "$_brokkr_sysfs" 2>/dev/null || true
+			fi
+		done
+		unset IFS
+
+		# Enslave member interfaces
+		IFS=,
+		for _brokkr_slave in $_brokkr_bslaves; do
+			[ -z "$_brokkr_slave" ] && continue
+			_brokkr_sw=0
+			while [ ! -d "/sys/class/net/$_brokkr_slave" ] && [ $_brokkr_sw -lt 120 ]; do
+				sleep 1
+				_brokkr_sw=$((_brokkr_sw + 1))
+			done
+			if [ -d "/sys/class/net/$_brokkr_slave" ]; then
+				ip link set "$_brokkr_slave" down 2>/dev/null || true
+				echo "+$_brokkr_slave" > "/sys/class/net/$_brokkr_bname/bonding/slaves" 2>/dev/null || true
+				log_begin_msg "BROKKR: Enslaved $_brokkr_slave to $_brokkr_bname"
+				log_end_msg
+			else
+				log_begin_msg "BROKKR: WARN slave $_brokkr_slave not found after 120s"
+				log_end_msg
+			fi
+		done
+		unset IFS
+
+		# Bring bond up
+		ip link set "$_brokkr_bname" up 2>/dev/null || true
+
+		# Default miimon if not already set
+		if [ -f "/sys/class/net/$_brokkr_bname/bonding/miimon" ]; then
+			_brokkr_cur=$(cat "/sys/class/net/$_brokkr_bname/bonding/miimon" 2>/dev/null || echo 0)
+			[ "${_brokkr_cur:-0}" -eq 0 ] && echo 100 > "/sys/class/net/$_brokkr_bname/bonding/miimon" 2>/dev/null || true
+		fi
+	done
+
+	if [ -n "$_brokkr_vlans" ]; then
+		sleep 2
+	fi
+
+	# --- Create VLANs ---
+	for _brokkr_vspec in $_brokkr_vlans; do
+		_brokkr_vname="${_brokkr_vspec%%:*}"
+		_brokkr_vparent="${_brokkr_vspec#*:}"
+		_brokkr_vid="${_brokkr_vname##*.}"
+
+		log_begin_msg "BROKKR: Creating VLAN $_brokkr_vname (id $_brokkr_vid) on $_brokkr_vparent"
+		log_end_msg
+
+		_brokkr_pw_max=120
+		case "$_brokkr_vparent" in
+		bond*)
+			_brokkr_has_bm=0
+			for _brokkr_m in $_brokkr_bond_masters; do
+				[ "$_brokkr_m" = "$_brokkr_vparent" ] && _brokkr_has_bm=1 && break
+			done
+			if [ "$_brokkr_has_bm" -eq 0 ]; then
+				log_begin_msg "BROKKR: ERROR vlan parent $_brokkr_vparent needs bond=${_brokkr_vparent}:slaves,... on cmdline"
+				log_end_msg
+				_brokkr_pw_max=0
+			fi
+			;;
+		esac
+
+		_brokkr_pw=0
+		while [ ! -d "/sys/class/net/$_brokkr_vparent" ] && [ $_brokkr_pw -lt "$_brokkr_pw_max" ]; do
+			sleep 1
+			_brokkr_pw=$((_brokkr_pw + 1))
+		done
+
+		if [ -d "/sys/class/net/$_brokkr_vparent" ]; then
+			if [ ! -d "/sys/class/net/$_brokkr_vname" ]; then
+				if ! ip link add link "$_brokkr_vparent" name "$_brokkr_vname" type vlan id "$_brokkr_vid" 2>/dev/null; then
+					log_begin_msg "BROKKR: WARN vlan add failed $_brokkr_vname on $_brokkr_vparent id=$_brokkr_vid"
+					log_end_msg
+				fi
+			fi
+			ip link set "$_brokkr_vname" up 2>/dev/null || true
+		else
+			log_begin_msg "BROKKR: WARN parent $_brokkr_vparent not found for VLAN $_brokkr_vname"
+			log_end_msg
+		fi
+	done
+
+	# --- Wait for link readiness ---
+	# DHCP: require carrier on bond + VLAN so dhclient does not burn full ROUNDTTT per round.
+	# Static ip=: wait only on $DEVICE (usually bondX.Y); ipconfig can apply addresses without
+	# demanding bond-master carrier first.
+	_brokkr_wait=0
+	_brokkr_ready=0
+	if [ "$_brokkr_net_race" -eq 1 ]; then
+		log_begin_msg "BROKKR: brokkr_net_race — skipping carrier wait (parallel DHCP + ipconfig)"
+		log_end_msg
+		_brokkr_ready=1
+	elif [ "$_brokkr_wants_dhcp" -eq 1 ]; then
+		# With vlan=bond0.N:bond0, dhclient runs on the VLAN. Waiting on bond0 carrier can burn
+		# the full 120s while LACP finishes — the VLAN may not show carrier until then anyway,
+		# but checking bond *and* VLAN required both; mlx5 often keeps bond operstate lagging VLAN.
+		if [ -n "$_brokkr_vlans" ]; then
+			log_begin_msg "BROKKR: Waiting up to 120s for VLAN carrier (DHCP on tagged iface)"
+			log_end_msg
+		else
+			log_begin_msg "BROKKR: Waiting up to 120s for bond carrier (DHCP)"
+			log_end_msg
+		fi
+		while [ $_brokkr_wait -lt 120 ]; do
+			_brokkr_all_up=1
+
+			if [ -n "$_brokkr_vlans" ]; then
+				for _brokkr_vspec in $_brokkr_vlans; do
+					_brokkr_vname="${_brokkr_vspec%%:*}"
+					_brokkr_carrier=$(cat "/sys/class/net/$_brokkr_vname/carrier" 2>/dev/null || echo 0)
+					_brokkr_oper=$(cat "/sys/class/net/$_brokkr_vname/operstate" 2>/dev/null || echo down)
+					if [ "$_brokkr_carrier" != "1" ] || [ "$_brokkr_oper" != "up" ]; then
+						_brokkr_all_up=0
+						break
+					fi
+				done
+			else
+				for _brokkr_bspec in $_brokkr_bonds; do
+					_brokkr_bname="${_brokkr_bspec%%:*}"
+					_brokkr_carrier=$(cat "/sys/class/net/$_brokkr_bname/carrier" 2>/dev/null || echo 0)
+					_brokkr_oper=$(cat "/sys/class/net/$_brokkr_bname/operstate" 2>/dev/null || echo down)
+					if [ "$_brokkr_carrier" != "1" ] || [ "$_brokkr_oper" != "up" ]; then
+						_brokkr_all_up=0
+						break
+					fi
+				done
+			fi
+
+			if [ $_brokkr_all_up -eq 1 ]; then
+				_brokkr_ready=1
+				break
+			fi
+			sleep 1
+			_brokkr_wait=$((_brokkr_wait + 1))
+		done
+	else
+		# Static ip=: configure addresses via ipconfig even if carrier/LACP lags; only brief settle.
+		if [ -n "${DEVICE}" ]; then
+			log_begin_msg "BROKKR: Brief wait for ${DEVICE} (static ip=, up to 20s)"
+			log_end_msg
+			while [ $_brokkr_wait -lt 20 ]; do
+				if [ -d "/sys/class/net/${DEVICE}" ]; then
+					_brokkr_carrier=$(cat "/sys/class/net/${DEVICE}/carrier" 2>/dev/null || echo 0)
+					_brokkr_oper=$(cat "/sys/class/net/${DEVICE}/operstate" 2>/dev/null || echo down)
+					if [ "$_brokkr_carrier" = "1" ] || [ "$_brokkr_oper" = "up" ] || [ "$_brokkr_oper" = "unknown" ]; then
+						_brokkr_ready=1
+						break
+					fi
+				fi
+				sleep 1
+				_brokkr_wait=$((_brokkr_wait + 1))
+			done
+			if [ -d "/sys/class/net/${DEVICE}" ]; then
+				_brokkr_ready=1
+			fi
+		else
+			_brokkr_ready=1
+		fi
+	fi
+
+	if [ $_brokkr_ready -eq 1 ]; then
+		log_begin_msg "BROKKR: Bond/VLAN ready after ${_brokkr_wait}s"
+		log_end_msg
+		sleep 2
+	else
+		log_begin_msg "BROKKR: WARN bond/VLAN not fully ready after wait, continuing"
+		log_end_msg
+	fi
+fi
+
+if [ -n "${DEVICE}" ]; then
+	# ============================================================
+	# BROKKR: MAC-aware device wait with rename support
+	# Runs after bond/VLAN creation and ifname= renames, so bond
+	# interfaces are already present and physical interfaces already
+	# have their final names. For a bond DEVICE this exits on the
+	# first check; for a slow-probing physical NIC the full 300s
+	# budget is still available.
+	# ============================================================
+
+	# Build MAC lookup from ifname= params on kernel cmdline
+	_brokkr_device_mac=""
+	for _brokkr_tok in $(cat /proc/cmdline); do
+		case "$_brokkr_tok" in
+			ifname=*)
+				_brokkr_ifspec="${_brokkr_tok#ifname=}"
+				_brokkr_if_name="${_brokkr_ifspec%%:*}"
+				_brokkr_if_mac="${_brokkr_ifspec#*:}"
+				if [ "$_brokkr_if_name" = "${DEVICE}" ]; then
+					_brokkr_device_mac="$_brokkr_if_mac"
+				fi
+				;;
+		esac
+	done
+
+	netdevwait=300
+	if [ -n "$_brokkr_device_mac" ]; then
+		log_begin_msg "BROKKR: Waiting up to ${netdevwait}s for ${DEVICE} (MAC ${_brokkr_device_mac})"
+		log_end_msg
+
+		_brokkr_found=0
+		_brokkr_nd_elapsed=0
+		while [ "$_brokkr_nd_elapsed" -lt "$netdevwait" ]; do
+			# Check if device already exists with correct name and MAC
+			if [ -e "/sys/class/net/${DEVICE}" ]; then
+				_brokkr_cur_mac=$(cat "/sys/class/net/${DEVICE}/address" 2>/dev/null)
+				if [ "$_brokkr_cur_mac" = "$_brokkr_device_mac" ]; then
+					_brokkr_found=1
+					break
+				fi
+			fi
+
+			# Check if MAC exists on a differently-named interface
+			for _brokkr_dev in /sys/class/net/*; do
+				[ -f "$_brokkr_dev/address" ] || continue
+				_brokkr_dev_mac=$(cat "$_brokkr_dev/address")
+				if [ "$_brokkr_dev_mac" = "$_brokkr_device_mac" ]; then
+					_brokkr_cur_name="${_brokkr_dev##*/}"
+					if [ "$_brokkr_cur_name" != "${DEVICE}" ]; then
+						log_begin_msg "BROKKR: Renaming ${_brokkr_cur_name} (${_brokkr_device_mac}) to ${DEVICE}"
+						log_end_msg
+						ip link set "$_brokkr_cur_name" down 2>/dev/null || true
+						if ip link set "$_brokkr_cur_name" name "${DEVICE}" 2>/dev/null; then
+							ip link set "${DEVICE}" up 2>/dev/null || true
+						else
+							log_begin_msg "BROKKR: WARN rename ${_brokkr_cur_name} to ${DEVICE} failed, retrying"
+							log_end_msg
+							ip link set "$_brokkr_cur_name" up 2>/dev/null || true
+							continue
+						fi
+					fi
+					_brokkr_found=1
+					break 2
+				fi
+			done
+
+			sleep 1
+			_brokkr_nd_elapsed=$((_brokkr_nd_elapsed + 1))
+		done
+
+		if [ $_brokkr_found -eq 0 ]; then
+			log_failure_msg "BROKKR: Interface ${DEVICE} (MAC ${_brokkr_device_mac}) did not appear in ${netdevwait}s"
+		else
+			log_begin_msg "BROKKR: Interface ${DEVICE} ready (MAC ${_brokkr_device_mac})"
+			log_end_msg
+		fi
+	else
+		# No ifname= mapping for DEVICE, fall back to name-only wait
+		log_begin_msg "Waiting up to ${netdevwait} secs for ${DEVICE} to become available"
+		_brokkr_nd_elapsed=0
+		while [ "$_brokkr_nd_elapsed" -lt "$netdevwait" ]; do
+			if [ -e "/sys/class/net/${DEVICE}" ]; then
+				break
+			fi
+			sleep 1
+			_brokkr_nd_elapsed=$((_brokkr_nd_elapsed + 1))
+		done
+		if [ ! -e "/sys/class/net/${DEVICE}" ]; then
+			log_failure_msg "Interface ${DEVICE} did not appear in time"
+		fi
+		log_end_msg
+	fi
+fi
+
+# DHCP only: skip ROUNDTTT when bond has no carrier — dhclient would wait full
+# timeout each round on a no-carrier master. Static ip= still runs ipconfig below.
+if [ -n "$_brokkr_bonds" ] && [ "${_brokkr_ready:-0}" -eq 0 ] && [ "$_brokkr_wants_dhcp" -eq 1 ]; then
+	log_begin_msg "BROKKR: Bond/VLAN not ready — skipping DHCP this pass (will retry if invoked again)"
+	log_end_msg
+	IP=done
+	IP6=done
+fi
+
+# Parallel race: static ipconfig + DHCP on carrier interfaces; first /run/net-*.conf wins.
+# Enable with kernel arg: brokkr_net_race or brokkr_net_race=1
+if [ "$_brokkr_net_race" -eq 1 ] && [ "$IP" != done ]; then
+	log_begin_msg "BROKKR: brokkr_net_race — starting parallel ipconfig and DHCP (120s)"
+	log_end_msg
+	_brokkr_race_pids=""
+	for _brokkr_ip_param in $(cat /proc/cmdline | tr ' ' '\n' | grep '^ip='); do
+		_brokkr_iv="${_brokkr_ip_param#ip=}"
+		case "$_brokkr_iv" in
+		dhcp|on|any|bootp|both|"") continue ;;
+		esac
+		( ipconfig -t 90 -d "$_brokkr_iv" ) & _brokkr_race_pids="$_brokkr_race_pids $!"
+	done
+	for _brokkr_nd in /sys/class/net/*; do
+		_brokkr_nn="${_brokkr_nd##*/}"
+		[ "$_brokkr_nn" = lo ] && continue
+		[ -e "$_brokkr_nd/bonding_slave" ] && continue
+		[ "$(cat "$_brokkr_nd/carrier" 2>/dev/null)" = 1 ] || continue
+		if [ -n "${DEVICE}" ] && [ "$_brokkr_nn" = "${DEVICE}" ]; then
+			continue
+		fi
+		( run_dhclient 90 -4 "$_brokkr_nn" ) & _brokkr_race_pids="$_brokkr_race_pids $!"
+	done
+	_brokkr_race_i=0
+	while [ "$_brokkr_race_i" -lt 120 ]; do
+		if ls /run/net-*.conf >/dev/null 2>&1; then
+			break
+		fi
+		sleep 1
+		_brokkr_race_i=$((_brokkr_race_i + 1))
+	done
+	for _brokkr_rp in $_brokkr_race_pids; do
+		kill "$_brokkr_rp" 2>/dev/null || true
+	done
+	wait 2>/dev/null || true
+	pkill -x dhclient 2>/dev/null || true
+
+	if ls /run/net-*.conf >/dev/null 2>&1; then
+		if [ -n "${DEVICE}" ] && [ -e "/run/net-${DEVICE}.conf" ]; then
+			:
+		else
+			for _brokkr_cf in /run/net-*.conf; do
+				[ -f "$_brokkr_cf" ] || continue
+				_brokkr_win="${_brokkr_cf#/run/net-}"
+				_brokkr_win="${_brokkr_win%.conf}"
+				DEVICE="$_brokkr_win"
+				DEVICE6="$_brokkr_win"
+				break
+			done
+		fi
+		IP=done
+		IP6=done
+		log_begin_msg "BROKKR: net race succeeded (DEVICE=${DEVICE})"
+		log_end_msg
+	fi
+fi
+
+# support ip options see linux sources
+# Documentation/filesystems/nfs/nfsroot.txt
+# Documentation/frv/booting.txt
+
+for ROUNDTTT in 2 3 4 6 9 16 25 36 64 100; do
+
+	# The NIC is to be configured if this file does not exist.
+	# Ip-Config tries to create this file and when it succeds
+	# creating the file, ipconfig is not run again.
+	if [ -z "${DEVICE}" ] && ls /run/net-*.conf >/dev/null 2>&1 || [ -e /run/net-"${DEVICE}".conf ]; then
+		IP="done"
+	fi
+	if [ -z "${DEVICE6}" ] && ls /run/net6-*.conf >/dev/null 2>&1 || [ -e /run/net6-"${DEVICE6}".conf ]; then
+		IP6="done"
+	fi
+
+	# if we've reached a point where both IP and IP6 are "done",
+	# then we're finished with network configuration.
+	if [ "$IP" = done ] && [ "$IP6" = done ]; then
+		break
+	fi
+
+	case ${IP} in
+	none|done|off)
+		# Do nothing
+		IP=done
+		;;
+	""|on|any|dhcp|bootp|both)
+		if [ "${NETWORK_SKIP_ENSLAVED:-0}" = 0 ] || [ -n "${DEVICE}" ]; then
+			run_dhclient $ROUNDTTT -4 ${DEVICE:+"${DEVICE}"}
+		else
+			# shellcheck disable=SC2046
+			run_dhclient $ROUNDTTT -4 $(all_non_enslaved_devices)
+		fi
+
+		;;
+	*)
+		# BROKKR: Handle multiple ip= parameters from kernel cmdline
+		_brokkr_ip_count=0
+		for _brokkr_ip_param in $(cat /proc/cmdline | tr ' ' '\n' | grep '^ip='); do
+			_brokkr_ip_value="${_brokkr_ip_param#ip=}"
+			_brokkr_ip_count=$((_brokkr_ip_count + 1))
+			log_begin_msg "BROKKR: Configuring interface ${_brokkr_ip_count}: ${_brokkr_ip_value}"
+			log_end_msg
+			ipconfig -t ${ROUNDTTT} -d "$_brokkr_ip_value"
+		done
+		if [ "$_brokkr_ip_count" -gt 0 ]; then
+			log_begin_msg "BROKKR: Configured ${_brokkr_ip_count} network interface(s) total"
+			log_end_msg
+			IP="done"
+		else
+			log_begin_msg "BROKKR: WARNING - No ip= params found, falling back to single IP"
+			log_end_msg
+			ipconfig -t ${ROUNDTTT} -d "$IP"
+		fi
+		;;
+	esac
+
+	case ${IP6} in
+	""|none|done|off)
+		# Do nothing
+		IP6=done
+		;;
+	*)
+		# check the content of IP6 and if it is not on/dhcp/any use it as
+		# a device name. Otherwise all devices will be tried (unless
+		# BOOTIF was set, see above).
+		case "${IP6}" in
+		on|dhcp|any)
+			;;
+		*)
+			DEVICE6="$IP6" ;;
+		esac
+
+		if [ "${NETWORK_SKIP_ENSLAVED:-0}" = 0 ] || [ -n "${DEVICE6}" ]; then
+			run_dhclient $ROUNDTTT -6 ${DEVICE6:+"${DEVICE6}"}
+		else
+			# shellcheck disable=SC2046
+			run_dhclient $ROUNDTTT -6 $(all_non_enslaved_devices)
+		fi
+		;;
+	esac
+done
+
+# source ipconfig output for either $DEVICE or the first one.
+# If the user is booting with only IPv6, then DEVICE may be set,
+# but no IPv4 conf files exist.
+for conf in /run/"net-$DEVICE.conf" /run/net-*.conf; do
+	if [ -e "$conf" ]; then
+		# source specific bootdevice
+		. "$conf"
+		break
+	fi
+done
+
+netinfo_to_resolv_conf /etc/resolv.conf \
+	/run/"net-${DEVICE}.conf" /run/net-*.conf /run/net6-*.conf
+netinfo_to_netplan /run/netplan \
+	/run/"net-${DEVICE}.conf" /run/net-*.conf /run/net6-*.conf

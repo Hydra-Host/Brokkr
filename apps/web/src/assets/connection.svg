@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="825"
+   height="931"
+   viewBox="0 0 825 931"
+   fill="none"
+   version="1.1"
+   id="svg32"
+   sodipodi:docname="connection.svg"
+   inkscape:version="1.4.3 (0d15f75, 2025-12-25)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs32" />
+  <sodipodi:namedview
+     id="namedview32"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.2393036"
+     inkscape:cx="587.83011"
+     inkscape:cy="314.69285"
+     inkscape:window-width="1800"
+     inkscape:window-height="1097"
+     inkscape:window-x="0"
+     inkscape:window-y="44"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg32" />
+  <path
+     d="M-10.5 31H276L304.5 2.5H519.5M-10.5 57H276L304.5 28.5H439.5M-10.5 82H276L304.5 53.5H547M-10.5 104H276L304.5 75.5H325.5M-10.5 210H148.5L172 250.703H265.5M-10.5 230.5H148.5L172 271.203H265.5M-10.5 250.703H148.5L172 291.406H268M-10.5 271.203H148.5L172 311.906H265.5M-10.5 304H128L158.649 352C158.649 352 238.411 352 273.5 352M-10.5 344L14.5 319H98M-10.5 417H225L248.5 376.297H273M-10.5 439H225L248.5 398.297C248.5 398.297 248.5 398.297 273 398.297M-10.5 457.5H229L252.383 417H271M-10.5 477H229L252.383 436.5H273M-10.5 505.5H229L252.5 533H273M-10.5 583H124L165 542H269.5M-10.5 614.5H80.5L109.5 643.5H178M-10.5 693.5H145L162.609 663H237M-10.5 707.5H145L162.609 677H293.5M-10.5 722H145L161.454 693.5H237M-10.5 757.5H145L162.609 727H433.5M-10.5 816.5H178L203.5 831.222H237M-10.5 831.222H178L203.5 845.945H391.5M-10.5 845.945H178L203.5 860.667H303.5M-10.5 886H178L199 897H604.5M-10.5 930H63.5L92.5 901H162.609M-10.5 164L14.5 139H128"
+     stroke="#907E6E"
+     id="path1" />
+  <circle
+     cx="441.5"
+     cy="28.5"
+     r="2"
+     stroke="#907E6E"
+     id="circle2" />
+  <circle
+     cx="548.5"
+     cy="53.5"
+     r="2.5"
+     fill="#907E6E"
+     id="circle3" />
+  <circle
+     cx="518.5"
+     cy="2.5"
+     r="2.5"
+     fill="#907E6E"
+     id="circle4" />
+  <circle
+     cx="327.5"
+     cy="75.5"
+     r="2.5"
+     fill="#907E6E"
+     id="circle5" />
+  <circle
+     cx="128"
+     cy="139"
+     r="3"
+     fill="#907E6E"
+     id="circle6" />
+  <circle
+     cx="267.5"
+     cy="250.5"
+     r="2"
+     stroke="#907E6E"
+     id="circle9" />
+  <circle
+     cx="267"
+     cy="291"
+     r="2"
+     fill="#907E6E"
+     id="circle10" />
+  <circle
+     cx="267"
+     cy="271"
+     r="2"
+     fill="#907E6E"
+     id="circle11" />
+  <circle
+     cx="272.5"
+     cy="351.5"
+     r="2.5"
+     fill="#907E6E"
+     id="circle13" />
+  <circle
+     cx="267"
+     cy="312"
+     r="2"
+     fill="#907E6E"
+     id="circle14" />
+  <circle
+     cx="98"
+     cy="319"
+     r="2"
+     fill="#907E6E"
+     id="circle15" />
+  <circle
+     cx="272.5"
+     cy="376.5"
+     r="2.5"
+     fill="#FDE57C"
+     id="circle16" />
+  <circle
+     cx="272.5"
+     cy="398.5"
+     r="2.5"
+     fill="#FDE57C"
+     id="circle17" />
+  <circle
+     cx="272.5"
+     cy="416.5"
+     r="2.5"
+     fill="#FDE57C"
+     id="circle18" />
+  <circle
+     cx="272.5"
+     cy="436.5"
+     r="2.5"
+     fill="#FDE57C"
+     id="circle19" />
+  <circle
+     cx="272.5"
+     cy="532.5"
+     r="2.5"
+     fill="#FDE57C"
+     id="circle20" />
+  <circle
+     cx="272.5"
+     cy="541.5"
+     r="2.5"
+     fill="#FDE57C"
+     id="circle21" />
+  <circle
+     cx="179.5"
+     cy="643.5"
+     r="2.5"
+     fill="#907E6E"
+     id="circle22" />
+  <circle
+     cx="239.5"
+     cy="662.5"
+     r="2.5"
+     fill="#907E6E"
+     id="circle23" />
+  <circle
+     cx="294.5"
+     cy="676.5"
+     r="2.5"
+     fill="#907E6E"
+     id="circle24" />
+  <circle
+     cx="235.5"
+     cy="693.5"
+     r="2.5"
+     fill="#907E6E"
+     id="circle25" />
+  <circle
+     cx="238.5"
+     cy="713.5"
+     r="2.5"
+     fill="#907E6E"
+     id="circle26" />
+  <circle
+     cx="437"
+     cy="727"
+     r="3"
+     fill="#907E6E"
+     id="circle27" />
+  <circle
+     cx="302"
+     cy="861"
+     r="3"
+     fill="#907E6E"
+     id="circle28" />
+  <circle
+     cx="240"
+     cy="831"
+     r="3"
+     fill="#907E6E"
+     id="circle29" />
+  <circle
+     cx="391"
+     cy="846"
+     r="3"
+     fill="#907E6E"
+     id="circle30" />
+  <circle
+     cx="167"
+     cy="901"
+     r="3"
+     fill="#907E6E"
+     id="circle31" />
+  <circle
+     cx="604.47595"
+     cy="897.12073"
+     r="3"
+     fill="#907e6e"
+     id="circle32" />
+</svg>

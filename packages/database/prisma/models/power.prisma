@@ -1,0 +1,56 @@
+enum PowerPortType {
+  IEC_C14
+  IEC_C20
+  NEMA_515P
+  NEMA_L630P
+  OTHER
+}
+
+enum PowerOutletType {
+  IEC_C13
+  IEC_C19
+  NEMA_515R
+  NEMA_L630R
+  OTHER
+}
+
+enum FeedLegPhase {
+  A
+  B
+  C
+}
+
+model PowerPort {
+  id            String         @id @default(uuid())
+  name          String
+  type          PowerPortType?
+  maximumDraw   Int?
+  allocatedDraw Int?
+  description   String?
+
+  device   Device @relation(fields: [deviceId], references: [id])
+  deviceId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId, name])
+  @@index([deviceId])
+}
+
+model PowerOutlet {
+  id           String           @id @default(uuid())
+  name         String
+  type         PowerOutletType?
+  feedLegPhase FeedLegPhase?
+  description  String?
+
+  device   Device @relation(fields: [deviceId], references: [id])
+  deviceId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId, name])
+  @@index([deviceId])
+}

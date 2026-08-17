@@ -1,0 +1,12 @@
+[Unit]
+Description=Configure ECMP routes for RoCE east-west fabric
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/hydra-roce-ecmp.sh
+
+[Install]
+WantedBy=multi-user.target

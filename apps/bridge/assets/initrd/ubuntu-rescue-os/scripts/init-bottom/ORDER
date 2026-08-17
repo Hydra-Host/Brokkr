@@ -1,0 +1,8 @@
+/scripts/init-bottom/lvm2 "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/init-bottom/udev "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/init-bottom/brokkr "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/init-bottom/cleanup "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf

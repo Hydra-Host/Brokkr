@@ -1,0 +1,711 @@
+// deploy.* operations — OS deployment pipeline (chroot, image restore, system
+// configuration, cloud-init, power-cycle cleanup).
+//
+// `deployOS` is the saga cutover point; the primitives (mountChroot,
+// writeFstab, installGrub, etc.) exist so the compound handler can orchestrate
+// in-process and tests can drive individual steps.
+//
+// Phone-home credential encryption stays on the bridge side of the trust
+// boundary. Image pulls are device-initiated — no archive bytes flow through
+// the gRPC stream.
+
+syntax = "proto3";
+
+package brokkr.agent.v1.operations;
+
+// ---------------------------------------------------------------------------
+// Reusable enums
+// ---------------------------------------------------------------------------
+
+// CPU architecture in curtin's naming.
+enum DeployArchitecture {
+  DEPLOY_ARCHITECTURE_UNSPECIFIED = 0;
+  DEPLOY_ARCHITECTURE_AMD64 = 1;
+  DEPLOY_ARCHITECTURE_ARM64 = 2;
+}
+
+// Tarball compression algorithm. Wire integers stable: 1=gzip, 2=zstd.
+// Names align with what the hub sends in lifecycle_data.os_layers[*].compression
+// so bridge passes the value through without translation.
+enum DeployCompression {
+  DEPLOY_COMPRESSION_UNSPECIFIED = 0;
+  DEPLOY_COMPRESSION_GZIP = 1;
+  DEPLOY_COMPRESSION_ZSTD = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Reusable messages
+// ---------------------------------------------------------------------------
+
+// One entry for the LUKS rekey/unlock/lock scripts. Matches the fields
+// referenced by luks-*.sh.j2 templates: device, mapper, mountpoint, fs_type,
+// label. Bridge builds this list from CurtinService's encrypted_volumes +
+// prepareStorage's preserved_encrypted_volumes.
+message DeployEncryptedVolumeConfig {
+  // Leaf LUKS device path, e.g. /dev/nvme0n1p3 or /dev/md0.
+  string device = 1;
+
+  // Mapper name without /dev/mapper/ prefix, e.g. 'crypt-data'.
+  string mapper = 2;
+
+  // Mountpoint for the decrypted volume, e.g. '/mnt/data'.
+  string mountpoint = 3;
+
+  // Filesystem type inside the LUKS container, e.g. 'xfs', 'ext4'.
+  string fs_type = 4;
+
+  // Filesystem label; used by the rekey script to locate the volume.
+  string label = 5;
+
+  // Stored LUKS UUID of a preserved volume; lets luks-unlock pair a baked mapper
+  // to its own array by UUID. Absent for newly-provisioned volumes (UUID not yet
+  // known at render time).
+  optional string luks_uuid = 6;
+}
+
+// Base OS image descriptor. HTTPS layer tarball fetched from a
+// content-addressed URL; agent verifies sha256 post-fetch, pre-extract.
+message DeployImageSource {
+  DeployImageSourceHttps https = 1;
+}
+
+message DeployImageSourceHttps {
+  // Fully-qualified URL for the tarball. Content-addressed:
+  // {OS_LAYER_URL}/sha256:<hash>. Typically a per-bridge nginx caching proxy
+  // in front of the upstream blob origin (see brokkr-host-manager nginx.conf
+  // for cache config). Runtime constraint: must be https:// or http:// scheme.
+  string url = 1;
+
+  // Tarball compression; selects between `tar -z` and `tar --zstd`.
+  DeployCompression compression = 2;
+
+  // Expected sha256 of the blob (64 lowercase hex chars). Agent verifies
+  // post-fetch, pre-extract; mismatches abort the deploy. Mandatory since
+  // the URL is content-addressed by this value.
+  string sha256 = 3;
+}
+
+// Optional customization overlay set applied after the base image restore.
+// Bridge pre-resolves URLs + stack positions from the hub-provided os_layers
+// list; agent applies the already-sorted list in order.
+message DeployCustomizations {
+  DeployCustomizationsHttps https = 1;
+}
+
+message DeployCustomizationsHttps {
+  // Ordered list of customization layers (bridge-sorted by stack_position).
+  repeated DeployHttpsLayer layers = 1;
+}
+
+// A single HTTPS customization layer.
+message DeployHttpsLayer {
+  // Customization layer name. Log-readable; not used for identity.
+  string name = 1;
+
+  // Fully-qualified URL for this layer. Content-addressed:
+  // {OS_LAYER_URL}/sha256:<hash>.
+  // Runtime constraint: must be https:// or http:// scheme.
+  string url = 2;
+
+  // Layer tarball compression.
+  DeployCompression compression = 3;
+
+  // Ordering key; lower applies first. Stable across snapshots/releases.
+  int32 stack_position = 4;
+
+  // Expected sha256 of the blob (64 lowercase hex chars). Agent verifies
+  // post-fetch, pre-extract; mismatches abort the deploy.
+  string sha256 = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Typed render-vars messages (agent-side rendering)
+//
+// The bridge ships typed variables for these; the agent renders the 9
+// lifecycle templates locally via nunjucks. Output verified byte-identical
+// to the pre-migration Jinja2 rendering across 19 branch-covering test
+// vectors AND against captured production fixtures from a live device
+// before the cutover (lc-test cloud.cfg / meta-data / grub).
+// ---------------------------------------------------------------------------
+
+// Phone-home credentials, hub-minted opaque bearer. The token is baked
+// directly into the rendered phone-home script's Authorization header.
+// The on-device phone-home-creds.json sidecar is a pure forensic artifact --
+// nothing on the device reads it. Hub produces the token via its
+// device-tokens service (DEPLOYMENT_OS context).
+message DeployPhoneHomeCreds {
+  // Retired Vault-Transit cipher/signature pair. Reserved so a skewed
+  // bridge/agent pair fails loudly instead of misreading the new token.
+  reserved 1, 2;
+  reserved "cipher", "signature";
+
+  // Phone-home POST endpoint the token authenticates against.
+  string endpoint = 3;
+
+  // Opaque brk_dev_os_* bearer token plaintext.
+  string deployment_os_token = 4;
+}
+
+// Serial console configuration for grub.cfg's serial console block.
+// Bridge resolves from the hub-rendered device atom's serial_port field. Only
+// `recommended` is consumed by templates today; room to grow if needed.
+message DeploySerialPorts {
+  // Recommended serial port, e.g. "ttyS1". Drives:
+  //   - GRUB_CMDLINE_LINUX: console=ttyS1,115200n8 earlyprintk= earlycon=
+  //   - GRUB_SERIAL_COMMAND: serial --unit=1 ...
+  //   - GRUB_TERMINAL="console serial"
+  string recommended = 1;
+}
+
+// Inputs for cloud-init renderer: produces 6 files under target_path.
+// Maps to bridge/assets/lifecycle/cloud-init-*.j2 + cloud.cfg.j2.
+//
+// Field mapping (template -> field):
+//   cloud-init-meta-data.j2:       device_id
+//   cloud-init-user-data.j2:       hostname (envelope), distro (envelope),
+//                                  ssh_pubkeys, password_hash
+//   cloud.cfg.j2:                  distro (envelope)
+//   cloud-init-phone-home.sh.j2:   phone_home_creds.deployment_os_token,
+//                                  .endpoint
+//   network-config (verbatim):     netplan_yaml
+//   phone-home-creds.json sidecar: phone_home_creds (serialized to JSON on
+//                                  the agent side)
+message DeployCloudInitVars {
+  // Bridge-side device id used as cloud-init's `instance-id`. String-typed
+  // for forward-compat with the planned UUID transition; bridge today
+  // stringifies its int device id (capture: `instance-id: 452`). Renderer
+  // emits verbatim; output is byte-identical to today.
+  string device_id = 1;
+
+  // SSH authorized_keys for the default user. Each entry is a full pubkey
+  // line ("ssh-ed25519 AAAA... user@host"); renderer adds the YAML list
+  // prefix.
+  repeated string ssh_pubkeys = 2;
+
+  // crypt(3)-style password hash for the default user. When unset, the
+  // user-data template emits `lock_passwd: true` (no password login).
+  optional string password_hash = 3;
+
+  // Pre-rendered netplan YAML body. Bridge resolves from the Redis netplan
+  // tier or the hub render-config fallback (see _apply_netplan_resolution
+  // in DeviceService). Agent writes verbatim to
+  // /var/lib/cloud/seed/nocloud/network-config.
+  string netplan_yaml = 4;
+
+  // Bearer phone-home creds + endpoint.
+  DeployPhoneHomeCreds phone_home_creds = 5;
+
+  // Optional operator-supplied cloud-init override as YAML. When set, the
+  // agent's renderUserData merges this dict into the rendered user-data
+  // before writing -- mirrors the bridge's prior custom_user_data merge
+  // in cloud_init_payload._render_user_data. `bootcmd` is union-merged
+  // (existing entries kept, new entries appended in declaration order);
+  // every other top-level key is overwritten by the custom dict.
+  //
+  // Empty / unset means the rendered user-data is shipped verbatim.
+  optional string custom_user_data_yaml = 6;
+}
+
+// Inputs for grub renderer: produces /etc/default/grub body and optional
+// UEFI fallback config (consumed by grub-mkstandalone, not written to disk).
+//
+// Field mapping (template -> field):
+//   grub.cfg.j2:          gpu_model, pci_realloc_off, serial_ports,
+//                         envelope.roce_iommu
+//   fallback-grub.cfg.j2: distro (envelope), arch (envelope) -- no new
+//                         fields needed
+//
+// purge_ttys is NOT a render variable -- it's a runtime flag for an agent
+// action (sed-in-chroot against 50-cloudimg-settings.cfg). Kept here for
+// renderer-adjacent locality.
+message DeployGrubVars {
+  // Device GPU model string from the hub-rendered device atom. Drives:
+  //   - GRUB_CMDLINE_LINUX_DEFAULT="memhp_default_state=online_movable"
+  //     when contains 'gh200' (case-insensitive)
+  //   - GRUB_CMDLINE_LINUX adds " iommu=pt nvidia-drm.modeset=0" when set
+  optional string gpu_model = 1;
+
+  // Quirk flag from kernel_quirks.needs_pci_realloc_off(). Adds
+  // " pci=realloc=off" to GRUB_CMDLINE_LINUX. Used for devices that
+  // refuse to boot cleanly without it (e.g. xe9780).
+  bool pci_realloc_off = 2;
+
+  // Reserved: roce_iommu intentionally not duplicated here. Grub renderer
+  // reads roce_iommu from the envelope field 15 to maintain a single
+  // source of truth across both the grub command-line and the in-chroot
+  // kernel-modules step.
+  reserved 3;
+  reserved "roce_iommu";
+
+  // Serial console; when unset, GRUB_CMDLINE_LINUX uses the no-serial
+  // branch and GRUB_SERIAL_COMMAND / GRUB_TERMINAL are omitted.
+  optional DeploySerialPorts serial_ports = 4;
+
+  // When true, agent runs an in-chroot sed against
+  // /etc/default/grub.d/50-cloudimg-settings.cfg to strip ttyS console
+  // args. Workaround for devices that fail with serial-console GRUB.
+  bool purge_ttys = 5;
+}
+
+// Inputs for RoCE east-west fabric configuration. The bundled .service
+// and .sh assets live on the agent (no engine needed -- they're static
+// byte payloads). Bridge provides the enable flag and DOCA URL.
+//
+// When enabled=true, agent's cloud-init renderer adds to user-data:
+//   write_files:
+//     - /etc/apt/preferences.d/doca-pin (static)
+//     - /etc/systemd/system/hydra-roce-qos.service (bundled)
+//     - /etc/systemd/system/hydra-roce-ecmp.service (bundled)
+//     - /etc/systemd/system/hydra-acs-disable.service (bundled)
+//     - /usr/local/sbin/hydra-roce-ecmp.sh (bundled)
+//   runcmd:
+//     - curl + gpg --dearmor for Mellanox key
+//     - echo "deb [signed-by=...] {doca_repo_url} ./" > sources list
+//     - apt-get update + install mft/dkms/mlnx-tools
+//     - systemctl daemon-reload && systemctl enable --now <units>
+message DeployRoceVars {
+  // Drives the entire RoCE injection block in user-data. Derived from
+  // device.location_custom_fields.east_west_network_type == "roce".
+  bool enabled = 1;
+
+  // Bridge-resolved DOCA APT repository URL for this device's OS + arch.
+  // Computed via get_doca_repo_url(os_codename, curtin_arch). Empty
+  // string when enabled=false. Format example:
+  //   https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/amd64
+  string doca_repo_url = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Chroot primitives
+// ---------------------------------------------------------------------------
+
+// deploy.mountChroot -- bind-mount /dev, /proc, /sys, /run, /dev/pts into
+// target_path and mark each mount private. Order matches Chroot._perform_mounts.
+// Rolls back (unmounts in reverse) on any mount failure.
+message DeployMountChrootInput {
+  // Directory hosting the mounted chroot. Must already exist.
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+}
+
+message DeployMountChrootOutput {
+  // Full paths of bind-mounts that were successfully established.
+  repeated string mounted_points = 1;
+}
+
+// deploy.unmountChroot -- unmount in reverse order. Best-effort: individual
+// unmount failures don't stop the sequence (matches Chroot.cleanup's
+// pass-on-exception behavior). Returns the list of paths successfully
+// unmounted.
+message DeployUnmountChrootInput {
+  // Target path whose chroot bind-mounts should be torn down.
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+}
+
+message DeployUnmountChrootOutput {
+  // Full paths that were successfully unmounted.
+  repeated string unmounted = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Image restore
+// ---------------------------------------------------------------------------
+
+// deploy.restoreHttpsLayer -- fetch a single tar archive from a URL and
+// extract it into target_path. Used for both the base image (when
+// channel=https) and each customization layer. Agent pipes fetch body -> tar
+// stdin; no local staging file. strip-components=1 to drop the leading ./
+// directory.
+message DeployRestoreHttpsLayerInput {
+  // Extraction destination (chroot root).
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+
+  // Fully-qualified URL for the tarball. Content-addressed:
+  // {OS_LAYER_URL}/sha256:<hash>.
+  // Runtime constraint: must be https:// or http:// scheme.
+  string url = 2;
+
+  // Tarball compression; picks between `tar -z` and `tar --zstd`.
+  DeployCompression compression = 3;
+
+  // Expected sha256 of the blob (64 lowercase hex chars). Agent verifies
+  // post-fetch, pre-extract; mismatches abort the operation.
+  string sha256 = 4;
+}
+
+message DeployRestoreHttpsLayerOutput {
+  // Bytes transferred from the network fetch.
+  int64 bytes = 1;
+}
+
+// deploy.removeWhiteouts -- delete character-device files with major:minor 0:0
+// left behind by overlay tar extraction. HTTPS channel only; restic snapshots
+// don't produce whiteouts.
+message DeployRemoveWhiteoutsInput {
+  // Filesystem tree to scan for overlay whiteout nodes.
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+}
+
+message DeployRemoveWhiteoutsOutput {
+  // Count of whiteout character-device entries removed.
+  int64 removed = 1;
+}
+
+// ---------------------------------------------------------------------------
+// System configuration (all run against the mounted chroot)
+// ---------------------------------------------------------------------------
+
+// deploy.configureMdadm -- scan for RAID arrays inside the chroot, substitute
+// hostname for the 'brokkr-discovery' placeholder, write /etc/mdadm/mdadm.conf.
+// configured=false when `mdadm --detail --scan` returns empty (no arrays).
+message DeployConfigureMdadmInput {
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+
+  // Hostname to substitute for the brokkr-discovery placeholder in
+  // mdadm.conf.
+  string hostname = 2;
+}
+
+message DeployConfigureMdadmOutput {
+  // True iff any arrays were detected and /etc/mdadm/mdadm.conf was written.
+  bool configured = 1;
+}
+
+// deploy.writeFstab -- write /etc/fstab under target_path. Content is already
+// cleaned/deduped on the bridge (EFI mount normalization lives in bridge-side
+// rendering, not the agent).
+message DeployWriteFstabInput {
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+
+  // Full /etc/fstab body, rendered on the bridge.
+  string content = 2;
+}
+
+message DeployWriteFstabOutput {
+  // Always true on success; the operation throws on write failure.
+  bool success = 1;
+}
+
+// deploy.writeCrypttab -- write /etc/crypttab under target_path.
+message DeployWriteCrypttabInput {
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+
+  // Full /etc/crypttab body; empty/whitespace content is a no-op (matches
+  // original behavior).
+  string content = 2;
+}
+
+message DeployWriteCrypttabOutput {
+  // True iff the write path was taken or a no-op was elected.
+  bool success = 1;
+}
+
+// deploy.installLuksScripts -- install three executables (rekey, unlock, lock)
+// into /usr/local/bin under target_path, chmod 755. Script-injection hardening:
+// the agent owns the fixed luks-{rekey,unlock,lock} templates and renders them
+// itself from these validated PARAMETERS. Script bodies are never accepted from
+// the bridge, so a compromised bridge cannot plant arbitrary executable code in
+// the LUKS/crypto path.
+message DeployInstallLuksScriptsInput {
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+
+  // Validated volume parameters fed into the agent's own luks-*.sh templates.
+  repeated DeployEncryptedVolumeConfig encrypted_volumes = 2;
+
+  // When true, the rendered rekey script skips the initial luksAddKey call.
+  bool already_keyed = 3;
+
+  // Volumes the luks-rekey script may luksFormat -- newly-provisioned volumes
+  // ONLY. Preserved volumes MUST NOT appear here: rekey reformats every device
+  // it lists, which would destroy preserved data.
+  repeated DeployEncryptedVolumeConfig rekey_volumes = 4;
+}
+
+message DeployInstallLuksScriptsOutput {
+  // Full paths of the installed scripts.
+  repeated string installed = 1;
+}
+
+// deploy.installGrub -- full GRUB install path. UEFI and Legacy BIOS handled
+// internally based on uefi + arch. For UEFI: debconf-set-selections, first
+// grub-install, fallback loader via grub-mkstandalone, write /etc/default/grub,
+// optional purge_ttys sed, update-grub, final grub-install. For Legacy:
+// per-disk grub-install against grub_disks, then defaults + update-grub.
+//
+// Everything runs inside the chroot at target_path. Bridge renders both the
+// grub defaults content and (for UEFI) the fallback_cfg; agent never reaches
+// for template data.
+//
+// Cross-field constraints (runtime-enforced by handler):
+// - When uefi=true, config.fallback_cfg should be set.
+// - When uefi=false, grub_disks must be non-empty.
+message DeployInstallGrubInput {
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+
+  // Target architecture; selects the GRUB target string.
+  DeployArchitecture arch = 2;
+
+  // True for UEFI install path, false for Legacy BIOS per-disk install.
+  bool uefi = 3;
+
+  // Bootloader-id used by UEFI grub-install (e.g. 'Ubuntu').
+  string distro = 4;
+
+  // Legacy BIOS per-disk targets. Unused when uefi=true.
+  repeated string grub_disks = 5;
+
+  // Field 6 (DeployGrubConfig config) was inlined into 7-9 during the
+  // agent-side rendering migration. The agent now renders the strings
+  // locally; the bridge no longer ships them as a nested message.
+  reserved 6;
+  reserved "config";
+
+  // Rendered /etc/default/grub body. The compound deployOS handler
+  // produces this via render/grub.ts:renderGrubDefaults; ad-hoc callers
+  // (tests, debugging) can pass any string.
+  string grub_defaults = 7;
+
+  // grub-mkstandalone input for the UEFI fallback loader. Used only
+  // when uefi=true; absent on Legacy BIOS installs.
+  optional string grub_fallback_cfg = 8;
+
+  // When true, sed-in-chroot strips ttyS console args from
+  // /etc/default/grub.d/50-cloudimg-settings.cfg.
+  bool purge_ttys = 9;
+}
+
+message DeployInstallGrubOutput {
+  // Successfully-installed GRUB targets, e.g. ['x86_64-efi'] or
+  // ['i386-pc:/dev/sda', ...].
+  repeated string installed_targets = 1;
+}
+
+// deploy.finalizeEfi -- UEFI-only post-install cleanup. Runs update-grub,
+// enumerates /boot/efiN directories under target_path, unmounts each, removes
+// them. Non-UEFI systems return {skipped: true}.
+message DeployFinalizeEfiInput {
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+
+  // When false, the op is a fast no-op.
+  bool uefi = 2;
+}
+
+message DeployFinalizeEfiOutput {
+  // True iff uefi=false and the op returned without touching anything.
+  bool skipped = 1;
+
+  // Paths of removed /boot/efiN directories.
+  repeated string cleaned = 2;
+}
+
+// deploy.writeCloudInitFiles -- six-file materialization under target_path.
+// Perms: 0644 for cloud.cfg + seed files, 0600 for phone-home creds, 0755 for
+// the phone-home script. Creates parent dirs as needed.
+//
+// SEC-deploy: the phone-home script and creds sidecar are NOT
+// accepted as bodies from the bridge. The agent owns their templates
+// (render/cloudinit.ts) and renders them from the validated device_id +
+// phone_home_creds parameters, so a compromised bridge cannot plant arbitrary
+// per-boot executable content or creds. Mirrors the LUKS pattern.
+message DeployWriteCloudInitFilesInput {
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+
+  // Field 2 (DeployCloudInitPayload payload) was inlined into 3-6 during
+  // the agent-side rendering migration. The agent now renders the
+  // strings locally via render/cloudinit.ts; the bridge no longer ships
+  // them as a nested message.
+  reserved 2;
+  reserved "payload";
+
+  // Fields 7-8 (phone_home_script, phone_home_creds_json) carried the
+  // bridge-rendered script + creds BODIES. Removed: bodies are
+  // never accepted from the bridge; the agent renders them from the typed
+  // device_id + phone_home_creds below. Reserved so a skewed pair fails loudly.
+  reserved 7, 8;
+  reserved "phone_home_script", "phone_home_creds_json";
+
+  // Rendered /etc/cloud/cloud.cfg content (0644).
+  string cloud_cfg = 3;
+
+  // Rendered seed meta-data content (0644).
+  string meta_data = 4;
+
+  // Rendered seed user-data content (0644).
+  string user_data = 5;
+
+  // Rendered seed network-config content (0644).
+  string network_config = 6;
+
+  // Device id rendered into the agent-owned phone-home creds sidecar
+  // (/var/lib/brokkr/phone-home-creds.json, 0600).
+  string device_id = 9;
+
+  // Validated endpoint + bearer token. The agent renders both the per-boot
+  // script (0755) and the creds JSON sidecar (0600) from its own templates.
+  DeployPhoneHomeCreds phone_home_creds = 10;
+}
+
+message DeployWriteCloudInitFilesOutput {
+  // Full paths of the six files that were written.
+  repeated string written = 1;
+}
+
+// deploy.applyRoceChrootConfig -- sed-in-chroot fix for nvidia-persistenced on
+// RoCE east-west devices. Only called when deployOS's roce_iommu is true.
+message DeployApplyRoceChrootConfigInput {
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+}
+
+message DeployApplyRoceChrootConfigOutput {
+  // True iff the edit path completed (or was a no-op because the target file
+  // was absent).
+  bool success = 1;
+}
+
+// deploy.powerCycleCleanup -- pre-reboot filesystem preparation. Removes merge
+// markers, runtime netplan, numbered EFI directories; sync + udevadm settle +
+// xfs_freeze for data integrity; unmounts remaining EFI mounts. Best-effort
+// on each sub-step (matches the current SSH path's behavior).
+message DeployPowerCycleCleanupInput {
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+}
+
+message DeployPowerCycleCleanupOutput {
+  // Always true -- every sub-step is best-effort; individual failures are
+  // logged and swallowed.
+  bool success = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Compound operation (saga cutover point)
+// ---------------------------------------------------------------------------
+
+// deploy.deployOS -- SAGA CUTOVER POINT. Orchestrates the full pipeline:
+//
+//   Pre-chroot:
+//     1. restoreHttpsLayer (base)
+//     2. [customizations] iterated restoreHttpsLayer per layer
+//     3. removeWhiteouts
+//
+//   Chroot (try/finally -- unmountChroot in finally):
+//     4. mountChroot
+//     5. configureMdadm
+//     6. writeFstab
+//     7. [crypttab] writeCrypttab
+//     8. [encrypted_volumes non-empty] installLuksScripts
+//     9. installGrub
+//    10. finalizeEfi
+//    11. writeCloudInitFiles
+//    12. [roce_iommu] applyRoceChrootConfig
+//
+//   Post-chroot:
+//    13. powerCycleCleanup
+//
+// The bridge's force_boot_device (still SSH -> efibootmgr until Phase 4)
+// runs on the bridge after this compound returns. See P3-D8.
+//
+// Timeout budget: 30 minutes. Progress emitted at each numbered step boundary
+// via work.progress envelopes so the bridge can relay coarse status to job
+// logs.
+//
+// Cross-field constraints (runtime-enforced by handler):
+// - When encrypted_volumes is non-empty, the agent renders + installs
+//   the LUKS scripts; luks_already_keyed gates the rekey-script branch.
+// - When uefi=false, grub_disks must be non-empty.
+// - When uefi=true, the agent renders the fallback grub config from
+//   envelope.arch + envelope.distro and feeds it to grub-mkstandalone.
+// - When roce.enabled=true, envelope.roce_iommu must also be true. The
+//   grub renderer reads envelope.roce_iommu directly rather than a
+//   duplicate field on DeployGrubVars.
+message DeployDeployOsInput {
+  // Chroot root for the entire pipeline.
+  // Runtime constraint: must match ^/(target|mnt)(/.*)?$.
+  string target_path = 1;
+
+  // Target architecture.
+  DeployArchitecture arch = 2;
+
+  // UEFI vs Legacy BIOS selection; affects installGrub and finalizeEfi.
+  bool uefi = 3;
+
+  // Distro name; used in GRUB bootloader-id and related config.
+  string distro = 4;
+
+  // Hostname for mdadm and downstream cloud-init.
+  string hostname = 5;
+
+  // Legacy BIOS per-disk GRUB install targets (empty when uefi=true).
+  repeated string grub_disks = 6;
+
+  // Base OS image source (HTTPS layer tarball).
+  DeployImageSource image = 7;
+
+  // Optional overlay customizations applied after the base restore.
+  optional DeployCustomizations customizations = 8;
+
+  // Rendered /etc/fstab body.
+  string fstab = 9;
+
+  // Rendered /etc/crypttab body; omit when there are no encrypted volumes.
+  optional string crypttab = 10;
+
+  // Encrypted volumes for rekey/unlock/lock script targeting. Empty when the
+  // device has no LUKS.
+  repeated DeployEncryptedVolumeConfig encrypted_volumes = 11;
+
+  // Fields 12-14 carried the bridge-rendered string payloads
+  // (luks_scripts, grub, cloud_init). Removed in the agent-side
+  // rendering migration; the agent now renders these locally from the
+  // typed-vars fields 16-19 below. Numbers reserved so they can never
+  // be reused with different semantics.
+  reserved 12, 13, 14;
+  reserved "luks_scripts", "grub", "cloud_init";
+
+  // When true, applyRoceChrootConfig is run for nvidia-persistenced
+  // compatibility on RoCE east-west devices. Defaults to false when absent.
+  // Single source of truth for the RoCE flag across both the in-chroot
+  // kernel-modules step and the agent-side grub renderer (which reads it
+  // from here rather than duplicating it under DeployGrubVars).
+  bool roce_iommu = 15;
+
+  // Cloud-init renderer inputs. Agent renders the 6 cloud-init files
+  // locally from these vars (cloud.cfg, meta-data, user-data,
+  // network-config, phone-home script + creds JSON).
+  DeployCloudInitVars cloud_init_vars = 16;
+
+  // GRUB renderer inputs. Agent renders /etc/default/grub locally (and
+  // the UEFI fallback config via envelope.arch + envelope.distro).
+  DeployGrubVars grub_vars = 17;
+
+  // LUKS rekey/unlock/lock renderer flag. The other LUKS template variable
+  // (encrypted_volumes) is already on the envelope as field 11. Consumed
+  // only by the rekey script.
+  bool luks_already_keyed = 18;
+
+  // RoCE east-west fabric configuration. Static .service + .sh assets are
+  // bundled on the agent side; bridge ships only the enable flag plus the
+  // bridge-resolved DOCA repo URL.
+  DeployRoceVars roce = 19;
+
+  // Newly-provisioned encrypted volumes the rekey script may luksFormat.
+  // Preserved volumes are excluded so a mixed new+preserved layout never
+  // reformats preserved data.
+  repeated DeployEncryptedVolumeConfig rekey_volumes = 20;
+}
+
+message DeployDeployOsOutput {
+  // Always true -- the op throws rather than returning deployed=false.
+  bool deployed = 1;
+}

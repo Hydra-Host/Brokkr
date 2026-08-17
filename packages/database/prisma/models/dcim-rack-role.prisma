@@ -1,0 +1,10 @@
+model DcimRackRole {
+  id          String  @id @default(uuid())
+  name        String
+  slug        String  @unique
+  color       String?
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

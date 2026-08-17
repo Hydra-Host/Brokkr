@@ -1,0 +1,165 @@
+// Work envelope — message types flowing in both directions to execute
+// operations on a device agent.
+//
+// Design notes
+//   * WorkRequest is server→agent, pushed inside ServerMessage.work_request on
+//     the OpenSession stream (see agent.proto).
+//   * WorkResponse, WorkProgress, and PartialResult are agent→server, each
+//     sent via its own unary RPC so they can land on any bridge replica
+//     (results persist to shared Redis; the dispatching bridge reads results
+//     asynchronously, enabling master/master stateless bridges).
+//   * Operation-specific input/output payloads are carried as opaque `bytes`
+//     (JSON-encoded) for the initial port to match the current Zod-envelope
+//     design exactly. Future iteration will lift payloads into a typed
+//     `oneof operation { ... }` once per-operation protos are written; the
+//     wire format is compatible with that migration via proto field reuse.
+
+syntax = "proto3";
+
+package brokkr.agent.v1;
+
+import "google/protobuf/duration.proto";
+
+// WorkRequest — dispatched by a bridge to a specific agent.
+// Delivered via ServerMessage.work_request on the OpenSession stream.
+message WorkRequest {
+  // Globally unique work identifier (UUIDv4 string). Idempotency key across
+  // BullMQ retries AND multi-bridge redispatch: agent caches completed
+  // results per work_id and returns the cached outcome on duplicate. A
+  // second dispatch that arrives while the first is still executing
+  // receives STATUS_ALREADY_IN_PROGRESS immediately.
+  string work_id = 1;
+
+  // Fully-qualified operation name, e.g. "collection.collectAll",
+  // "storage.wipeDisk". Agent routes to the matching handler.
+  string operation = 2;
+
+  // Operation-specific input payload (JSON-encoded against the per-operation
+  // input schema). Validated by the agent at dispatch time; opaque at the
+  // envelope layer. See design-doc note above about the future migration to
+  // a typed oneof.
+  bytes input = 3;
+
+  // Saga or BullMQ correlation id. Propagated into agent logs for tracing;
+  // not used for dispatch routing.
+  string job_id = 4;
+
+  // Per-operation deadline. Agent aborts the handler (via AbortSignal)
+  // when exceeded. Absent = no per-op deadline; fall back to transport
+  // keepalive + agent defaults.
+  google.protobuf.Duration deadline = 5;
+
+  // Stable identifier of the bridge that dispatched this work. Informational;
+  // helps agent-side tracing when N bridges are active. NOT used by the
+  // agent for response routing — results go through ReportResult on whatever
+  // transport happens to be healthy (Redis does the cross-bridge handoff).
+  string server_id = 6;
+
+  // W3C trace context (https://www.w3.org/TR/trace-context/) captured from
+  // the dispatching bridge's active span at enqueue time, so agent-side
+  // execution spans join the hub→bridge trace. Empty when the bridge runs
+  // with telemetry disabled. Agents that don't understand tracing ignore
+  // both fields.
+  string traceparent = 7;
+  string tracestate = 8;
+}
+
+// WorkResponse — terminal outcome of a WorkRequest.
+// Reported via the unary ReportResult RPC (see agent.proto). May land on
+// any bridge replica; the receiving bridge persists to shared Redis,
+// from which the dispatching bridge reads asynchronously.
+message WorkResponse {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+
+    // Operation completed; `output` populated, `error` empty.
+    STATUS_SUCCESS = 1;
+
+    // Operation failed; `error` populated, `output` empty.
+    STATUS_FAILURE = 2;
+
+    // The work_id is already executing from an earlier (retried) dispatch.
+    // Bridge should NOT treat this as final — it should continue to wait
+    // on shared Redis for the eventual success/failure outcome reported
+    // by the first dispatch's execution.
+    STATUS_ALREADY_IN_PROGRESS = 3;
+  }
+
+  // Matches the originating WorkRequest.work_id.
+  string work_id = 1;
+
+  Status status = 2;
+
+  // Operation-specific output (JSON-encoded) when status == STATUS_SUCCESS.
+  bytes output = 3;
+
+  // Structured error details when status == STATUS_FAILURE.
+  OperationError error = 4;
+}
+
+// WorkProgress — mid-operation progress report for a long-running op.
+// Reported via ReportProgress. Best-effort delivery; dropped messages are
+// non-fatal. Intended for operator dashboards on wipe, deploy, benchmark.
+message WorkProgress {
+  string work_id = 1;
+
+  // Fractional progress in [0.0, 1.0]; monotonically non-decreasing per
+  // work_id. Values outside the range are clamped by the receiver.
+  float progress = 2;
+
+  // Optional human-readable status line ("zeroing partition 3 of 8",
+  // "installing base system", etc.).
+  string message = 3;
+}
+
+// PartialResult — streaming per-sub-unit output during a compound operation.
+// Reported via ReportPartialResult. Bridge persists each as it arrives
+// rather than waiting for the terminal WorkResponse.
+//
+// Used for:
+//   * collection.collectAll — one PartialResult per collector
+//   * benchmark.runBenchmarks — one per benchmark
+//   * diagnostic.runAll — one per diagnostic
+message PartialResult {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_SUCCESS = 1;
+    STATUS_FAILURE = 2;
+  }
+
+  string work_id = 1;
+
+  // Sub-unit identifier within the compound operation. For collection:
+  // the collector name ("architecture", "lsblk", "nvidia_detailed"). For
+  // benchmark: the benchmark name. Matches the suffix of the operation
+  // registry entry.
+  string unit = 2;
+
+  Status status = 3;
+
+  // Sub-unit output (JSON-encoded) when status == STATUS_SUCCESS.
+  bytes data = 4;
+
+  // Structured error when status == STATUS_FAILURE.
+  OperationError error = 5;
+
+  // Wall-clock time spent on this sub-unit.
+  google.protobuf.Duration duration = 6;
+}
+
+// OperationError — structured failure payload embedded in WorkResponse
+// and PartialResult. Also returned as a google.rpc.Status detail on RPC-
+// level errors (registration rejection, dispatch failure).
+message OperationError {
+  // Short code identifying the error class.
+  // Examples: "INVALID_INPUT", "OPERATION_FAILED", "TIMEOUT",
+  // "UNKNOWN_OPERATION", "SUBPROCESS_EXIT", "MISSING_BINARY".
+  string code = 1;
+
+  // Human-readable message; safe to log.
+  string message = 2;
+
+  // JSON-encoded arbitrary context (stack trace, parse issues, stderr
+  // excerpt). Opaque at this layer; consumers parse as needed.
+  string details_json = 3;
+}

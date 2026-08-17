@@ -1,0 +1,20 @@
+model Gateway {
+  id              String @id @default(uuid())
+  routingPriority Int?
+
+  vrf   Vrf?    @relation(fields: [vrfId], references: [id], onDelete: SetNull)
+  vrfId String?
+
+  gatewayIp   IpAddress @relation("GatewayIpAddress", fields: [gatewayIpId], references: [id])
+  gatewayIpId String
+
+  prefix   Prefix @relation("GatewayPrefix", fields: [prefixId], references: [id])
+  prefixId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vrfId])
+  @@index([gatewayIpId])
+  @@index([prefixId])
+}

@@ -1,0 +1,9 @@
+@import 'tailwindcss';
+
+/* Vendored "Hydra Dark" design system (theme tokens + terminal styling),
+   ported from the standalone sandbox. */
+@import './styles/brokkr-theme.css';
+
+:root {
+  color-scheme: dark;
+}

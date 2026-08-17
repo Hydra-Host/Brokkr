@@ -1,0 +1,61 @@
+// agent.* operations — agent lifecycle management (self-update, version
+// reporting).
+//
+// Named agent_ops.proto to avoid symbol collision with agent.proto (which
+// defines AgentService + AgentRegistration).
+
+syntax = "proto3";
+
+package brokkr.agent.v1.operations;
+
+// agent.upgrade — fetch a new main.js bundle (and optionally a new systemd
+// unit file) via FetchBundle (see agent.proto), verify SHA-256, atomically
+// swap /opt/brokkr/agent/main.js, and exit so systemd restarts the agent.
+//
+// No URL is transmitted — the gRPC session already authenticates (TLS +
+// per-device bearer token). ``sha256`` is the FetchBundle key for the
+// bundle; ``unit_sha256`` triggers an optional FetchBundle for the unit file.
+message AgentUpgradeInput {
+  // Reserved tags from the pre-gRPC-streaming era:
+  //   1 (string url)              — replaced by FetchBundle
+  //   4 (optional string unit_url) — replaced by FetchBundle
+  // Tag numbers for sha256, expected_version, unit_sha256 are kept as-is
+  // so an old agent decoding a new envelope still finds its fields.
+  reserved 1, 4;
+  reserved "url", "unit_url";
+
+  // Expected SHA-256 of the bundle. Lowercase hex, 64 chars. Agent
+  // passes this verbatim to ``FetchBundle(sha256=..., artifact=BUNDLE)``
+  // and rejects the swap if the concatenated streamed bytes don't hash
+  // to the same value.
+  string sha256 = 2;
+
+  // Semver (or commit-SHA) version the bundle should report after
+  // restart; used for post-upgrade verification by the bridge's
+  // version gate on the next dispatch.
+  string expected_version = 3;
+
+  // Optional: expected SHA-256 of a systemd unit file to swap alongside
+  // the bundle. When present the agent issues a second
+  // ``FetchBundle(sha256=..., artifact=UNIT)``. Empty/absent means "don't
+  // touch the unit file" — the existing one will re-execute the new
+  // bundle on restart.
+  optional string unit_sha256 = 5;
+}
+
+message AgentUpgradeOutput {
+  // Byte length of the downloaded bundle after SHA-256 verification.
+  int64 bundle_bytes = 1;
+
+  // Present and true exactly when the bundle hash matched input.sha256.
+  // (The source Zod schema uses z.literal(true); the agent must set this
+  // unconditionally to true on success.)
+  bool sha256_verified = 2;
+
+  // True when unit_sha256 was provided and the unit file was swapped.
+  bool unit_replaced = 3;
+
+  // Wall-clock unix-ms timestamp at which the handler scheduled the exit.
+  // Present on success; the agent exits shortly after.
+  int64 restart_scheduled_at_ms = 4;
+}

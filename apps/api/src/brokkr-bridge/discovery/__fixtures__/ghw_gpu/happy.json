@@ -1,0 +1,5 @@
+{
+  "gpu": {
+    "cards": [{ "address": "simple-framebuffer.0", "index": 0, "pci": null }]
+  }
+}

@@ -1,0 +1,15 @@
+apiVersion: v2
+name: brokkr-hub
+description: >-
+  Brokkr hub - the control plane. Postgres + Redis + the one-shot DB migration
+  + the customer/operator app (:3000), in LOCAL_SIMULATION_ENABLED mode.
+type: application
+version: 0.1.0
+appVersion: latest
+home: https://github.com/Hydra-Host/Brokkr
+sources:
+  - https://github.com/Hydra-Host/Brokkr
+keywords:
+  - brokkr
+  - bare-metal
+  - hub

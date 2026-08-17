@@ -1,0 +1,5 @@
+{
+  "hypervisor_enabled": true,
+  "iommu_groups_enabled": true,
+  "sriov_bios_enabled": false
+}

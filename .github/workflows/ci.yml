@@ -1,0 +1,55 @@
+# The public mirror's only build gate — the internal GitLab pipeline never
+# reaches it, so a fork PR is verified here or nowhere. Inert on GitLab.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # @hydrahost/managed-edition is filtered out of the mirror, so pin the edition
+  # rather than letting it resolve from an absent optional dependency.
+  HH_FORCE_BOSS: 'true'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # version omitted on purpose: derived from package.json packageManager
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          # matches the devenv nodejs_24 pin, within engines.node (>=22.12 <25)
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # excludes @repo/e2e; DB-gated suites self-skip with DATABASE_URL unset
+      - name: Test
+        run: pnpm test

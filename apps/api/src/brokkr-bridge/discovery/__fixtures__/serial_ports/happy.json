@@ -1,0 +1,17 @@
+{
+  "hardware_platform": { "manufacturer": "Supermicro", "model": "AS -4124GS-TNR", "architecture": "x86_64" },
+  "detected_ports": { "ttyS0": { "hardware_status": "active" }, "ttyS1": { "hardware_status": "inactive" } },
+  "bmc_sol_hardware": {
+    "sol_capable": true,
+    "sol_enabled": true,
+    "hardware_channel": 1,
+    "hardware_baud_rate": 115200,
+    "hardware_port": 2,
+    "encryption_capable": true
+  },
+  "hardware_recommendations": {
+    "optimal_port": "ttyS1",
+    "recommended_baud": 115200,
+    "bmc_channel_mapping": "BMC hardware channel 1"
+  }
+}

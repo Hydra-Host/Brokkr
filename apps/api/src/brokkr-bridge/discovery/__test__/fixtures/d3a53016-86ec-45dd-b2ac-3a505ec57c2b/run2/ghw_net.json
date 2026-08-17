@@ -1,0 +1,3875 @@
+{
+  "network": {
+    "nics": [
+      {
+        "name": "bonding_masters",
+        "mac_address": "",
+        "is_virtual": false,
+        "capabilities": null,
+        "speed": "",
+        "duplex": ""
+      },
+      {
+        "name": "docker0",
+        "mac_address": "",
+        "is_virtual": true,
+        "capabilities": [
+          {
+            "name": "auto-negotiation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "pause-frame-use",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-checksumming",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv4",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-ip-generic",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv6",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-fcoe-crc",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-sctp",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather-fraglist",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tcp-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-ecn-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-mangleid-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-receive-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "large-receive-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "ntuple-filters",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "receive-hashing",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "highdma",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-filter",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "vlan-challenged",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-lockless",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "netns-local",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-robust",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-fcoe-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gre-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gre-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip4-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp_tnl-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp_tnl-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-partial",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tunnel-remcsum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-sctp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-esp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-list",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "fcoe-mtu",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-nocache-copy",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "loopback",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-fcs",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-all",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-vlan-stag-hw-insert",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-stag-hw-parse",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-stag-filter",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "l2-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hw-tc-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-tx-csum-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp_tunnel-port-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-tx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-rx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-hw",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-record",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-list",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "macsec-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp-gro-forwarding",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "hsr-tag-ins-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-tag-rm-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-dup-offload",
+            "is_enabled": false,
+            "can_enable": false
+          }
+        ],
+        "speed": "Unknown!",
+        "duplex": "Unknown!(255)"
+      },
+      {
+        "name": "eno12399np0",
+        "mac_address": "8c:84:74:20:35:80",
+        "is_virtual": false,
+        "capabilities": [
+          {
+            "name": "auto-negotiation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "pause-frame-use",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv4",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ip-generic",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-ipv6",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-fcoe-crc",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-sctp",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather-fraglist",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tcp-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-ecn-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-tcp-mangleid-segmentation",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-receive-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "large-receive-offload",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "ntuple-filters",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "receive-hashing",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "highdma",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-filter",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "vlan-challenged",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-lockless",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "netns-local",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-robust",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-fcoe-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gre-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gre-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip4-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip6-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp_tnl-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp_tnl-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-partial",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tunnel-remcsum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-sctp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-esp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-list",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "fcoe-mtu",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-nocache-copy",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "loopback",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-fcs",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-all",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-vlan-stag-hw-insert",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-stag-hw-parse",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-stag-filter",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "l2-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hw-tc-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "esp-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-tx-csum-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp_tunnel-port-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tls-hw-tx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-rx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-hw",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tls-hw-record",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-list",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "macsec-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp-gro-forwarding",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "hsr-tag-ins-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-tag-rm-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-dup-offload",
+            "is_enabled": false,
+            "can_enable": false
+          }
+        ],
+        "pci_address": "0000:22:00.0",
+        "speed": "Unknown!",
+        "duplex": "Unknown!(255)",
+        "supported_link_modes": ["25000baseSR/Full", "10000baseSR/Full"],
+        "supported_ports": ["FIBRE"],
+        "supported_fec_modes": ["RS", "BASER"],
+        "advertised_link_modes": ["25000baseSR/Full", "10000baseSR/Full"]
+      },
+      {
+        "name": "eno12409np1",
+        "mac_address": "8c:84:74:20:35:81",
+        "is_virtual": false,
+        "capabilities": [
+          {
+            "name": "auto-negotiation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "pause-frame-use",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv4",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ip-generic",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-ipv6",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-fcoe-crc",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-sctp",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather-fraglist",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tcp-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-ecn-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-tcp-mangleid-segmentation",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-receive-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "large-receive-offload",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "ntuple-filters",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "receive-hashing",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "highdma",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-filter",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "vlan-challenged",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-lockless",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "netns-local",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-robust",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-fcoe-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gre-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gre-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip4-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip6-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp_tnl-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp_tnl-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-partial",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tunnel-remcsum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-sctp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-esp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-list",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "fcoe-mtu",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-nocache-copy",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "loopback",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-fcs",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-all",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-vlan-stag-hw-insert",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-stag-hw-parse",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-stag-filter",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "l2-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hw-tc-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "esp-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-tx-csum-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp_tunnel-port-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tls-hw-tx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-rx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-hw",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tls-hw-record",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-list",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "macsec-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp-gro-forwarding",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "hsr-tag-ins-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-tag-rm-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-dup-offload",
+            "is_enabled": false,
+            "can_enable": false
+          }
+        ],
+        "pci_address": "0000:22:00.1",
+        "speed": "Unknown!",
+        "duplex": "Unknown!(255)",
+        "supported_link_modes": ["25000baseSR/Full", "10000baseSR/Full"],
+        "supported_ports": ["FIBRE"],
+        "supported_fec_modes": ["RS", "BASER"],
+        "advertised_link_modes": ["25000baseSR/Full", "10000baseSR/Full"]
+      },
+      {
+        "name": "eno8303",
+        "mac_address": "aa:bb:cc:dd:ee:03",
+        "is_virtual": false,
+        "capabilities": [
+          {
+            "name": "auto-negotiation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "pause-frame-use",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv4",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ip-generic",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-ipv6",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-fcoe-crc",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-sctp",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather-fraglist",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tcp-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-ecn-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-mangleid-segmentation",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-receive-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "large-receive-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "tx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "ntuple-filters",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "receive-hashing",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "highdma",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-filter",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "vlan-challenged",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-lockless",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "netns-local",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-robust",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-fcoe-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gre-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gre-csum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-ipxip4-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-ipxip6-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp_tnl-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp_tnl-csum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-partial",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-tunnel-remcsum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-sctp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-esp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-list",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "fcoe-mtu",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-nocache-copy",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "loopback",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-fcs",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-all",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-vlan-stag-hw-insert",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-stag-hw-parse",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-stag-filter",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "l2-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hw-tc-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-tx-csum-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp_tunnel-port-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-tx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-rx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-hw",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-record",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-list",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "macsec-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp-gro-forwarding",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "hsr-tag-ins-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-tag-rm-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-dup-offload",
+            "is_enabled": false,
+            "can_enable": false
+          }
+        ],
+        "pci_address": "0000:02:00.0",
+        "speed": "1000Mb/s",
+        "duplex": "Full",
+        "supported_link_modes": [
+          "10baseT/Half",
+          "10baseT/Full",
+          "100baseT/Half",
+          "100baseT/Full",
+          "1000baseT/Half",
+          "1000baseT/Full"
+        ],
+        "supported_ports": ["TP"],
+        "advertised_link_modes": [
+          "10baseT/Half",
+          "10baseT/Full",
+          "100baseT/Half",
+          "100baseT/Full",
+          "1000baseT/Half",
+          "1000baseT/Full"
+        ]
+      },
+      {
+        "name": "eno8403",
+        "mac_address": "aa:bb:cc:dd:ee:04",
+        "is_virtual": false,
+        "capabilities": [
+          {
+            "name": "auto-negotiation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "pause-frame-use",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv4",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ip-generic",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-ipv6",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-fcoe-crc",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-sctp",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather-fraglist",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tcp-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-ecn-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-mangleid-segmentation",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-receive-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "large-receive-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "tx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "ntuple-filters",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "receive-hashing",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "highdma",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-filter",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "vlan-challenged",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-lockless",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "netns-local",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-robust",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-fcoe-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gre-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gre-csum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-ipxip4-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-ipxip6-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp_tnl-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp_tnl-csum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-partial",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-tunnel-remcsum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-sctp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-esp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-list",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "fcoe-mtu",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-nocache-copy",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "loopback",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-fcs",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-all",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-vlan-stag-hw-insert",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-stag-hw-parse",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-stag-filter",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "l2-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hw-tc-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-tx-csum-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp_tunnel-port-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-tx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-rx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-hw",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-record",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-list",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "macsec-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp-gro-forwarding",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "hsr-tag-ins-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-tag-rm-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-dup-offload",
+            "is_enabled": false,
+            "can_enable": false
+          }
+        ],
+        "pci_address": "0000:02:00.1",
+        "speed": "1000Mb/s",
+        "duplex": "Full",
+        "supported_link_modes": [
+          "10baseT/Half",
+          "10baseT/Full",
+          "100baseT/Half",
+          "100baseT/Full",
+          "1000baseT/Half",
+          "1000baseT/Full"
+        ],
+        "supported_ports": ["TP"],
+        "advertised_link_modes": [
+          "10baseT/Half",
+          "10baseT/Full",
+          "100baseT/Half",
+          "100baseT/Full",
+          "1000baseT/Half",
+          "1000baseT/Full"
+        ]
+      },
+      {
+        "name": "enp160s0np0",
+        "mac_address": "58:a2:e1:a4:f4:d6",
+        "is_virtual": false,
+        "capabilities": [
+          {
+            "name": "auto-negotiation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "pause-frame-use",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv4",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-ip-generic",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv6",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-fcoe-crc",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-sctp",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather-fraglist",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tcp-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-ecn-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-tcp-mangleid-segmentation",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-receive-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "large-receive-offload",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "ntuple-filters",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "receive-hashing",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "highdma",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-filter",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "vlan-challenged",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-lockless",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "netns-local",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-robust",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-fcoe-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gre-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gre-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip4-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp_tnl-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp_tnl-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-partial",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tunnel-remcsum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-sctp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-esp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-list",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "fcoe-mtu",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-nocache-copy",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "loopback",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-fcs",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "rx-all",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-vlan-stag-hw-insert",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-stag-hw-parse",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-stag-filter",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "l2-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hw-tc-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "esp-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-tx-csum-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp_tunnel-port-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tls-hw-tx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-rx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-hw",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-record",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-list",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "macsec-hw-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-udp-gro-forwarding",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "hsr-tag-ins-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-tag-rm-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-dup-offload",
+            "is_enabled": false,
+            "can_enable": false
+          }
+        ],
+        "pci_address": "0000:a0:00.0",
+        "speed": "100000Mb/s",
+        "duplex": "Full",
+        "supported_link_modes": [
+          "1000baseT/Full",
+          "10000baseT/Full",
+          "1000baseKX/Full",
+          "10000baseKR/Full",
+          "10000baseR_FEC",
+          "40000baseKR4/Full",
+          "40000baseCR4/Full",
+          "40000baseSR4/Full",
+          "40000baseLR4/Full",
+          "25000baseCR/Full",
+          "25000baseKR/Full",
+          "25000baseSR/Full",
+          "50000baseCR2/Full",
+          "50000baseKR2/Full",
+          "100000baseKR4/Full",
+          "100000baseSR4/Full",
+          "100000baseCR4/Full",
+          "100000baseLR4_ER4/Full",
+          "50000baseSR2/Full",
+          "1000baseX/Full",
+          "10000baseCR/Full",
+          "10000baseSR/Full",
+          "10000baseLR/Full",
+          "10000baseER/Full",
+          "50000baseKR/Full",
+          "50000baseSR/Full",
+          "50000baseCR/Full",
+          "50000baseLR_ER_FR/Full",
+          "50000baseDR/Full",
+          "100000baseKR2/Full",
+          "100000baseSR2/Full",
+          "100000baseCR2/Full",
+          "100000baseLR2_ER2_FR2/Full",
+          "100000baseDR2/Full",
+          "200000baseKR4/Full",
+          "200000baseSR4/Full",
+          "200000baseLR4_ER4_FR4/Full",
+          "200000baseDR4/Full",
+          "200000baseCR4/Full",
+          "100000baseKR/Full",
+          "100000baseSR/Full",
+          "100000baseLR_ER_FR/Full",
+          "100000baseCR/Full",
+          "100000baseDR/Full",
+          "200000baseKR2/Full",
+          "200000baseSR2/Full",
+          "200000baseLR2_ER2_FR2/Full",
+          "200000baseDR2/Full",
+          "200000baseCR2/Full",
+          "400000baseKR4/Full",
+          "400000baseSR4/Full",
+          "400000baseLR4_ER4_FR4/Full",
+          "400000baseDR4/Full",
+          "400000baseCR4/Full"
+        ],
+        "supported_ports": ["FIBRE"],
+        "supported_fec_modes": ["None", "RS", "BASER"],
+        "advertised_link_modes": [
+          "1000baseT/Full",
+          "10000baseT/Full",
+          "1000baseKX/Full",
+          "10000baseKR/Full",
+          "10000baseR_FEC",
+          "40000baseKR4/Full",
+          "40000baseCR4/Full",
+          "40000baseSR4/Full",
+          "40000baseLR4/Full",
+          "25000baseCR/Full",
+          "25000baseKR/Full",
+          "25000baseSR/Full",
+          "50000baseCR2/Full",
+          "50000baseKR2/Full",
+          "100000baseKR4/Full",
+          "100000baseSR4/Full",
+          "100000baseCR4/Full",
+          "100000baseLR4_ER4/Full",
+          "50000baseSR2/Full",
+          "1000baseX/Full",
+          "10000baseCR/Full",
+          "10000baseSR/Full",
+          "10000baseLR/Full",
+          "10000baseER/Full",
+          "50000baseKR/Full",
+          "50000baseSR/Full",
+          "50000baseCR/Full",
+          "50000baseLR_ER_FR/Full",
+          "50000baseDR/Full",
+          "100000baseKR2/Full",
+          "100000baseSR2/Full",
+          "100000baseCR2/Full",
+          "100000baseLR2_ER2_FR2/Full",
+          "100000baseDR2/Full",
+          "200000baseKR4/Full",
+          "200000baseSR4/Full",
+          "200000baseLR4_ER4_FR4/Full",
+          "200000baseDR4/Full",
+          "200000baseCR4/Full",
+          "100000baseKR/Full",
+          "100000baseSR/Full",
+          "100000baseLR_ER_FR/Full",
+          "100000baseCR/Full",
+          "100000baseDR/Full",
+          "200000baseKR2/Full",
+          "200000baseSR2/Full",
+          "200000baseLR2_ER2_FR2/Full",
+          "200000baseDR2/Full",
+          "200000baseCR2/Full",
+          "400000baseKR4/Full",
+          "400000baseSR4/Full",
+          "400000baseLR4_ER4_FR4/Full",
+          "400000baseDR4/Full",
+          "400000baseCR4/Full"
+        ],
+        "advertised_fec_modes": ["RS"]
+      },
+      {
+        "name": "enp181s0np0",
+        "mac_address": "58:a2:e1:b1:45:68",
+        "is_virtual": false,
+        "capabilities": [
+          {
+            "name": "auto-negotiation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "pause-frame-use",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv4",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-ip-generic",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv6",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-fcoe-crc",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-sctp",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather-fraglist",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tcp-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-ecn-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-tcp-mangleid-segmentation",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-receive-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "large-receive-offload",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "ntuple-filters",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "receive-hashing",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "highdma",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-filter",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "vlan-challenged",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-lockless",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "netns-local",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-robust",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-fcoe-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gre-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gre-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip4-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp_tnl-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp_tnl-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-partial",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tunnel-remcsum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-sctp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-esp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-list",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "fcoe-mtu",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-nocache-copy",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "loopback",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-fcs",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "rx-all",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-vlan-stag-hw-insert",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-stag-hw-parse",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-stag-filter",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "l2-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hw-tc-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "esp-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-tx-csum-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp_tunnel-port-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tls-hw-tx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-rx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-hw",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-record",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-list",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "macsec-hw-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-udp-gro-forwarding",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "hsr-tag-ins-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-tag-rm-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-dup-offload",
+            "is_enabled": false,
+            "can_enable": false
+          }
+        ],
+        "pci_address": "0000:b5:00.0",
+        "speed": "100000Mb/s",
+        "duplex": "Full",
+        "supported_link_modes": [
+          "1000baseT/Full",
+          "10000baseT/Full",
+          "1000baseKX/Full",
+          "10000baseKR/Full",
+          "10000baseR_FEC",
+          "40000baseKR4/Full",
+          "40000baseCR4/Full",
+          "40000baseSR4/Full",
+          "40000baseLR4/Full",
+          "25000baseCR/Full",
+          "25000baseKR/Full",
+          "25000baseSR/Full",
+          "50000baseCR2/Full",
+          "50000baseKR2/Full",
+          "100000baseKR4/Full",
+          "100000baseSR4/Full",
+          "100000baseCR4/Full",
+          "100000baseLR4_ER4/Full",
+          "50000baseSR2/Full",
+          "1000baseX/Full",
+          "10000baseCR/Full",
+          "10000baseSR/Full",
+          "10000baseLR/Full",
+          "10000baseER/Full",
+          "50000baseKR/Full",
+          "50000baseSR/Full",
+          "50000baseCR/Full",
+          "50000baseLR_ER_FR/Full",
+          "50000baseDR/Full",
+          "100000baseKR2/Full",
+          "100000baseSR2/Full",
+          "100000baseCR2/Full",
+          "100000baseLR2_ER2_FR2/Full",
+          "100000baseDR2/Full",
+          "200000baseKR4/Full",
+          "200000baseSR4/Full",
+          "200000baseLR4_ER4_FR4/Full",
+          "200000baseDR4/Full",
+          "200000baseCR4/Full",
+          "100000baseKR/Full",
+          "100000baseSR/Full",
+          "100000baseLR_ER_FR/Full",
+          "100000baseCR/Full",
+          "100000baseDR/Full",
+          "200000baseKR2/Full",
+          "200000baseSR2/Full",
+          "200000baseLR2_ER2_FR2/Full",
+          "200000baseDR2/Full",
+          "200000baseCR2/Full",
+          "400000baseKR4/Full",
+          "400000baseSR4/Full",
+          "400000baseLR4_ER4_FR4/Full",
+          "400000baseDR4/Full",
+          "400000baseCR4/Full"
+        ],
+        "supported_ports": ["FIBRE"],
+        "supported_fec_modes": ["None", "RS", "BASER"],
+        "advertised_link_modes": [
+          "1000baseT/Full",
+          "10000baseT/Full",
+          "1000baseKX/Full",
+          "10000baseKR/Full",
+          "10000baseR_FEC",
+          "40000baseKR4/Full",
+          "40000baseCR4/Full",
+          "40000baseSR4/Full",
+          "40000baseLR4/Full",
+          "25000baseCR/Full",
+          "25000baseKR/Full",
+          "25000baseSR/Full",
+          "50000baseCR2/Full",
+          "50000baseKR2/Full",
+          "100000baseKR4/Full",
+          "100000baseSR4/Full",
+          "100000baseCR4/Full",
+          "100000baseLR4_ER4/Full",
+          "50000baseSR2/Full",
+          "1000baseX/Full",
+          "10000baseCR/Full",
+          "10000baseSR/Full",
+          "10000baseLR/Full",
+          "10000baseER/Full",
+          "50000baseKR/Full",
+          "50000baseSR/Full",
+          "50000baseCR/Full",
+          "50000baseLR_ER_FR/Full",
+          "50000baseDR/Full",
+          "100000baseKR2/Full",
+          "100000baseSR2/Full",
+          "100000baseCR2/Full",
+          "100000baseLR2_ER2_FR2/Full",
+          "100000baseDR2/Full",
+          "200000baseKR4/Full",
+          "200000baseSR4/Full",
+          "200000baseLR4_ER4_FR4/Full",
+          "200000baseDR4/Full",
+          "200000baseCR4/Full",
+          "100000baseKR/Full",
+          "100000baseSR/Full",
+          "100000baseLR_ER_FR/Full",
+          "100000baseCR/Full",
+          "100000baseDR/Full",
+          "200000baseKR2/Full",
+          "200000baseSR2/Full",
+          "200000baseLR2_ER2_FR2/Full",
+          "200000baseDR2/Full",
+          "200000baseCR2/Full",
+          "400000baseKR4/Full",
+          "400000baseSR4/Full",
+          "400000baseLR4_ER4_FR4/Full",
+          "400000baseDR4/Full",
+          "400000baseCR4/Full"
+        ],
+        "advertised_fec_modes": ["RS"]
+      },
+      {
+        "name": "enp55s0f0np0",
+        "mac_address": "50:00:e6:a6:21:4c",
+        "is_virtual": false,
+        "capabilities": [
+          {
+            "name": "auto-negotiation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "pause-frame-use",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv4",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-ip-generic",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv6",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-fcoe-crc",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-sctp",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather-fraglist",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tcp-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-ecn-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-tcp-mangleid-segmentation",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-receive-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "large-receive-offload",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "ntuple-filters",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "receive-hashing",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "highdma",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-filter",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "vlan-challenged",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-lockless",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "netns-local",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-robust",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-fcoe-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gre-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gre-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip4-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp_tnl-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp_tnl-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-partial",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tunnel-remcsum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-sctp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-esp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-list",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "fcoe-mtu",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-nocache-copy",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "loopback",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-fcs",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "rx-all",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-vlan-stag-hw-insert",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-stag-hw-parse",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-stag-filter",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "l2-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hw-tc-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "esp-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-tx-csum-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp_tunnel-port-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tls-hw-tx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-rx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-hw",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-record",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-list",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "macsec-hw-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-udp-gro-forwarding",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "hsr-tag-ins-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-tag-rm-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-dup-offload",
+            "is_enabled": false,
+            "can_enable": false
+          }
+        ],
+        "pci_address": "0000:37:00.0",
+        "speed": "Unknown!",
+        "duplex": "Unknown!(255)",
+        "supported_link_modes": [
+          "1000baseT/Full",
+          "10000baseT/Full",
+          "1000baseKX/Full",
+          "10000baseKR/Full",
+          "10000baseR_FEC",
+          "40000baseKR4/Full",
+          "40000baseCR4/Full",
+          "40000baseSR4/Full",
+          "40000baseLR4/Full",
+          "25000baseCR/Full",
+          "25000baseKR/Full",
+          "25000baseSR/Full",
+          "50000baseCR2/Full",
+          "50000baseKR2/Full",
+          "100000baseKR4/Full",
+          "100000baseSR4/Full",
+          "100000baseCR4/Full",
+          "100000baseLR4_ER4/Full",
+          "50000baseSR2/Full",
+          "1000baseX/Full",
+          "10000baseCR/Full",
+          "10000baseSR/Full",
+          "10000baseLR/Full",
+          "10000baseER/Full",
+          "50000baseKR/Full",
+          "50000baseSR/Full",
+          "50000baseCR/Full",
+          "50000baseLR_ER_FR/Full",
+          "50000baseDR/Full",
+          "100000baseKR2/Full",
+          "100000baseSR2/Full",
+          "100000baseCR2/Full",
+          "100000baseLR2_ER2_FR2/Full",
+          "100000baseDR2/Full"
+        ],
+        "supported_fec_modes": ["None", "RS", "BASER"],
+        "advertised_link_modes": [
+          "1000baseT/Full",
+          "10000baseT/Full",
+          "1000baseKX/Full",
+          "10000baseKR/Full",
+          "10000baseR_FEC",
+          "40000baseKR4/Full",
+          "40000baseCR4/Full",
+          "40000baseSR4/Full",
+          "40000baseLR4/Full",
+          "25000baseCR/Full",
+          "25000baseKR/Full",
+          "25000baseSR/Full",
+          "50000baseCR2/Full",
+          "50000baseKR2/Full",
+          "100000baseKR4/Full",
+          "100000baseSR4/Full",
+          "100000baseCR4/Full",
+          "100000baseLR4_ER4/Full",
+          "50000baseSR2/Full",
+          "1000baseX/Full",
+          "10000baseCR/Full",
+          "10000baseSR/Full",
+          "10000baseLR/Full",
+          "10000baseER/Full",
+          "50000baseKR/Full",
+          "50000baseSR/Full",
+          "50000baseCR/Full",
+          "50000baseLR_ER_FR/Full",
+          "50000baseDR/Full",
+          "100000baseKR2/Full",
+          "100000baseSR2/Full",
+          "100000baseCR2/Full",
+          "100000baseLR2_ER2_FR2/Full",
+          "100000baseDR2/Full"
+        ]
+      },
+      {
+        "name": "enp55s0f1np1",
+        "mac_address": "50:00:e6:a6:21:4d",
+        "is_virtual": false,
+        "capabilities": [
+          {
+            "name": "auto-negotiation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "pause-frame-use",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv4",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-ip-generic",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv6",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-fcoe-crc",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-sctp",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather-fraglist",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tcp-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-ecn-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-tcp-mangleid-segmentation",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-receive-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "large-receive-offload",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-vlan-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "ntuple-filters",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "receive-hashing",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "highdma",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-filter",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "vlan-challenged",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-lockless",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "netns-local",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-robust",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-fcoe-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gre-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gre-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip4-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-ipxip6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp_tnl-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-udp_tnl-csum-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-partial",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tunnel-remcsum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-sctp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-esp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-list",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "fcoe-mtu",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-nocache-copy",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "loopback",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-fcs",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "rx-all",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-vlan-stag-hw-insert",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-stag-hw-parse",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-stag-filter",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "l2-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hw-tc-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "esp-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-tx-csum-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp_tunnel-port-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tls-hw-tx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-rx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-hw",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-record",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-list",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "macsec-hw-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-udp-gro-forwarding",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "hsr-tag-ins-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-tag-rm-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-dup-offload",
+            "is_enabled": false,
+            "can_enable": false
+          }
+        ],
+        "pci_address": "0000:37:00.1",
+        "speed": "Unknown!",
+        "duplex": "Unknown!(255)",
+        "supported_link_modes": [
+          "1000baseT/Full",
+          "10000baseT/Full",
+          "1000baseKX/Full",
+          "10000baseKR/Full",
+          "10000baseR_FEC",
+          "40000baseKR4/Full",
+          "40000baseCR4/Full",
+          "40000baseSR4/Full",
+          "40000baseLR4/Full",
+          "25000baseCR/Full",
+          "25000baseKR/Full",
+          "25000baseSR/Full",
+          "50000baseCR2/Full",
+          "50000baseKR2/Full",
+          "100000baseKR4/Full",
+          "100000baseSR4/Full",
+          "100000baseCR4/Full",
+          "100000baseLR4_ER4/Full",
+          "50000baseSR2/Full",
+          "1000baseX/Full",
+          "10000baseCR/Full",
+          "10000baseSR/Full",
+          "10000baseLR/Full",
+          "10000baseER/Full",
+          "50000baseKR/Full",
+          "50000baseSR/Full",
+          "50000baseCR/Full",
+          "50000baseLR_ER_FR/Full",
+          "50000baseDR/Full",
+          "100000baseKR2/Full",
+          "100000baseSR2/Full",
+          "100000baseCR2/Full",
+          "100000baseLR2_ER2_FR2/Full",
+          "100000baseDR2/Full"
+        ],
+        "supported_fec_modes": ["None", "RS", "BASER"],
+        "advertised_link_modes": [
+          "1000baseT/Full",
+          "10000baseT/Full",
+          "1000baseKX/Full",
+          "10000baseKR/Full",
+          "10000baseR_FEC",
+          "40000baseKR4/Full",
+          "40000baseCR4/Full",
+          "40000baseSR4/Full",
+          "40000baseLR4/Full",
+          "25000baseCR/Full",
+          "25000baseKR/Full",
+          "25000baseSR/Full",
+          "50000baseCR2/Full",
+          "50000baseKR2/Full",
+          "100000baseKR4/Full",
+          "100000baseSR4/Full",
+          "100000baseCR4/Full",
+          "100000baseLR4_ER4/Full",
+          "50000baseSR2/Full",
+          "1000baseX/Full",
+          "10000baseCR/Full",
+          "10000baseSR/Full",
+          "10000baseLR/Full",
+          "10000baseER/Full",
+          "50000baseKR/Full",
+          "50000baseSR/Full",
+          "50000baseCR/Full",
+          "50000baseLR_ER_FR/Full",
+          "50000baseDR/Full",
+          "100000baseKR2/Full",
+          "100000baseSR2/Full",
+          "100000baseCR2/Full",
+          "100000baseLR2_ER2_FR2/Full",
+          "100000baseDR2/Full"
+        ]
+      },
+      {
+        "name": "wt0",
+        "mac_address": "",
+        "is_virtual": true,
+        "capabilities": [
+          {
+            "name": "Features",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "rx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksumming",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv4",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-ip-generic",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-checksum-ipv6",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-fcoe-crc",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-checksum-sctp",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-scatter-gather-fraglist",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tcp-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-ecn-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp-mangleid-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-tcp6-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-segmentation-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "generic-receive-offload",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "large-receive-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-vlan-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "ntuple-filters",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "receive-hashing",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "highdma",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "rx-vlan-filter",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "vlan-challenged",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-lockless",
+            "is_enabled": true,
+            "can_enable": false
+          },
+          {
+            "name": "netns-local",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-robust",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-fcoe-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gre-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gre-csum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-ipxip4-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-ipxip6-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp_tnl-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp_tnl-csum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-gso-partial",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-tunnel-remcsum-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-sctp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-esp-segmentation",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-udp-segmentation",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "tx-gso-list",
+            "is_enabled": true,
+            "can_enable": true
+          },
+          {
+            "name": "fcoe-mtu",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-nocache-copy",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "loopback",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-fcs",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-all",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tx-vlan-stag-hw-insert",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-stag-hw-parse",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-vlan-stag-filter",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "l2-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hw-tc-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "esp-tx-csum-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp_tunnel-port-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-tx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-rx-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-hw",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "tls-hw-record",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-gro-list",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "macsec-hw-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "rx-udp-gro-forwarding",
+            "is_enabled": false,
+            "can_enable": true
+          },
+          {
+            "name": "hsr-tag-ins-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-tag-rm-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-fwd-offload",
+            "is_enabled": false,
+            "can_enable": false
+          },
+          {
+            "name": "hsr-dup-offload",
+            "is_enabled": false,
+            "can_enable": false
+          }
+        ],
+        "speed": "",
+        "duplex": ""
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "//": "pagination + mac-address are Nest require() surfaces — CommonJS like @repo/auth/rbac. See package.json build.",
+  "extends": "@repo/typescript-config/nestjs.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "declarationMap": true,
+    "incremental": false
+  },
+  "include": ["src/pagination/**/*.ts", "src/extensions/**/*.ts"],
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/**/__test__"]
+}

@@ -1,0 +1,67 @@
+{
+  "name": "@repo/auth",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "require": "./src/index.ts"
+    },
+    "./client": {
+      "types": "./src/client.ts",
+      "import": "./src/client.ts",
+      "require": "./src/client.ts"
+    },
+    "./api-key-permissions": {
+      "types": "./src/api-key-permissions.ts",
+      "import": "./src/api-key-permissions.ts",
+      "require": "./src/api-key-permissions.ts"
+    },
+    "./rbac": {
+      "types": "./src/rbac/index.ts",
+      "require": "./dist/rbac/index.js",
+      "import": "./dist/rbac/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc && tsc -p tsconfig.rbac.json && echo '{\"type\":\"commonjs\"}' > dist/rbac/package.json",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.rbac.json",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@repo/api-client": "workspace:*",
+    "@repo/database": "workspace:*",
+    "bcrypt": "^6.0.0",
+    "better-auth": "^1.2.0",
+    "@better-auth/api-key": ">=1.6.13 <1.7.0"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/bcrypt": "^6.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.2",
+    "vitest": "^4.0.17"
+  }
+}

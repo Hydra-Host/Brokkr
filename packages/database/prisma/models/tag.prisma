@@ -1,0 +1,46 @@
+enum TagObjectType {
+  DEVICE
+  INTERFACE
+  PREFIX
+  VLAN
+  VRF
+  IP_ADDRESS
+  ZONE
+  CLUSTER
+}
+
+model Tag {
+  id          String  @id @default(uuid())
+  name        String
+  // URL-safe identifier. Callers filter tags by slug.
+  slug        String?
+  color       String?
+  description String?
+
+  // Nullable organization: when null, the tag is a global/system tag (e.g.
+  // customer-primary, north-south). The composite unique constraints below
+  // treat NULL as distinct, so a partial
+  // unique index on (name) and (slug) where organizationId IS NULL is added
+  // manually in the migration to prevent global-tag duplicates.
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String?
+
+  assignments TagAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+}
+
+model TagAssignment {
+  tag        Tag           @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId      String
+  objectType TagObjectType
+  objectId   String
+
+  @@id([tagId, objectType, objectId])
+  @@index([objectType, objectId])
+}

@@ -1,0 +1,8 @@
+{
+  "//": "Subpath redirector so `@repo/database/pagination` resolves under classic `node` moduleResolution (Nest apps), which ignores the package `exports` map. Points at the separately-built NestJS/CommonJS dist; types come from source.",
+  "name": "@repo/database-pagination",
+  "license": "Apache-2.0",
+  "private": true,
+  "main": "../dist/pagination/index.js",
+  "types": "../src/pagination/index.ts"
+}

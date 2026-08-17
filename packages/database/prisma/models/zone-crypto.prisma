@@ -1,0 +1,42 @@
+// Zone-crypto enrollment models for the S1 sealed-envelope subsystem.
+//
+// `ZoneRegistrationToken` is a one-time, per-zone bridge enrollment credential.
+// Operators mint a token via the admin endpoint; only the SHA-256 hash is
+// stored — the raw token is shown to the operator once and never persisted.
+// On enrollment the token is atomically validated, marked consumed, and the
+// presented `zone_pub` is recorded. Re-presentation of the same token with
+// the same `consumedZonePub` returns the original response (idempotency for
+// dropped-response retries); a different `zone_pub` is rejected.
+//
+// `ZoneEnrollment` is the steady-state record of a zone's current X25519
+// public key as reported by the bridge. One row per zone (zoneId is unique);
+// re-enrollment replaces the row. The hub reads this model to gate per-zone
+// sealing in F4 (`zone.enrollment` populated ⇒ seal outbound).
+
+model ZoneRegistrationToken {
+  id              String    @id @default(uuid())
+  tokenHash       String    @unique // SHA-256 hex of the raw token (raw never persisted)
+  zoneId          String
+  expiresAt       DateTime // 24h after creation for unused tokens
+  consumedAt      DateTime?
+  consumedZonePub Bytes? // zone_pub recorded at consume time, used for idempotency
+  createdAt       DateTime  @default(now())
+  createdById     String // admin user who minted
+
+  zone      Zone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@index([zoneId])
+  @@index([expiresAt])
+}
+
+model ZoneEnrollment {
+  id              String   @id @default(uuid())
+  zoneId          String   @unique // one current enrollment per zone
+  zonePub         Bytes // 32-byte X25519 public key
+  generation      Int      @default(1) // ++ on each re-enrollment; stamped onto DeviceSecret.keyGen to detect stale (re-keyed) secrets
+  enrolledAt      DateTime @default(now())
+  consumedTokenId String? // audit reference to the token that produced this enrollment
+
+  zone Zone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+}

@@ -1,0 +1,27 @@
+#!ipxe
+
+# Set job ID header for downloads
+params
+param --header x-brokkr-job-id {{ job_id | default("") }}
+
+{% if grub_supported %}
+set bootload_url "{{ bridge_url }}/api/grub?platform={{ platform }}&arch={{ arch }}"
+echo Chainloading bootloader URL: ${bootload_url}
+imgfree
+chain ${bootload_url}##params || goto sanboot
+{% else %}
+echo No grub bootloader for {{ arch }}:{{ platform }}; booting local disk directly
+imgfree
+{% endif %}
+
+:sanboot
+{% if platform == 'efi' %}
+echo Attempting to boot from EFI disk...
+sanboot --no-describe --drive 0 || goto exit
+{% else %}
+echo Attempting to boot from Legacy disk...
+sanboot --no-describe --drive 0x80 || goto exit
+{% endif %}
+
+:exit
+exit 1

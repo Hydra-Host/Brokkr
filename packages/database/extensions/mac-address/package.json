@@ -1,0 +1,8 @@
+{
+  "//": "Subpath redirector so `@repo/database/extensions/mac-address` resolves under classic `node` moduleResolution (Nest apps), which ignores the package `exports` map. Points at the separately-built NestJS/CommonJS dist; types come from source.",
+  "name": "@repo/database-mac-address",
+  "license": "Apache-2.0",
+  "private": true,
+  "main": "../../dist/extensions/mac-address.js",
+  "types": "../../src/extensions/mac-address.ts"
+}

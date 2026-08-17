@@ -1,0 +1,49 @@
+{
+  "block": {
+    "total_size_bytes": 810858354688,
+    "disks": [
+      {
+        "name": "loop0",
+        "size_bytes": 5408819200,
+        "physical_block_size_bytes": 512,
+        "drive_type": "ssd",
+        "removable": false,
+        "storage_controller": "loop",
+        "bus_path": "unknown",
+        "vendor": "unknown",
+        "model": "unknown",
+        "serial_number": "unknown",
+        "wwn": "unknown",
+        "partitions": []
+      },
+      {
+        "name": "loop1",
+        "size_bytes": 5283459072,
+        "physical_block_size_bytes": 512,
+        "drive_type": "ssd",
+        "removable": false,
+        "storage_controller": "loop",
+        "bus_path": "unknown",
+        "vendor": "unknown",
+        "model": "unknown",
+        "serial_number": "unknown",
+        "wwn": "unknown",
+        "partitions": []
+      },
+      {
+        "name": "nvme1n1",
+        "size_bytes": 800166076416,
+        "physical_block_size_bytes": 4096,
+        "drive_type": "ssd",
+        "removable": false,
+        "storage_controller": "nvme",
+        "bus_path": "pci-0000:8e:00.0-nvme-1",
+        "vendor": "unknown",
+        "model": "Dell DC NVMe ISE 7450 MU U.2 800GB",
+        "serial_number": "24344AAF9E3C",
+        "wwn": "eui.000000000000000100a075244aaf9e3c",
+        "partitions": []
+      }
+    ]
+  }
+}

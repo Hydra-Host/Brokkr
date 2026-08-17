@@ -1,0 +1,15 @@
+[Unit]
+Description=Brokkr Lockscreen Display
+After=multi-user.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/brokkr/lockscreen.env
+ExecStart=/usr/bin/node /opt/brokkr/agent/main.js lockscreen
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

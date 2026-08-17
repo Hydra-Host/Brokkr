@@ -1,0 +1,184 @@
+enum LayerSelectionType {
+  SINGLE_SELECT
+  MULTI_SELECT
+}
+
+enum LayerRelationType {
+  REQUIRES
+  CONFLICTS
+}
+
+enum LayerKind {
+  BASE
+  LEGACY
+  COMPONENT
+  INTERNAL
+  // Bootable system images (rescue/discovery) in the `liveOS` group. Selected
+  // via the rescue picker and referenced by Deployment.rescueLayerId; excluded
+  // from the customer base dropdown (which filters kind in [BASE, LEGACY]).
+  LIVE
+}
+
+enum LayerBuildStatus {
+  IMPORTING
+  READY
+  FAILED
+  RETIRED
+}
+
+model LayerBuild {
+  id            String           @id @default(uuid())
+  version       String
+  env           String
+  schemaVersion Int
+  manifestUrl   String
+  status        LayerBuildStatus @default(IMPORTING)
+  error         String?
+
+  pipelineId           BigInt?
+  generatedAt          DateTime?
+  promotedFrom         String?
+  promotedAt           DateTime?
+  promotedByPipelineId BigInt?
+
+  importedById String?
+  importedBy   User?    @relation("importedBuilds", fields: [importedById], references: [id])
+  importedAt   DateTime @default(now())
+
+  artifacts          LayerArtifact[]
+  zones              Zone[]
+  defaultForSettings PlatformSettings[] @relation("defaultBuild")
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([version, env])
+  @@index([status])
+}
+
+model PlatformSettings {
+  id                  String      @id @default("singleton")
+  defaultLayerBuildId String?
+  defaultLayerBuild   LayerBuild? @relation("defaultBuild", fields: [defaultLayerBuildId], references: [id])
+  updatedById         String?
+  updatedBy           User?       @relation("platformSettingsUpdates", fields: [updatedById], references: [id])
+  updatedAt           DateTime    @updatedAt
+}
+
+model LayerGroup {
+  id            String             @id @default(uuid())
+  slug          String             @unique
+  name          String
+  selectionType LayerSelectionType
+  layers        Layer[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Layer {
+  id   String @id @default(uuid())
+  slug String @unique
+  name String
+
+  family String?
+  kind   LayerKind @default(COMPONENT)
+
+  layerGroup   LayerGroup @relation(fields: [layerGroupId], references: [id])
+  layerGroupId String
+
+  artifacts         LayerArtifact[]
+  deploymentLayers  DeploymentLayer[]
+  // Reverse direction only — peer layers that REQUIRE this layer point here
+  // via LayerRelation.relatedLayerId. Forward direction (this layer's own
+  // requires) is per-artifact, exposed via LayerArtifact.relations.
+  relationsTo       LayerRelation[]   @relation("layerRelationTo")
+  // Deployments selecting this layer as their base OS (kind=BASE) or rescue
+  // boot override (kind=LIVE). Distinct from `deploymentLayers`, which is the
+  // per-deployment customization-layer join.
+  baseDeployments   Deployment[]      @relation("deploymentBaseLayer")
+  rescueDeployments Deployment[]      @relation("deploymentRescueLayer")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model LayerArtifact {
+  id      String @id @default(uuid())
+  layerId String
+  layer   Layer  @relation(fields: [layerId], references: [id], onDelete: Cascade)
+
+  layerBuildId String
+  layerBuild   LayerBuild @relation(fields: [layerBuildId], references: [id], onDelete: Restrict)
+
+  osDistro   String
+  osCodename String
+  osVersion  String
+  arch       String
+  // Defaults to "" so the composite unique constraint isn't bypassed by Postgres
+  // NULL-not-equal-NULL semantics. "vanilla"|"hpc"|"tee" for legacy bases, "" otherwise.
+  variant    String @default("")
+
+  sha256      String
+  url         String
+  size        BigInt
+  compression String @default("zstd")
+
+  kernel         String?
+  releaseVersion String?
+
+  sourceVersion     String?
+  filename          String?
+  builtAt           DateTime?
+  builtByPipelineId BigInt?
+
+  deploymentLayers DeploymentLayer[]
+  // Per-build peer compat: relations are scoped to (artifact, related layer),
+  // not (layer, related layer), so arch/distro variants can declare different requires.
+  relations        LayerRelation[]   @relation("layerRelationFrom")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([layerBuildId, sha256], map: "LayerArtifact_layerBuildId_sha256_key")
+  @@unique([layerBuildId, layerId, osDistro, osCodename, arch, variant], map: "LayerArtifact_build_slot_key")
+  @@index([layerBuildId, osDistro, osCodename, arch])
+  @@index([layerId])
+}
+
+// Per-artifact peer compat. The "from" side is a specific LayerArtifact build
+// (so cuda-13.2 on debian/12/arm64 can declare different requires than
+// cuda-13.2 on debian/12/amd64). The "to" side is a Layer slug because the
+// user picks layers — the resolver maps the layer choice to its artifact
+// for the selected base at provision time. ON DELETE CASCADE on the artifact
+// side: deactivating an artifact + later deleting cleans its relations.
+model LayerRelation {
+  artifactId     String
+  relatedLayerId String
+  type           LayerRelationType
+  groupId        String?
+  artifact       LayerArtifact     @relation("layerRelationFrom", fields: [artifactId], references: [id], onDelete: Cascade)
+  relatedLayer   Layer             @relation("layerRelationTo", fields: [relatedLayerId], references: [id])
+
+  @@id([artifactId, relatedLayerId])
+  @@index([relatedLayerId])
+}
+
+// One row per (deployment, layer) pair, written at provision time. Records
+// which specific LayerArtifact (sha-pinned) was assigned to the deployment.
+// Reprovisions update the same Deployment row in place, so this table
+// follows the DeploymentSshKeys pattern: composite PK, replace-on-write
+// (deleteMany + createMany in a transaction), no per-reprovision history
+// preserved. Whether the layer actually applied successfully is inferred
+// from the parent Deployment's status.
+model DeploymentLayer {
+  deploymentId    String
+  layerId         String
+  layerArtifactId String
+  installedAt     DateTime      @default(now())
+  deployment      Deployment    @relation(fields: [deploymentId], references: [id])
+  layer           Layer         @relation(fields: [layerId], references: [id])
+  layerArtifact   LayerArtifact @relation(fields: [layerArtifactId], references: [id])
+
+  @@id([deploymentId, layerId])
+  @@index([layerArtifactId])
+}

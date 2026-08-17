@@ -1,0 +1,36 @@
+[
+  {
+    "name": "sda",
+    "size": 240057409536,
+    "rota": true,
+    "serial": "HDD-SERIAL-001",
+    "wwn": "0x50000000000000aa",
+    "model": "TOSHIBA MG07"
+  },
+  {
+    "name": "sdb",
+    "size": 240057409536,
+    "rota": false,
+    "serial": "SSD-SERIAL-001",
+    "wwn": "0x50026b0000000001",
+    "model": "KINGSTON SA400S3"
+  },
+  {
+    "name": "nvme0n1",
+    "size": 7681501126656,
+    "rota": false,
+    "serial": "NVME-SERIAL-001",
+    "wwn": "eui.000000000000000100a075200000001",
+    "model": "Micron_7450_MTFDKCC7T6TFR"
+  },
+  {
+    "name": "nvme1n1",
+    "size": 7681501126656,
+    "rota": false,
+    "serial": "NVME-SERIAL-002",
+    "wwn": "eui.000000000000000100a075200000002",
+    "model": "Micron_7450_MTFDKCC7T6TFR"
+  },
+  { "name": "loop0", "size": 4096, "rota": false, "serial": null, "wwn": null, "model": null },
+  { "name": "sr0", "size": 0, "rota": true, "serial": null, "wwn": null, "model": null }
+]

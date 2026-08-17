@@ -1,0 +1,272 @@
+[
+  {
+    "ifindex": 1,
+    "ifname": "lo",
+    "flags": ["LOOPBACK", "UP", "LOWER_UP"],
+    "mtu": 65536,
+    "xdp": {
+      "mode": 2,
+      "prog": {
+        "id": 45,
+        "tag": "127663dc089f4523",
+        "jited": 1
+      },
+      "attached": [
+        {
+          "mode": 2,
+          "prog": {
+            "id": 45,
+            "tag": "127663dc089f4523",
+            "jited": 1
+          }
+        }
+      ]
+    },
+    "qdisc": "noqueue",
+    "operstate": "UNKNOWN",
+    "group": "default",
+    "txqlen": 1000,
+    "link_type": "loopback",
+    "address": "00:00:00:00:00:00",
+    "broadcast": "00:00:00:00:00:00",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "127.0.0.1",
+        "prefixlen": 8,
+        "scope": "host",
+        "label": "lo",
+        "valid_life_time": 4294967295,
+        "preferred_life_time": 4294967295
+      },
+      {
+        "family": "inet6",
+        "local": "::1",
+        "prefixlen": 128,
+        "scope": "host",
+        "valid_life_time": 4294967295,
+        "preferred_life_time": 4294967295
+      }
+    ]
+  },
+  {
+    "ifindex": 2,
+    "ifname": "eno12399np0",
+    "flags": ["NO-CARRIER", "BROADCAST", "MULTICAST", "UP"],
+    "mtu": 1500,
+    "qdisc": "mq",
+    "operstate": "DOWN",
+    "group": "default",
+    "txqlen": 1000,
+    "link_type": "ether",
+    "address": "8c:84:74:20:35:80",
+    "broadcast": "ff:ff:ff:ff:ff:ff",
+    "altnames": ["enp34s0f0np0"],
+    "addr_info": []
+  },
+  {
+    "ifindex": 3,
+    "ifname": "eno8303",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "qdisc": "mq",
+    "operstate": "UP",
+    "group": "default",
+    "txqlen": 1000,
+    "link_type": "ether",
+    "address": "aa:bb:cc:dd:ee:03",
+    "broadcast": "ff:ff:ff:ff:ff:ff",
+    "altnames": ["enp2s0f0"],
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "10.0.99.2",
+        "prefixlen": 22,
+        "broadcast": "172.16.15.255",
+        "scope": "global",
+        "label": "eno8303",
+        "valid_life_time": 4294967295,
+        "preferred_life_time": 4294967295
+      },
+      {
+        "family": "inet6",
+        "local": "2001:db8::2",
+        "prefixlen": 64,
+        "scope": "global",
+        "dynamic": true,
+        "mngtmpaddr": true,
+        "noprefixroute": true,
+        "valid_life_time": 2591962,
+        "preferred_life_time": 604762
+      },
+      {
+        "family": "inet6",
+        "local": "fe80::c6cb:e1ff:feee:1936",
+        "prefixlen": 64,
+        "scope": "link",
+        "valid_life_time": 4294967295,
+        "preferred_life_time": 4294967295
+      }
+    ]
+  },
+  {
+    "ifindex": 4,
+    "ifname": "eno8403",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "qdisc": "mq",
+    "operstate": "UP",
+    "group": "default",
+    "txqlen": 1000,
+    "link_type": "ether",
+    "address": "aa:bb:cc:dd:ee:04",
+    "broadcast": "ff:ff:ff:ff:ff:ff",
+    "altnames": ["enp2s0f1"],
+    "addr_info": [
+      {
+        "family": "inet6",
+        "local": "fe80::c6cb:e1ff:feee:1937",
+        "prefixlen": 64,
+        "scope": "link",
+        "valid_life_time": 4294967295,
+        "preferred_life_time": 4294967295
+      }
+    ]
+  },
+  {
+    "ifindex": 5,
+    "ifname": "eno12409np1",
+    "flags": ["NO-CARRIER", "BROADCAST", "MULTICAST", "UP"],
+    "mtu": 1500,
+    "qdisc": "mq",
+    "operstate": "DOWN",
+    "group": "default",
+    "txqlen": 1000,
+    "link_type": "ether",
+    "address": "8c:84:74:20:35:81",
+    "broadcast": "ff:ff:ff:ff:ff:ff",
+    "altnames": ["enp34s0f1np1"],
+    "addr_info": []
+  },
+  {
+    "ifindex": 6,
+    "ifname": "enp55s0f0np0",
+    "flags": ["NO-CARRIER", "BROADCAST", "MULTICAST", "UP"],
+    "mtu": 1500,
+    "qdisc": "mq",
+    "operstate": "DOWN",
+    "group": "default",
+    "txqlen": 1000,
+    "link_type": "ether",
+    "address": "50:00:e6:a6:21:4c",
+    "broadcast": "ff:ff:ff:ff:ff:ff",
+    "addr_info": []
+  },
+  {
+    "ifindex": 7,
+    "ifname": "enp55s0f1np1",
+    "flags": ["NO-CARRIER", "BROADCAST", "MULTICAST", "UP"],
+    "mtu": 1500,
+    "qdisc": "mq",
+    "operstate": "DOWN",
+    "group": "default",
+    "txqlen": 1000,
+    "link_type": "ether",
+    "address": "50:00:e6:a6:21:4d",
+    "broadcast": "ff:ff:ff:ff:ff:ff",
+    "addr_info": []
+  },
+  {
+    "ifindex": 8,
+    "ifname": "enp160s0np0",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "qdisc": "mq",
+    "operstate": "UP",
+    "group": "default",
+    "txqlen": 1000,
+    "link_type": "ether",
+    "address": "58:a2:e1:a4:f4:d6",
+    "broadcast": "ff:ff:ff:ff:ff:ff",
+    "addr_info": [
+      {
+        "family": "inet6",
+        "local": "fe80::5aa2:e1ff:fea4:f4d6",
+        "prefixlen": 64,
+        "scope": "link",
+        "valid_life_time": 4294967295,
+        "preferred_life_time": 4294967295
+      }
+    ]
+  },
+  {
+    "ifindex": 9,
+    "ifname": "enp181s0np0",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "mtu": 1500,
+    "qdisc": "mq",
+    "operstate": "UP",
+    "group": "default",
+    "txqlen": 1000,
+    "link_type": "ether",
+    "address": "58:a2:e1:b1:45:68",
+    "broadcast": "ff:ff:ff:ff:ff:ff",
+    "addr_info": [
+      {
+        "family": "inet6",
+        "local": "fe80::5aa2:e1ff:feb1:4568",
+        "prefixlen": 64,
+        "scope": "link",
+        "valid_life_time": 4294967295,
+        "preferred_life_time": 4294967295
+      }
+    ]
+  },
+  {
+    "ifindex": 10,
+    "ifname": "wt0",
+    "flags": ["POINTOPOINT", "NOARP", "UP", "LOWER_UP"],
+    "mtu": 1280,
+    "qdisc": "noqueue",
+    "operstate": "UNKNOWN",
+    "group": "default",
+    "txqlen": 1000,
+    "link_type": "none",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "100.110.100.173",
+        "prefixlen": 16,
+        "broadcast": "100.110.255.255",
+        "scope": "global",
+        "label": "wt0",
+        "valid_life_time": 4294967295,
+        "preferred_life_time": 4294967295
+      }
+    ]
+  },
+  {
+    "ifindex": 11,
+    "ifname": "docker0",
+    "flags": ["NO-CARRIER", "BROADCAST", "MULTICAST", "UP"],
+    "mtu": 1500,
+    "qdisc": "noqueue",
+    "operstate": "DOWN",
+    "group": "default",
+    "link_type": "ether",
+    "address": "d6:fd:6d:f3:7f:8c",
+    "broadcast": "ff:ff:ff:ff:ff:ff",
+    "addr_info": [
+      {
+        "family": "inet",
+        "local": "172.17.0.1",
+        "prefixlen": 16,
+        "broadcast": "172.17.255.255",
+        "scope": "global",
+        "label": "docker0",
+        "valid_life_time": 4294967295,
+        "preferred_life_time": 4294967295
+      }
+    ]
+  }
+]

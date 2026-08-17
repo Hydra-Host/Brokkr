@@ -1,0 +1,31 @@
+enum StorageDriveType {
+  NVME
+  SSD
+  HDD
+}
+
+model StorageDrive {
+  id        String           @id @default(uuid())
+  name      String
+  type      StorageDriveType
+  model     String?
+  serial    String?
+  wwn       String?
+  sizeBytes BigInt
+
+  // Populated by ghw_block collector
+  physicalBlockBytes Int?
+  busPath            String? // PCI path for NVMe, etc.
+  storageController  String? // NVMe / SATA / SAS / virtio
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId, name])
+  @@index([deviceId])
+  @@index([serial])
+  @@index([type])
+}

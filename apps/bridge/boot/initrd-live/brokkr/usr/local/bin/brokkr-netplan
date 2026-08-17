@@ -1,0 +1,71 @@
+#!/bin/bash
+# Netplan configuration application script for Brokkr Live OS
+# Checks for and applies netplan configurations from /etc/netplan
+
+set -e
+
+# Function to log messages
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] netplan-apply: $*"
+}
+
+# Check if netplan binary exists
+if ! command -v netplan >/dev/null 2>&1; then
+    log "WARNING: netplan command not found, skipping network configuration"
+    exit 0
+fi
+
+# Check if /etc/netplan directory exists and has yaml files
+if [ ! -d /etc/netplan ]; then
+    log "No /etc/netplan directory found, skipping"
+    exit 0
+fi
+
+# Check for netplan files (*.yaml or *.yml)
+netplan_files=$(find /etc/netplan -maxdepth 1 -type f \( -name "*.yaml" -o -name "*.yml" \) 2>/dev/null | head -n1)
+
+if [ -z "$netplan_files" ]; then
+    log "No netplan configuration files found in /etc/netplan, skipping"
+    exit 0
+fi
+
+log "Found netplan configuration files in /etc/netplan"
+
+# Create /run/netplan directory if it doesn't exist
+if [ ! -d /run/netplan ]; then
+    log "Creating /run/netplan directory"
+    mkdir -p /run/netplan
+fi
+
+# Remove any existing netplan files in /run/netplan
+log "Cleaning existing netplan files in /run/netplan"
+rm -f /run/netplan/*.yaml /run/netplan/*.yml 2>/dev/null || true
+
+# Move netplan files from /etc/netplan to /run/netplan
+log "Moving netplan files from /etc/netplan to /run/netplan"
+for file in /etc/netplan/*.yaml /etc/netplan/*.yml; do
+    if [ -f "$file" ]; then
+        filename=$(basename "$file")
+        log "Moving $filename to /run/netplan/"
+        mv "$file" "/run/netplan/$filename"
+    fi
+done
+
+# Set proper permissions on netplan files
+log "Setting permissions on netplan files"
+chmod 600 /run/netplan/* 2>/dev/null || true
+
+# Apply netplan configuration
+log "Applying netplan configuration"
+if netplan apply; then
+    sleep 5s
+    # Double tap apply to ensure there are no issues
+    netplan apply
+    log "Netplan configuration applied successfully"
+else
+    log "ERROR: Failed to apply netplan configuration"
+    exit 1
+fi
+
+log "Network configuration complete"
+exit 0

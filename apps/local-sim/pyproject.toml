@@ -1,0 +1,65 @@
+[project]
+name = "local"
+version = "0.1.0"
+description = "Local bare-metal simulation env"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.6",
+  "pydantic-settings>=2.4",
+  "pyyaml>=6.0",
+  "jinja2>=3.1",
+  "click>=8.1",
+  "rich>=13.7",
+  "sushy-tools",
+  # Hub Postgres + Bridge Redis clients used by local.stores (replacing the
+  # earlier subprocess-to-psql / subprocess-to-redis-cli shell-out pattern).
+  "psycopg[binary]>=3.1",
+  "redis>=5.0",
+  "termcolor>=3.3.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.4"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["scripts"]
+addopts = "-m 'not e2e and not integration'"
+markers = [
+  "integration: requires a running Postgres reachable via HUB_DATABASE_URL",
+  "e2e: requires the full brok-local sim stack running",
+  "lifecycle: drives a device through a provision/deprovision saga (destructive)",
+  "slow: minutes-long (real OS deploy / layer download)",
+  "quick: quick lifecycle journey (provision -> end-rental)",
+  "full: full lifecycle journey (provision -> power-cycle -> reprovision -> end-rental)",
+  "layers: provision with an OS-customization layer stack + verify each layer (destructive)",
+  "rescue: rescue-boot a machine into the live OS + back (destructive)",
+  "custom_ipxe: provision ipxe-custom + verify the stored iPXE URL (destructive)",
+  "cloud_init: provision with user-data + verify cloud-init sections (destructive)",
+  "base_os: cycle a device through each selected base OS, verifying distro/version each time (destructive)",
+  "commissioning: full device commissioning — network scan + faked enrichment + commission saga → qualify → inventory (destructive, slow)",
+  "disk_layout: cycle a device through each selected disk layout, verifying filesystem/mountpoint/config (lvm/raid) each time (destructive)",
+  "bridge_failover: kill the spoke working a provision; another spoke on the shared zone queue picks it up to PROVISIONED (destructive, slow, needs >=2 spokes)",
+  "spoke_resume: restart the spoke working a provision mid-saga; the saga resumes from its Redis-persisted plan to PROVISIONED (destructive, slow, needs >=2 spokes)",
+  "requires_host: needs host resources CI can't provide (real virt firmware/daemon, the devenv-rendered sudoers drop-in) — run on the devenv host",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ARG", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# ARG misfires pervasively on test doubles — monkeypatch-replacement lambdas, mock callables
+# whose signature must match the patched target, and pytest fixtures used only for their effect.
+"tests/**" = ["ARG"]

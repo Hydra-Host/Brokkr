@@ -1,0 +1,75 @@
+#!/bin/sh -e
+
+PREREQS=""
+
+prereqs() {
+    echo "$PREREQS"
+}
+
+case "$1" in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+log(){ echo "[brokkr-live] $*" >&2; }
+
+mkdir -p "$(dirname "$LOGFILE")"
+log "Injecting Brokkr overlay contents from /brokkr"
+
+# Copy everything from /brokkr into the new root filesystem
+if [ -d /brokkr ]; then
+    cp -a /brokkr/. /root/
+    log "All overlay contents copied successfully."
+    
+    # Update CA certificates if any were added
+    if [ -d /root/usr/local/share/ca-certificates ] && [ "$(ls -A /root/usr/local/share/ca-certificates/ 2>/dev/null)" ]; then
+        log "Updating CA certificate trust store..."
+        if chroot /root /usr/sbin/update-ca-certificates; then
+            log "CA certificates updated successfully"
+        else
+            log "WARNING: Failed to update CA certificates"
+        fi
+    else
+        log "No custom CA certificates found, skipping trust store update"
+    fi
+
+    # Enable all brokkr-* services found in the overlay
+    for service_file in /root/etc/systemd/system/brokkr-*.service; do
+        [ -f "$service_file" ] || continue
+        service_name=$(basename "$service_file")
+        log "Enabling $service_name..."
+        mkdir -p /root/etc/systemd/system/multi-user.target.wants
+        ln -sf "../$service_name" "/root/etc/systemd/system/multi-user.target.wants/$service_name"
+        log "$service_name enabled"
+    done
+else
+    log "No /brokkr directory found in initrd."
+fi
+
+log "Injection complete."
+
+# Fix system directory permissions (converted from ansible task)
+log "Fixing system directory permissions..."
+chmod 0755 /root/etc 2>/dev/null || true
+chmod 0700 /root/root 2>/dev/null || true  
+chmod 0755 /root/opt 2>/dev/null || true
+chmod 0755 /root/usr 2>/dev/null || true
+chmod 1777 /root/tmp 2>/dev/null || true  # Sticky bit for tmp
+chmod 0755 /root/var 2>/dev/null || true
+chmod 0755 /root/home 2>/dev/null || true
+chmod 0755 /root/bin 2>/dev/null || true
+chmod 0755 /root/sbin 2>/dev/null || true
+
+# Fix SSH permissions for secure access
+if [ -d /root/root/.ssh ]; then
+    chmod 0700 /root/root/.ssh 2>/dev/null || true
+    log "Fixed SSH directory permissions"
+fi
+if [ -f /root/root/.ssh/authorized_keys ]; then
+    chmod 0600 /root/root/.ssh/authorized_keys 2>/dev/null || true
+    log "Fixed SSH authorized_keys permissions"
+fi
+
+log "Directory permissions fixed"

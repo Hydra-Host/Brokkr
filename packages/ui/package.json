@@ -1,0 +1,133 @@
+{
+  "name": "@repo/ui",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./utils": {
+      "types": "./src/components/utils.ts",
+      "import": "./src/components/utils.ts"
+    },
+    "./csv": {
+      "types": "./src/csv.ts",
+      "import": "./src/csv.ts"
+    },
+    "./lib/*": {
+      "types": "./src/lib/*.ts",
+      "import": "./src/lib/*.ts"
+    },
+    "./hooks/*": {
+      "types": "./src/hooks/*.ts",
+      "import": "./src/hooks/*.ts"
+    },
+    "./hooks/use-server-table": {
+      "types": "./src/hooks/use-server-table.tsx",
+      "import": "./src/hooks/use-server-table.tsx"
+    },
+    "./components/*": {
+      "types": "./src/components/*.tsx",
+      "import": "./src/components/*.tsx"
+    },
+    "./form/*": {
+      "types": "./src/components/form/*.tsx",
+      "import": "./src/components/form/*.tsx"
+    },
+    "./provision/*": {
+      "types": "./src/components/provision/*.tsx",
+      "import": "./src/components/provision/*.tsx"
+    },
+    "./logo": {
+      "types": "./src/components/logos/logo.tsx",
+      "import": "./src/components/logos/logo.tsx"
+    },
+    "./ascii-art": {
+      "types": "./src/components/ascii-art/index.ts",
+      "import": "./src/components/ascii-art/index.ts"
+    },
+    "./ascii-logo": {
+      "types": "./src/components/logos/ascii-logo.tsx",
+      "import": "./src/components/logos/ascii-logo.tsx"
+    },
+    "./matrix-reveal": {
+      "types": "./src/components/matrix-reveal.tsx",
+      "import": "./src/components/matrix-reveal.tsx"
+    },
+    "./animated-sidebar-logo": {
+      "types": "./src/components/logos/animated-sidebar-logo.tsx",
+      "import": "./src/components/logos/animated-sidebar-logo.tsx"
+    },
+    "./styles/brokkr.css": "./src/styles/brokkr.css",
+    "./styles/terminal-theme.css": "./src/styles/terminal-theme.css",
+    "./bottom-bar": {
+      "types": "./src/components/bottom-bar/index.ts",
+      "import": "./src/components/bottom-bar/index.ts"
+    },
+    "./theme-provider": {
+      "types": "./src/components/theme-provider.tsx",
+      "import": "./src/components/theme-provider.tsx"
+    },
+    "./theme-selector": {
+      "types": "./src/components/theme-selector.tsx",
+      "import": "./src/components/theme-selector.tsx"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
+    "@repo/api-client": "workspace:*",
+    "@repo/utils": "workspace:*",
+    "@tiptap/extension-link": "^3.22.0",
+    "@tiptap/extension-underline": "^3.22.0",
+    "@tiptap/react": "^3.22.0",
+    "@tiptap/starter-kit": "^3.22.0",
+    "@base-ui/react": "^1.1.0",
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@tanstack/react-table": "^8.16.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cmdk": "1.1.1",
+    "date-fns": "^3.0.0",
+    "input-otp": "^1.4.2",
+    "js-yaml": "^4.3.0",
+    "lucide-react": "^0.562.0",
+    "react-day-picker": "^8.10.1",
+    "react-phone-number-input": "^3.4.12",
+    "recharts": "^2.15.4",
+    "sonner": "^2.0.6",
+    "tailwind-merge": "^3.4.0",
+    "zod": "^3.25.0"
+  },
+  "peerDependencies": {
+    "@tanstack/react-router": "^1.0.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0",
+    "react-hook-form": "^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react-hook-form": {
+      "optional": true
+    },
+    "@tanstack/react-router": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@tanstack/react-router": "^1.158.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.8",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
+}

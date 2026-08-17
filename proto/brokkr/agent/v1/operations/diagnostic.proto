@@ -1,0 +1,146 @@
+// diagnostic.* operations — passive hardware health diagnostics.
+//
+// Inputs are empty (all diagnostics are parameter-free probes). Outputs
+// carry an opaque map<string, bytes> so each diagnostic can encode
+// arbitrarily nested health data as JSON bytes without locking the proto
+// schema. diagnostic.runAll merges all results and appends a
+// `diagnostics_metadata` summary block.
+
+syntax = "proto3";
+
+package brokkr.agent.v1.operations;
+
+// ---------------------------------------------------------------------------
+// diagnostic.gpu
+// ---------------------------------------------------------------------------
+
+// Input for the diagnostic.gpu operation (parameter-free probe).
+message DiagnosticGpuInput {}
+
+// Output for the diagnostic.gpu operation.
+// The "gpu" key holds the nested health report serialised as JSON bytes.
+message DiagnosticGpuOutput {
+  map<string, bytes> gpu = 1;
+}
+
+// ---------------------------------------------------------------------------
+// diagnostic.thermal
+// ---------------------------------------------------------------------------
+
+// Input for the diagnostic.thermal operation (parameter-free probe).
+message DiagnosticThermalInput {}
+
+// Output for the diagnostic.thermal operation.
+// The "thermal" key holds the nested health report serialised as JSON bytes.
+message DiagnosticThermalOutput {
+  map<string, bytes> thermal = 1;
+}
+
+// ---------------------------------------------------------------------------
+// diagnostic.storage
+// ---------------------------------------------------------------------------
+
+// Input for the diagnostic.storage operation (parameter-free probe).
+message DiagnosticStorageInput {}
+
+// Output for the diagnostic.storage operation.
+// The "storage" key holds the nested health report serialised as JSON bytes.
+message DiagnosticStorageOutput {
+  map<string, bytes> storage = 1;
+}
+
+// ---------------------------------------------------------------------------
+// diagnostic.memory
+// ---------------------------------------------------------------------------
+
+// Input for the diagnostic.memory operation (parameter-free probe).
+message DiagnosticMemoryInput {}
+
+// Output for the diagnostic.memory operation.
+// The "memory" key holds the nested health report serialised as JSON bytes.
+message DiagnosticMemoryOutput {
+  map<string, bytes> memory = 1;
+}
+
+// ---------------------------------------------------------------------------
+// diagnostic.network
+// ---------------------------------------------------------------------------
+
+// Input for the diagnostic.network operation (parameter-free probe).
+message DiagnosticNetworkInput {}
+
+// Output for the diagnostic.network operation.
+// The "network" key holds the nested health report serialised as JSON bytes.
+message DiagnosticNetworkOutput {
+  map<string, bytes> network = 1;
+}
+
+// ---------------------------------------------------------------------------
+// diagnostic.performance
+// ---------------------------------------------------------------------------
+
+// Input for the diagnostic.performance operation (parameter-free probe).
+message DiagnosticPerformanceInput {}
+
+// Output for the diagnostic.performance operation.
+// The "performance" key holds the nested health report serialised as JSON bytes.
+message DiagnosticPerformanceOutput {
+  map<string, bytes> performance = 1;
+}
+
+// ---------------------------------------------------------------------------
+// diagnostic.power
+// ---------------------------------------------------------------------------
+
+// Input for the diagnostic.power operation (parameter-free probe).
+message DiagnosticPowerInput {}
+
+// Output for the diagnostic.power operation.
+// The "power" key holds the nested health report serialised as JSON bytes.
+message DiagnosticPowerOutput {
+  map<string, bytes> power = 1;
+}
+
+// ---------------------------------------------------------------------------
+// diagnostic.system
+// ---------------------------------------------------------------------------
+
+// Input for the diagnostic.system operation (parameter-free probe).
+// Named DiagnosticSystemInput to avoid collision with the system.* namespace
+// (system.ts is ported separately into the same proto package).
+message DiagnosticSystemInput {}
+
+// Output for the diagnostic.system operation.
+// The "system" key holds the nested health report serialised as JSON bytes.
+message DiagnosticSystemOutput {
+  map<string, bytes> system = 1;
+}
+
+// ---------------------------------------------------------------------------
+// diagnostic.battery
+// ---------------------------------------------------------------------------
+
+// Input for the diagnostic.battery operation (parameter-free probe).
+message DiagnosticBatteryInput {}
+
+// Output for the diagnostic.battery operation.
+// The "battery" key holds the nested health report serialised as JSON bytes.
+message DiagnosticBatteryOutput {
+  map<string, bytes> battery = 1;
+}
+
+// ---------------------------------------------------------------------------
+// diagnostic.runAll — compound orchestrator
+// ---------------------------------------------------------------------------
+
+// Input for the diagnostic.runAll operation (parameter-free; runs all 9
+// diagnostics concurrently).
+message DiagnosticRunAllInput {}
+
+// Output for the diagnostic.runAll operation.
+// Flat merged record: one key per diagnostic ("gpu", "thermal", ...) plus a
+// "diagnostics_metadata" tail block summarising totals, successful, failed,
+// and job_id. Values are opaque JSON bytes.
+message DiagnosticRunAllOutput {
+  map<string, bytes> results = 1;
+}

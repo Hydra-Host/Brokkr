@@ -1,0 +1,86 @@
+{
+  "current_cmdline": "vmlinuz health_check=http://brokkr.lan/api/health initrd=initrd.img initrd=mtls.img initrd=brokkr-discovery-1619.img##params initrd=brokkr-live.img boot=casper netboot=url nfsboot=auto ro network systemd.unit=multi-user.target ifname=eno12399np0:6c:92:cf:ef:59:80 ifname=eno12409np1:6c:92:cf:ef:59:81 ifname=eno8303:aa:bb:cc:dd:ee:01 ifname=eno8403:aa:bb:cc:dd:ee:02 ip=10.0.99.1::10.0.99.254:255.255.252.0:host-1-76-14-1619:eno8303:none:172.16.12.7: url=https://brokkr.lan/api/download/discovery/amd64/brokkr-discovery.iso bdi.station_mac=aa:bb:cc:dd:ee:01 bdi.station_arch=amd64 bdi.station_mode=efi bdi.station_ip=10.0.99.1 bdi.station_netmask=255.255.252.0 bdi.station_gateway=10.0.99.254 bdi.station_serial=TESTSERIAL01 bdi.bridge_type=full console=tty0 nomodeset",
+  "parsed_parameters": {
+    "console": ["console=tty0"],
+    "display": ["nomodeset"],
+    "security": [],
+    "network": [],
+    "storage": [],
+    "power": [],
+    "hardware": [],
+    "other": [
+      "vmlinuz",
+      "health_check=http://brokkr.lan/api/health",
+      "initrd=initrd.img",
+      "initrd=mtls.img",
+      "initrd=brokkr-discovery-1619.img##params",
+      "initrd=brokkr-live.img",
+      "boot=casper",
+      "netboot=url",
+      "nfsboot=auto",
+      "ro",
+      "network",
+      "systemd.unit=multi-user.target",
+      "ifname=eno12399np0:6c:92:cf:ef:59:80",
+      "ifname=eno12409np1:6c:92:cf:ef:59:81",
+      "ifname=eno8303:aa:bb:cc:dd:ee:01",
+      "ifname=eno8403:aa:bb:cc:dd:ee:02",
+      "ip=10.0.99.1::10.0.99.254:255.255.252.0:host-1-76-14-1619:eno8303:none:172.16.12.7:",
+      "url=https://brokkr.lan/api/download/discovery/amd64/brokkr-discovery.iso",
+      "bdi.station_mac=aa:bb:cc:dd:ee:01",
+      "bdi.station_arch=amd64",
+      "bdi.station_mode=efi",
+      "bdi.station_ip=10.0.99.1",
+      "bdi.station_netmask=255.255.252.0",
+      "bdi.station_gateway=10.0.99.254",
+      "bdi.station_serial=TESTSERIAL01",
+      "bdi.bridge_type=full"
+    ]
+  },
+  "ubuntu_version": "Ubuntu 22.04.5 LTS",
+  "grub_config": {
+    "cmdline_linux": "quiet splash console=tty0 console=ttyS0,115200n8 amd_iommu=on intel_iommu=on iommu=pt pcie_acs_override=downstream,multifunction",
+    "serial_command": "serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1",
+    "terminal": "console serial"
+  },
+  "hardware_analysis": {
+    "gpu_type": "nvidia",
+    "cpu_vendor": "intel",
+    "vtd_support": true,
+    "iommu_status": "disabled_but_supported",
+    "system_manufacturer": "dell inc.",
+    "platform_recommendations": "dell_poweredge"
+  },
+  "issues_detected": [],
+  "recommendations": [
+    {
+      "parameter": "intel_iommu=on",
+      "priority": "medium",
+      "ubuntu_context": "Enables Intel VT-d for virtualization and PCI passthrough",
+      "grub_addition": "Add \"intel_iommu=on\" to GRUB_CMDLINE_LINUX",
+      "hardware_basis": "Intel VT-d support detected in hardware"
+    },
+    {
+      "parameter": "console=ttyS0,115200n8 console=tty0",
+      "priority": "medium",
+      "ubuntu_context": "Dual console setup for serial and local access",
+      "grub_addition": "Add \"console=ttyS0,115200n8 console=tty0\" to GRUB_CMDLINE_LINUX",
+      "hardware_basis": "Server deployment best practice"
+    },
+    {
+      "parameter": "pcie_aspm=off",
+      "priority": "medium",
+      "ubuntu_context": "Fixes PCIe ASPM issues common on Dell PowerEdge servers",
+      "grub_addition": "Add \"pcie_aspm=off\" to GRUB_CMDLINE_LINUX",
+      "hardware_basis": "Dell PowerEdge platform detected"
+    }
+  ],
+  "ubuntu_optimizations": {
+    "network_naming": {
+      "current": "predictable_names",
+      "recommendation": "consider_traditional",
+      "parameters": "net.ifnames=0 biosdevname=0",
+      "ubuntu_benefit": "Traditional eth0, eth1 naming for easier management"
+    }
+  }
+}

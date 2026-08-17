@@ -1,0 +1,92 @@
+Brokkr
+Copyright 2026 Hydrahost, Inc.
+
+This product includes software developed at Hydrahost, Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this product except in compliance with the License. You may obtain a
+copy of the License in the LICENSE file distributed with this product, or at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations
+under the License.
+
+----------------------------------------------------------------------------
+
+This product bundles third-party software components, each under its own
+license. See THIRD-PARTY-LICENSES.md for the full list of bundled
+dependencies and their licenses.
+
+----------------------------------------------------------------------------
+
+BUNDLED BOOT ARTIFACTS
+
+THIRD-PARTY-LICENSES.md is generated from pnpm-lock.yaml and so covers npm
+dependencies only. The boot artifacts below are built from upstream source or
+redistributed as upstream release binaries, and are attributed here instead.
+
+1. GNU GRUB, GPL-3.0-or-later
+
+   Bootloader images the bridge serves to devices booting from local disk:
+   apps/bridge/assets/download/grub/bootx64.efi, bootaa64.efi and core.img.
+   Upstream: https://www.gnu.org/software/grub/
+
+   Built from the Ubuntu 24.04 (noble) grub-common, grub-efi-amd64-bin,
+   grub-efi-arm64-bin and grub-pc-bin packages; the EFI images report GRUB
+   2.12-1ubuntu7.3. GRUB's own source is not modified. grub-mkstandalone packs
+   the distribution's stock modules and embeds one of our configuration files
+   as boot/grub/grub.cfg. Those configuration files are in
+   apps/bridge/boot/grub/ and the build recipe is
+   apps/local-sim/scripts/local/grub-build.sh.
+
+2. iPXE, GPL-2.0-or-later
+
+   Network-boot firmware (ipxe.efi, snp.efi, snponly.efi and an ipxe.iso)
+   built into the bridge container image. The binaries are not committed to
+   this repository. Upstream: https://github.com/ipxe/ipxe, pinned at commit
+   5921e6b45.
+
+   Most iPXE files additionally offer the Unmodified Binary Distribution
+   Licence (COPYING.UBDL) as an alternative to the GPL. The builds distributed
+   here include files declared FILE_LICENCE ( GPL2_OR_LATER ) without that
+   alternative, among them interface/efi/efi_path.c and net/ipmi_settings.c,
+   so the UBDL is not available for these binaries and they are conveyed under
+   the GPL.
+
+   iPXE is modified. apps/bridge/boot/ipxe/ is copied over the upstream tree
+   before the build: overlay/ carries our source changes and additions (IPMI
+   transports and settings, EFI device paths, DNS, the root certificate
+   store), config/general.h and config/branding.h override feature selection
+   and branding, and autoexec-chainload.ipxe is embedded into the firmware.
+
+3. curl, curl license (an MIT/X derivative)
+
+   Static curl binaries packed into the brokkr-live initrd (brokkr-live.img):
+   apps/bridge/boot/initrd-live/usr/bin/curl-amd64 and curl-arm64.
+   Redistributed unmodified from release v8.11.0 of
+   https://github.com/moparisthebest/static-curl; the exact download URLs are
+   recorded in apps/bridge/boot/initrd-live/usr/bin/README. Upstream curl:
+   https://curl.se/
+
+   Both are curl 8.11.0 linked statically against musl libc, OpenSSL, zlib,
+   nghttp2 and libssh2. The amd64 binary reports OpenSSL 3.1.7 (Apache-2.0);
+   the arm64 binary reports OpenSSL 1.1.1t (dual OpenSSL/SSLeay license).
+   musl libc and nghttp2 are MIT, zlib is under the zlib license, and libssh2
+   is BSD-3-Clause. None of these components is copyleft.
+
+WRITTEN OFFER
+
+For the GPL-licensed artifacts above (GNU GRUB and iPXE), Hydrahost, Inc. will
+give any third party, for a period of three years from the date of
+distribution, the complete corresponding machine-readable source, including
+the scripts used to control compilation and installation, on request to
+opensource@hydrahost.com.
+
+Our own modifications are published in this repository: apps/bridge/boot/ipxe/
+for iPXE and apps/bridge/boot/grub/ for GRUB. Unmodified upstream source is
+available from the pinned iPXE commit above and from Ubuntu's grub2 source
+package at the version above.

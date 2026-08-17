@@ -1,0 +1,341 @@
+diff --git a/cli.c b/cli.c
+index 317eed9..2efccaa 100644
+--- a/cli.c
++++ b/cli.c
+@@ -88,6 +88,8 @@ enum {
+   CLI_OPT_VMNET_NAT66_PREFIX,
+   CLI_OPT_VMNET_NETWORK_IDENTIFIER,
+   CLI_OPT_VMNET_DISABLE_DHCP,
++  CLI_OPT_VMNET_SERIALIZE_TO,
++  CLI_OPT_VMNET_JOIN_FROM,
+ };
+ 
+ struct cli_options *cli_options_parse(int argc, char *argv[]) {
+@@ -108,6 +110,8 @@ struct cli_options *cli_options_parse(int argc, char *argv[]) {
+       {"vmnet-nat66-prefix",       required_argument, NULL, CLI_OPT_VMNET_NAT66_PREFIX      },
+       {"vmnet-network-identifier", required_argument, NULL, CLI_OPT_VMNET_NETWORK_IDENTIFIER},
+       {"vmnet-disable-dhcp",       no_argument,       NULL, CLI_OPT_VMNET_DISABLE_DHCP      },
++      {"vmnet-serialize-to",       required_argument, NULL, CLI_OPT_VMNET_SERIALIZE_TO      },
++      {"vmnet-join-from",          required_argument, NULL, CLI_OPT_VMNET_JOIN_FROM         },
+       {"pidfile",                  required_argument, NULL, 'p'                             },
+       {"help",                     no_argument,       NULL, 'h'                             },
+       {"version",                  no_argument,       NULL, 'v'                             },
+@@ -161,6 +165,12 @@ struct cli_options *cli_options_parse(int argc, char *argv[]) {
+     case CLI_OPT_VMNET_DISABLE_DHCP:
+       res->vmnet_disable_dhcp = true;
+       break;
++    case CLI_OPT_VMNET_SERIALIZE_TO:
++      res->vmnet_serialize_to = strdup(optarg);
++      break;
++    case CLI_OPT_VMNET_JOIN_FROM:
++      res->vmnet_join_from = strdup(optarg);
++      break;
+     case 'p':
+       res->pidfile = strdup(optarg);
+       break;
+@@ -177,10 +187,18 @@ struct cli_options *cli_options_parse(int argc, char *argv[]) {
+       break;
+     }
+   }
+-  if (argc - optind != 1) {
+-    goto error;
++  // Owner mode (--vmnet-serialize-to) only creates + holds the network; it serves no QEMU socket,
++  // so it takes no positional socket path. Every other mode requires exactly one.
++  if (res->vmnet_serialize_to != NULL) {
++    if (argc - optind != 0) {
++      goto error;
++    }
++  } else {
++    if (argc - optind != 1) {
++      goto error;
++    }
++    res->socket_path = strdup(argv[optind]);
+   }
+-  res->socket_path = strdup(argv[optind]);
+ 
+   /* warn before the defaults below are filled in, so that only explicitly
+    * specified values match */
+diff --git a/cli.h b/cli.h
+index a15b9fa..908c5a4 100644
+--- a/cli.h
++++ b/cli.h
+@@ -26,6 +26,14 @@ struct cli_options {
+   char *vmnet_nat66_prefix;
+   // --vmnet-disable-dhcp; disables the vmnet DHCP server (requires macOS 26)
+   bool vmnet_disable_dhcp;
++  // --vmnet-serialize-to; owner mode: create the shared network, write its serialization blob to
++  // this path, then just hold it (no interface, no socket) so joiners can attach. macOS-26
++  // vmnet_network_create is single-owner, so exactly one process may create a given network.
++  char *vmnet_serialize_to;
++  // --vmnet-join-from; joiner mode: read the serialization blob from this path and start an
++  // interface on that already-created shared network instead of creating a new one. Lets per-VM
++  // daemons each own their interface (no head-of-line starvation) on one shared disable-dhcp network.
++  char *vmnet_join_from;
+   // -p, --pidfile; writes pidfile using permissions of socket_vmnet
+   char *pidfile;
+   // arg
+diff --git a/main.c b/main.c
+index fcaa04c..df676c7 100644
+--- a/main.c
++++ b/main.c
+@@ -239,7 +239,84 @@ static interface_ref start(struct state *state, struct cli_options *cliopt) {
+         dispatch_semaphore_signal(sem);
+       };
+ 
+-  if (cliopt->vmnet_disable_dhcp) {
++  if (cliopt->vmnet_join_from != NULL) {
++    // Joiner mode: attach an interface to a shared network another process already created and
++    // serialized to --vmnet-join-from (macOS 26+). Each joiner gets its own interface + dispatch
++    // queue, so a noisy VM can't starve the others (the reason for one daemon per VM), while all
++    // land on the single-owner disable-dhcp network.
++#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
++    if (__builtin_available(macOS 26.0, *)) {
++      FILE *f = fopen(cliopt->vmnet_join_from, "rb");
++      if (f == NULL) {
++        ERRORF("fopen(\"%s\"): %s", cliopt->vmnet_join_from, strerror(errno));
++        return NULL;
++      }
++      fseek(f, 0, SEEK_END);
++      long blen = ftell(f);
++      fseek(f, 0, SEEK_SET);
++      if (blen <= 0) {
++        ERRORF("empty serialization file \"%s\"", cliopt->vmnet_join_from);
++        fclose(f);
++        return NULL;
++      }
++      void *buf = malloc((size_t)blen);
++      if (buf == NULL) {
++        ERRORF("malloc(%ld) failed for serialization blob from \"%s\"", blen,
++               cliopt->vmnet_join_from);
++        fclose(f);
++        return NULL;
++      }
++      size_t rd = fread(buf, 1, (size_t)blen, f);
++      fclose(f);
++      if (rd != (size_t)blen) {
++        ERROR("short read of network serialization");
++        free(buf);
++        return NULL;
++      }
++      // Rebuild the wrapper dict the framework returned from copy_serialization: it is a
++      // dictionary with a single "networkSerialization" data blob.
++      xpc_object_t ser = xpc_dictionary_create(NULL, NULL, 0);
++      xpc_dictionary_set_data(ser, "networkSerialization", buf, (size_t)blen);
++      free(buf);
++      vmnet_return_t cst = VMNET_FAILURE;
++      vmnet_network_ref net = vmnet_network_create_with_serialization(ser, &cst);
++      xpc_release(ser);
++      if (net == NULL) {
++        ERRORF("vmnet_network_create_with_serialization: [%d] %s", cst, vmnet_strerror(cst));
++        return NULL;
++      }
++      xpc_object_t desc = xpc_dictionary_create(NULL, NULL, 0);
++      iface = vmnet_interface_start_with_network(net, desc, state->host_queue, on_started);
++      if (iface == NULL) {
++        xpc_release(desc);
++        os_release(net);
++        ERRORF("vmnet_interface_start_with_network: returned NULL for joiner on \"%s\"",
++               cliopt->vmnet_join_from);
++        return NULL;
++      }
++      dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
++      xpc_release(desc);
++      if (status != VMNET_SUCCESS) {
++        // Async failure: on_started reported a non-success status after
++        // vmnet_interface_start_with_network returned synchronously. Release the
++        // network ref so the shared reservation is freed (otherwise it stays active
++        // and blocks future runs). The interface ref is cleaned up by the caller.
++        os_release(net);
++        ERRORF("vmnet_interface_start_with_network (async): [%d] %s for joiner on \"%s\"",
++               status, vmnet_strerror(status), cliopt->vmnet_join_from);
++        return NULL;
++      }
++      // The started interface retains its own reference to the network; keep our ref too so this
++      // joiner also keeps the reservation alive for as long as it serves its VM.
++    } else {
++      ERROR("--vmnet-join-from requires macOS 26.0 or later");
++      return NULL;
++    }
++#else
++    ERROR("--vmnet-join-from requires building against the macOS 26 SDK or later");
++    return NULL;
++#endif
++  } else if (cliopt->vmnet_disable_dhcp) {
+     // The DHCP server can only be disabled via the vmnet_network_configuration
+     // API, which is macOS 26+. Guard at both compile time (SDK has the symbols)
+     // and runtime (the host actually provides them).
+@@ -335,8 +412,9 @@ static interface_ref start(struct state *state, struct cli_options *cliopt) {
+   }
+ 
+   if (status != VMNET_SUCCESS) {
+-    const char *start_api =
+-        cliopt->vmnet_disable_dhcp ? "vmnet_interface_start_with_network" : "vmnet_start_interface";
++    const char *start_api = (cliopt->vmnet_disable_dhcp || cliopt->vmnet_join_from != NULL)
++                                ? "vmnet_interface_start_with_network"
++                                : "vmnet_start_interface";
+     ERRORF("%s: [%d] %s", start_api, status, vmnet_strerror(status));
+     return NULL;
+   }
+@@ -495,6 +573,120 @@ static int add_listen_fd(int kq, int fd) {
+ 
+ static void on_accept(struct state *state, int accept_fd, interface_ref iface);
+ 
++#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
++// Owner mode: create the disable-dhcp shared network, copy its serialization blob out to
++// cliopt->vmnet_serialize_to, and return the held network_ref. Joiners (--vmnet-join-from) attach
++// their own interfaces to this same network via vmnet_network_create_with_serialization, so each VM
++// keeps its own interface (no per-handle head-of-line starvation) on one single-owner network.
++// The reservation lives as long as this ref is held, so main() holds it until a termination signal.
++API_AVAILABLE(macos(26.0))
++static vmnet_network_ref owner_create_and_serialize(struct cli_options *cliopt) {
++  vmnet_return_t st = VMNET_FAILURE;
++  vmnet_network_configuration_ref cfg = vmnet_network_configuration_create(cliopt->vmnet_mode, &st);
++  if (cfg == NULL) {
++    ERRORF("vmnet_network_configuration_create: [%d] %s", st, vmnet_strerror(st));
++    return NULL;
++  }
++  if (cliopt->vmnet_interface != NULL) {
++    INFOF("Using network interface \"%s\"", cliopt->vmnet_interface);
++    st = vmnet_network_configuration_set_external_interface(cfg, cliopt->vmnet_interface);
++    if (st != VMNET_SUCCESS) {
++      ERRORF("vmnet_network_configuration_set_external_interface: [%d] %s", st, vmnet_strerror(st));
++      os_release(cfg);
++      return NULL;
++    }
++  }
++  if (cliopt->vmnet_gateway != NULL) {
++    struct in_addr gateway, subnet, mask;
++    if (!inet_aton(cliopt->vmnet_gateway, &gateway)) {
++      ERRORF("invalid address \"%s\" for --vmnet-gateway", cliopt->vmnet_gateway);
++      os_release(cfg);
++      return NULL;
++    }
++    if (!inet_aton(cliopt->vmnet_mask, &mask)) {
++      ERRORF("invalid address \"%s\" for --vmnet-mask", cliopt->vmnet_mask);
++      os_release(cfg);
++      return NULL;
++    }
++    subnet = gateway;
++    subnet.s_addr &= mask.s_addr;
++    vmnet_network_configuration_set_ipv4_subnet(cfg, &subnet, &mask);
++  }
++  if (cliopt->vmnet_nat66_prefix != NULL) {
++    struct in6_addr prefix;
++    if (inet_pton(AF_INET6, cliopt->vmnet_nat66_prefix, &prefix) != 1) {
++      ERRORF("invalid IPv6 prefix \"%s\" for --vmnet-nat66-prefix", cliopt->vmnet_nat66_prefix);
++      os_release(cfg);
++      return NULL;
++    }
++    st = vmnet_network_configuration_set_ipv6_prefix(cfg, &prefix, 64);
++    if (st != VMNET_SUCCESS) {
++      ERRORF("vmnet_network_configuration_set_ipv6_prefix: [%d] %s", st, vmnet_strerror(st));
++      os_release(cfg);
++      return NULL;
++    }
++  }
++  vmnet_network_configuration_disable_dhcp(cfg);
++  vmnet_network_ref net = vmnet_network_create(cfg, &st);
++  os_release(cfg);
++  if (net == NULL) {
++    ERRORF("vmnet_network_create: [%d] %s", st, vmnet_strerror(st));
++    return NULL;
++  }
++  xpc_object_t ser = vmnet_network_copy_serialization(net, &st);
++  if (ser == NULL) {
++    ERRORF("vmnet_network_copy_serialization: [%d] %s", st, vmnet_strerror(st));
++    os_release(net);
++    return NULL;
++  }
++  size_t blen = 0;
++  const void *bptr = xpc_dictionary_get_data(ser, "networkSerialization", &blen);
++  if (bptr == NULL || blen == 0) {
++    ERROR("network serialization has no \"networkSerialization\" data");
++    xpc_release(ser);
++    os_release(net);
++    return NULL;
++  }
++  // Atomic publish: write to a temp file and rename so joiners never see a
++  // partial blob (rename is atomic on APFS/HFS+).
++  char *tmp_path = NULL;
++  if (asprintf(&tmp_path, "%s.tmp", cliopt->vmnet_serialize_to) < 0) {
++    ERROR("asprintf failed for tmp_path");
++    xpc_release(ser);
++    os_release(net);
++    return NULL;
++  }
++  FILE *f = fopen(tmp_path, "wb");
++  if (f == NULL) {
++    ERRORF("fopen(\"%s\"): %s", tmp_path, strerror(errno));
++    free(tmp_path);
++    xpc_release(ser);
++    os_release(net);
++    return NULL;
++  }
++  size_t wrote = fwrite(bptr, 1, blen, f);
++  fclose(f);
++  xpc_release(ser);
++  if (wrote != blen) {
++    ERRORF("short write of network serialization to \"%s\"", tmp_path);
++    unlink(tmp_path);
++    free(tmp_path);
++    os_release(net);
++    return NULL;
++  }
++  if (rename(tmp_path, cliopt->vmnet_serialize_to) != 0) {
++    ERRORF("rename(\"%s\", \"%s\"): %s", tmp_path, cliopt->vmnet_serialize_to, strerror(errno));
++    unlink(tmp_path);
++    free(tmp_path);
++    os_release(net);
++    return NULL;
++  }
++  free(tmp_path);
++  INFOF("Created shared network; wrote %zu-byte serialization to \"%s\"", blen, cliopt->vmnet_serialize_to);
++  return net;
++}
++#endif
++
+ int main(int argc, char *argv[]) {
+   debug = getenv("DEBUG") != NULL;
+   int rc = 1;
+@@ -533,6 +725,41 @@ int main(int argc, char *argv[]) {
+     }
+   }
+ 
++  // Owner mode: create + serialize the shared network, then hold the reservation (no socket, no
++  // interface) until a termination signal. Joiners attach their own interfaces via --vmnet-join-from.
++  if (cliopt->vmnet_serialize_to != NULL) {
++#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
++    if (__builtin_available(macOS 26.0, *)) {
++      vmnet_network_ref owned = owner_create_and_serialize(cliopt);
++      if (owned == NULL) {
++        goto done; // error already logged
++      }
++      INFOF("%s", "Shared-network owner holding the reservation; waiting for a termination signal");
++      while (1) {
++        struct kevent ev[1];
++        int n = kevent(kq, NULL, 0, ev, 1, NULL);
++        if (n < 0) {
++          ERRORN("kevent");
++          goto done;
++        }
++        if (ev[0].filter == EVFILT_SIGNAL) {
++          INFOF("Received signal %s", strsignal(ev[0].ident));
++          break;
++        }
++      }
++      // `owned` is released on process exit, tearing down the shared network reservation.
++      rc = 0;
++      goto done;
++    } else {
++      ERROR("--vmnet-serialize-to requires macOS 26.0 or later");
++      goto done;
++    }
++#else
++    ERROR("--vmnet-serialize-to requires building against the macOS 26 SDK or later");
++    goto done;
++#endif
++  }
++
+   DEBUGF("Opening socket \"%s\" (for UNIX group \"%s\")", cliopt->socket_path,
+          cliopt->socket_group);
+   listen_fd = socket_bindlisten(cliopt->socket_path, cliopt->socket_group);

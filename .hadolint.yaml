@@ -1,0 +1,7 @@
+# DL3008: pin apt versions — the api/bridge Dockerfiles intentionally don't pin distro
+#         packages (versions float with the base image's apt sources).
+# DL3003: use WORKDIR instead of `cd` — the multi-stage ipxe/grub/initrd builds cd within
+#         a single RUN on purpose.
+ignored:
+  - DL3008
+  - DL3003

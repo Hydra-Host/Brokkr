@@ -1,0 +1,42 @@
+// Billing cadence for reservations / invites.
+enum BillingFrequency {
+  HOURLY
+  WEEKLY
+  MONTHLY
+}
+
+model Reservation {
+  id                String    @id @default(uuid())
+  internalProvision Boolean?  @default(false)
+  endDate           DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime? @updatedAt
+  notes             String?
+
+  price                     Int?
+  billingFrequency          BillingFrequency?
+  // Grace window (ms) for interruptible rentals. null for non-interruptible reservations.
+  interruptibleNoticePeriod Int?
+
+  reserverId           String
+  reserver             User                   @relation(fields: [reserverId], references: [id])
+  customerId           String
+  customer             Organization           @relation(fields: [customerId], references: [id])
+  deployments          Deployment[]
+  reservationInvite    ReservationInvite?
+  serversInReservation ServersInReservation[]
+}
+
+// Per-Reservation membership of Servers. Renamed from
+// `DevicesInReservation` in `20260527213000_move_rentals_to_server`
+// when the join table's FK moved from Device.id to Server.id.
+// Composite PK rebuilt as (reservationId, serverId).
+model ServersInReservation {
+  id            String      @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reservation   Reservation @relation(fields: [reservationId], references: [id])
+  reservationId String
+  serverId      String
+  server        Server      @relation(fields: [serverId], references: [id])
+
+  @@id([reservationId, serverId])
+}

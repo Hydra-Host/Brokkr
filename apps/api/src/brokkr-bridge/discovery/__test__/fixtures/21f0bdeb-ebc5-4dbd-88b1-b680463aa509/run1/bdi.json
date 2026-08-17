@@ -1,0 +1,10 @@
+{
+  "station_mac": "aa:bb:cc:dd:ee:01",
+  "station_arch": "amd64",
+  "station_mode": "efi",
+  "station_ip": "10.0.99.1",
+  "station_netmask": "255.255.252.0",
+  "station_gateway": "10.0.99.254",
+  "station_serial": "TESTSERIAL01",
+  "bridge_type": "full"
+}

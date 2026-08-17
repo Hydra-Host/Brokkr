@@ -1,0 +1,9 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      "env": ["DATABASE_URL", "PGBOUNCER_CONNECTION_STRING"]
+    }
+  }
+}

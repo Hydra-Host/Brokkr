@@ -1,0 +1,45 @@
+// Optional operator hierarchy above Zone: Facility (the operator umbrella — one
+// company's presence) -> Colocation (a deployed building or space) -> Zone.
+// Every upward link is nullable — a Zone with no Colocation is fully functional.
+// Geography deliberately stays on ZoneAddress; neither entity carries an address.
+
+model Facility {
+  id String @id @default(uuid())
+
+  // Uniqueness is case-insensitive, enforced by a raw functional unique index on
+  // lower(name) (see migration); Prisma can't express it, so no @unique here.
+  name String
+
+  // Admin-only internal label, mirroring Zone.internalName.
+  internalName String?
+
+  operator String? // legal/operating entity running the site, when it differs from name
+  website  String?
+  notes    String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime? // soft delete
+
+  colocations Colocation[]
+  contacts    Contact[]
+}
+
+model Colocation {
+  id           String  @id @default(uuid())
+  name         String
+  internalName String?
+  notes        String?
+
+  facilityId String?
+  facility   Facility? @relation(fields: [facilityId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime? // soft delete
+
+  zones    Zone[]
+  contacts Contact[]
+
+  @@index([facilityId])
+}
