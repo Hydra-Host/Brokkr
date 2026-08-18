@@ -56,6 +56,8 @@ import {
 import * as React from 'react';
 import { useState } from 'react';
 
+import { getDocsUrl } from '~/lib/runtime-config';
+
 import { getSectionForPathname, type NavSection } from '@/lib/nav';
 import type { SidebarNavContribution } from '@hydrahost/plugin-sdk';
 import { signOut, useSession } from '@repo/auth/client';
@@ -75,6 +77,7 @@ import {
 } from '@repo/ui/components/dropdown-menu';
 import { SidebarInset, SidebarMenuButton, SidebarProvider, SidebarTrigger } from '@repo/ui/components/sidebar';
 import { ThemeSelector } from '@repo/ui/theme-selector';
+import { isRecord } from '@repo/utils';
 import { AppSidebar } from './-components/app-sidebar';
 
 import { useNavigationShortcuts } from '@repo/ui/hooks/use-navigation-shortcuts';
@@ -435,7 +438,7 @@ function AppShellContent({ session, location }: AppShellContentProps) {
     icon: BookOpen,
     isCollapsible: true,
     stateKey: 'documentation',
-    items: [{ title: 'Overview', url: '/docs/brokkr-overview', icon: BookOpen }],
+    items: [{ title: 'Overview', url: getDocsUrl(), icon: BookOpen, isExternal: true }],
   });
 
   if (activeOrg) {
@@ -733,10 +736,15 @@ function AppShellContent({ session, location }: AppShellContentProps) {
   );
 }
 
+function isSidebarNavContribution(contribution: unknown): contribution is SidebarNavContribution {
+  return isRecord(contribution) && typeof contribution.to === 'string' && typeof contribution.label === 'string';
+}
+
 function buildPluginSections(entries: ReadonlyArray<{ pluginId: string; contribution: unknown }>): NavSection[] {
   const bySection = new Map<string, NavSection>();
   for (const entry of entries) {
-    const c = entry.contribution as SidebarNavContribution;
+    if (!isSidebarNavContribution(entry.contribution)) continue;
+    const c = entry.contribution;
     const title = c.section ?? 'Plugins';
     const key = title.toLowerCase();
     const sectionIcon = c.sectionIcon ? wrapPluginIcon(entry.pluginId, c.sectionIcon, Puzzle) : Puzzle;

@@ -7,12 +7,10 @@ import { createFileRoute, Link, Outlet, useLocation } from '@tanstack/react-rout
 import { Menu, X } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 import { COMPANY_URL } from '~/lib/branding';
+import { getDocsUrl } from '~/lib/runtime-config';
 
 const navItems = [
-  {
-    label: 'Docs',
-    to: '/docs/brokkr-overview',
-  },
+  { label: 'Docs', to: getDocsUrl(), external: true },
   {
     label: 'Inventory',
     to: '/inventory',

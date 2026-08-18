@@ -1,0 +1,78 @@
+---
+title: 'Audit and event log'
+description: 'An append-only event log with per-row durability tiers, device and IPAM changelog diffs, webhook delivery records, and device-secret disclosure records.'
+section: security
+order: 4
+slug: security/audit-and-event-log
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} records audited actions in an append-only event log, alongside changelog diffs, webhook delivery rows, and a device-secret audit trail. Audit rows carry no foreign keys, so deleting a device, renaming an API key, or dropping a role does not change the recorded history. The write shape excludes secrets by type, and every row records the durability class of its own write.
+
+## Event log rows
+
+The event log records one row per audited action. Each row carries `resource`, `action`, and a combined `actionKey`, along with the actor, the target, and the outcome (`SUCCEEDED`, `FAILED`, or `DENIED`). Each row also carries request forensics: `requestId`, the HTTP method and path, the client IP, and the user agent. `requestId` correlates every row a single request produced.
+
+The rows are designed to serve as evidence:
+
+- **No foreign keys.** Actor, API key, and target labels are denormalized into the row as they stood at the time of the action. Renaming an API key or deleting a user cannot rewrite or orphan history.
+- **API keys are attributed twice.** A key's actions resolve `actorId` to the owning human. The row also carries `apiKeyId` and `apiKeyLabel`, which distinguishes a key's actions from its owner's UI actions.
+- **Secrets are structurally excluded.** The write shape has no request-body field, and `metadata` accepts only allowlisted extras. Error codes record the HTTP status and the exception class name. The exception message is never recorded because messages can carry user data.
+
+The application exposes exactly two operations on the table: insert, and a list query scoped to the caller's organization. The organization comes from session context. Query parameters cannot set it.
+
+## EVIDENCE and ACTIVITY tiers
+
+Every row declares its tier and its durability. The durability field records what the write achieved rather than what was intended.
+
+| Tier       | Covers                                                     | Durability                                  | On write failure                            |
+| ---------- | ---------------------------------------------------------- | ------------------------------------------- | ------------------------------------------- |
+| `EVIDENCE` | Enumerated governance actions (role and ownership changes) | `ATOMIC`: shares the mutation's transaction | The mutation rolls back with it             |
+| `ACTIVITY` | Every other captured mutation, and every denied check      | `BEST_EFFORT`: off the response path        | Logged and dropped; the request never fails |
+
+`ATOMIC` is the only compliance-grade durability class. An `EVIDENCE` row and its mutation commit or roll back together, so the row cannot exist without the change and the change cannot exist without the row. The enum also names `POST_COMMIT`, a row written after its mutation committed. A `POST_COMMIT` row is lost if the process dies between the commit and the write. Recording the achieved durability per row lets an auditor filter on `durability=ATOMIC` and see exactly the guarantees they can rely on.
+
+## How rows are captured
+
+Every permission check records an intent for the request. After the handler responds, an interceptor drains those intents and writes `ACTIVITY` rows for two classes of check:
+
+- **Mutating permissions.** A permission is classified as mutating when an auditor needs to see that the action happened, even if the verb does not change state. For example, `device-secret:access` is a read, but a credential disclosure must be logged.
+- **Denied checks, including reads.** A refused action is a security signal, so it is recorded as `DENIED` even when the equivalent successful read would not be recorded.
+
+A handler error after the check passed is recorded as `FAILED` with a mapped error code. Rows with `DEVICE` and `SYSTEM` actors are stored but hidden by default, so the default feed shows human activity. Pass `includeSystemActors` to include them.
+
+Query the log at `GET /api/v1/event-log`. Results are filterable by action key, resource, tier, durability, actor, outcome, target, and time range. The endpoint requires the `event-log:access` permission, which the Owner and Admin roles hold by default. See [Roles and permissions](/organizations/rbac).
+
+## Changelog diffs
+
+Alongside the event log, {BRAND_NAME} keeps a changelog of row-level before and after snapshots with a computed per-field diff.
+
+- **Device changes are captured at the database layer.** A PostgreSQL trigger on the device table writes a changelog row for every insert, update, and delete, including writes that bypass the application entirely. Updates that touch only the `updatedAt` timestamp are filtered out as churn.
+- **IPAM changes are captured in the application, with attribution.** Every create, update, and delete made through the IPAM API (VRF, prefix, IP address, VLAN, or IP range) appends a changelog row carrying the before and after snapshots, the diff, and the acting principal.
+
+<Note>
+  IPAM capture is scoped to the IPAM API write paths. Writes that reach the same rows from elsewhere do not append
+  changelog rows. For example, deleting an interface retires its assigned IPs, and Bridge reconciliation soft-deletes
+  addresses that left the wire. Unlike the device table, the IPAM tables have no database trigger to catch these writes.
+</Note>
+
+Query the IPAM changelog at `GET /api/v1/ipam/changelog`. Results are filterable by table and record. The endpoint requires the `ipam:read` permission. See [IP address management](/network/ipam).
+
+## Webhook delivery forensics
+
+Every webhook delivery is stored as a persistent row. The row records the exact payload sent, the attempt count, the HTTP status and response body returned by the receiver, the error message on failure, and the next scheduled retry. {BRAND_NAME} retries a failed delivery automatically up to 4 times, for 5 attempts in total, on a backoff that steps from one to four minutes. A minutely cron with distributed locking drives the retries, so concurrent hub instances never double-send. You can also retry a delivery manually, which reactivates a disabled webhook. See [Webhooks](/brokkr-api-webhooks).
+
+<Note>
+  Delivery rows in a terminal state (succeeded or exhausted) are cleaned up nightly once they are older than 30 days.
+  The delivery table exists for debugging receivers and is not a permanent evidence store. The event log and the
+  changelog are the durable record.
+</Note>
+
+## Device-secret audit trail
+
+Every privileged access to a device credential appends a row to the device-secret audit trail: `WRITE`, `UPDATE`, `REVEAL_REQUESTED`, `REVEAL_DELIVERED` (the disclosure point), `DISPATCH`, and `INVALIDATED`. The trail is append-only. Application code never mutates or prunes the rows, and the `payload` field never holds secret material.
+
+The audit row references its device without a foreign key. Hard-deleting a device cascades away its sealed secrets, but the record that a credential was disclosed survives. The record shows who received the credential and from which IP, correlated end-to-end by request ID. Disclosures that never had a device row (ephemeral seals during commissioning) are recorded against the zone instead. A database CHECK constraint enforces that one of the two scopes is always present.
+
+For how the credentials themselves are sealed and revealed, see [Zone-sealed secrets and device tokens](/security/secrets-and-device-tokens).

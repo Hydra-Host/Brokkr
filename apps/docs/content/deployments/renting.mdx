@@ -1,0 +1,100 @@
+---
+title: 'Renting a GPU server'
+description: Browse live GPU inventory, rent and provision a server, redeem reservation invites, and make your first SSH connection.
+section: deployments
+order: 2
+slug: deployments/renting
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+You rent bare metal GPU servers from the {BRAND_NAME} marketplace. Browse live inventory by chipset, then complete the rent form with an OS and an SSH key. {BRAND_NAME} provisions the server after you submit. The flow runs from listing to login prompt without a ticket.
+
+## Browse the marketplace
+
+1. Open **Servers Available** under **Rent GPU Servers** in the web app. The grid shows one card per category (chipset): the GPU chipsets plus a CPU category.
+2. Filter by **Availability** (On Demand, Reserve, Pre-order), **Chipset**, **Manufacturer**, or **Tag**.
+3. Each category card shows availability badges and a starting price ("from $X"). The starting price is computed from current listings when a live price is available and falls back to a static price otherwise.
+4. Open a category to see its individual listings.
+
+Each listing card shows the hardware (GPU model and count, CPU, memory, storage), the location, and live hourly pricing. Pricing is quoted **per GPU per hour** on GPU servers and per server otherwise. Two capability badges matter when you compare listings:
+
+| Badge           | Meaning                                                                                                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **TEE Capable** | The hardware supports a trusted execution environment; you can enable TEE at provision time. See [TEE environment](/tee-environment).             |
+| **Clusterable** | The server joins your organization's private cluster network in its zone, giving it isolated east/west connectivity to your other machines there. |
+
+Interruptible-capable listings also show their lower interruptible rate alongside the on-demand price.
+
+## Contract types
+
+| Contract               | Pricing            | Terms                                                                                                |
+| ---------------------- | ------------------ | ---------------------------------------------------------------------------------------------------- |
+| **On demand**          | Listed hourly rate | Cancel any time; the unused portion of the billing cycle is refunded.                                |
+| **Interruptible**      | Lower floor rate   | The server can be reclaimed after a notice period (5 minutes by default). Unused time is refunded.   |
+| **Reservation invite** | Negotiated price   | Price, billing interval (hourly, weekly, or monthly), and any notice period are fixed by the invite. |
+
+Some listings are interruptible-only, and the rent form locks the Interruptible option on for them. If a host currently runs another customer's interruptible deployment, taking it over requires an interruptible request. In that case the form shows a **Provision Delay** equal to the incumbent deployment's notice period.
+
+## Rent and provision
+
+Open a listing to reach the rent form. The left side lists full specifications. The right side is **Configure your device**.
+
+1. Enter a **Deployment Name**.
+2. Select an **Operating System**. Choosing iPXE Custom adds a required **iPXE URL** field (HTTP or HTTPS). See [layers](/os-builds/layers) for how operating systems are composed.
+3. On TEE-capable hardware, select the TEE layer under customizations (step 8) to provision into a trusted execution environment. iPXE Custom has no layers, so a **TEE** checkbox appears instead.
+4. Select at least one **SSH Key**. Use **Add SSH Key** to register one inline without leaving the form. See [SSH keys](/ssh-keys-with-brokkr).
+5. Choose **Interruptible** if you want the floor rate and accept eviction after the notice period.
+6. Assign the deployment to a **Project**. The **Create Project** link leaves the rent form and discards your entries, so create a new project before you start the form.
+7. Optionally expand advanced settings to edit **disk layouts**. The form pre-fills the server's default layout. Mountpoints must be unique, and target disks are always wiped. Per-layout encryption is available. See [disk layouts](/deployments/disk-layouts) and [disk encryption](/disk-encryption).
+8. Optionally add **customizations** (GPU driver, CUDA framework, extra software) and a **cloud-init** config. Cloud-init is validated as YAML before submit. See [customizations](/os-builds/customizations).
+9. Review the price panel, then click **Provision**. The panel shows the hourly rate (per GPU per hour on GPU servers), the weekly total, the contract type, and any notice period.
+
+Submitting the form creates the deployment and starts provisioning. You land on the Deployments page while the OS installs. See [deployment lifecycle](/deployments/lifecycle) for what happens next, and [troubleshooting provisioning](/help/getting-help) if provisioning stalls.
+
+## Redeem a reservation invite
+
+Suppliers can offer you a specific server at negotiated terms by issuing a reservation invite (see [selling capacity](/deployments/selling-capacity)). If the invite names your email address, you receive an email when it is created. Invites scoped to your organization appear only in the web app.
+
+1. Open **Deployments**. Active invites appear in a **Reservation Invites** section with the device name, specifications, and expiry.
+2. Click **Redeem Invite**. This opens the listing's rent form with the invite's price and billing interval in place of the public rate.
+3. Complete the form and provision as usual.
+
+The invite is matched to you by invitee email or invitee organization. Renting the server consumes the invite: the reservation takes its price, billing frequency, and notice period from the invite, and the invite is marked accepted. Invites expire on their end date. An expired or already-accepted invite no longer applies.
+
+## Rent from the CLI
+
+`brokkr inventory:rent` mirrors the web form. With no flags it runs interactively. You pick a server, then answer prompts for the name, OS, SSH keys, billing type, and project:
+
+```bash
+brokkr inventory:rent
+```
+
+For scripting, pass everything as flags:
+
+```bash
+brokkr inventory:rent <device-id> \
+  --name my-server \
+  --os ubuntu-plucky-vanilla \
+  --ssh-keys "<key-id>" \
+  --force --json
+```
+
+`--interruptible`, `--project-id`, `--disk-layout`, `--cloud-init`, `--ipxe-url` (HTTPS only), and `--customizations` cover most of the rest of the form. When `--disk-layout` is omitted, the disk layout defaults to the server's recommended layout. Unless you pass `--force`, the command asks for confirmation before renting. Interactive runs also show the hourly rate before that prompt. See the [CLI reference](/api/cli).
+
+<Note>
+  Two form options are web-only. The CLI always provisions disk layouts unencrypted (`--disk-layout` accepts no encrypt
+  setting), and it has no flag for the iPXE **TEE** checkbox.
+</Note>
+
+## Find your IP and first SSH
+
+1. Open **Deployments** and select your deployment to open its details panel.
+2. Under **Connection Information**, copy the IPv4 (or IPv6) address. Every field is click-to-copy.
+3. Copy the ready-made SSH command shown below the addresses and run it.
+
+```bash
+ssh ubuntu@203.0.113.10
+```
+
+The username depends on the OS: `ubuntu` for Ubuntu, `debian` for Debian, and `root` when the server is booted into a rescue OS. The panel also lists the SSH keys installed during initial setup. Keys added on the server afterward do not appear here.

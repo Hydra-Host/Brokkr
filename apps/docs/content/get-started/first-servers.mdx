@@ -1,0 +1,94 @@
+---
+title: 'Commission your first servers'
+description: Scan a management subnet, validate BMC credentials, and commission servers into qualified, provisionable inventory.
+section: get-started
+order: 2
+slug: get-started/first-servers
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+Commissioning turns the servers on a management subnet into provisionable inventory. {BRAND_NAME} scans the subnet, validates each server's BMC credentials, wipes the disks, test-provisions an operating system, wipes the disks again, and then counts the server as stock. Every machine completes this full provision cycle before you rent it out.
+
+## Prerequisites
+
+- A zone with a running Bridge, enrolled in zone-crypto. BMC credentials are sealed to the zone's key, and sealing fails until enrollment completes. See [Create and enroll a zone](/zones/create-and-enroll) and [Secrets and device tokens](/security/secrets-and-device-tokens).
+- BMCs reachable from the Bridge on a subnet recorded in [IPAM](/network/ipam) with the `MANAGEMENT` role. [Zone network setup](/zones/network-setup) covers marking one. You can also add one from the commissioning page.
+- Permission to create devices in the zone.
+
+If you have no hardware, run the same flow against simulated BMCs in the [sim lab](/get-started/sim-lab).
+
+## Step 1: Scan the management subnet
+
+Open **Zones → your zone → Commission**. Pick a single management subnet or scan all of them, then click **Scan**. Brokkr starts one scan per subnet on the Bridge and polls the results every few seconds.
+
+The Bridge runs the probes locally:
+
+| Probe                                                                                             | What it establishes              |
+| ------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `nmap` host discovery (TCP SYN on 22, 80, and the Redfish port; ICMP and UDP 623 when privileged) | Which addresses are alive        |
+| ARP / neighbor table lookup                                                                       | The BMC MAC behind each IP       |
+| IPMI ping (RMCP, UDP 623)                                                                         | The **IPMI** capability badge    |
+| HTTPS `GET /redfish/v1`                                                                           | The **Redfish** capability badge |
+
+The Bridge's own addresses and the subnet gateway are excluded from results. Subnets of /16 or broader are refused as too large. Split them before scanning. If some subnets fail, the page shows partial results. It tells you how many subnets to rescan.
+
+Devices already commissioned in the zone are hidden. Devices mid-commissioning appear with their live status instead of a duplicate row.
+
+## Step 2: Enrich
+
+A freshly scanned device is **Detected**. At this point the scan has a BMC IP, usually a MAC, and the capability badges. Enrichment fills in the hardware identity: NIC MAC and IP, serial numbers, and manufacturer.
+
+If a machine has already PXE-booted into the discovery OS, its facts merge into the scan results automatically. Otherwise, enter the BMC username and password and click **Enrich**. Brokkr seals the credentials for the Bridge and reboots the device into the discovery OS over PXE. The row shows **Enriching** until the facts arrive. A failed enrichment shows its error on the row.
+
+<Note>Brokkr refuses the enrich request unless the zone is enrolled in zone-crypto.</Note>
+
+## Step 3: Validate credentials
+
+Enter the BMC username and password and click **Validate**. Brokkr seals the credentials into a one-shot envelope and dispatches a power-status check through the Bridge. Plaintext credentials never enter the queue, and validation never stores them. A pass marks the device **Ready**.
+
+## Step 4: Commission
+
+Click **Commission**. For each device, Brokkr:
+
+1. Creates the device record, named from its BMC MAC.
+2. Registers the BMC interface and IP in IPAM, plus the NIC interface when known.
+3. Seals the BMC credentials as a versioned device secret. Brokkr seals on write and cannot decrypt the result. Only the zone's Bridge can decrypt it.
+4. Enqueues the commissioning saga on the zone's Bridge.
+
+A BMC MAC that already exists in the zone is rejected as a duplicate. The device record and its sealed credentials are created in one transaction, so a sealing failure creates nothing. If enqueueing fails, Brokkr soft-deletes the just-created device. If that cleanup also fails, Brokkr logs a critical error and the device needs manual cleanup.
+
+## The commissioning saga
+
+Commissioning runs three phases on the Bridge. The page renders each phase as a progress ring you can click for per-step detail:
+
+| Phase              | What happens                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| **Server Prep**    | Validate IPMI credentials, standardize BIOS via Redfish, PXE-boot into the discovery OS, wipe all disks, collect hardware facts |
+| **Provision Test** | Deploy an OS (Ubuntu 24.04 by default) under a transient qualify deployment and wait for it to phone home                       |
+| **Deprovision**    | NIST 800 disk wipe, EFI boot-entry cleanup, re-collect hardware facts, promote to inventory                                     |
+
+Each phase triggers the next automatically. Collected facts start the provision test. The deployed OS phoning home starts the deprovision. A completed deprovision qualifies the server.
+
+The page polls progress every ten seconds and derives a status per device:
+
+| Status         | Meaning                                                 |
+| -------------- | ------------------------------------------------------- |
+| **InProgress** | Steps are advancing                                     |
+| **Stalled**    | The zone is offline, or no step activity for 20 minutes |
+| **Failed**     | A step failed, or the run was marked failed             |
+| **Done**       | Qualified and awaiting your acknowledgment              |
+
+A **Failed** device has two recovery options. **Retry** restarts the whole run with the saved credentials. The per-step **Retry** in the step-detail dialog resets only the failed step and resumes from there. **Cancel** removes the queued work and soft-deletes the device, its interfaces, its IPs, and its sealed secrets. Cancel is refused once a device has qualified, so a finished run cannot be discarded by accident.
+
+For step-level failures beyond a retry, see [Troubleshooting provisioning](/help/getting-help).
+
+## Acknowledge
+
+When a device reaches **Done**, click **Acknowledge** to promote it to an active server. Each commissioned machine has:
+
+- A full hardware inventory record from the discovery OS. See [Inventory and discovery](/infrastructure/inventory-and-discovery).
+- Proof of a complete provision-and-wipe cycle. A ping alone proves reachability only.
+- Sealed, versioned BMC credentials for all future [out-of-band](/infrastructure/out-of-band) operations.
+- BMC and NIC addresses registered in IPAM.
+- A server record in the inventory lifecycle, ready for its first [deployment](/deployments/lifecycle).

@@ -60,16 +60,6 @@ erDiagram
         json data
     }
 
-    DeviceOnboardingProgress {
-        uuid id PK
-        string macAddress
-        string ipmiMacAddress
-        enum status "Queued, InProgress, Done, Failed, etc."
-        bool deviceDetailsChecked
-        json diskInfo
-        json networkingInfo
-    }
-
     SupplierSKU {
         uuid id PK
         string sku
@@ -81,7 +71,6 @@ erDiagram
     Device ||--o| SupplierSKU : "skuId"
     Device ||--o{ DeviceDocument : "deviceId"
     Device ||--o{ DeviceTestRun : "deviceId"
-    Device ||--o{ DeviceOnboardingProgress : "deviceId"
     Device ||--o{ Cpu : "deviceId"
     Device ||--o{ Gpu : "deviceId"
     Device ||--o{ StorageDrive : "deviceId"

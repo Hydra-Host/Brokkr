@@ -1,0 +1,102 @@
+---
+title: 'Deployment lifecycle'
+description: 'How lifecycle jobs move a server from provision to deprovision: the phase state machine, phone-home completion, watchdogs, and the stuck sweep.'
+section: deployments
+order: 1
+slug: deployments/lifecycle
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+import { LifecycleDiagram } from '~/components/lifecycle-diagram';
+
+In {BRAND_NAME}, provisions, reprovisions, power operations, and deprovisions each run as a tracked lifecycle job. Every job has an enforced state machine, a per-job event timeline, and watchdogs that drive quiet jobs to a terminal phase. When a job stalls, the event timeline records why.
+
+<LifecycleDiagram />
+
+## The core loop
+
+A deployment starts with a **provision**. You pick an operating system [layer](/os-builds/layers), [SSH keys](/ssh-keys-with-brokkr), and [disk layouts](/deployments/disk-layouts), plus optional cloud-init, an iPXE URL, customizations, and TEE. Day-2 operations are power control and rescue mode. The loop ends with a **reprovision** or a **deprovision**. A reprovision reinstalls the OS and keeps the deployment. A deprovision wipes the device, ends the deployment, and returns the device to inventory.
+
+## Lifecycle jobs and the phase state machine
+
+Each operation creates one lifecycle job against one device. The lifecycle engine owns the job's `phase` and moves it only along allowed edges. An illegal transition throws instead of corrupting state. Contended transitions are claimed with an atomic compare-and-set: grace-timer resumes, deferred-job resume or abort, terminal verdicts out of `AWAITING_PHONE_HOME`, and the stuck sweep. A writer that loses the race cedes the transition and never overwrites it.
+
+| Phase                 | Meaning                                                                             |
+| --------------------- | ----------------------------------------------------------------------------------- |
+| `REQUESTED`           | Job created; nothing sent yet.                                                      |
+| `AUTHORIZING`         | Plugin authorization gates run (fail-closed).                                       |
+| `SCHEDULED`           | Parked on the interruptible grace timer (see [renting](/deployments/renting)).      |
+| `DEFERRED`            | Parked by a plugin gate for out-of-band resolution, such as human approval.         |
+| `DISPATCHED`          | Sent to the zone's Bridge.                                                          |
+| `RUNNING`             | The Bridge reported its first step.                                                 |
+| `AWAITING_PHONE_HOME` | Bridge work finished (provision and reprovision only); waiting for the OS callback. |
+| `COMPLETED`           | Terminal: the operation succeeded.                                                  |
+| `FAILED`              | Terminal: work was dispatched and did not succeed.                                  |
+| `ABORTED`             | Terminal: the job ended before any work reached the device.                         |
+
+Provision and deprovision run through fail-closed plugin gates (`provision.authorize`, `deprovision.authorize`) before dispatch. If a registered gate handler is unavailable or crashes, the operation aborts instead of proceeding. If no handler is registered, the gate passes and the operation continues. A gate can also defer a provision into `DEFERRED`. A deferred provision is later resumed or aborted through the plugin lifecycle-control surface. See [events, gates, and host services](/extend/events-gates-and-host-services).
+
+## Phone-home-gated completion
+
+A successful Bridge saga does not complete a provision or reprovision. The job enters `AWAITING_PHONE_HOME` with a 30-minute deadline and completes only when the deployed OS boots and phones home to Brokkr (the hub) with its device token. The saga proves the Bridge wrote the OS to disk. The phone-home call proves the installed OS booted, which is stronger evidence that the provision succeeded.
+
+When the deadline passes, the phone-home watchdog fires. If the server already reports `PROVISIONED` (the callback landed but the job missed it), the watchdog completes the job. Otherwise it fails the job with `phone-home deadline exceeded`. A job stuck in `AWAITING_PHONE_HOME` almost always means the deployed OS never reached the hub. The usual cause is a network or boot problem rather than a saga failure. See [troubleshooting provisioning](/help/getting-help).
+
+## The event timeline
+
+Bridge step and completion results, phone-home receipts, and every watchdog and sweep verdict append a row to the job's event timeline. Each row records the saga name, step name, event type, status, attempt, `occurredAt`, and the hub's ingest-time `recordedAt`. On Bridge step and completion rows, `occurredAt` is the Bridge's own timestamp. On phone-home, watchdog, and sweep rows, Brokkr stamps it. The timeline is append-only and deduplicated, so at-least-once message delivery never writes a duplicate row.
+
+<Note>
+  Pre-dispatch transitions (authorization, gate aborts, and deferrals) are not on the timeline. For a job that never
+  dispatched, the job's phase and error field carry the verdict.
+</Note>
+
+To diagnose a stuck job, read its timeline. It shows the last step the Bridge reported and every watchdog or sweep verdict since.
+
+## Power control and the deployment lock
+
+Power operations (reboot, power cycle, power on, and power off) are also lifecycle jobs. Each carries a 15-minute watchdog. If the Bridge never responds, the watchdog fails the job. A failed power job clears the device's transitional power status. It does not mark the server failed.
+
+The **deployment lock** is a customer-set safety toggle in the deployment's settings. While the deployment is locked, Brokkr rejects reprovision, power commands, deprovision, and rescue-mode changes. Unlock the deployment before any of these operations. Brokkr also rejects power commands while a power state transition is already in progress.
+
+## Rescue mode
+
+Rescue mode reboots the device into a live in-memory OS and leaves the installed disks untouched. Use it to mount the installed drives and repair problems such as a broken netplan, or to recover data.
+
+<Note>
+  Rescue changes dispatch a reboot directly to the Bridge. They are not tracked lifecycle jobs and have no event
+  timeline.
+</Note>
+
+Prerequisites: the deployment status is `provisioned` or `failed`, and the deployment is not locked.
+
+1. Activate rescue mode. Brokkr publishes the deployment's SSH keys for the rescue OS, sets the rescue layer, and reboots the device to PXE.
+2. SSH in with the deployment's keys and repair the system.
+3. Exit rescue mode. Brokkr clears the rescue layer and reboots the device back into the installed OS.
+
+Exit requires only that the deployment is in rescue mode and unlocked. It does not check deployment status. Status can drift while a device sits in rescue, and gating exit on status would strand the device.
+
+## Reprovision vs deprovision
+
+| Operation   | Deployment | Disks                                                             | End state                   |
+| ----------- | ---------- | ----------------------------------------------------------------- | --------------------------- |
+| Reprovision | Kept       | Reinstalled per the new [disk layouts](/deployments/disk-layouts) | New OS, same deployment     |
+| Deprovision | Ended      | [Wiped](/security/disk-sanitization)                              | Device returns to inventory |
+
+A reprovision takes a full new configuration (name, OS, SSH keys, disk layouts, cloud-init, customizations, and TEE) and validates it against the device's hardware before dispatch. Completion is phone-home-gated, the same as a first provision. To keep data across a reprovision, see [preserving data disks](/deployments/preserving-data-disks).
+
+A deprovision ends the deployment and its reservation and revokes the deployment's OS device tokens at dispatch. Completion returns the device to inventory. After revocation, a stale callback from the old OS fails authentication. A deployed-OS phone-home can land during deprovisioning only in the brief gap before revocation takes effect. If one does, Brokkr marks the server's lifecycle status `failed`, because the old OS booting again means the wipe likely failed.
+
+## Watchdogs and the stuck sweep
+
+Watchdogs cover the two known deadlines: phone-home and the power saga. The **stuck sweep** is the backstop for everything else. Every 5 minutes it pages through all non-terminal jobs and terminalizes any that have gone quiet.
+
+| Phase                       | Stuck condition                          | Verdict                                      |
+| --------------------------- | ---------------------------------------- | -------------------------------------------- |
+| `REQUESTED` / `AUTHORIZING` | No progress for 15 minutes               | `ABORTED`: request never dispatched          |
+| `SCHEDULED`                 | 30 minutes past its resume time          | `ABORTED`: grace timer never resumed the job |
+| `DISPATCHED`                | No Bridge response for 30 minutes        | `FAILED`: no bridge response after dispatch  |
+| `RUNNING`                   | No phase update and no event for 2 hours | `FAILED`: no bridge activity while running   |
+| `AWAITING_PHONE_HOME`       | 15 minutes past the phone-home deadline  | `FAILED`: phone-home deadline exceeded       |
+
+`DEFERRED` jobs are exempt. They wait indefinitely for their out-of-band resolution. Every sweep verdict lands in the job's event timeline with its reason, so the timeline shows what a swept job was waiting for. To disable the sweep on a hub instance, set `LIFECYCLE_STUCK_SWEEP_ENABLED=false`.

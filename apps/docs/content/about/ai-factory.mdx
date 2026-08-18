@@ -1,0 +1,79 @@
+---
+title: '{BRAND_NAME} for AI factories'
+description: GPU marketplace categories, on-demand and interruptible pricing, confidential computing, fabric-aware inventory, and automated burn-in.
+section: about
+order: 4
+slug: about/ai-factory
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} manages GPU servers as verified, sellable marketplace inventory. The curated catalog spans Blackwell to Volta. Listings quote live per-GPU-hour prices on on-demand and interruptible channels. Confidential computing is gated on verified hardware, and automated burn-in stress-tests GPUs on a rolling verification cycle.
+
+## GPU catalog
+
+The marketplace organizes inventory into categories. Each category targets a class of workload. GPU categories carry a live starting price computed from current listings. The CPU category carries a static starting price. Every category can be offered on demand, as a reservation, or as a pre-order.
+
+| Category                                                  | Built for                                                                                                                                                                                                                                             |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NVIDIA B300, B200, GB200, GB300                           | Blackwell-generation training and inference. B200 servers pair 8 Blackwell GPUs with fifth-gen NVLink for up to 3x training and 15x inference performance over predecessors; GB200/GB300 Grace Blackwell Superchips target trillion-parameter models. |
+| NVIDIA H200, H100, GH200                                  | Hopper-generation AI and HPC convergence: LLM training, inference, and scientific computing.                                                                                                                                                          |
+| NVIDIA A100, V100                                         | Balanced training, inference, and analytics; proven Ampere and Volta capacity.                                                                                                                                                                        |
+| NVIDIA L40S, RTX Pro 6000 Blackwell, RTX A6000, RTX A4000 | Generative AI, neural rendering, professional visualization.                                                                                                                                                                                          |
+| NVIDIA RTX 5090, RTX 4090, RTX 3090, A10                  | Cost-efficient inference, fine-tuning, and deep-learning research.                                                                                                                                                                                    |
+| CPU                                                       | Intel and AMD compute for the workloads around the GPUs: databases, hosting, data processing.                                                                                                                                                         |
+
+## On-demand and interruptible pricing
+
+A GPU listing carries an on-demand price and, optionally, an interruptible price. Prices are quoted per GPU-hour where per-GPU pricing applies. The interruptible channel rents out hardware between committed tenants:
+
+- A listing can be flagged interruptible-only, offer both channels side by side, or omit the interruptible price and sell on demand only.
+- A device occupied by an interruptible deployment stays listed. Only another interruptible request can take it over. Brokkr rejects an on-demand provision of an occupied host.
+- By default, an eviction becomes a pending request that an operator explicitly authorizes or rejects. Operators can configure evictions to execute immediately instead.
+- After an eviction executes, the sitting tenant gets a notice window before the device is reclaimed. The window is 5 minutes by default, or the deployment's own notice period when it carries one.
+
+The inventory API exposes the same channels programmatically with a pipe-delimited filter grammar:
+
+```text
+filters=category:eq:h100|status:eq:on demand|interruptibleReady:eq:true
+```
+
+Read [Inventory API](/brokkr-api-inventory) and [Renting servers](/deployments/renting).
+
+## Confidential computing
+
+Tenants request a Trusted Execution Environment (TEE) in three ways: a TEE flag on the provision, a TEE variant of the operating system, or the TEE setup customization layer. All three converge on the same gate. Brokkr rejects the provision with `TEE is not supported on this device` unless the device is TEE-capable, before any job dispatches to the zone.
+
+The gate checks the TEE capability recorded for the device at discovery. Discovery grants the capability only when the device passes a full hardware verification chain: CPU family and model allowlists, BIOS version allowlists (plus CPLD version where the vendor requires one), and a GPU vBIOS that matches NVIDIA's published attestation list.
+
+The TEE-capable badge on listings adds one more check: the device's GPU family must be eligible for the TEE layer. The badge lets tenants find confidential capacity in the marketplace instead of discovering incompatibility at deploy time.
+
+The first step of the burn-in pipeline probes each GPU's NVIDIA Confidential Computing mode on the live device. Stress tests are skipped on devices running in Confidential Compute mode. This avoids conflicts with the attestation boundary.
+
+<Note>Recording the per-GPU CC mode (`OFF`, `ON`, `DEVTOOLS`) in inventory is in development.</Note>
+
+Read the [TEE environment guide](/tee-environment) for tenant-facing setup and [OS customizations](/os-builds/customizations) for the layer mechanics.
+
+## Fabric-aware inventory
+
+Multi-node training performance depends on the fabric, so {BRAND_NAME} records fabric details as structured inventory rather than free text:
+
+- **NVLink topology** (in development) is modeled per device as a directed GPU-to-GPU graph: one edge per source/target GPU pair, with lane count, bandwidth in Gbps, and link status. NCCL placement decisions on multi-GPU nodes use this data.
+- **InfiniBand and Ethernet fabric ports** are ingested during hardware discovery and recorded as interfaces on the device: adapter name, GUID, link type, port state, maximum speed in Gbps, and operational and physical link state.
+- **Per-deployment diagnostics** cover the NVLink, InfiniBand, fabric, CUDA, ECC, and thermal domains, so a tenant issue can be traced to the layer that caused it.
+
+Read [Inventory and discovery](/infrastructure/inventory-and-discovery) for discovery mechanics.
+
+## Automated GPU burn-in
+
+Burn-in runs automatically. When hardware discovery completes on a commissioned device, Brokkr enqueues a benchmarks job to the zone's Bridge. Periodic inventory collection re-runs discovery, so devices are retested over time. The Bridge runs two test suites against the device: a GPU burn-in (30 minutes by default) and an NCCL performance run.
+
+The burn-in records per-GPU compute throughput, temperature, and error counts, with a per-GPU verdict. The NCCL run records GPU count, peak and average bus bandwidth in GB/s, minimum latency, and error counts including out-of-bounds errors.
+
+A passing result is trusted for 15 days. A failed run is retested. Devices that are mid-provision are excluded until they settle. The GPU software the tests exercise (the driver and CUDA toolkit) is installed as versioned [layers](/os-builds/layers) with per-hardware compatibility rules.
+
+## Where to go next
+
+- [Quickstart](/get-started/quickstart): deploy your first GPU server.
+- [Become a supply partner](/about/become-a-supply-partner): list your GPU fleet on the marketplace.
+- [Selling capacity](/deployments/selling-capacity): pricing and listing mechanics for operators.

@@ -1,0 +1,68 @@
+---
+title: 'Become a supply partner'
+description: 'Fleet onboarding, reservation invites, and how supply organizations are created on a {BRAND_NAME} instance.'
+section: about
+order: 5
+slug: about/become-a-supply-partner
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+Supply partners run the physical side of a {BRAND_NAME} platform. A supply partner enrolls zones and runs hardware discovery, then lists GPU servers that customers rent in a browser. {BRAND_NAME} handles provisioning, customer access, and the deployment lifecycle.
+
+## Two sides of the platform
+
+Every organization on a {BRAND_NAME} instance has exactly one tenant type:
+
+```prisma
+enum TenantType {
+  SupplyCustomer
+  DemandCustomer
+}
+```
+
+The onboarding flow maps its two account choices onto these types:
+
+| Onboarding choice   | Organization type | Built for                                                            |
+| ------------------- | ----------------- | -------------------------------------------------------------------- |
+| "Rent GPU compute"  | `DemandCustomer`  | Individuals and companies renting GPU compute for their projects     |
+| "Become a supplier" | `SupplyCustomer`  | Operators offering GPU compute and connecting with those who need it |
+
+Demand organizations rent capacity. Supply organizations provide it. Read [Renting](/deployments/renting) for the demand side. The rest of this page covers supply organizations.
+
+## What supply partners operate
+
+- **Fleet onboarding.** Create zones and enroll Bridges, then run discovery to inventory your hardware. Devices record their supplier organization, so ownership stays explicit as hardware moves through the platform. Read [Create and enroll a zone](/zones/create-and-enroll), [Inventory and discovery](/infrastructure/inventory-and-discovery), and [Your first servers](/get-started/first-servers).
+- **Branded storefront (in development).** The data model reserves one storefront per supply organization: a unique slug, a logo, and a custom stylesheet. There is no way to attach or display a storefront yet.
+- **Listings and direct offers.** List capacity on the market through the selling flow, or send a reservation invite. A reservation invite is a direct offer addressed to a customer's email address. It carries a price, a billing frequency, an expiry date, and the specific servers on offer. When the customer accepts, the invite becomes a reservation. Read [Selling capacity](/deployments/selling-capacity).
+- **Revenue operations.** Reservations, deployments, and the full device lifecycle live in your organization. Wire [webhooks](/brokkr-api-webhooks) and organization API keys into your billing and CRM systems. Read [Deployment lifecycle](/deployments/lifecycle).
+
+## How supply organizations are created
+
+New users create their organization in the onboarding flow.
+
+<Note>Onboarding requires multi-factor authentication. Enable it before you start. Read [MFA](/brokkr-mfa).</Note>
+
+1. Sign in. If you have pending invitations, onboarding lists them. Accept one to join an existing organization under its assigned role. Decline to continue with onboarding.
+2. Under **Create Your Organization**, enter an organization name (up to 100 characters).
+3. On instances that allow supply organizations, an **Account Type** selector appears. Select **Become a supplier**.
+4. Submit. {BRAND_NAME} creates a `SupplyCustomer` organization and sets it as your active organization, then takes you to **Zone Management → Servers**.
+
+The account type selector is edition-aware. The web app asks the API which organization types the instance allows and hides the choice when `SupplyCustomer` is not among them. The API independently rejects a disallowed type with an error stating that organizations of that type cannot be created on this instance. There is no client-side workaround.
+
+## One supplier per BOSS instance
+
+The self-hosted BOSS edition ships a fixed pair of policies:
+
+- Self-serve creation is limited to demand organizations. The default allowed-types provider returns only `DemandCustomer`, so the supplier option never appears in onboarding.
+- The supply tenancy policy caps the instance at exactly one supply tenant.
+
+On BOSS, the supply partner is you. Your organization supplies the capacity, and every self-serve signup becomes a demand customer. At most one organization holds the instance-operator designation, which gates operator-only capabilities. A partial unique index at the database level enforces the singleton. Both policies are edition override points, which is why the onboarding selector exists. See [Editions](/about/editions) for how the managed edition layers overrides on top of BOSS defaults.
+
+## Talk to us
+
+Supply partnerships start with the operator of the instance you want to sell on. There is no supply-partner inquiry form. Contact the operator directly.
+
+The hub ships a demand-side lead-capture path. When all five `HUBSPOT_*` values (access token, portal ID, contact owner ID, demand-request form ID, and demand-request object type ID) are set in the hub environment, the `hubspot-leads` plugin activates. The public inventory pages then expose contact capture and a demand-request form that submit directly into the operator's HubSpot portal. A `salesforce-leads` plugin is the alternative. When both are configured, HubSpot stays active.
+
+If you are evaluating whether to run your own instance instead, start with the [{BRAND_NAME} overview](/brokkr-overview) and the [quickstart](/get-started/quickstart). Then read [Organizations and tenancy](/organizations/orgs-and-tenancy) and [RBAC](/organizations/rbac) to plan how your team and your customers share the platform.

@@ -1,0 +1,125 @@
+---
+title: 'Plugins'
+description: 'One npm package extends the hub backend, hub UI, the Bridge, and the Brokkr Live Agent with typed APIs, per-plugin Postgres schemas, UI slots, events, and lifecycle gates.'
+section: extend
+order: 1
+slug: extend/plugins-overview
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+A plugin is a single npm package that adds features to a {BRAND_NAME} installation without a fork. One package can extend all four tiers: the hub backend, the hub UI, the Bridge, and the Brokkr Live Agent. The extension points on this page are exercised in production. {BRAND_NAME}'s own admin panel, the Operator Hub, is a plugin. It is built on the SDK surface documented on this page and is enabled in the default registry.
+
+## One package, four tiers
+
+A plugin declares a manifest for each tier it extends. Each manifest is loaded only by the tier that needs it, so the hub UI bundle never pulls in backend code.
+
+| Tier              | Entry point                             | What it adds                                                                |
+| ----------------- | --------------------------------------- | --------------------------------------------------------------------------- |
+| Hub backend       | `backendModule` lazy thunk              | NestJS module: controllers, services, event and gate handlers               |
+| Hub UI            | `./frontend-manifest` subpath           | Slot contributions plus a root route at `/plugins/<id>` with sub-paths      |
+| Bridge            | `bridgeModule` lazy thunk               | NestJS module inside each Bridge, with a key-value store and agent dispatch |
+| Brokkr Live Agent | `./agent` subpath (`defineAgentPlugin`) | Named device-side operations, auto-namespaced `<pluginId>.*`                |
+
+Bridge and agent extensions are enabled with a per-plugin `BRIDGE_PLUGIN_<NAME>_ENABLED` environment variable. Each registry entry in the host's `plugins.config.ts` names its own flag. Every Bridge and agent process reads the flag, so set it consistently across a zone. See [Bridge and agent plugins](/extend/bridge-and-agent-plugins) and [{BRAND_NAME} components](/brokkr-components) for how the tiers fit together.
+
+<Note>
+  Agent plugins are bundled into the agent build at compile time. Enabling an agent plugin implies an agent rollout.
+</Note>
+
+## The extension surface
+
+Plugin authors depend on one package, `@hydrahost/plugin-sdk`. The SDK provides:
+
+- **Per-plugin Postgres schemas.** Declare `schemaName` and ship numbered SQL migrations. The host creates the schema and applies the migrations at boot. Migrations are forward-only, and each carries a sha256 checksum, so editing applied history is a fatal error. Stateless plugins omit both fields.
+- **Typed HTTP contracts.** Endpoints are ts-rest routes under `/plugins/<id>/`. The host validates them at boot and publishes them in its OpenAPI output. The plugin's UI calls them through a typed client generated from the same contract object.
+- **Typed configuration.** The manifest declares a Zod `configSchema`. The host validates installer-supplied settings at boot and injects the parsed value into your services. A validation failure aborts boot with a per-field error list.
+- **UI slots.** Named extension points (`dashboard-widget`, `sidebar-nav`, `address-autocomplete`, `inventory-page-extras`, `inventory-item-cta`). Each slot has a compile-time-checked contribution shape. Widgets render inside an error boundary, so a broken plugin cannot crash the host UI.
+- **The event bus.** Typed, fire-and-forget notifications of core activity (organization created, device failed, Bridge saga completed). Handlers are observers. They cannot intercept the action, and one handler's failure never reaches its siblings.
+- **Lifecycle gates.** The blocking counterpart to events. The host awaits gate handlers, in priority order, before an irreversible action. A handler can reject the job or defer it until the plugin resumes it. A plugin may only register for gates declared in its manifest's `allowedGates` field. The host denies undeclared registrations.
+- **Host services.** Injection tokens for the database client, request identity (`requirePermission`, `requireInstanceOperator`, `requireSessionAuth`), lifecycle requests (provision, reprovision, deprovision, power control), device operations, IPAM provisioning, and email. See [Events, gates, and host services](/extend/events-gates-and-host-services).
+
+## Anatomy of a manifest
+
+The following is the Operator Hub's backend manifest in full:
+
+```typescript
+import { join } from 'path';
+
+import { definePlugin } from '@hydrahost/plugin-sdk';
+
+import { contractFragment } from './contract';
+import { OperatorHubConfigSchema } from './schemas';
+
+// TS module augmentations don't cross project boundaries, so pull them in
+// explicitly for consumers that import only plugin.ts (e.g. plugins-config).
+// Type-only; never in the web bundle.
+import './backend/brokkr-events.types';
+import './backend/brokkr-gates.types';
+
+// migrationsDir resolves from the CJS build output (dist/cjs/plugin.js) up to
+// package-root database/migrations; plugin.ts is CJS-only so __dirname is
+// valid. Must never reference frontend code.
+export const operatorHubManifest = definePlugin({
+  id: 'operator-hub',
+  version: '0.1.0',
+  schemaName: 'plugin_operator_hub',
+  migrationsDir: join(__dirname, '..', '..', 'database', 'migrations'),
+  allowedGates: ['provision.authorize'],
+  backendModule: () => import('./backend'),
+  contract: contractFragment,
+  configSchema: OperatorHubConfigSchema,
+});
+
+export default operatorHubManifest;
+```
+
+Every field is declarative. An installer can read a plugin's manifest and see what the plugin claims: its schema, its endpoints, its settings, and the gates it may hold.
+
+## The Operator Hub
+
+The Operator Hub provides user management and cross-tenant deployment views. It also handles provisioning approvals. It is not privileged host code. It uses the same SDK surface available to third-party plugins. It is a plugin package that:
+
+- contributes `sidebar-nav` entries and a root route at `/plugins/operator-hub`, dispatching its own sub-pages from the URL splat
+- owns the `plugin_operator_hub` Postgres schema
+- registers a `provision.authorize` gate handler that parks [provisioning jobs](/deployments/lifecycle) for operator approval before dispatch
+- gates every backend handler with `requireInstanceOperator()`, with an `operatorOnly` frontend flag as defense in depth
+
+## Trust model
+
+<Warning>
+  There is no sandbox. A plugin runs in the same process as its host tier, with the host's privileges. Installing a
+  plugin runs someone else's code with your database credentials.
+</Warning>
+
+Plugin code can query any data in the database and read any environment variable. It can also make outbound network requests. The per-plugin schema is a namespace convention. It does not provide isolation. This is the same trust model as a Rails engine or a WordPress plugin.
+
+Before you install a third-party plugin:
+
+- Audit its source. Prefer plugins you can read end-to-end in an evening.
+- Pin an exact version. Do not use a `^` range for untrusted code.
+- For sensitive deployments, maintain a private fork.
+- Expect the README to document what the plugin reads, writes, and contacts. If it does not, treat that as a finding.
+
+## Stability promises
+
+`@hydrahost/plugin-sdk` follows semver. Within the current `0.x` line:
+
+- The documented manifest fields and patterns are stable. Adding optional fields is non-breaking. Removing or repurposing a field is breaking and happens only in a `0.x+1.0` jump.
+- UI slots are never removed or renamed in a minor release.
+- The `/api/v1` contract prefix changes only with a major bump.
+- `@hydrahost/plugin-runtime` is host-internal. Do not depend on it. Its API may change without notice.
+
+<Note>
+  The event and gate payload maps are TypeScript augmentations that plugins currently mirror locally. Revalidate your
+  plugin after each host upgrade. An SDK-hosted canonical event map is planned.
+</Note>
+
+The event bus is in-process today. A distributed transport is a possible future change and would not alter the SDK surface.
+
+## Where next
+
+- [Installing plugins](/extend/installing-plugins): register a package in the plugins-config workspace, then enable, disable, or uninstall it.
+- [Writing a plugin](/extend/writing-a-plugin): the full authoring walkthrough, from manifest to publishing checklist.
+- [Events, gates, and host services](/extend/events-gates-and-host-services): the backend integration surface in depth.
+- [Bridge and agent plugins](/extend/bridge-and-agent-plugins): extending zones and devices.

@@ -1,0 +1,110 @@
+---
+title: 'Events, gates, and host services'
+description: React to lifecycle events, veto or defer provisioning jobs with fail-closed gates, and drive provisioning, device ops, IPAM, and email through host service tokens.
+section: extend
+order: 4
+slug: extend/events-gates-and-host-services
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+A plugin can observe lifecycle events, veto or defer provisioning jobs, and act on the platform through typed contracts that the host enforces. This page covers the three surfaces that provide those hooks: the event bus, lifecycle gates, and host service tokens. [Writing your first plugin](/extend/writing-a-plugin) covers the package structure these hooks live in.
+
+## The event bus
+
+Inject `PLUGIN_EVENT_BUS` to receive a `PluginEventBus` with `emit`, `on`, and `off`. Event names and payloads are typed through the `BrokkrEventMap` interface, which the host augments with events from the [lifecycle engine](/deployments/lifecycle):
+
+| Event                                                          | Fires when                                                                                                                                          |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lifecycle.dispatched`                                         | A job passed its gates and was sent to the Bridge                                                                                                   |
+| `lifecycle.deferred`                                           | A gate deferred a job (payload carries the reason)                                                                                                  |
+| `provision.completed` / `provision.failed`                     | Provision outcomes. `provision.failed` also fires when a reprovision fails; there is no `reprovision.failed`. An aborted reprovision emits no event |
+| `provision.started`                                            | An interruptible-capacity takeover provision dispatched (ordinary provisions emit `lifecycle.dispatched` only)                                      |
+| `reprovision.completed`                                        | A reprovision succeeded                                                                                                                             |
+| `deprovision.completed` / `deprovision.failed`                 | Deprovision outcomes                                                                                                                                |
+| `deployment.interruption.scheduled` / `.queued` / `.completed` | Interruptible-capacity takeover stages                                                                                                              |
+| `cluster.attached` / `cluster.detached`                        | A deployment joined or left a cluster network                                                                                                       |
+
+Events are fire-and-forget. The host wraps every handler. A throw or rejected promise is logged against your plugin id and does not reach other handlers or the emitter. Subscribe in `onApplicationBootstrap`, keep the unsubscribe function that `on()` returns, and call it on shutdown:
+
+```typescript
+onApplicationBootstrap(): void {
+  this.unsubscribe = this.events.on('lifecycle.deferred', (e) => this.handleDeferred(e), { pluginId: 'operator-hub' });
+}
+
+onApplicationShutdown(): void {
+  this.unsubscribe?.();
+}
+```
+
+Events report outcomes and cannot change them. To block or defer an operation before it runs, use a gate.
+
+## Lifecycle gates
+
+A gate is a handler that the lifecycle engine awaits before it performs the irreversible action. Two gates exist: `provision.authorize` and `deprovision.authorize`. Your manifest must list each gate it uses in `allowedGates`. Registering an unlisted gate throws `GateRegistrationDeniedError`. Handlers run in ascending `priority` order, and each handler has three possible outcomes:
+
+| Outcome | How                            | Effect                                                                                                                                                                                                 |
+| ------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Approve | Return normally                | The next handler runs; after all pass, the job dispatches                                                                                                                                              |
+| Veto    | Throw `LifecycleGateRejection` | The job aborts with your reason and the engine compensates (a provision's reservation is ended)                                                                                                        |
+| Defer   | Throw `LifecycleGateDeferral`  | A provision parks in the `DEFERRED` phase and `lifecycle.deferred` fires; your plugin resumes or aborts it later. Deferring a deprovision aborts it; the engine converts the deferral into a rejection |
+
+<Note>
+  The host may re-run a gate that already passed. Write handlers to be idempotent and free of irreversible side effects.
+</Note>
+
+Gates fail closed. Any other error a handler throws blocks the operation and counts as a fault against a circuit breaker. The breaker is keyed per plugin and gate, and every handler your plugin registers on that gate shares it. Five consecutive faults within 60 seconds open the breaker.
+
+<Warning>
+  While a gate's breaker is open, that gate aborts every operation it guards with `GateUnavailableError`. A broken
+  approval plugin therefore stops provisioning instead of silently allowing it.
+</Warning>
+
+Each gate's breaker trips and heals on its own, so an open breaker on one gate does not affect the other. The breaker heals on a timer rather than on a successful run: it clears 60 seconds after the first fault. A successful run before the trip resets the fault count. Vetoes and deferrals are policy outcomes and never count as faults.
+
+A deprovision request can carry `gateOverride`, which skips the handlers entirely. The host writes a warning to its log recording who forced past the veto and for which job. This is the only way to bypass a gate.
+
+## Host services
+
+The host binds injectable tokens that let a plugin act on the platform.
+
+<Warning>
+  Every host service token is a cross-tenant surface that does not check the request identity. Authorize your own
+  callers first. `PLUGIN_REQUEST_CONTEXT` exposes the caller's identity plus `requirePermission`,
+  `requireInstanceOperator`, and `requireSessionAuth`.
+</Warning>
+
+| Token                        | Surface                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PLUGIN_LIFECYCLE_REQUESTS`  | Request provision, reprovision, deprovision, lifecycle-only deprovision (reset a stuck device with no active deployment), reboot, and power on/off. Every call creates a lifecycle job and returns `{ jobId, jobType, phase }`; the Bridge saga dispatches unless a gate defers the job (returned in the `DEFERRED` phase, no dispatch) or vetoes it (the call throws). Only provision and deprovision run their gates. Reprovision, reboot, power, and lifecycle-only deprovision dispatch without one. |
+| `PLUGIN_LIFECYCLE`           | `resumeDeferred(jobId)` and `abortDeferred(jobId, reason)` release or abort a job that a gate parked. Both return `false` if the job already left `DEFERRED`. Resume accepts only provision jobs.                                                                                                                                                                                                                                                                                                        |
+| `PLUGIN_DEVICE_OPS_REQUESTS` | Device operations outside the lifecycle state machine: force hardware discovery, run GPU burn-in + NCCL benchmarks, and activate or deactivate rescue mode.                                                                                                                                                                                                                                                                                                                                              |
+| `PLUGIN_IPAM_PROVISIONING`   | [IPAM](/network/ipam) writes: `createPrefix`, `createIpAddress`, `setPrefixGateway`, `createIpRange`. The host runs each write as the system actor scoped to the `organizationId` you pass. `rollbackProvisioned` soft-deletes the rows of a failed multi-step provision in a single transaction. Record the ids you create so you can compensate.                                                                                                                                                       |
+| `PLUGIN_EMAIL`               | `send({ to, subject, html, from? })` through the host's configured transport. Escape user-controlled text before embedding it in HTML.                                                                                                                                                                                                                                                                                                                                                                   |
+
+## Worked example: Operator Hub approvals
+
+The built-in `operator-hub` plugin (`packages/plugins/operator-hub/`) combines all three surfaces into an approval workflow. No customer provision starts until an operator approves it.
+
+Its manifest declares `allowedGates: ['provision.authorize']`, and its gate registrar defers every approvable provision:
+
+```typescript
+this.unregister = this.gateBus.register('provision.authorize', async (payload) => {
+  if (await this.approvals.isInterruptibleTakeover(payload.jobId)) return; // already approved once
+  if (payload.internalProvision) return; // operator test deployments skip approval
+  await this.approvals.recordPending({ lifecycleJobId: payload.jobId /* device, deployment, org, customer */ });
+  throw new LifecycleGateDeferral('Awaiting operator approval');
+});
+```
+
+The full loop:
+
+1. A customer requests a provision. The engine creates the reservation and deployment, then runs `provision.authorize`.
+2. The gate records a `PENDING` row in the plugin's own Postgres schema and throws `LifecycleGateDeferral`. The job parks in `DEFERRED`.
+3. The engine emits `lifecycle.deferred`. The plugin's notifier, subscribed on the event bus, emails every instance-operator member through `PLUGIN_EMAIL`.
+4. An operator approves in the plugin's UI. The service calls `lifecycle.resumeDeferred(jobId)`. A `false` return means the job was decided concurrently and surfaces as a conflict. On success the service marks the row `APPROVED` and emails the customer. The email is best-effort because the job has already dispatched.
+5. A rejection calls `lifecycle.abortDeferred(jobId, reason)`. The job aborts, the engine ends the reservation to release the device, and the customer receives the reason (HTML-escaped).
+
+Approvals survive restarts because no state lives in memory. The job's `DEFERRED` phase is a database row, and the pending approval is a row in the plugin's own schema. Reuse the same division of labor in your own plugins: gates control the operation, events provide awareness, and host services take action.
+
+See [Bridge and agent plugins](/extend/bridge-and-agent-plugins) to run policy on the zone side instead of the hub.

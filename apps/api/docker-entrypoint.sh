@@ -16,7 +16,8 @@ CONFIG_PATH="/app/apps/web/dist/env-config.js"
 cat >"$CONFIG_PATH" <<EOF
 // Auto-generated at container start — do not edit.
 window.__ENV__ = Object.freeze({
-  RADAR_PUBLISHABLE_KEY: "${RADAR_PUBLISHABLE_KEY:-}"
+  RADAR_PUBLISHABLE_KEY: "${RADAR_PUBLISHABLE_KEY:-}",
+  DOCS_URL: "${BROKKR_DOCS_URL:-}"
 });
 EOF
 

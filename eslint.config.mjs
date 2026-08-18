@@ -1,3 +1,4 @@
+import { config as baseConfig } from '@repo/eslint-config/base';
 import { nestJsConfig } from '@repo/eslint-config/nest-js';
 import { reactConfig } from '@repo/eslint-config/react';
 
@@ -8,7 +9,15 @@ export default [
   })),
   ...reactConfig.map((config) => ({
     ...config,
-    files: ['apps/web/**/*.{ts,tsx,js,jsx}', 'packages/ui/**/*.{ts,tsx,js,jsx}'],
+    files: [
+      'apps/web/**/*.{ts,tsx,js,jsx}',
+      'packages/ui/**/*.{ts,tsx,js,jsx}',
+      'packages/plugin-sdk/**/*.{ts,tsx,js,jsx}',
+    ],
+  })),
+  ...baseConfig.map((config) => ({
+    ...config,
+    files: ['packages/plugins/device-monitoring/**/*.{ts,js}'],
   })),
   {
     files: ['apps/api/src/app.module.ts'],

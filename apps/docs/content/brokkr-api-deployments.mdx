@@ -1,0 +1,141 @@
+---
+title: 'Deployments API'
+description: 'REST endpoints for the server lifecycle: power control, rescue mode, reprovision, deprovision, locks, projects, log export, and customer approvals.'
+section: api
+order: 6
+slug: brokkr-api-deployments
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+The deployments API manages deployed servers over REST. Use it to control power, boot a server into rescue mode, reprovision a server with a new operating system, and release the server when you are done. The {BRAND_NAME} web UI and CLI are built on the same typed contract.
+
+All routes live under `/api/v1` and operate on deployments owned by the authenticated organization. Authenticate as described in [API authentication](/brokkr-api-authentication). For end-to-end types, use the [TypeScript client](/api/typescript-client). For the concepts behind these endpoints, see [Deployment lifecycle](/deployments/lifecycle).
+
+## List and inspect deployments
+
+| Method  | Path               | Returns                                                                                       |
+| ------- | ------------------ | --------------------------------------------------------------------------------------------- |
+| `GET`   | `/deployments`     | Paginated list of the organization's deployments.                                             |
+| `GET`   | `/deployments/:id` | Full detail: specs, networking, storage layouts, lock state, lifecycle history, and requests. |
+| `PATCH` | `/deployments/:id` | Updates the deployment's display name (`{"name": "..."}`).                                    |
+
+The detail response includes `isLocked`, the `lifecycleActions` audit trail, pending and historical `lifecycleRequests`, available storage layouts, and the deployment's project.
+
+## Lifecycle actions
+
+Each action endpoint returns a `DeploymentActionResponse` with a `success` flag and optional `error_code` and `message` fields.
+
+| Method   | Path                                      | Action                                                      |
+| -------- | ----------------------------------------- | ----------------------------------------------------------- |
+| `PATCH`  | `/deployments/:id/power-control`          | Powers the device on or off via IPMI.                       |
+| `PATCH`  | `/deployments/:id/power-cycle`            | Hard power cycle, equivalent to unplugging and re-plugging. |
+| `PATCH`  | `/deployments/:id/reboot`                 | Deprecated. Use `power-cycle` instead.                      |
+| `POST`   | `/deployments/:id/rescue-mode/activate`   | Boots a temporary rescue OS for diagnostics and recovery.   |
+| `POST`   | `/deployments/:id/rescue-mode/deactivate` | Exits rescue and reboots into the primary OS.               |
+| `DELETE` | `/deployments/:id/deprovision`            | Releases the device back to the supplier. Irreversible.     |
+
+Power control takes one field:
+
+```bash
+curl -X PATCH "$HUB/api/v1/deployments/$ID/power-control" \
+  -H "Content-Type: application/json" \
+  -d '{"operation": "off"}'
+```
+
+Rescue activation returns `400` if rescue mode is already active. Deactivation returns `400` if it is not.
+
+## Reprovision
+
+`PATCH /deployments/:id/reprovision` wipes and reinstalls the operating system. The deployment must not be locked.
+
+| Field             | Required | Description                                                                                           |
+| ----------------- | -------- | ----------------------------------------------------------------------------------------------------- |
+| `deploymentName`  | yes      | Name for the deployment.                                                                              |
+| `operatingSystem` | yes      | OS slug to install.                                                                                   |
+| `sshKeyIds`       | yes      | SSH key IDs to deploy. At least one is required.                                                      |
+| `diskLayouts`     | yes      | Disk layout array with at least one entry (see below).                                                |
+| `cloudInit`       | no       | Cloud-init as a YAML string (max 64 KB) or JSON object.                                               |
+| `customizations`  | no       | [Layer](/os-builds/layers) selections keyed by layer slug, e.g. `{"gpuDriver": "nvidia-driver-580"}`. |
+| `tee`             | no       | Request hardware (BMC) TEE for this provision.                                                        |
+| `ipxeUrl`         | no       | Custom iPXE boot URL.                                                                                 |
+
+Each `diskLayouts` entry sets `config` (layout strategy: `lvm`, `direct`, or a RAID level), `format` (`ext4` or `xfs`, the only formats the deploy pipeline creates), `mountpoint` (absolute path, restricted character set), `diskType`, `disks`, and two flags:
+
+- `wipe` is required and explicit. Set it to `false` to keep the existing data on that disk group across the reinstall. See [Preserving data disks](/deployments/preserving-data-disks).
+- `encrypt` enables LUKS [disk encryption](/disk-encryption) for the group. It is not supported on system mountpoints or when `wipe` is `false`.
+
+```json
+{
+  "deploymentName": "train-04",
+  "operatingSystem": "ubuntu-24-04",
+  "sshKeyIds": ["9b2f9c4e-..."],
+  "customizations": { "gpuDriver": "nvidia-driver-580", "gpuFramework": "cuda-13-1" },
+  "diskLayouts": [
+    {
+      "config": "raid1",
+      "format": "ext4",
+      "mountpoint": "/",
+      "diskType": "NVMe",
+      "disks": ["nvme0n1", "nvme1n1"],
+      "wipe": true
+    },
+    {
+      "config": "lvm",
+      "format": "xfs",
+      "mountpoint": "/data",
+      "diskType": "SSD",
+      "disks": ["sda", "sdb"],
+      "wipe": false
+    }
+  ]
+}
+```
+
+Layout options for a specific machine come from the `storageLayouts` and `defaultDiskLayouts` fields in the deployment detail. See [Disk layouts](/deployments/disk-layouts).
+
+## The deployment lock
+
+`PATCH /deployments/:id/toggle-lock` flips the lock state. While a deployment is locked, lifecycle actions are refused. Deprovision, reprovision, power control, power cycle, and rescue mode activation and deactivation all return `400`.
+
+The endpoint is a toggle. Read `isLocked` from the deployment detail before you call it to confirm which state the call produces. The response message states the resulting state (`Deployment locked` or `Deployment unlocked`).
+
+## Log export
+
+`POST /deployments/:id/logs` retrieves the serial-over-LAN (SOL) console output the Bridge streamed during provisioning. The body selects the job: `{"jobType": "Provision"}` or `{"jobType": "Reprovision"}`. The response returns timestamped `entries` in order and a `complete` flag. The flag is `true` once the Bridge has finished streaming.
+
+<Note>
+  Log export is available only for deployments provisioned with a custom iPXE script (`ipxeUrl`). For standard OS-slug
+  deployments the endpoint returns `400`.
+</Note>
+
+## Projects
+
+Projects group related deployments within an organization.
+
+| Method   | Path                                           | Action                                                      |
+| -------- | ---------------------------------------------- | ----------------------------------------------------------- |
+| `POST`   | `/deployments/projects`                        | Creates a project (`{"name": "..."}`).                      |
+| `GET`    | `/deployments/projects`                        | Paginated list of projects with their deployments.          |
+| `GET`    | `/deployments/projects/:projectId`             | One project with all its deployments.                       |
+| `PATCH`  | `/deployments/projects/:projectId`             | Updates `name` and `isDefault`.                             |
+| `DELETE` | `/deployments/projects/:projectId`             | Deletes a project.                                          |
+| `PUT`    | `/deployments/projects/:projectId/deployments` | Moves deployments into this project from `sourceProjectId`. |
+
+Setting `isDefault: true` makes a project the target for new deployments. You can delete a project only when it is not the default, its deployments have been moved out, and it is not the organization's last remaining project.
+
+## Customer approvals for operator-requested actions
+
+When an operator requests a destructive action on your deployment (`DEPROVISION`, `REPROVISION`, or `PROVISION`), the action does not execute until you approve it.
+
+| Method  | Path                                                     | Action                                                     |
+| ------- | -------------------------------------------------------- | ---------------------------------------------------------- |
+| `GET`   | `/deployments/:id/lifecycle-requests`                    | Lists pending and historical requests for the deployment.  |
+| `PATCH` | `/deployments/:id/lifecycle-requests/:requestId/approve` | Approves the request, allowing the operator to execute it. |
+| `PATCH` | `/deployments/:id/lifecycle-requests/:requestId/reject`  | Rejects the request. The action does not run.              |
+
+Approving and rejecting require the `lifecycle-request:approve` permission. Each request carries its `type`, `status` (`PENDING`, `APPROVED`, `REJECTED`, `EXECUTED`), the requesting admin's name, and approval, rejection, and execution timestamps.
+
+## Interruptible claims
+
+If you rent interruptible capacity, `GET /deployments/interruptible-claims` returns the organization's interruption claims. Each claim includes the target deployment, the scheduled `interruptAt` time, and a `Pending` or `Complete` status. Filter by status with `?status=`. The deployment detail also surfaces `scheduledInterruptionTime` when an interruption is scheduled. See [Renting servers](/deployments/renting).

@@ -552,7 +552,7 @@ export class CommissioningService {
     this.requireCommissioningRole();
     await this.requireZone(zoneId);
     // Enrich plan ids are minted `enrich-<uuid>`; reject anything else so a device UUID can't be used to
-    // cancel a real onboarding device's saga plan / BullMQ jobs through this endpoint.
+    // cancel a real commissioning device's saga plan / BullMQ jobs through this endpoint.
     if (!planId.startsWith('enrich-')) {
       throw new BadRequestException('Not an enrich plan id');
     }
@@ -561,7 +561,7 @@ export class CommissioningService {
     await this.cancelRedisEnrichPlan(zoneId, planId);
     await this.redis.del(enrichPlanStartedKey(zoneId, planId));
 
-    this.logger.log(`[Onboarding] Cancelled enrichment plan=${planId} zone=${zoneId}`);
+    this.logger.log(`[Commissioning] Cancelled enrichment plan=${planId} zone=${zoneId}`);
     return { success: true, message: 'Enrichment cancelled' };
   }
 
@@ -578,7 +578,7 @@ export class CommissioningService {
       plan.completed_at = Date.now() / 1000;
       await this.redis.set(key, JSON.stringify(plan), 'KEEPTTL');
     } catch (error) {
-      this.logger.warn(`[Onboarding] Failed to cancel enrich plan ${planId}: ${getErrorMessage(error)}`);
+      this.logger.warn(`[Commissioning] Failed to cancel enrich plan ${planId}: ${getErrorMessage(error)}`);
     }
   }
 

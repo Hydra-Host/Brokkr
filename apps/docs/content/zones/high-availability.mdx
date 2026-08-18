@@ -1,0 +1,89 @@
+---
+title: 'High availability'
+description: 'Run sibling Bridges in one zone: Redis leader election, a floating VIP with gratuitous ARP, lease-hydrating DHCP failover, and cross-Bridge saga resume.'
+section: zones
+order: 4
+slug: zones/high-availability
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+In {BRAND_NAME}, every Bridge in a zone is a full replica. One leader serves DHCP and holds the floating VIP. The sibling Bridges watch the same Redis. When the leader stops renewing its lease, a sibling takes over the VIP, the DHCP leases, and any interrupted provisioning job. If a Bridge dies halfway through provisioning a server, a sibling finishes the install.
+
+This page describes each layer of that failover and how to verify it. [Enroll a second Bridge](/zones/create-and-enroll) in the zone, then run the failover scenarios in the [sim lab](/get-started/sim-lab).
+
+## Leader election
+
+Every Bridge runs a heartbeat against the zone's Redis. The heartbeat claims the `bridge:leader` key with `SET NX` and a TTL. The Bridge that holds the key is the zone leader. The leader renews the key each heartbeat. If renewal fails, it demotes itself immediately. If the leader dies, the key expires. The next sibling's claim wins. Followers also claim opportunistically between heartbeats when they see the key vacant, so takeover does not wait for a full election cycle.
+
+Each heartbeat also registers the Bridge in a service registry (`bridge:instance:<id>`) with its versions, active plugins, and the host's real network interfaces. Brokkr (the hub) uses these registrations for zone health and for the per-prefix NIC dropdowns described below. See [Services and health](/zones/services-and-health) for how Brokkr surfaces leader status.
+
+Tune the timings with environment variables:
+
+| Variable                           | Default   | Meaning                                                                   |
+| ---------------------------------- | --------- | ------------------------------------------------------------------------- |
+| `BRIDGE_HOSTNAME`                  | host name | The Bridge's instance identity. Must match its device name in Brokkr.     |
+| `LEADER_TTL_SECONDS`               | `30`      | Leader key TTL. This is the worst-case takeover delay after a hard crash. |
+| `LEADER_RENEW_INTERVAL_SECONDS`    | `10`      | How often the leader renews the key.                                      |
+| `LEADER_HEARTBEAT_TIMEOUT_SECONDS` | `15`      | Heartbeat timeout before the Bridge treats the tick as failed.            |
+| `REGISTRY_TTL_SECONDS`             | `120`     | Service-registry entry TTL.                                               |
+
+The Bridge refuses to start if `LEADER_TTL_SECONDS` does not exceed the renew interval plus the heartbeat timeout. A tighter setting would make leadership flap.
+
+## The floating VIP
+
+PXE clients in the zone use one stable address: a VRRP VIP that only the leader binds. Because the address moves with the leader, DHCP, DNS, HTTP, and TFTP traffic survives Bridge failover. Agents and phone-home do not use the VIP. Each agent holds gRPC sessions to every Bridge in the zone, and phone-home targets Brokkr directly. You assign the VIP in [IPAM](/network/ipam) as a tracked IP address on the zone's primary prefix. Only a `PRIMARY`-role prefix accepts one. Bridges in a zone can name their VIP-facing NIC differently, so you bind the NIC per Bridge. A Bridge you leave unbound never claims the VIP.
+
+Brokkr publishes the assignment as a per-prefix Redis atom (`prefix:{prefixId}:config:vrrp`) that maps each Bridge name to its NIC, and reconciles the atoms against the database every minute. On the Bridge, a reconcile cron reads the atoms each tick:
+
+- The leader binds each VIP with `ip addr add <vip> dev <nic> label brokkr-vrrp`, then sends gratuitous ARP (`arping -U`, 5 packets by default) so switches repoint the VIP's MAC at once.
+- Followers release every labeled address they hold.
+- The `brokkr-vrrp` label is the ownership record. After a process restart, the Bridge rediscovers exactly what it bound without a local state file.
+
+The reconciler fails closed. Any failed read of Redis or interface state aborts the tick and preserves the current bindings. The reconciler also refuses to claim an address that already exists without its label. It treats a manually added duplicate as an error to fix and does not adopt it. On shutdown, the Bridge releases all VIPs before it releases the leader key, so an orderly handover does not overlap the old binding with the new leader's.
+
+<Note>
+  A hard crash skips the shutdown release. The stale address stays bound until the old Bridge returns and reconciles as
+  a follower. In the meantime, the new leader's gratuitous ARP repoints traffic.
+</Note>
+
+For gateway-level redundancy beyond the Bridge VIP, see [Gateways, VRRP, and BGP circuits](/network/gateways-vrrp-bgp-circuits).
+
+## DHCP failover with lease hydration
+
+Every Bridge keeps its [DHCP](/network/dhcp-and-pxe) socket bound, but only the leader answers. Leases are not local state. Every grant is written to Redis with a TTL that matches the lease lifetime.
+
+When a Bridge gains leadership, it hydrates before it serves. It loads all live leases from Redis, adopts each into its subnets, and discards expired records. Until hydration succeeds, the engine answers nothing. It retries every 250 ms. Answering with an empty lease table would hand out addresses its predecessor already leased. When a Bridge loses leadership, it disables lease writes, clears its in-memory lease state, and returns to dropping packets with the socket still bound.
+
+## Saga resume across Bridges
+
+Provisioning runs as a saga: an ordered plan of steps persisted in Redis, with one status and result per step, updated as the [deployment lifecycle](/deployments/lifecycle) advances. The plan is the source of truth, so a dead Bridge loses nothing. The worker process holds no state the saga depends on.
+
+Sibling Bridges consume the same zone-scoped job queue. When the working Bridge dies, the queue redelivers its stalled job to a sibling. A per-device lock prevents two Bridges from driving the same server. The redelivery delay exceeds the lock timeout, so the new Bridge starts only after the dead one's lock has expired. The resuming runner loads the plan, finds the step the crash left `RUNNING`, resets it to `PENDING`, and runs it again. Completed steps are never repeated. Their recorded results feed the remaining steps.
+
+As a backstop, the leader runs a stranded-plan cron. The cron scans Redis for unfinished plans that are past a grace period with no live queue job and re-enqueues them. A Bridge draining for shutdown uses the same path. It leaves its current step `PENDING` instead of failing the device, and the cron resumes it.
+
+## Failover, step by step
+
+When the leader dies mid-provision, failover proceeds in this order:
+
+1. Renewals stop. The `bridge:leader` key expires within `LEADER_TTL_SECONDS` (30 s by default).
+2. A sibling claims the key and becomes leader.
+3. Its next VRRP tick binds the VIP on its own configured NIC and sends gratuitous ARP. Client traffic follows.
+4. Its DHCP engine hydrates every live lease from Redis, then starts answering.
+5. Once the device lock expires, the stalled provisioning job redelivers to a surviving sibling, which is not necessarily the new leader. The saga resumes from its last completed step.
+6. If the old Bridge returns, it comes back as a follower. It releases any labeled VIPs and drops DHCP packets.
+
+## Test failover in the sim lab
+
+The [sim lab](/get-started/sim-lab) ships three failover scenarios. All three require the VM fleet mode. The two Bridge-failover scenarios (`spoke-failover`, `spoke-resume`) require at least two Bridge replicas in the zone and fail fast otherwise.
+
+| Scenario         | What it does                                                                 | What must hold                                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `spoke-failover` | Provisions a server, detects which Bridge is working the saga, and kills it. | A sibling picks up the job and the server reaches `PROVISIONED`. End-rental then returns it to `INVENTORY`.                       |
+| `spoke-resume`   | Restarts the working Bridge mid-saga instead of killing it.                  | The saga resumes from its Redis-persisted plan and reaches `PROVISIONED`. It does not restart from zero.                          |
+| `vrrp-failover`  | Drives the real VRRP reconciler against live Redis through an `ip` shim.     | The leader binds the VIP, the follower binds nothing, failover moves the VIP, and clearing the atom releases it. Non-destructive. |
+
+Run them from the sim lab's test runner before every upgrade of a multi-Bridge zone.
+
+<Warning>A failover you have never exercised is a failover you do not have.</Warning>

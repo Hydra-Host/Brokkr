@@ -1,0 +1,91 @@
+---
+title: 'Roles and permissions'
+description: The permission catalog, system and custom roles, and the grant rules that prevent privilege escalation.
+section: organizations
+order: 2
+slug: organizations/rbac
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} grants access through roles built from a fixed permission catalog. Every role edit, member change, and API key scope is checked against one invariant: an actor can only grant permissions it already holds.
+
+## The permission catalog
+
+Every capability is a permission key of the form `resource:action` (for example `deployment:create`, `device:power-control`, and `console:takeover`). The catalog defines 78 permissions across 22 resources:
+
+| Resource              | Actions                                     |
+| --------------------- | ------------------------------------------- |
+| `organization`        | read, update, delete, manage-owners         |
+| `member`              | read, delete, change-role                   |
+| `invitation`          | read, create, delete                        |
+| `device`              | read, create, update, delete, power-control |
+| `device-model`        | read, create, update, delete                |
+| `device-secret`       | access                                      |
+| `deployment`          | read, create, update, delete                |
+| `deployment-project`  | read, create, update, delete                |
+| `lifecycle-request`   | read, create, approve                       |
+| `inventory`           | read, create                                |
+| `zone`                | read, create, update, delete, register      |
+| `dcim`                | read, create, update, delete                |
+| `ipam`                | read, create, update, delete                |
+| `network`             | read, create, update, delete                |
+| `cloud-init-template` | read, update, delete                        |
+| `ssh-key`             | read, create, delete                        |
+| `tag`                 | read, create, update, delete                |
+| `reservation-invite`  | read, create, update, delete                |
+| `console`             | read, open, takeover, share, ticket         |
+| `api-key`             | read, create, update, delete                |
+| `webhook`             | read, create, update, delete                |
+| `event-log`           | access                                      |
+
+Two resources use `access` instead of `read`. The Member system role derives every `:read` key automatically. Device credentials (`device-secret:access`) and the organization event log (`event-log:access`) use `access` so that neither flows to Member by default.
+
+Every permission also carries an audit classification (`mutating` or `read-only`) that decides whether exercising it is captured in the [event log](/security/audit-and-event-log). The classification follows what an auditor needs to see. Whether the verb changes state does not decide it. `device-secret:access` is a read, but a credential disclosure must be logged, so it classifies as `mutating`.
+
+To browse the catalog with descriptions, open **Org Settings → Roles → View All Permissions**.
+
+## System roles
+
+Three system roles ship with every installation. They are global and seeded. You cannot edit or archive them.
+
+| Role       | Grant                                                                                                                                                                                                                                                                                                                                                      |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Owner**  | All 78 permissions                                                                                                                                                                                                                                                                                                                                         |
+| **Admin**  | Everything except `organization:delete` and `organization:manage-owners`                                                                                                                                                                                                                                                                                   |
+| **Member** | Every `:read` permission, plus an operational set: deployment and deployment-project lifecycle, provisioning from inventory, power control, SSH keys, console open and takeover, lifecycle requests, API key creation, create rights on IPAM, DCIM, network, tag, and zone records, and full write control (create, update, delete) of reservation invites |
+
+To adjust a system role, clone it. The clone becomes a custom role that you own.
+
+## Custom roles
+
+Each organization can hold up to 20 active custom roles.
+
+1. Open **Org Settings → Roles**.
+2. Select **Create Custom Role**, or select **Clone** on a system role card to start from its permission set. Cloned roles carry a **Cloned** badge.
+3. Name the role. On a fresh create, the slug auto-generates from the name. A clone prefills `<source-slug>-custom` instead. The slug field stays editable in both cases.
+4. Select permissions in the matrix. The matrix shows one card per resource, one checkbox per action, and a group checkbox that toggles the whole resource. Each card shows a selected/available count, and every checkbox carries the permission's description as a tooltip.
+5. Save.
+
+The matrix shows the full catalog regardless of the permissions you hold. Only `organization:manage-owners` is disabled in place, and it stays disabled unless you hold the entire catalog. Every other checkbox is selectable. The within-actor rule below rejects a save that includes a permission you do not hold yourself.
+
+<Note>Archiving a custom role requires that no active members and no pending invitations still reference it.</Note>
+
+## Escalation rules
+
+Three rules gate every role and member write:
+
+- **Within-actor grants.** You cannot put a permission that you do not hold yourself into a role or into the scope of an API key you own. The server rejects the request and names the escalated keys. Editing another member's key with `api-key:update` substitutes the key owner's permissions as the cap, so a key never carries a permission its owner does not hold.
+- **Strict dominance.** Managing another member (removing them or changing their role) requires that your permission set strictly dominates theirs. You must hold everything they hold plus at least one permission they lack. Equal peers cannot manage each other. Actions on yourself are exempt.
+- **Owner capability.** A role is owner-capable only when it holds every permission in the catalog, and `organization:manage-owners` can only be granted inside an owner-capable role. There is no partial owner. Granting, revoking, or transferring owner access runs through dedicated flows that only an owner-capable actor can invoke. Ordinary role assignment refuses owner-capable roles and members. An edit can never flip a role's owner capability, and the last owner-capable member cannot be removed. Every owner mutation for an organization serializes under a database advisory lock, so concurrent requests cannot race past the checks.
+
+## API key scoping
+
+An API key's scope is set at creation and is one of two kinds. The key's owner can edit the scope afterwards. A holder of `api-key:update` can edit the scope of another member's key.
+
+- **Inherit** (the default): the key mirrors its owner's role.
+- **Explicit**: a subset of permission keys. Grants into an explicit scope are gated at grant time by the key owner's own permissions, by the within-actor rule when you scope a key of your own, and by delegability. `api-key:create`, `api-key:update`, `api-key:delete`, and `organization:manage-owners` can never be placed in a scope, because a leaked key that can mint or edit keys is a standing escalation path. `api-key:read` remains delegable.
+
+Effective permissions are recomputed on every call as the stored scope intersected with the owner's live role permissions. If you demote the owner, every one of their keys narrows immediately. If you remove the owner from the organization, their keys stop authenticating. A malformed stored scope resolves to zero permissions, so the key fails closed.
+
+See [API authentication](/brokkr-api-authentication) for creating and using keys. See [Organizations and tenancy](/organizations/orgs-and-tenancy) for how roles attach to memberships.

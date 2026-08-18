@@ -1,0 +1,69 @@
+---
+title: 'Architecture'
+description: How Brokkr, the per-zone Bridges, and the device-side Brokkr Live Agent divide the work of running bare metal.
+section: about
+order: 2
+slug: brokkr-components
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+import { HubSpokeDiagram } from '~/components/hub-spoke-diagram';
+
+{BRAND_NAME} runs bare metal with three components and one bus. Brokkr (the hub) decides what happens, a Bridge (the spoke) in each zone carries out the work, and the Brokkr Live Agent (the agent) on each server dials out. Brokkr never opens a connection to a Bridge. Jobs and results travel over a shared Redis bus. The agent makes only outbound connections. The Bridge is the only component that opens connections to hardware. It drives BMCs over IPMI, Redfish, and SSH from inside the zone. No management connection originates outside the zone.
+
+<HubSpokeDiagram />
+
+## Vocabulary
+
+These terms mean exactly one thing each across the docs. The full list lives in the [glossary](/help/glossary).
+
+| Term           | Meaning                                                                                                                                                                                                                                 |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **device**     | Any physical asset Brokkr tracks: servers, bridges, switches, routers, and PDUs. Every device carries a coarse status (`PLANNED`, `STAGED`, `ACTIVE`, `MAINTENANCE`) and, once assigned, a role. An unassigned device is a valid state. |
+| **server**     | A device with the `Server` role: a compute host you rent out. Only servers carry the operational lifecycle the Bridges drive (`INVENTORY` → `PROVISIONING` → `PROVISIONED`, plus `OFFLINE`, `FAILED`, `DEPROVISIONING`).                |
+| **deployment** | One customer rental of one server: the selected OS, layers, SSH keys, and dates. The server row describes the hardware. The deployment describes the tenant's use of it.                                                                |
+| **zone**       | A data center. Each zone has its own Bridges, its own job queue, and its own Redis namespace, all keyed by the zone's UUID.                                                                                                             |
+| **saga**       | A named multi-step workflow Brokkr dispatches to a Bridge: `provision`, `deprovision`, `commission`, `reboot`, `power_on`, `power_off`, `network_scan`, `benchmarks`, and others.                                                       |
+| **plan**       | The persisted execution state of one saga run, correlated end to end by its `plan_id`.                                                                                                                                                  |
+| **atom**       | One hub-rendered configuration value in Redis that a Bridge reads, such as a device record, a netplan, or a DHCP config.                                                                                                                |
+| **phase**      | The hub-side position of a lifecycle job, from `REQUESTED` through `COMPLETED`.                                                                                                                                                         |
+
+## The components
+
+### The hub
+
+Brokkr is a NestJS API backed by PostgreSQL. It owns all state: inventory, IPAM, organizations, deployments, and RBAC. It decides what happens but never touches hardware. Brokkr has exactly two channels toward a zone, both over the shared Redis:
+
+1. **Jobs.** Brokkr enqueues `saga.run` messages onto the zone's BullMQ queue. Each job names the saga, the target device, a `plan_id`, and a payload.
+2. **Atoms.** Brokkr renders configuration into zone-prefixed Redis keys that Bridges read.
+
+Config atoms (netplan, DHCP, DNS, VRRP, device records, server tokens, and device secrets) are wrapped in one canonical envelope: `status` (`ok` or `failed`), the `value`, and a `written_at` timestamp. Several other hub-written values are raw: the iPXE URL and the rescue SSH keys (plain strings), the device pointer keys (a bare device id) and their pointer-tracking arrays, and the `device:{id}:data` monitoring blob (bare JSON). A failure is written to the same key with a short TTL, so a Bridge polling for a missing config sees a definitive "no" instead of retrying forever. When a Bridge needs an atom that is absent, it enqueues a `render.request`. Brokkr resolves the entity and writes the atom back.
+
+Results flow the other way through a single shared `results:inbox` queue: step-level saga results, saga completions, discovery payloads, per-device health checks, and render requests. Zone liveness does not use the queue. Each Bridge instance keeps a presence key alive in the zone's Redis namespace, and a hub cron sweeps those keys to mark each zone online or offline.
+
+Brokkr also tracks each lifecycle operation (provision, reprovision, reboot, power on/off, commission, and deprovision) as a **lifecycle job** with an enforced phase machine: `REQUESTED` → `SCHEDULED` → `AUTHORIZING` → `DISPATCHED` → `RUNNING` → `COMPLETED`, with `FAILED` and `ABORTED` as exits. `DEFERRED` parks the job to retry and re-enters `AUTHORIZING`. Other sagas (benchmarks, inventory collection, and network scans) dispatch straight to the queue with no lifecycle job. Provisions and reprovisions add one more phase, described below.
+
+### Bridges
+
+The Bridge is the zone-local executor. It sits on the zone's network, consumes the zone's job queue, and runs each saga step by step. Steps power servers through their BMCs, serve DHCP and PXE boot, deploy operating systems, and collect hardware inventory.
+
+Sagas are crash-safe. The plan, which records every step's status, result, and attempt count, persists in Redis rather than in process memory. If a Bridge dies mid-step, the next runner finds the step still marked `RUNNING`, resets it to `PENDING`, and executes it again. A step that fails can rewind the plan to an earlier step and retry, up to a per-step attempt limit. A Bridge that shuts down or loses the device lock parks the current step as `PENDING` instead of reporting a failure, because a drain is not a device fault. These resets are deliberately not reported. Every step start, failure, and completion is reported back to Brokkr through `results:inbox`, so the UI shows live progress.
+
+You can run more than one Bridge per zone. Agent reports can land on any Bridge, and all Bridges persist to the shared Redis, so Bridges are interchangeable peers. See [high availability](/zones/high-availability).
+
+### The agent
+
+The Brokkr Live Agent runs on the device itself, inside the ephemeral live OS used for discovery and rescue, and during provisioning. It only dials out. The agent opens one long-lived TLS gRPC session per Bridge in its zone, authenticated by a device-bound bearer token that it renews over the same session.
+
+Work flows down the streams the agent opened. The Bridge pushes work requests, topology updates, and cancellations. The agent executes them and reports results, progress, logs, and traces back as independent unary calls that any Bridge can receive. When the zone's Bridge set changes, a topology update tells the agent, and the agent reconciles its sessions: it opens new sessions, drops removed ones, and backs off exponentially on reconnects. Agent upgrades use the same channel. The Bridge streams the new bundle over the existing session, and the agent verifies its SHA-256 and swaps it atomically. For details, read [the Brokkr Live Agent](/infrastructure/host-agent).
+
+## How a provision ends
+
+A finished saga does not mark a server `provisioned`. Provision and reprovision jobs move to `AWAITING_PHONE_HOME` and complete only when the deployed OS boots and phones home to Brokkr with its device token. A watchdog deadline fails the job if the callback never arrives. The phone-home call is the proof that provisioning worked. A completed saga alone does not change the status. See the [deployment lifecycle](/deployments/lifecycle).
+
+## Where next
+
+- Read [What is {BRAND_NAME}](/brokkr-overview) for the product-level tour.
+- Read [Create and enroll a zone](/zones/create-and-enroll) to stand up your first Bridge.
+- Read [Security model](/brokkr-security) for tokens, sealing, and the trust boundaries between these components.
+- Read [Bridge and agent plugins](/extend/bridge-and-agent-plugins) to extend the Bridge and the agent.

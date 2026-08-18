@@ -1,0 +1,100 @@
+---
+title: 'DHCP and PXE'
+description: Per-prefix DHCP and PXE serving derived from IPAM. Modes are authoritative, proxy, or off, with lease control, custom options, and live lease visibility.
+section: network
+order: 2
+slug: network/dhcp-and-pxe
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+Brokkr derives DHCP configuration from [IPAM](/network/ipam). Set a serving mode on a prefix and the zone's Bridge answers DHCP for that segment. Address pools, routers, and reservations come from the records IPAM already holds. There is no dhcpd.conf to keep in sync, so the address plan and the DHCP server cannot drift apart.
+
+## Serving modes
+
+Every prefix carries an optional DHCP mode. The Bridge dispatches per prefix, so one Bridge can be authoritative on its provisioning segment while proxying PXE on another.
+
+| Mode            | What the Bridge does                                                                                 |
+| --------------- | ---------------------------------------------------------------------------------------------------- |
+| Unset           | Nothing. DHCP is not configured for this prefix.                                                     |
+| `AUTHORITATIVE` | Assigns addresses and serves boot info. The Bridge is the sole DHCP server for the prefix.           |
+| `PROXY`         | Serves PXE boot info only. Another server assigns addresses.                                         |
+| `OFF`           | Explicitly disabled. Distinct from unset; records that disabling DHCP for this prefix is deliberate. |
+
+## Configure a prefix
+
+1. Open the zone, then the DHCP page for the prefix. The same configuration card appears on the prefix's IPAM edit page.
+2. Select a DHCP mode.
+3. Fill in the mode's fields and save.
+
+Switching modes does not clear stored values. If you switch a prefix from Proxy to Authoritative and back, the MAC allowlist is preserved.
+
+## Serve preconditions
+
+A prefix's DHCP policy reaches the wire only when all of the following hold. Brokkr rejects an enable up front when it can check the condition. The Bridge enforces the rest per subnet: it drops the offending subnet and continues to serve its other subnets.
+
+- **The prefix is assigned to a zone.** DHCP configuration publishes per zone, so Brokkr rejects a serving mode on a prefix with no zone. Assign the prefix to a zone first. Brokkr also rejects IPv6 prefixes and `NAT`-role prefixes.
+- **The Bridge holds an address inside the prefix, or a relay is configured.** The in-subnet address is the subnet's DHCP server identity. The Bridge skips a subnet where no Bridge NIC address falls inside the CIDR and no relay agent IP is set. The [zone network setup](/zones/network-setup) flow avoids this case by building on prefixes reflected from the Bridge's own NICs.
+- **An authoritative subnet has something to serve.** `AUTHORITATIVE` with no `ACTIVE` in-prefix IP range and no reservations is rejected as "nothing to serve" and dropped. `PROXY` needs no pool because it never assigns addresses.
+- **Routers come only from the gateway.** The routers option (DHCP option 3) derives exclusively from the prefix's gateway IP. If the prefix has no gateway, leases carry no default route.
+
+<Warning>
+  When the Bridge skips a subnet, it logs a warning locally and nothing appears in Brokkr. A prefix that looks enabled
+  can serve nothing.
+</Warning>
+
+## Authoritative mode
+
+**Lease TTL** sets how long each lease is valid, in seconds. The minimum is 120 and the default is 600. A client may request a shorter lease. The Bridge clamps the request between 120 seconds and the configured TTL. The renewal (T1) and rebind (T2) timers derive automatically at 25% and 50% of the granted lease.
+
+**Custom DHCP options** accept up to 32 code/value pairs. Codes range from 1 to 254 and values are limited to 255 characters. The Bridge rejects duplicate codes. Reserved codes are auto-managed and cannot be set manually. These are the codes the Bridge computes itself, such as the subnet mask, routers, DNS servers, and the lease timers. For any other code, your value takes precedence over the value the Bridge would have generated.
+
+**DHCP relay agent IP** identifies this prefix for relayed traffic. When a relay forwards requests from another segment, the Bridge matches the relay's address to this field to select the prefix. An active associated prefix requires this address.
+
+A restarting Bridge rehydrates its lease table from the zone's lease store and does not answer until hydration succeeds. When a client declines an address, the Bridge quarantines it rather than re-offering it immediately.
+
+## Proxy mode
+
+`PROXY` mode is the standard proxyDHCP arrangement for segments that already have a DHCP server. The existing server keeps assigning addresses and needs no reconfiguration. The Bridge answers only PXE clients, identified by the `PXEClient` vendor class or the client-architecture option, with an offer that carries the TFTP server and bootfile but no address. The client merges the two answers and boots. The Bridge also answers the PXE follow-up request on the boot-server port.
+
+Proxy mode gates PXE responses with a MAC allowlist, so unknown hardware cannot network-boot from the Bridge:
+
+- Devices already known to this prefix can PXE-boot automatically.
+- Add MAC addresses for hardware not yet discovered, such as new servers awaiting [commissioning](/infrastructure/inventory-and-discovery).
+- Leave the list empty to allow only known devices.
+
+If another server legitimately owns lease assignment on the segment, check **External authoritative DHCP server on this segment**. This records the arrangement and silences the Bridge's no-lease-authority warning for the prefix.
+
+## iPXE build targets
+
+Each prefix selects the PXE firmware flavor the Bridge hands to booting machines. All three targets are UEFI builds. The Bridge serves only `.efi` binaries and has no legacy BIOS build.
+
+| Target    | Firmware                                                        |
+| --------- | --------------------------------------------------------------- |
+| `IPXE`    | iPXE with its own native NIC drivers                            |
+| `SNP`     | iPXE on the firmware's network stack (SNP), driving any NIC     |
+| `SNPONLY` | iPXE on the firmware's network stack, driving only the boot NIC |
+
+Two refinements apply per request. A per-device override, set on the server's settings page and shown in the Reservations table, takes precedence over the prefix-level target, so one NIC that needs the SNP build does not force the whole segment onto SNP. The Bridge also reads the client-architecture option to pick the bootfile build that matches each machine's architecture.
+
+Once a client is already running iPXE, detected by its user class, the Bridge stops offering the bootfile so the chainload does not loop. The target selects the firmware flavor only; the Bridge serves whichever iPXE build it carries. [Network boot](/network/network-boot) covers what happens after iPXE loads.
+
+## Per-prefix DNS
+
+A prefix can supply its own upstream resolvers. An unset list inherits the zone's resolvers. The Bridge runs a single DNS server for the zone, so the override is not scoped to the prefix's clients. The first non-empty resolver list, ordered by prefix id, replaces the upstream resolvers for the whole Bridge.
+
+<Note>
+  A per-prefix serve on/off toggle is stored but not yet enforced (in development). Switching a prefix off only keeps
+  its resolver override from being considered. DNS still listens on every interface that hosts a DHCP subnet.
+</Note>
+
+When the Bridge advertises itself as the resolver, it also includes its peer Bridge whenever the peer's address falls inside the prefix, so clients keep resolving through a [Bridge failover](/zones/high-availability).
+
+## Runtime status
+
+The prefix DHCP page shows the serving state next to the configuration:
+
+- **Derived Serving Info** shows the candidate next-server (TFTP) address and DNS servers, computed from IPAM: the VRRP VIP when one is set, otherwise the Bridge's NIC addresses inside the prefix. The panel is advisory and read-only. The Bridge puts a next-server on the wire only when PXE is configured, so the displayed address can differ from what is actually served.
+- **IP Ranges** lists the address ranges inside the prefix used for DHCP allocation, managed in [IPAM](/network/ipam).
+- **Reservations** lists static assignments derived from device interface addresses: MAC, IP, hostname, iPXE target, and links to the device and interface.
+- **DHCP Leases** is the live lease table the zone's Bridge currently holds for this prefix, refreshed every 30 seconds with relative expiry times.

@@ -1,0 +1,338 @@
+---
+title: 'Configuration reference'
+description: 'Every configuration key for the hub and the Bridge: identity secrets, datastores, integrations, and white-label branding.'
+section: self-host
+order: 4
+slug: self-host/configuration-reference
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+This page lists every configuration key for the {BRAND_NAME} components. All components read the same configuration contract, so the same keys apply wherever a component runs. Docker Compose is the supported deploy target today.
+
+Each Compose unit ships a commented `.env.example` (`deploy/self-hosted/hub/`, `deploy/self-hosted/bridge/`). Start from that file. It is not exhaustive; some integration keys on this page must be added by hand. See [Docker Compose](/self-host/docker-compose) for the deploy walkthrough.
+
+## Images
+
+| Key                   | Value                                  |
+| --------------------- | -------------------------------------- |
+| `BROKKR_APP_IMAGE`    | `hydrahost/brokkr-hub` (Docker Hub)    |
+| `BROKKR_BRIDGE_IMAGE` | `hydrahost/brokkr-bridge` (Docker Hub) |
+
+Both images are public and multi-arch (amd64 and arm64). New versions are published on each tagged release. To run a source-built fork, point these keys at your own registry.
+
+## Identity keys
+
+Three secrets define your installation's cryptographic identity. Generate each secret once and back it up. Rotation is a breaking event:
+
+| Key                      | Runs on | Purpose                                                                            | Rotation invalidates    |
+| ------------------------ | ------- | ---------------------------------------------------------------------------------- | ----------------------- |
+| `BROKKR_HUB_PRIVATE_KEY` | hub     | X25519 private key (base64, 32 bytes) for zone enrollment and device-secret crypto | Every zone enrollment   |
+| `DEVICE_TOKEN_PEPPER`    | hub     | Pepper for hashing device tokens at rest                                           | Every device token      |
+| `BRIDGE_AT_REST_KEY`     | Bridge  | AES-256 at-rest encryption key for device secrets the Bridge caches                | The Bridge secret cache |
+
+```bash
+openssl rand -base64 32   # BROKKR_HUB_PRIVATE_KEY, BRIDGE_AT_REST_KEY
+openssl rand -hex 32      # DEVICE_TOKEN_PEPPER
+```
+
+Each key fails loud when missing or malformed:
+
+- `BROKKR_HUB_PRIVATE_KEY` unset: hub crypto stays dormant and every `POST /zones/<id>/enroll` returns 503, so no Bridge can enroll. Present but malformed: the hub throws at boot. Confirm the key loaded by checking the boot log for `Hub crypto loaded; hub_pub=<hex>`.
+- `DEVICE_TOKEN_PEPPER` unset or blank: the hub fails closed. There is no fallback.
+- `BRIDGE_AT_REST_KEY`: the Bridge refuses to start on the shipped placeholder. Generate the key once per zone and set the identical value on every Bridge in that zone, because they share the secret cache.
+
+See [Secrets and device tokens](/security/secrets-and-device-tokens) for how these keys are used.
+
+## Datastores
+
+Postgres and Redis are the only hard dependencies:
+
+| Key            | Purpose                                          |
+| -------------- | ------------------------------------------------ |
+| `DATABASE_URL` | Hub Postgres, the source of truth                |
+| `REDIS_URL`    | Cache and the hub-to-Bridge message bus (BullMQ) |
+
+The self-hosted hub Compose unit assembles `DATABASE_URL` from `PG_USER`, `PG_DB`, and `PG_PASSWORD`, and points `REDIS_URL` at the bundled Redis. On the Bridge, `REDIS_URL` points at the hub's Redis and includes the zone's Redis ACL credential.
+
+<Warning>Keep Redis on a private network or VPN. Never expose `:5432` or `:6379` at the edge.</Warning>
+
+## Auth and first admin
+
+| Key                                            | Purpose                                                                                                                     |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET`                           | Session signing secret; rotating it invalidates all sessions                                                                |
+| `BASE_URL`                                     | Public URL browsers hit, used for auth callbacks and CORS. Must match your TLS certificate                                  |
+| `PHONE_HOME_BASE_URL`                          | URL provisioned machines call home to. Set an address reachable from your provisioning networks rather than the public FQDN |
+| `BROKKR_ADMIN_EMAIL` / `BROKKR_ADMIN_PASSWORD` | Operator bootstrap. On boot, the hub idempotently ensures an operator org and admin Owner exist                             |
+
+<Warning>
+  The admin password is written only on first creation. Changing it in `.env` later does nothing. Change it away from
+  well-known defaults before first boot on any reachable deployment.
+</Warning>
+
+## Zone identity (Bridge)
+
+| Key                         | Purpose                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `BROKKR_ZONE_ID`            | The zone's UUID from the hub UI. Also the Bridge's Redis namespace                               |
+| `BROKKR_REGISTRATION_TOKEN` | Registration token minted on the zone's overview page. Shown once, single-use, expires after 24h |
+| `BRIDGE_HOSTNAME`           | Unique name per Bridge, used for leader election and agent dial-back                             |
+| `BROKKR_HUB_URL`            | The hub API, used for the one enrollment call                                                    |
+| `BRIDGE_URL`                | Base URL the Bridge advertises to machines. Use its provisioning-NIC IP, never loopback          |
+
+See [Create and enroll a zone](/zones/create-and-enroll). A second Bridge in the same zone needs the same `BRIDGE_AT_REST_KEY`, a unique `BRIDGE_HOSTNAME`, and its own token. Leader election runs on every Bridge automatically. See [High availability](/zones/high-availability).
+
+## Mode toggles
+
+| Key                        | Effect                                                                                                                                                                                                                                 |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOCAL_SIMULATION_ENABLED` | Sim/trial bypass. Always `false` in production; `NODE_ENV=production` refuses the bypass                                                                                                                                               |
+| `GRPC_INSECURE`            | `true` makes agents dial Bridge gRPC over plaintext. The shipped Compose file defaults it to `true`; the application default is `false`. Set `false` only once a TLS terminator fronts the gRPC port with a cert from your baked-in CA |
+| `BRIDGE_SYNC_ENABLED`      | Sync the discovery OS image set from an asset host (see below)                                                                                                                                                                         |
+| `LOG_LEVEL`                | Logging verbosity (`info`, `debug`, ...)                                                                                                                                                                                               |
+
+## OS asset sync
+
+The Bridge image bakes in the iPXE binaries, the initrd overlays, and the bridge-agent bundle. It does not bake in the discovery OS image set (`vmlinuz`, `initrd.img`, `brokkr-discovery.iso`) that discovery PXE boot serves. Only sync populates that set. With `BRIDGE_SYNC_ENABLED=false`, the Bridge logs an error at boot while the set is missing and discovery boots fail. Startup continues unless `BRIDGE_DISCOVERY_IMAGES_STRICT=true`. Set `BRIDGE_SYNC_ENABLED=true` to pull the set from an asset host. When sync is on, you must also set `DISCOVERY_BASE_URL`, because its built-in default is a non-resolving placeholder. `BROKKR_LIVE_VERSION` defaults to a real version (`1.0.4`); set it only to pin a different one:
+
+```bash
+DISCOVERY_BASE_URL=https://assets.example.com/brokkr-live
+BROKKR_LIVE_VERSION=1.0.4
+```
+
+With sync enabled, a defined-but-empty `DISCOVERY_BASE_URL` builds a broken sync URL. Leave the variable unset so the sync at least fails on the placeholder. When sync is off, `DISCOVERY_BASE_URL` is inert. `BROKKR_LIVE_VERSION` is still read on every registration heartbeat and reported as `brokkr_live_version` in the Bridge's instance registry. In that case it is reporting-only metadata, and nothing is downloaded.
+
+`OS_LAYER_URL` is independent of the sync toggle. The Bridge never downloads OS-customization [layers](/os-builds/layers). Provisioned machines fetch layer blobs from `<OS_LAYER_URL>/sha256:<hash>` at deploy time. Its default is another non-resolving placeholder, so set it whenever you deploy layer-based OS builds:
+
+```bash
+OS_LAYER_URL=https://assets.example.com/os-layers/blobs
+```
+
+<Note>
+  The Bridge validates `OS_LAYER_URL` on every boot regardless of the sync toggle. A defined-but-empty value fails loud
+  and blocks startup.
+</Note>
+
+## Integrations
+
+Integrations are [plugins](/extend/plugins-overview) that enable themselves when their full variable set is non-empty. Leave a key empty or unset to disable its integration. A missing key never fails the boot; the hub silently disables the plugin.
+
+| Integration        | Variables                                                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Mailgun (email)    | `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, `MAILGUN_FROM_ADDRESS`                                                               |
+| Radar (geocoding)  | `RADAR_SECRET_KEY`                                                                                                        |
+| HubSpot (leads)    | `HUBSPOT_ACCESS_TOKEN`, `HUBSPOT_PORTAL_ID`, `HUBSPOT_CONTACT_OWNER_ID`, plus the demand-request form and object-type IDs |
+| Salesforce (leads) | `SALESFORCE_MY_DOMAIN_URL`, `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET`                                            |
+
+When both HubSpot and Salesforce leads are configured, HubSpot stays active and Salesforce is disabled. Clear the `HUBSPOT_*` variables to switch.
+
+The hub `.env.example` also carries keys no self-hosted deployment can use. The Pylon helpdesk plugin (`PYLON_API_TOKEN`, `PYLON_ACCOUNT_ID`, `BROKKR_ADMIN_ORG_ID`) and the ClickHouse analytics plugin (`CLICKHOUSE_*`) are proprietary. They ship only in internal managed builds and are absent from the open-source tree. The self-hosted hub logs each proprietary plugin as `not installed (BOSS tree)` and skips it at boot, ignoring their keys, whether you run the published image or build from source. The `VAULT_*` and `NETBOX_*` keys are inert; no hub code reads them. Keep the shipped placeholders as-is.
+
+## White-label branding
+
+Nine `VITE_*` variables brand the web UI. The web build reads them at build time (`import.meta.env`), so the published images ship the defaults. Exporting them at `docker build` time is not enough: the hub Dockerfile declares no `VITE_*` build args, and the build context excludes `.env` files. To rebrand, add `ARG` and `ENV` lines for these variables to `apps/api/Dockerfile` and build the hub image from source. Alternatively, set them in the shell and run the web build (`pnpm build`) outside Docker.
+
+| Variable             | Default                       |
+| -------------------- | ----------------------------- |
+| `VITE_BRAND_NAME`    | `BoSS`                        |
+| `VITE_COMPANY_NAME`  | falls back to the brand name  |
+| `VITE_SUPPORT_EMAIL` | `support@example.com`         |
+| `VITE_LEGAL_EMAIL`   | `legal@example.com`           |
+| `VITE_COMPANY_URL`   | `https://example.com`         |
+| `VITE_TERMS_URL`     | `<company URL>/terms`         |
+| `VITE_PRIVACY_URL`   | `<company URL>/privacy`       |
+| `VITE_SECURITY_URL`  | falls back to the company URL |
+| `VITE_HELPDESK_URL`  | empty                         |
+
+`VITE_COMPANY_URL` must be an `http://` or `https://` URL; anything else falls back to the default, and trailing slashes are stripped.
+
+## GPU category catalog
+
+The marketplace category cards (name, chipset, description, badges, and CTA) live in one static module: `apps/web/src/lib/category-data.ts` (`inventoryCategories`). The catalog is compiled into the SPA and is not environment-driven. Edit the array and rebuild the web app to change it. The displayed starting price is the exception. Every inventory route merges live category pricing and availability from the hub API over the static array (`mergeCategoryPrices`), so the hard-coded `startPrice` only shows when no live price matches the chipset.
+
+## Complete variable reference
+
+Every variable each component reads at runtime, extracted from the source. `DATABASE_URL` and `PGBOUNCER_CONNECTION_STRING` on the hub are assembled by the Compose file from `PG_USER`, `PG_PASSWORD`, and `PG_DB` (with `REDIS_URL` pointing at the bundled Redis); those, the image tags, and the published host ports are consumed by the Compose files themselves and appear in the [Docker Compose examples](/self-host/docker-compose).
+
+### Hub
+
+| Variable                                   | Default                                                     | Required | What it controls                                                                                                                                                                                                                                          |
+| ------------------------------------------ | ----------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_BYPASS_ALLOWED_ENVS`                 | `dev`                                                       | no       | Comma separated list of HH_ENV values where the auth bypass and local simulation flags are permitted to activate                                                                                                                                          |
+| `AUTH_BYPASS_ENABLED`                      | blank                                                       | no       | Set `true` to request the dev auth bypass (CSRF off, all origins trusted, relaxed password policy, rate limiter off, seeded test identities); boot refuses with an error if set while NODE_ENV is production or HH_ENV is not in AUTH_BYPASS_ALLOWED_ENVS |
+| `BASE_URL`                                 | blank (dev falls back to `http://localhost:5173`)           | yes      | Public URL of the hub, used as the CORS origin, a Better Auth trusted origin, the email link base, and the phone home fallback; boot throws when NODE_ENV is production and it is unset                                                                   |
+| `BETTER_AUTH_TRUSTED_ORIGINS`              | blank                                                       | no       | Comma separated extra origins trusted by Better Auth in addition to BASE_URL and the localhost defaults                                                                                                                                                   |
+| `BRAND_NAME`                               | `BoSS`                                                      | no       | Product brand name used in branding strings and as the default operator organization name                                                                                                                                                                 |
+| `BROKKR_ADMIN_EMAIL`                       | `admin@brokkr.local`                                        | no       | Email of the first boot instance operator admin user seeded at startup                                                                                                                                                                                    |
+| `BROKKR_ADMIN_ORG_ID`                      | `00000000-0000-0000-0000-000000000000`                      | no       | UUID of the instance operator organization seeded at boot                                                                                                                                                                                                 |
+| `BROKKR_ADMIN_ORG_NAME`                    | BRAND_NAME value                                            | no       | Display name of the seeded instance operator organization                                                                                                                                                                                                 |
+| `BROKKR_ADMIN_PASSWORD`                    | `brokkr`                                                    | no       | Password for the first boot operator admin credential; the default is a well known login, rotate it on any reachable deployment                                                                                                                           |
+| `BROKKR_HUB_PRIVATE_KEY`                   | blank                                                       | no       | Base64 encoded 32 byte X25519 private key that enables Bridge zone enrollment; unset leaves the enrollment endpoint dormant (503), a malformed value fails boot                                                                                           |
+| `COMPANY_NAME`                             | BRAND_NAME value                                            | no       | Company name used in branding strings                                                                                                                                                                                                                     |
+| `DEVICE_DATA_RECONCILE_ENABLED`            | `true`                                                      | no       | Set `false` to pause the device data reconcile cron on this replica                                                                                                                                                                                       |
+| `DEVICE_HEALTH_CHECK_ENABLED`              | `true`                                                      | no       | Set `false` to pause the periodic device health check cron                                                                                                                                                                                                |
+| `DEVICE_TOKEN_BROKKR_LIVE_TTL_SECONDS`     | `86400`                                                     | no       | TTL in seconds for discovery OS device tokens                                                                                                                                                                                                             |
+| `DEVICE_TOKEN_PEPPER`                      | none                                                        | yes      | Secret pepper used to hash device tokens at rest; the hub throws at boot if unset or blank                                                                                                                                                                |
+| `DISABLE_AUTH_SESSION_CACHE`               | blank                                                       | no       | Set `true` (ignored in production) to disable the Redis session cache for Better Auth; used by e2e runs                                                                                                                                                   |
+| `DISABLE_WEBHOOK_CLEANUP_CRON`             | blank                                                       | no       | Set `true` to disable the webhook delivery cleanup cron                                                                                                                                                                                                   |
+| `DISABLE_WEBHOOK_RETRY_CRON`               | blank                                                       | no       | Set `true` to disable the webhook delivery retry cron                                                                                                                                                                                                     |
+| `EMAIL_FROM`                               | blank                                                       | no       | From address for outbound email; the SMTP transport stays disabled without it                                                                                                                                                                             |
+| `EMAIL_LOCAL_DELIVERY`                     | blank                                                       | no       | Set `true` on a local instance to actually deliver email instead of skipping sends when IS_LOCAL is true                                                                                                                                                  |
+| `EMAIL_PROVIDER`                           | `nodemailer`                                                | no       | Selects the outbound email transport from the plugin transport registry                                                                                                                                                                                   |
+| `GIT_SHA`                                  | `dev`                                                       | no       | Build identifier recorded as the handler version on discovery runs                                                                                                                                                                                        |
+| `GOOGLE_MAPS_API_KEY`                      | blank                                                       | no       | Enables the Google Maps geocoding plugin (address autocomplete) when set; wins the shared slot over Radar                                                                                                                                                 |
+| `GOOGLE_MAPS_API_URL`                      | `https://places.googleapis.com`                             | no       | Override for the Google Places API base URL                                                                                                                                                                                                               |
+| `HEARTBEAT_MONITOR_ENABLED`                | `true`                                                      | no       | Set `false` to pause the zone heartbeat monitor and heartbeat retention crons                                                                                                                                                                             |
+| `HH_ENV`                                   | blank                                                       | no       | Hydra internal environment name; gates the auth bypass allowlist and managed only alerts; unset on self hosted installs                                                                                                                                   |
+| `HH_FORCE_BOSS`                            | blank                                                       | no       | Set `true` to force the open source BOSS edition even when the managed edition package is installed; local escape hatch                                                                                                                                   |
+| `HUB_PORT`                                 | `3000`                                                      | no       | HTTP listen port for the hub server                                                                                                                                                                                                                       |
+| `HUBSPOT_TRACKER_PORTAL_ID`                | HUBSPOT_PORTAL_ID value                                     | no       | Portal id for the HubSpot tracking script injected into the SPA; set `off` to disable the tracker                                                                                                                                                         |
+| `INTERRUPTIBLE_EVICTION_REQUIRES_APPROVAL` | `true`                                                      | no       | Set `false` to let interruptible deployment evictions proceed without operator approval                                                                                                                                                                   |
+| `INVENTORY_COLLECTION_ENABLED`             | `true`                                                      | no       | Set `false` to pause the periodic inventory collection cron                                                                                                                                                                                               |
+| `IS_LOCAL`                                 | blank                                                       | no       | Set `true` to mark a local dev instance; email sends are skipped unless EMAIL_LOCAL_DELIVERY is true                                                                                                                                                      |
+| `LEGAL_EMAIL`                              | `legal@example.com`                                         | no       | Legal contact email used in branding strings                                                                                                                                                                                                              |
+| `LIFECYCLE_STUCK_SWEEP_ENABLED`            | `true`                                                      | no       | Set `false` to pause the lifecycle stuck job sweep cron on this replica                                                                                                                                                                                   |
+| `LOCAL_SIMULATION_ENABLED`                 | blank                                                       | no       | Set `true` (in a permitted env) to enable local simulation mode; boot refuses if set in a non permitted env                                                                                                                                               |
+| `LOG_LEVEL`                                | `log`                                                       | no       | Minimum Nest log level; unknown values fall back to log with a warning                                                                                                                                                                                    |
+| `MONITOR_ZABBIX_TOKEN`                     | blank                                                       | no       | API token for a managed Zabbix instance; unset skips Zabbix host provisioning                                                                                                                                                                             |
+| `NODE_ENV`                                 | blank                                                       | no       | `production` enables static SPA serving, makes BASE_URL mandatory, and hard blocks the auth bypass flags                                                                                                                                                  |
+| `NODE_TLS_REJECT_UNAUTHORIZED`             | blank                                                       | no       | Set `0` to skip TLS certificate verification on rediss connections                                                                                                                                                                                        |
+| `OS_LAYER_MANIFEST_URL`                    | `https://brokkr.assets.hydra.host/os-layers/releases/1.0.3` | no       | Manifest URL the container entrypoint uses to seed the OS layer catalog at start; empty disables the seed                                                                                                                                                 |
+| `PHONE_HOME_BASE_URL`                      | BASE_URL value                                              | no       | Base URL embedded in the phone home endpoint handed to devices, for when devices reach the hub at a different address than BASE_URL                                                                                                                       |
+| `QUALIFY_OS_SLUG`                          | `ubuntu-24.04`                                              | no       | OS layer slug deployed by the commissioning qualify provision step                                                                                                                                                                                        |
+| `RADAR_API_URL`                            | `https://api.radar.io`                                      | no       | Radar API base URL override                                                                                                                                                                                                                               |
+| `RADAR_PUBLISHABLE_KEY`                    | blank                                                       | no       | Browser safe Radar key written by the entrypoint into the SPA runtime env-config.js                                                                                                                                                                       |
+| `RADAR_SECRET_KEY`                         | blank                                                       | no       | Enables the Radar geocoding plugin when set, unless Google Maps is also configured                                                                                                                                                                        |
+| `REDIS_CA_CERT`                            | blank                                                       | no       | Path to a CA certificate file (PEM) trusted for TLS (rediss) Redis connections                                                                                                                                                                            |
+| `RUN_DB_MIGRATIONS`                        | `true`                                                      | no       | The entrypoint runs `prisma migrate deploy` on every start unless set to `false`; a failed migration aborts the container                                                                                                                                 |
+| `S3_ACCESS_KEY_ID`                         | blank                                                       | no       | S3 access key; all three S3 vars must be set to enable raw discovery payload upload                                                                                                                                                                       |
+| `S3_BUCKET`                                | `brokkr-device-data-dev`                                    | no       | S3 bucket that receives raw discovery collector payloads                                                                                                                                                                                                  |
+| `S3_ENDPOINT_URL`                          | blank                                                       | no       | S3 compatible endpoint URL for discovery payload uploads                                                                                                                                                                                                  |
+| `S3_SECRET_ACCESS_KEY`                     | blank                                                       | no       | S3 secret key                                                                                                                                                                                                                                             |
+| `SMTP_HOST`                                | blank                                                       | no       | SMTP server host; the transport is enabled only when both SMTP_HOST and EMAIL_FROM are set                                                                                                                                                                |
+| `SMTP_PASS`                                | blank                                                       | no       | SMTP auth password; auth requires both SMTP_USER and SMTP_PASS                                                                                                                                                                                            |
+| `SMTP_PORT`                                | `587`                                                       | no       | SMTP server port                                                                                                                                                                                                                                          |
+| `SMTP_SECURE`                              | blank                                                       | no       | Set `true` for implicit TLS on the SMTP connection                                                                                                                                                                                                        |
+| `SMTP_USER`                                | blank                                                       | no       | SMTP auth username                                                                                                                                                                                                                                        |
+| `SUPPORT_EMAIL`                            | `support@example.com`                                       | no       | Support contact email used in branding strings                                                                                                                                                                                                            |
+| `SUPPRESS_EXPECTED_AUTH_ERRORS`            | blank                                                       | no       | Set `true` to silence expected session and auth error logging                                                                                                                                                                                             |
+| `TRUST_PROXY`                              | blank                                                       | no       | Express trust proxy setting (`true`, hop count, or IP/CIDR list); only set behind a real edge proxy, an unparseable value fails boot                                                                                                                      |
+| `WEBVM_TERMINAL_ENABLED`                   | `true`                                                      | no       | Set `false` to disable the WebVM browser terminal plugin                                                                                                                                                                                                  |
+
+### Hub plugin keys
+
+Read only when the named plugin is installed and enabled; absent plugins log "not installed" and skip them.
+
+| Variable                                | Default                    | Required | What it controls                                                                                                 |
+| --------------------------------------- | -------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
+| `CLICKHOUSE_HOST`                       | blank                      | no       | Analytics plugin: ClickHouse host; all three CLICKHOUSE vars must be set to enable the plugin                    |
+| `CLICKHOUSE_PASSWORD`                   | blank                      | no       | Analytics plugin: ClickHouse password                                                                            |
+| `CLICKHOUSE_USER`                       | blank                      | no       | Analytics plugin: ClickHouse user                                                                                |
+| `HUBSPOT_ACCESS_TOKEN`                  | blank                      | no       | HubSpot leads plugin: private app token; all five HUBSPOT vars must be set to enable the plugin                  |
+| `HUBSPOT_CONTACT_OWNER_ID`              | blank                      | no       | HubSpot leads plugin: owner assigned to created contacts                                                         |
+| `HUBSPOT_DEMAND_REQUEST_OBJECT_TYPE_ID` | blank                      | no       | HubSpot leads plugin: custom object type id for demand requests                                                  |
+| `HUBSPOT_FORM_ID_DEMAND_REQUEST`        | blank                      | no       | HubSpot leads plugin: form id for demand request submissions                                                     |
+| `HUBSPOT_PORTAL_ID`                     | blank                      | no       | HubSpot leads plugin: portal id                                                                                  |
+| `MAILGUN_API_KEY`                       | blank                      | no       | Mailgun email plugin: API key; requires MAILGUN_DOMAIN and a from address                                        |
+| `MAILGUN_API_URL`                       | `https://api.mailgun.net`  | no       | Mailgun email plugin: API base URL override                                                                      |
+| `MAILGUN_DOMAIN`                        | blank                      | no       | Mailgun email plugin: sending domain                                                                             |
+| `MAILGUN_FROM_ADDRESS`                  | EMAIL_FROM value           | no       | Mailgun email plugin: from address                                                                               |
+| `PYLON_ACCOUNT_ID`                      | blank                      | no       | Pylon helpdesk plugin: account id; requires PYLON_API_TOKEN and BROKKR_ADMIN_ORG_ID                              |
+| `PYLON_API_TOKEN`                       | blank                      | no       | Pylon helpdesk plugin: API token                                                                                 |
+| `PYLON_BROKKR_HOST_TEMPLATE`            | `brokkr.{env}.example.com` | no       | Pylon helpdesk plugin: hostname template for links back to the hub in tickets                                    |
+| `PYLON_OPS_CONTACT_EMAIL`               | `ops@example.com`          | no       | Pylon helpdesk plugin: ops contact email attached to tickets                                                     |
+| `SALESFORCE_CLIENT_ID`                  | blank                      | no       | Salesforce leads plugin: connected app client id; requires SALESFORCE_MY_DOMAIN_URL and SALESFORCE_CLIENT_SECRET |
+| `SALESFORCE_CLIENT_SECRET`              | blank                      | no       | Salesforce leads plugin: connected app client secret                                                             |
+| `SALESFORCE_LEAD_OWNER_ID`              | blank                      | no       | Salesforce leads plugin: owner assigned to created leads                                                         |
+| `SALESFORCE_MY_DOMAIN_URL`              | blank                      | no       | Salesforce leads plugin: My Domain URL                                                                           |
+| `SALESFORCE_API_VERSION`                | blank                      | no       | Salesforce leads plugin: API version override                                                                    |
+
+### Bridge
+
+The Bridge also exposes advanced tuning for BullMQ queues, device locks, Redis cache TTLs, SNMP, Telegraf, and stranded plan sweeps; those keep safe defaults and are listed in the source under apps/bridge. The variables below are the operational surface.
+
+| Variable                            | Default                    | Required | What it controls                                                                                                                                     |
+| ----------------------------------- | -------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BRIDGE_AT_REST_KEY`                | none                       | yes      | 32 byte base64 key encrypting BMC credentials, tokens, and secrets at rest in Redis; the Bridge refuses to start without it                          |
+| `BRIDGE_ORCHESTRATOR_ENABLED`       | none                       | yes      | Explicit `true`/`false` gate for the startup tasks (leader election, BullMQ, gRPC, TFTP, sync); unset throws, `false` runs a degraded HTTP only mode |
+| `BROKKR_ZONE_ID`                    | none                       | yes      | Zone UUID issued by Brokkr; scopes all Redis keys and queues; empty refuses to start when the orchestrator is enabled                                |
+| `AGENT_AUTH_DEVICE_TTL_S`           | `86400`                    | no       | TTL in seconds for device agent auth tokens                                                                                                          |
+| `AGENT_AUTH_DISCOVERY_TTL_S`        | `86400`                    | no       | TTL in seconds for discovery agent auth tokens                                                                                                       |
+| `AGENT_AUTH_TOKEN_BYTES`            | `32`                       | no       | Random byte length of generated agent auth tokens (minimum 16)                                                                                       |
+| `ANALYTICS_ENABLED`                 | `false`                    | no       | Enables analytics reporting                                                                                                                          |
+| `BRIDGE_ASSETS_DIR`                 | app assets dir             | no       | Overrides the directory containing bundled assets (iPXE builds, templates); `ASSETS_DIR` is the legacy fallback                                      |
+| `BRIDGE_CHAIN_REACHABILITY_STRICT`  | `false`                    | no       | When `true`, a failed PXE chain reachability check aborts startup instead of warning                                                                 |
+| `BRIDGE_DISCOVERY_IMAGES_STRICT`    | `false`                    | no       | When `true`, missing discovery images fail startup instead of warning                                                                                |
+| `BRIDGE_GRPC_DIALBACK_HOST`         | blank                      | no       | Host the on device agent dials back for gRPC, rendered into the initrd config                                                                        |
+| `BRIDGE_HOSTNAME`                   | OS hostname                | no       | Bridge instance identity for leader election and DNS self records                                                                                    |
+| `BRIDGE_IPXE_BUILDS_STRICT`         | `false`                    | no       | When `true`, missing iPXE build artifacts fail startup instead of warning                                                                            |
+| `BRIDGE_SSH_PRIVKEY_PATH`           | blank                      | no       | Fallback path (after `SSH_KEY_PATH`) to the Bridge SSH private key                                                                                   |
+| `BRIDGE_SYNC_ENABLED`               | `true`                     | no       | Enables the background sync of discovery images from asset hosting                                                                                   |
+| `BRIDGE_TLS_TERMINATED`             | `false`                    | no       | Declares TLS is terminated in front of the Bridge, relaxing the chain reachability check                                                             |
+| `BRIDGE_URL`                        | `https://brokkr.lan`       | no       | Public base URL of this Bridge embedded in iPXE scripts and initrd config                                                                            |
+| `BROKKR_ENV`                        | blank                      | no       | Environment name (resolution order `BROKKR_ENV`, `HH_ENV`, `ENVIRONMENT`) driving default asset URLs and TLS policy                                  |
+| `BROKKR_HUB_URL`                    | blank                      | no       | Brokkr base URL for zone enrollment; unset leaves the enrollment bootstrap dormant                                                                   |
+| `BROKKR_LIVE_INITIAL_DELAY_SECONDS` | `90`                       | no       | Initial delay before polling for discovery OS readiness during lifecycle jobs                                                                        |
+| `BROKKR_LIVE_VERSION`               | `1.0.4`                    | no       | Version of the discovery OS image the Bridge serves                                                                                                  |
+| `BROKKR_LIVE_WAIT_SECONDS`          | `1800`                     | no       | Maximum wait for the discovery OS to come up during lifecycle jobs                                                                                   |
+| `BROKKR_REGISTRATION_TOKEN`         | blank                      | no       | One time token used to enroll this zone with Brokkr                                                                                                  |
+| `DISCOVERY_ARCHITECTURES`           | `amd64,arm64`              | no       | Comma list of CPU architectures to sync discovery images for                                                                                         |
+| `DISCOVERY_BASE_URL`                | env derived placeholder    | no       | Base URL for downloading discovery OS images; set it to your asset host                                                                              |
+| `ENVIRONMENT`                       | `prod`                     | no       | Deployment environment name; `dev` and `local` relax TLS and SSH host key policies                                                                   |
+| `GRPC_ENABLED`                      | `true`                     | no       | Enables the agent facing gRPC server                                                                                                                 |
+| `GRPC_EXTERNAL_PORT`                | `443`                      | no       | Externally advertised gRPC port for agents                                                                                                           |
+| `GRPC_INSECURE`                     | `false`                    | no       | Tells rendered agents to dial gRPC without TLS                                                                                                       |
+| `GRPC_INTERNAL_HOST`                | `127.0.0.1`                | no       | Bind host of the internal gRPC listener                                                                                                              |
+| `GRPC_INTERNAL_PORT`                | `9082`                     | no       | Bind port of the internal gRPC listener                                                                                                              |
+| `HOST`                              | `127.0.0.1`                | no       | HTTP listen host                                                                                                                                     |
+| `HTTPS_DOWNLOAD_TIMEOUT`            | `3600`                     | no       | Overall timeout in seconds for artifact downloads                                                                                                    |
+| `HTTPS_RETRY_ATTEMPTS`              | `3`                        | no       | Retry attempts for artifact downloads                                                                                                                |
+| `HTTPS_RETRY_DELAY`                 | `5`                        | no       | Delay in seconds between download retries                                                                                                            |
+| `HTTPS_STALL_TIMEOUT`               | `120`                      | no       | Per read idle timeout so a mid stream stall cannot hang a download                                                                                   |
+| `HTTPS_VERIFY_SSL`                  | `true`                     | no       | TLS verification for artifact downloads; `false` is only permitted in local, dev, or simulation                                                      |
+| `IPMI_COMMAND_TIMEOUT`              | `30`                       | no       | Timeout in seconds for ipmitool commands                                                                                                             |
+| `IPMITOOL_BIN`                      | found on PATH              | no       | Explicit path to the ipmitool binary                                                                                                                 |
+| `JOB_TTL_SECONDS`                   | `7200`                     | no       | TTL for job records in Redis                                                                                                                         |
+| `LEADER_HEARTBEAT_TIMEOUT_SECONDS`  | `15`                       | no       | Heartbeat timeout for leader election                                                                                                                |
+| `LEADER_RENEW_INTERVAL_SECONDS`     | `10`                       | no       | Leader lease renew interval                                                                                                                          |
+| `LEADER_TTL_SECONDS`                | `30`                       | no       | Leader lease TTL; must exceed renew interval plus heartbeat timeout                                                                                  |
+| `LIFECYCLE_WORKER_CONCURRENCY`      | `10`                       | no       | Concurrency of the lifecycle queue worker                                                                                                            |
+| `LOCAL_SIMULATION_ENABLED`          | `false`                    | no       | Enables local BMC simulation mode                                                                                                                    |
+| `LOG_FORMAT`                        | `json`                     | no       | Log output format, `json` or `console`                                                                                                               |
+| `LOG_LEVEL`                         | `info`                     | no       | Log level in app config and rendered agent config                                                                                                    |
+| `NETWORK_DEFAULT_SCAN_TIMEOUT`      | `60`                       | no       | Default network scan timeout in seconds                                                                                                              |
+| `NETWORK_IPMI_PORT`                 | `623`                      | no       | UDP port probed for IPMI during network scans                                                                                                        |
+| `NETWORK_MAX_CONCURRENT_SCANS`      | `10`                       | no       | Maximum concurrent network scans                                                                                                                     |
+| `NETWORK_NMAP_PRIVILEGED`           | `true`                     | no       | Runs nmap in privileged mode; defaults off in simulation                                                                                             |
+| `NETWORK_REDFISH_PORT`              | `443`                      | no       | TCP port probed for Redfish during network scans                                                                                                     |
+| `PERSISTENT_STORAGE_PATH`           | `/brokkr`                  | no       | Root of persistent storage for discovery images and initrd builds                                                                                    |
+| `PORT`                              | `8080`                     | no       | HTTP listen port                                                                                                                                     |
+| `REDFISH_TLS_VERIFY`                | `false`                    | no       | Enables TLS certificate verification for BMC Redfish connections                                                                                     |
+| `REDIS_CA_CERT`                     | blank                      | no       | Path to a CA certificate file (PEM) trusted for TLS (rediss) Redis connections                                                                       |
+| `REDIS_URL`                         | `redis://localhost:6379/0` | no       | Redis connection URL toward Brokkr; `rediss:` enables TLS                                                                                            |
+| `SNMP_ENABLED`                      | `false`                    | no       | Enables the SNMP module                                                                                                                              |
+| `SSH_KEY_PATH`                      | none                       | no       | Primary path to the Bridge SSH private key baked into discovery images                                                                               |
+| `SSH_PORT`                          | `22`                       | no       | Default port for outbound SSH to devices                                                                                                             |
+| `SSH_STRICT_HOST_KEY_CHECKING`      | `true`                     | no       | SSH host key verification; `false` is only permitted in local, dev, or simulation                                                                    |
+| `SSH_TIMEOUT`                       | `30`                       | no       | Default outbound SSH connect timeout in seconds                                                                                                      |
+| `SSH_USERNAME`                      | `root`                     | no       | Default username for outbound SSH to devices                                                                                                         |
+| `TELEGRAF_ENABLED`                  | `false`                    | no       | Enables the managed Telegraf monitoring runtime                                                                                                      |
+| `TFTP_ENABLED`                      | `true`                     | no       | Enables the built in TFTP server for PXE boot files                                                                                                  |
+| `WIPE_ABSOLUTE_TIMEOUT_SECONDS`     | `28800`                    | no       | Absolute cap in seconds on a disk wipe job                                                                                                           |
+| `WIPE_STALL_TIMEOUT_SECONDS`        | `600`                      | no       | No progress stall timeout for disk wipe jobs                                                                                                         |
+| `ZONE_CRYPTO_HTTP_TIMEOUT_SECONDS`  | `30`                       | no       | HTTP timeout for zone enrollment calls to Brokkr                                                                                                     |
+
+### Brokkr Live Agent
+
+The agent takes its identity and endpoints from the agent.yaml baked into its initrd by the Bridge; no variable is required for it to start.
+
+| Variable                            | Default              | Required | What it controls                                                                            |
+| ----------------------------------- | -------------------- | -------- | ------------------------------------------------------------------------------------------- |
+| `AGENT_LOG_LEVEL`                   | agent.yaml value     | no       | Minimum log level for the agent logger; a valid value overrides agent.yaml                  |
+| `BRIDGE_PLUGIN_HELLO_WORLD_ENABLED` | `false`              | no       | Set `true` to enable the hello world example plugin device operations                       |
+| `BROKKR_HOSTS_FILE`                 | `/etc/hosts`         | no       | Hosts file the agent rewrites with Bridge name to IP entries on topology updates            |
+| `DEVICE_ID`                         | lockscreen.env value | no       | Device identifier printed on the lockscreen banner; display only                            |
+| `JOB_ID`                            | lockscreen.env value | no       | Provisioning job identifier printed on the lockscreen banner                                |
+| `LOCAL_SIMULATION_ENABLED`          | `false`              | no       | When `true`, the public IP collector reports a placeholder instead of querying the internet |
+| `LOCKSCREEN_INTERVAL`               | `10`                 | no       | Lockscreen refresh interval in seconds                                                      |

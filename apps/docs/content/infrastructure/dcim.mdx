@@ -1,0 +1,105 @@
+---
+title: 'DCIM'
+description: Rack elevations, typed cabling, PDUs and CDUs, the device model catalog, tags, and automated GPU burn-in.
+section: infrastructure
+order: 2
+slug: infrastructure/dcim
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} models the physical layer of a zone: rack units, cable runs, power feeds, and coolant loops. You can query the API for what a given interface is plugged into or which outlet feeds a power supply. The system enforces physical constraints. A database index guarantees that a port hosts at most one cable end. The API rejects a power outlet cabled to anything other than a power port, and it rejects a rack shrunk below its tallest mounted device.
+
+DCIM data is supplier-owned. {BRAND_NAME} is the sole source of truth. You manage the data through the API and the UI. There is no external DCIM sync. See the [API reference](/brokkr-api-dcim) for full endpoint schemas.
+
+## Racks and elevations
+
+Racks belong to a zone. Each rack has a name (unique per zone), a height in rack units (default 42U, maximum 1000U), a starting unit, a status (`ACTIVE`, `PLANNED`, `RESERVED`, `DEPRECATED`), an optional role (compute, network, storage, mixed, power), and serial and asset-tag fields.
+
+A rack assignment records where a device sits: a decimal U position (half-U devices are supported, for example `10.5`), a face (`FRONT` or `REAR`), and the device's height in U. A device mounts in exactly one rack. Each position and face combination is occupied at most once. Reducing a rack's height is validated against its assignments. The API rejects any change that would strand a mounted device above the new top unit.
+
+The elevation API returns per-unit occupancy for a rack, both faces by default:
+
+```bash
+GET /api/v1/dcim/racks/{id}/elevation?face=FRONT
+```
+
+```json
+[
+  {
+    "unit": 10,
+    "face": "FRONT",
+    "occupied": true,
+    "device": { "id": "…", "name": "gpu-node-07", "heightU": 4, "position": 10 }
+  },
+  { "unit": 14, "face": "FRONT", "occupied": false, "device": null }
+]
+```
+
+<Note>
+  Placing and moving devices is in development. There is no endpoint or UI to create rack assignments yet, and the
+  elevation view is read-only.
+</Note>
+
+## Cables and port kinds
+
+Every cable connects exactly two terminations: an A-side and a B-side. Each termination points at one of seven port kinds:
+
+| Port kind           | Lives on           | Purpose                                                                                  |
+| ------------------- | ------------------ | ---------------------------------------------------------------------------------------- |
+| Interface           | Any device         | Network port: physical NIC, bond/LAG, VLAN sub-interface, or management port             |
+| Console port        | Server             | Serial console input for [out-of-band access](/infrastructure/out-of-band)               |
+| Console server port | Console server     | Aggregation-side serial port, cabled to console ports                                    |
+| Power port          | Any powered device | PSU inlet; tracks maximum and allocated draw in watts                                    |
+| Power outlet        | PDU                | Output; tracks the three-phase feed leg (A/B/C)                                          |
+| Front port          | Patch panel        | Panel-front position, mapped through to a rear port                                      |
+| Rear port           | Patch panel        | Panel-rear termination; one rear port serves multiple front positions on breakout panels |
+
+Cable creation validates the pair against a compatibility matrix:
+
+| A-side                 | May connect to                                                      |
+| ---------------------- | ------------------------------------------------------------------- |
+| Interface              | Interface, front port, rear port                                    |
+| Console port           | Console server port, front port, rear port                          |
+| Console server port    | Console port, front port, rear port                                 |
+| Power port             | Power outlet                                                        |
+| Power outlet           | Power port                                                          |
+| Front port / rear port | Interface, console port, console server port, front port, rear port |
+
+One cable per port is enforced by the database. A unique index on the termination's type and ID means a physical port hosts at most one cable end. The API pre-checks the ports and returns `409 Conflict` naming the occupied port. A concurrent create that slips past the pre-check hits the index and receives the same `409`. Deleting a cable frees its ports immediately.
+
+Cables also carry a media type (Cat5e through Cat6A, OM3/OM4 multimode, OS1/OS2 single-mode, DAC, AOC, power, serial, USB, coax, or other), a status (`CONNECTED`, `PLANNED`, `DECOMMISSIONING`), a label, a color, and a length. The unit (meters, centimeters, feet, inches) is required whenever a length is set.
+
+## PDUs and CDUs
+
+Power distribution units and coolant distribution units are modeled as device roles. Each gets its own extension record on the device:
+
+- A **PDU** record stores the outlet count, the rated inlet amperage, the voltage type, and an observed power status (`On` or `Off`; null means never observed).
+- A **CDU** record stores the coolant type, the rated flow rate (liters per minute), the rated thermal capacity (kW), the airflow direction (front-to-rear, rear-to-front, side variants, passive, or mixed), and the same observed power status.
+
+Both are managed at `/api/v1/pdus` and `/api/v1/cdus` (list, get, update, decommission). Passive facility hardware is also modeled: patch panels, whose port positions are the front and rear ports above, and rack brush panels. Neither carries a power status or a BMC. This is by design.
+
+## The device model catalog
+
+Device models describe a hardware type once so that racking math and power budgets do not repeat per device. A model records the manufacturer and model name (unique together), an optional URL-safe slug, a form factor, a full-depth flag, a height in U, and a maximum power draw in watts. CRUD lives at `/api/v1/device-models`.
+
+## Tags
+
+Tags classify what infrastructure does. A tag has a name, slug, color, and description. Organization tags are scoped to your organization. Global tags (such as `customer-primary` and `north-south`) have no owning organization and classify function system-wide. An administrator creates global tags. None are seeded automatically. Manage them at `/api/v1/tags`.
+
+<Note>
+  Attaching tags to objects is in development. The data model covers devices, interfaces, prefixes, VLANs, VRFs, IP
+  addresses, zones, and clusters, but there is no endpoint or UI to assign a tag yet.
+</Note>
+
+## GPU burn-in and listing health
+
+Brokkr burn-tests discovered GPU servers automatically, and failures surface as unhealthy on inventory and listings. When [discovery](/infrastructure/inventory-and-discovery) completes, Brokkr (the hub) dispatches a benchmarks job to the zone's Bridge. The Bridge runs two test suites on the device and reports the results back: a GPU burn-in and an NCCL performance test.
+
+Brokkr schedules runs automatically, and scheduling is self-healing:
+
+- A device with no prior run, a failed last run, or a passing run older than 15 days is re-tested.
+- A run stuck in `Running` for over an hour does not block a retry.
+- Devices that are provisioning are skipped, as are devices without an assigned role and zone.
+
+The latest completed GPU burn-in run drives the health shown on inventory and [capacity listings](/deployments/selling-capacity). A device with no completed run counts as healthy. A completed run that did not pass marks the device unhealthy. The Healthy/Unhealthy listing filter applies exactly this rule.

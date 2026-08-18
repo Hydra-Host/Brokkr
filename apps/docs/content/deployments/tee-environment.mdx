@@ -1,0 +1,126 @@
+---
+title: 'Confidential AI (Intel TDX)'
+description: Walkthrough from selecting a TEE-capable server to running confidential AI workloads with automated Intel TDX support.
+section: deployments
+order: 3
+slug: tee-environment
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+This guide takes you from selecting a TEE-capable server to running confidential AI workloads, using {BRAND_NAME}'s fully automated Intel TDX support. {BRAND_NAME} automates the BIOS configuration and the host OS installation. It also validates the TDX setup. You configure the guest and the workload.
+
+## 1. Find TEE-capable servers
+
+In the {BRAND_NAME} console, look for servers marked "TEE Capable". These servers support hardware-enforced confidential computing with Intel Trust Domain Extensions (TDX).
+
+<Warning>If a server is not marked TEE-capable, Intel TDX cannot be enabled later.</Warning>
+
+### What {BRAND_NAME} validates
+
+For every TEE-capable server, {BRAND_NAME} has already:
+
+- Validated the CPU, platform firmware, and memory configuration
+- Confirmed that the platform supports Intel TDX at the silicon level
+
+## 2. Provision with a TEE operating system
+
+When you provision the server, select one of the TEE OS images:
+
+- **Ubuntu Noble 24.04 LTS (TEE)**: stable long-term support release. Recommended for production.
+- **Ubuntu Plucky 25.04 (TEE)**: newer kernel and TDX features. Choose it when your AI workload needs the latest TDX capabilities.
+
+<Note>Provisioning can take up to 60 minutes. This is expected.</Note>
+
+During provisioning, {BRAND_NAME}:
+
+- Applies a validated TDX BIOS configuration
+- Performs the required multi-stage reboots
+- Installs a Canonical-based TDX host stack
+- Verifies that the TDX module is fully initialized
+
+The server is marked ready only after all checks pass.
+
+## 3. Verify that TDX is active
+
+Once the server is ready, connect over SSH. Confirm that Intel TDX is enabled:
+
+```bash
+sudo dmesg | grep -i tdx
+```
+
+The output should indicate that:
+
+- BIOS support is enabled
+- The TDX module is loaded
+- The module is initialized
+
+You can also check the KVM module parameter:
+
+```bash
+cat /sys/module/kvm_intel/parameters/tdx
+```
+
+Expected value:
+
+```
+Y
+```
+
+<Warning>If these checks fail, do not proceed. Contact {BRAND_NAME} support.</Warning>
+
+## 4. Create and configure your Trust Domain (TD)
+
+From this point on, configuration happens inside the guest. {BRAND_NAME}'s automation covers the host only.
+
+Follow Canonical's official Intel TDX documentation, starting at "5. Create TD Image":
+
+[https://github.com/canonical/tdx?tab=readme-ov-file#5-create-td-image](https://github.com/canonical/tdx?tab=readme-ov-file#5-create-td-image)
+
+The Canonical documentation covers:
+
+- Creating a TD guest image
+- Launching a Trust Domain VM
+- Optional remote attestation and key release
+
+Canonical's documentation is the authoritative TDX reference and always carries the latest instructions, so this guide links to it instead of duplicating the content.
+
+## 5. Run your confidential AI workloads
+
+Inside the Trust Domain VM, you can:
+
+- Run standard Linux workloads (no app changes required)
+- Attach and use NVIDIA GPUs via passthrough
+- Deploy PyTorch, TensorFlow, vLLM, Kubernetes, etc.
+- Gate secrets or keys on successful TDX attestation
+
+At this stage:
+
+- VM memory and CPU state are hardware-encrypted
+- The host OS, hypervisor, and provider operators cannot inspect your workload
+- You can cryptographically prove where your code is running
+
+## Security boundaries
+
+<Warning>These notes are critical. Do not skip them.</Warning>
+
+### What TDX protects
+
+- VM memory contents
+- CPU state
+- Isolation from the host OS and hypervisor
+
+### What TDX does not automatically protect
+
+- Your application logic
+- Network-level exposure
+- Data you explicitly send outside the Trust Domain
+- Secrets you load without attestation checks
+
+<Note>Confidential computing strengthens your trust boundary. It does not replace good security design.</Note>
+
+## Where to go next
+
+Canonical's Intel TDX reference documentation:
+
+[https://github.com/canonical/tdx](https://github.com/canonical/tdx)

@@ -34,6 +34,7 @@ EOF
 
 make_nested_worktree() {
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
   git init -q -b main "$OWN"
   git -C "$OWN" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init
   git -C "$OWN" worktree add -q --detach "$OWN/.worktrees/sibling"

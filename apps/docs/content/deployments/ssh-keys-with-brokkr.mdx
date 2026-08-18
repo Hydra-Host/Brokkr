@@ -1,0 +1,43 @@
+---
+title: 'SSH keys'
+description: How to upload, create, and use SSH keys with your server, plus notes on key formats and IPv4 and IPv6 connectivity.
+section: deployments
+order: 1
+slug: ssh-keys-with-brokkr
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+When you create a {BRAND_NAME} account, you can upload an SSH key. The key is associated with your user. When you provision a server, you select one of these keys.
+
+If you do not have an SSH key, create one:
+
+```bash
+ssh-keygen -t rsa -b 2048
+```
+
+When prompted, provide a name for the key pair. We recommend the default location for the key. A passphrase is optional. We recommend one for added security.
+
+## SSH notes
+
+{BRAND_NAME} accepts multiple key formats, including RSA, ECDSA, and ED25519.
+
+To check whether your SSH agent has access to your key, run:
+
+```bash
+ssh-add -L
+```
+
+If your key is not listed, add it:
+
+```bash
+ssh-add ~/.ssh/nameofprivatekey
+```
+
+## IPv4 and IPv6
+
+If SSH fails with the message "No route to host", you may be on IPv4 trying to reach an IPv6 machine.
+
+To get an IPv6 address on an IPv4-only network, download the Cloudflare app from [https://one.one.one.one](https://one.one.one.one).
+
+To verify that you have an IPv6 address, use [https://www.myipaddress.com](https://www.myipaddress.com).

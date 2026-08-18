@@ -1,0 +1,120 @@
+---
+title: 'Disk sanitization'
+description: 'Automatic NIST SP 800-88r2 sanitization between tenants: per-media method ladders, sampled verification, and a persisted evidence report for every wipe.'
+section: security
+order: 5
+slug: security/disk-sanitization
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} sanitizes every disk it discovers between tenants, following NIST SP 800-88r2. It wipes each disk with a strongest-first method ladder matched to the media and its controller path. It verifies the result by sampling sectors and records a structured sanitization report. Sanitization runs automatically and requires no ticket or manual erasure session.
+
+## When sanitization runs
+
+Sanitization is a built-in step of the [deployment lifecycle](/deployments/lifecycle). The Brokkr Live Agent (the agent) executes it on the device, which runs under Brokkr Live for the wipe:
+
+| Lifecycle event | Mode      | Scope                                                                                                                                                        |
+| --------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Provision       | Full      | Every discovered disk, so a fresh tenant never inherits prior data, even on disks outside the layout                                                         |
+| Reprovision     | Selective | Disk groups with wipe enabled; [preserved data disks](/deployments/preserving-data-disks) are untouched                                                      |
+| Deprovision     | Full      | Every discovered disk before the server leaves service                                                                                                       |
+| Commissioning   | Full      | Every discovered disk, during discovery before hardware collection; the qualification deploy that follows runs its own full wipe, recorded under `provision` |
+
+<Note>
+  Discovery covers fixed block devices only. USB-attached disks are excluded from discovery, so they are neither wiped
+  nor listed in the report.
+</Note>
+
+The wipe step fails closed. Only an explicit pass verdict lets the saga continue. Anything else fails the job, and the device lands in `failed` instead of returning to inventory with residual data.
+
+## How a wipe runs
+
+1. The agent unmounts all filesystems.
+2. Holder teardown dismantles storage stacks top-down: crypt, then LVM, then RAID. Crypt mappings always close, since a close destroys no on-disk data. The LVM and RAID layers skip any stack that contains a preserved disk. Partitions are not dismantled. The agent clears only their signatures, after teardown.
+3. The agent re-discovers block devices and reconciles the wipe set against the pre-teardown enumeration.
+4. On each wipe target, the agent writes validation markers: 1,000 random 512-byte patterns at evenly spaced sectors.
+5. The agent maps each disk to its storage controller, then wipes disks concurrently, walking each disk's method ladder until one method succeeds.
+6. The agent verifies each wiped disk by re-reading the marker sectors.
+7. The agent assembles the sanitization report and returns it to the Bridge, which persists it through Brokkr.
+
+## Method ladders
+
+Each disk gets a ladder ordered strongest-first. The first method the drive accepts wins, and the report records the technique that ran on each disk.
+
+| Media                      | Ladder (first success wins)                                                                                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| NVMe                       | Sanitize crypto erase (Purge) → Sanitize block erase (Purge) → Format `SES=2` crypto erase (Purge) → Format `SES=1` user-data erase (Clear) → `blkdiscard` (best effort) |
+| SSD, no flagged controller | ATA Sanitize crypto scramble (Purge) → ATA Sanitize block erase (Purge) → ATA Secure Erase enhanced (Purge) → `blkdiscard` (best effort)                                 |
+| SSD, flagged controller    | `blkdiscard` (best effort)                                                                                                                                               |
+| HDD, no flagged controller | ATA Sanitize overwrite (Purge) → ATA Secure Erase enhanced (Purge) → ATA Secure Erase (Clear) → random-data overwrite with `dd` (Clear)                                  |
+| HDD, flagged controller    | Random-data overwrite with `dd` (Clear)                                                                                                                                  |
+
+Two hardware constraints shape the ladders:
+
+- **Storage controllers**: ATA commands hang indefinitely behind RAID HBAs, so the agent maps each disk to its PCI storage controller and withholds the ATA rungs from any disk behind a matched controller. The match is deliberately over-cautious and flags any storage controller, including plain AHCI. On commodity SATA hardware the flagged ladders are therefore the norm. The ATA Sanitize and Secure Erase rungs run only when a disk resolves to no matched controller. NVMe is never flagged. It speaks its own protocol with no HBA in the path.
+- **NVMe namespaces**: NVMe Sanitize erases the whole controller, meaning every namespace at once. When namespaces on one controller share a wipe, one Sanitize covers the set. When any sibling namespace is preserved (or not listed in a disk group at all), the agent suppresses controller-wide Sanitize and the ladder falls through to namespace-scoped Format methods.
+
+## Verification
+
+Before the wipe, the agent seeds each target with 1,000 random markers spread across the disk. After the wipe, it re-reads every marker sector and grades the result against the method that ran:
+
+- **Erase-class methods** must read back zero at every sampled sector.
+- **Overwrite-class methods** must show every sector changed from its pre-wipe marker. Non-zero residue is the expected state after an overwrite.
+- **Crypto-erase methods** destroy the encryption keys, so stale ciphertext can legitimately remain. An all-zero readback passes as plain `pass`. Residual data at sampled sectors passes as `pass_crypto_erase` with a note.
+
+Unreadable sectors count against the disk and are never treated as zeros. Verification fails when 10% or more of the sampled sectors are unreadable, so a dying drive cannot score a false pass. After NVMe Sanitize, the agent also waits out the drive's restricted-read window before verifying. Some controllers report completion before their internal verify finishes. The wait ensures verification reads the drive's post-sanitize state.
+
+## Fail-closed accounting
+
+The report certifies a wipe only when every disk is accounted for. Any of the following fails the whole job:
+
+- A full wipe finds a disk that was present before teardown but is neither sanitized nor accounted for as skipped, including disks that appear only after a container dissolves.
+- A selective wipe target vanishes from post-teardown discovery.
+- A full wipe skips a read-only device (it still carries readable data and can be re-enabled).
+- A full wipe sanitizes zero disks, or every method on a disk fails.
+- A selective wipe's exclusions leave zero disks sanitized despite requested targets.
+
+The agent never silently erases a wipe target that shares a RAID or volume-group stack with a preserved disk. It drops the target from the wipe set and lists it in `skipped_disks` with the reason. Remaining targets are still wiped, and the job can pass with the skip on record. The job fails only when such exclusions leave nothing to sanitize.
+
+## Sanitization reports
+
+Every wipe produces a structured report. It records per-disk identity (model, serial, WWN, transport, size), the technique used with its Purge/Clear classification, and the verification verdict. It also lists preserved disks, skipped disks with reasons, and the holder-teardown summary.
+
+```json
+{
+  "version": "1.0",
+  "standards_reference": ["NIST SP 800-88r2 (September 2025)", "IEEE 2883 (2022)", "ISO/IEC 27040 (2024)"],
+  "mode": "full",
+  "overall_result": "pass",
+  "disks": [
+    {
+      "name": "nvme0n1",
+      "media_type": "NVMe",
+      "serial": "S4EWNX0N401234",
+      "sanitization_method": "purge",
+      "sanitization_technique": "NVMe Sanitize Crypto Erase (Purge)",
+      "result": "pass_crypto_erase",
+      "verification": {
+        "method": "sector_sampling",
+        "sectors_checked": 1000,
+        "sectors_failed": 37,
+        "result": "pass_crypto_erase",
+        "note": "Crypto-erase destroys encryption keys; non-zero reads are expected (stale ciphertext, drive DLFEAT dependent)"
+      }
+    }
+  ],
+  "preserved_disks": [],
+  "skipped_disks": []
+}
+```
+
+Brokkr persists one report per device and job, keyed to the lifecycle action that triggered it (`provision`, `commission`, or `deprovision`). Retries upsert: a later passing report replaces an earlier failed one for the same job, and a failed retry never overwrites a stored pass.
+
+<Note>A read API and UI for browsing reports are in development. Reports currently live in the hub database.</Note>
+
+## Standards alignment
+
+Techniques are labeled with their NIST SP 800-88r2 category, either Purge or Clear. The report cites NIST SP 800-88r2 (September 2025), IEEE 2883 (2022), and ISO/IEC 27040 (2024). The agent records `blkdiscard` as best-effort rather than assigning it a standards category, so the report reflects what actually ran.
+
+Sanitization complements [disk encryption](/disk-encryption). It does not replace it. Encrypt data volumes during a tenancy and sanitize all media at its end. For the wider security model, see [{BRAND_NAME} security](/brokkr-security).

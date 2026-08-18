@@ -1,0 +1,90 @@
+---
+title: 'OS layers'
+description: Compose a bootable OS at provision time from a pinned base and content-addressed component layers, with no golden images.
+section: os-builds
+order: 1
+slug: os-builds/layers
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} assembles a server's operating system at provision time from independent layers. You pick a base OS and the components you need, such as NVIDIA drivers, CUDA, PyTorch, Docker, InfiniBand, and confidential computing, and {BRAND_NAME} installs that combination on the server in minutes. As with Docker images, each layer is built once and stored by content hash. The combination you select never needs to be pre-built.
+
+## Layers instead of golden images
+
+Golden images require a full build for every OS, driver, and toolkit combination, so the catalog grows combinatorially. Three driver lines, nine CUDA versions, and six operating systems already require 162 images before PyTorch is added.
+
+{BRAND_NAME} builds and caches each component once. A base OS builds as a complete rootfs, and every other component builds as an independent layer on top of it. At provision time, the layers you select are stacked onto the disk in a fixed order to produce a bootable system.
+
+## What a layer is
+
+A layer is a compressed tarball of filesystem content (zstd; gzip is also accepted), identified by the sha256 of its bytes.
+
+- A **base layer** is a complete minimal rootfs for one combination of distribution, version, and architecture, with a pinned kernel and GRUB. It is built from an upstream cloud image pinned by URL. Ubuntu images are also pinned by sha256 checksum. Debian publishes no per-file sha256, so its images are pinned by URL only. An unknown OS version fails the build closed, so upstream kernel drift cannot enter a build silently.
+- A **component layer** contains only the filesystem delta of one component's install, captured against a pristine base. Extracting it on top of the base adds only that component.
+
+Layers live in a public content-addressed store: one blob per unique sha256, at `blobs/sha256:<hash>`, shared by every release that references it. A release is a single JSON manifest listing each layer's hash, URL, and catalog metadata. Brokkr imports that manifest into its layer catalog. See [layer builds](/os-builds/layer-builds) for the pipeline and release flow.
+
+### Layer kinds
+
+| Kind        | What it is                                                                                           | Where you see it                                                             |
+| ----------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `BASE`      | A bootable rootfs; the root of every stack                                                           | Base OS picker                                                               |
+| `COMPONENT` | A stackable customization (drivers, CUDA, Docker, …)                                                 | Customization picker                                                         |
+| `LEGACY`    | A pre-built monolithic image imported from the previous image store; rejects customizations entirely | Nowhere yet; catalog only (in development)                                   |
+| `LIVE`      | A bootable system image for rescue and discovery; never installed to disk                            | Rescue mode and discovery (no customer picker; the platform supplies the OS) |
+
+## How an install is assembled
+
+When you provision a server, Brokkr resolves your base OS and customization selections against the active layer build:
+
+1. Brokkr finds the sha-pinned artifact for the base and for each selected component, matched to the base's distribution, codename, and the device's architecture. A component you cannot see in the form either has no artifact for that combination or is filtered out by the device's hardware eligibility (GPU model, TEE capability).
+2. Components sort by **family stack order** (`base → legacy → driver → runtime → platform → toolkit → framework → application → diagnostic`), with ties broken alphabetically by slug. Each entry gets an integer `stack_position`; lower applies first.
+3. The [Brokkr Live Agent](/infrastructure/host-agent) on the device downloads each blob by its content address, verifies the sha256 after download, and extracts it onto the target disk in order. Later layers overwrite or add files; nothing is merged at runtime.
+4. The Brokkr Live Agent configures boot: GRUB, cloud-init, and fstab. GRUB installs with `--no-nvram` plus a fallback copy at `EFI/BOOT`, so the machine boots through the EFI fallback path. The agent never adds a firmware boot entry for the installed OS. The disk-wipe step earlier in the flow prunes stale entries instead. It walks the firmware boot order and deletes every listed entry except the one currently booted. The pruning is best-effort. If it fails, provisioning continues without it.
+
+The wire payload for a GPU server looks like this:
+
+```json
+[
+  { "layer": "ubuntu-24.04", "sha256": "9f2c…", "compression": "zstd", "stack_position": 0 },
+  { "layer": "nvidia-driver-580", "sha256": "feda…", "compression": "zstd", "stack_position": 1 },
+  { "layer": "cuda-13.0", "sha256": "a41b…", "compression": "zstd", "stack_position": 2 },
+  { "layer": "docker", "sha256": "77e0…", "compression": "zstd", "stack_position": 3 }
+]
+```
+
+Family placement in the current catalog:
+
+| Family        | Layers                                                                 |
+| ------------- | ---------------------------------------------------------------------- |
+| `driver`      | `nvidia-driver-535` / `580` / `595`, `mellanox-ofed` (InfiniBand/RDMA) |
+| `runtime`     | `cuda-11.8` … `cuda-13.2`                                              |
+| `platform`    | `docker`, `nvidia-container-toolkit`                                   |
+| `framework`   | `pytorch-cu118` … `pytorch-cu130`                                      |
+| `application` | `tee-setup` (Intel TDX)                                                |
+| `image`       | `brokkr-live` / `brokkr-live-light` (live OS bundles)                  |
+
+Driver layers are hardened for headless data center use. Desktop packages are excluded, nouveau is blacklisted, and sleep targets are masked. Ubuntu builds ship prebuilt server kernel modules instead of DKMS; Debian builds compile the open kernel modules via DKMS.
+
+## Groups and selection rules
+
+Every layer belongs to a **group**, the unit the provisioning form renders. A group is either `SINGLE_SELECT` (drivers, where you pick exactly one) or `MULTI_SELECT` (misc software). Cross-layer `REQUIRES` relations are declared per artifact, so validation is exact for your base and architecture. Selecting a CUDA version constrains which drivers remain selectable, and selecting a driver constrains the CUDA versions. The full catalog, hardware-eligibility rules, and the driver ↔ CUDA compatibility matrix are covered in [customizations](/os-builds/customizations).
+
+## Provenance
+
+At provision time, Brokkr writes one `DeploymentLayer` row per selected layer, recording the exact sha-pinned artifact assigned to the deployment. The base OS and any active rescue OS are recorded on the deployment itself. For any running server, you can identify exactly which bytes are installed, down to the hash. See the [deployment lifecycle](/deployments/lifecycle) for when these rows are written.
+
+<Note>A reprovision replaces the `DeploymentLayer` rows in place. It does not keep per-reprovision history.</Note>
+
+## System layers
+
+The platform seeds three layers itself rather than from the build manifest:
+
+| Slug               | Kind   | Purpose                                                                                                                                                                                 |
+| ------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `brokkr-discovery` | `LIVE` | Internal discovery OS, [network-booted](/network/network-boot) during provisioning and deprovisioning to [inventory hardware](/infrastructure/inventory-and-discovery) and apply layers |
+| `ubuntu-rescue-os` | `LIVE` | Rescue OS for device recovery and maintenance; the default booted when rescue mode is activated (the customer API offers no OS choice)                                                  |
+| `ipxe-custom`      | `BASE` | Custom iPXE boot; chainloads a user-supplied iPXE script URL                                                                                                                            |
+
+While active, a `LIVE` layer boots instead of the installed OS. `LIVE` layers never appear in the base OS picker, which lists only `BASE` layers. The discovery OS is itself assembled from the same layer store it deploys from.

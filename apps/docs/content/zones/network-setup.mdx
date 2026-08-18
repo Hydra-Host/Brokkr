@@ -1,0 +1,143 @@
+---
+title: 'Zone network setup'
+description: "Configure an enrolled zone's networks. Brokkr reflects the Bridge's NICs into IPAM automatically. Add a gateway, a DHCP pool, and a MANAGEMENT role before servers can commission."
+section: zones
+order: 2
+slug: zones/network-setup
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+An enrolled zone needs its networks before servers can commission. {BRAND_NAME} reflects every addressed NIC on the Bridge into IPAM automatically, including each NIC's subnet. Three edits in Brokkr complete the setup: a gateway, a DHCP pool, and a `MANAGEMENT` role on the BMC subnet. The zone is then ready for hardware.
+
+## What appears automatically
+
+Enrollment itself creates no network records. Brokkr reads each Bridge's presence record on a 30-second cycle and reflects the Bridge's live network state into the zone:
+
+- **A Bridge device.** It carries an interface per NIC and the addresses each NIC holds.
+- **A prefix per connected subnet.** Each prefix is created `ACTIVE`, assigned to the zone, with no role set. If a prefix covering the subnet already exists in the zone, Brokkr creates nothing new.
+- **A gateway seed.** When the Bridge's default route leaves through a reflected subnet, Brokkr seeds that prefix's gateway IP from the route. The seed is bootstrap-only. Brokkr never overwrites a gateway you set yourself and never restores one you clear.
+
+Reflection is IPv4-only and sees only addresses. A NIC with no IPv4 address reports nothing, so Brokkr cannot see the NIC or its subnet until you address it.
+
+## Address the Bridge host
+
+Reflection is one-way. Brokkr records the addresses a Bridge holds and never assigns them. The only address a Bridge ever adds to itself is a [VRRP VIP](/zones/high-availability). Before the steps below, give the Bridge's provisioning NIC a static address on the host. On Ubuntu with netplan:
+
+```yaml
+# /etc/netplan/61-provisioning.yaml
+network:
+  version: 2
+  ethernets:
+    enp3s0:
+      addresses: [10.0.1.2/24]
+```
+
+Run `netplan apply`. Within 30 seconds, `10.0.1.0/24` appears in IPAM, assigned to the zone, with `10.0.1.2` recorded on the Bridge's interface.
+
+## Configure the networks
+
+The steps below use a worked example: a provisioning subnet `10.0.1.0/24` with the Bridge at `10.0.1.2` on `enp3s0`, and a BMC subnet `10.99.1.0/24` with an iDRAC at `10.99.1.10`. Once both Bridge NICs are addressed, both prefixes already exist in IPAM. Every step edits a reflected record, either in the web UI or through the API.
+
+### Step 1: Set the provisioning prefix's gateway
+
+Open the `10.0.1.0/24` prefix in IPAM and set its gateway IP to the address the segment routes through. In this example that is `10.0.1.2`, because the Bridge routes for the segment. The gateway field is the only source for the DHCP routers option. Without a gateway, clients get addresses but no default route. The gateway must be an address inside the prefix. The Bridge never leases it to a client.
+
+### Step 2: Create the DHCP pool
+
+On the IP Ranges page, create a range inside the prefix: start `10.0.1.100`, end `10.0.1.200`, status `ACTIVE` (the default). The pool is required. An authoritative subnet with no `ACTIVE` IP range and no reservations has nothing to serve, and the Bridge drops it. Both ends of the range must sit inside the prefix. The Bridge never serves an out-of-prefix range.
+
+### Step 3: Enable DHCP
+
+Open the prefix's DHCP page. Set the mode to `AUTHORITATIVE` and save. There are no next-server or DNS fields to fill in. The Bridge derives both from its own in-subnet address, so `10.0.1.2` serves the leases, the TFTP boot path, and DNS for the segment. To network-boot servers on the segment, also select an [iPXE build target](/network/dhcp-and-pxe#ipxe-build-targets). Without one, the Bridge assigns addresses but offers no boot file.
+
+Enabling DHCP requires the prefix to be zone-assigned, and serving requires the Bridge to hold an address inside the prefix. Both are already true here because the prefix was reflected from the Bridge's own NIC. The full list is in [serve preconditions](/network/dhcp-and-pxe#serve-preconditions).
+
+### Step 4: Mark the BMC prefix MANAGEMENT
+
+Edit the reflected `10.99.1.0/24` prefix and set its role to `MANAGEMENT`. The commissioning scan enumerates the zone's `MANAGEMENT`-role prefixes. In a zone without one, the scan request is rejected. Leave DHCP unset on this prefix. BMCs carry their own addressing.
+
+<Warning>
+  Do not create a second prefix for the same subnet. IPAM rejects the overlap. Edit the reflected record instead.
+</Warning>
+
+## Discovery images
+
+DHCP and PXE get a machine to iPXE. The discovery OS is what the machine boots into. Every unknown machine that chains in gets a discovery boot: it loads the discovery OS, collects inventory, and dials the Bridge's agent gRPC endpoint. Without the discovery images on disk, PXE succeeds but provisioning stalls, because the Bridge has nothing to chainload into.
+
+The discovery OS ships as three files per CPU architecture:
+
+| File                   | Role                                                        |
+| ---------------------- | ----------------------------------------------------------- |
+| `vmlinuz`              | The discovery kernel                                        |
+| `initrd.img`           | The distro initramfs for that architecture                  |
+| `brokkr-discovery.iso` | The discovery OS image the live kernel boots from over HTTP |
+
+The Bridge asserts all three files are present for every architecture it serves and refuses to serve an architecture whose set is incomplete. On a discovery boot, the machine's chain script loads `vmlinuz` and `initrd.img` from the Bridge, stacks the shared `brokkr-live.img` plus a per-device agent initrd on top, and points the live-boot kernel at `brokkr-discovery.iso` over HTTP as its filesystem source. The discovery OS comes up and its agent dials the Bridge's gRPC endpoint to report inventory. The endpoint address is baked into the per-device initrd. The full sequence (DHCP → TFTP iPXE → `/api/chain` → discovery boot → agent gRPC) is in [How network boot works](/network/network-boot).
+
+### Turn on discovery-image sync
+
+The Bridge does not fetch the discovery OS unless you enable sync. Set `BRIDGE_SYNC_ENABLED=true` in the Bridge's `.env`, then point it at an asset host:
+
+```bash
+# deploy/self-hosted/bridge/.env
+BRIDGE_SYNC_ENABLED=true
+DISCOVERY_BASE_URL=https://brokkr.assets.hydra.host/brokkr-live-light
+OS_LAYER_URL=https://brokkr.assets.hydra.host/os-layers/blobs
+BROKKR_LIVE_VERSION=1.1.8
+DISCOVERY_ARCHITECTURES=amd64
+```
+
+<Warning>
+  The URLs have no working defaults. If they are unset, the Bridge falls back to non-resolving `*.example.com`
+  placeholders and every fetch fails, so a Bridge with sync on but the URLs unset is worse than a Bridge with sync off.
+  Set all of `DISCOVERY_BASE_URL`, `OS_LAYER_URL`, and `BROKKR_LIVE_VERSION`, or leave sync off.
+</Warning>
+
+On each sync, the Bridge fetches these files for each architecture in `DISCOVERY_ARCHITECTURES`:
+
+```text
+${DISCOVERY_BASE_URL}/${BROKKR_LIVE_VERSION}/<arch>/manifest.json
+${DISCOVERY_BASE_URL}/${BROKKR_LIVE_VERSION}/<arch>/vmlinuz
+${DISCOVERY_BASE_URL}/${BROKKR_LIVE_VERSION}/<arch>/initrd.img
+${DISCOVERY_BASE_URL}/${BROKKR_LIVE_VERSION}/<arch>/brokkr-discovery.iso
+```
+
+`BROKKR_LIVE_VERSION` is the `<version>` path segment. Pin it explicitly and bump it to roll the discovery OS forward. `DISCOVERY_ARCHITECTURES` defaults to `amd64,arm64` in code. Set it to only the architectures you boot so the Bridge does not require images it never serves.
+
+### Light or full
+
+The asset host publishes two variants. The variant is the last path segment of `DISCOVERY_BASE_URL`:
+
+- **`brokkr-live-light`** contains the three files above, about 330 MB. This set is enough to PXE-boot discovery on a machine.
+- **`brokkr-live`** is the full set, about 2.4 GB.
+
+Use the light variant unless you need the full one. The size difference applies per architecture and per version. Every fresh Bridge downloads this set before it can boot anything.
+
+## Optional settings
+
+Everything else stays at its default in a single-Bridge zone:
+
+- **VRF.** Leave it unset. The prefix lives in the global routing scope. VRFs exist for [overlapping tenant space](/network/ipam#vrfs-overlapping-tenant-space).
+- **VLANs.** Attach one only when the segment is tagged.
+- **VRRP VIP.** In zones running more than one Bridge, the VIP becomes the serving address that survives failover. See [High availability](/zones/high-availability).
+
+## Verify
+
+Ask Brokkr what the Bridge will serve:
+
+```bash
+curl https://<hub>/api/v1/ipam/prefixes/<prefixId>/dhcp/serving \
+  -H "x-api-key: $BROKKR_API_KEY"
+```
+
+In the worked example, both fields come back as the Bridge's in-subnet address: `{"nextServer": "10.0.1.2", "dnsServers": ["10.0.1.2"]}`. Then watch leases arrive as machines boot:
+
+```bash
+curl https://<hub>/api/v1/ipam/prefixes/<prefixId>/dhcp/leases \
+  -H "x-api-key: $BROKKR_API_KEY"
+```
+
+The prefix's DHCP page shows the same data live: derived serving info, IP ranges, reservations, and the lease table, refreshed every 30 seconds.
+
+With the networks in place, the zone is ready for hardware. Next, [commission your first servers](/get-started/first-servers). The scan sweeps the `MANAGEMENT` prefix you marked, and every machine it finds flows into [inventory and discovery](/infrastructure/inventory-and-discovery).

@@ -35,7 +35,7 @@ vi.mock('sonner', () => ({
   },
 }));
 
-import { formatZoneLocation, CommissionServersButton } from '../commission-servers-button';
+import { CommissionServersButton, formatZoneLocation } from '../commission-servers-button';
 
 function mkZone(overrides: Partial<ZoneListItem> = {}): ZoneListItem {
   return {

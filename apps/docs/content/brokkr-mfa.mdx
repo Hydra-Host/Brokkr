@@ -1,0 +1,106 @@
+---
+title: 'Accounts, MFA, and API keys'
+description: 'How {BRAND_NAME} authenticates people and machines: passwords, two-factor authentication, sessions, and API keys across web, CLI, and MCP.'
+section: security
+order: 3
+slug: brokkr-mfa
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} authenticates people with a password and a TOTP second factor, and machines with API keys. Sign-in endpoints are rate limited, and operations that change your identity accept only a session.
+
+## Passwords
+
+Passwords are hashed with bcrypt. The maximum length is 72 bytes of UTF-8, which is bcrypt's own limit. The limit is enforced explicitly, so a longer password is rejected instead of silently truncated.
+
+Resetting a password revokes every existing session for the account. A banned account cannot open a new session. Sign-in fails with a request to contact support.
+
+## Sign-in rate limiting
+
+Authentication endpoints are rate limited per client IP:
+
+| Endpoint                 | Limit          |
+| ------------------------ | -------------- |
+| Sign in                  | 5 per minute   |
+| Sign up                  | 5 per minute   |
+| Password reset request   | 3 per minute   |
+| All other auth endpoints | 100 per minute |
+
+The limiter is keyed on the client IP that the server resolves from the connection, carried on an internal server-stamped header. Client-supplied headers such as `x-forwarded-for` are ignored, so an attacker cannot rotate a spoofed header value to evade the sign-in limit.
+
+## Two-factor authentication
+
+The {BRAND_NAME} web app requires TOTP two-factor authentication. A signed-in user who has not enrolled is redirected to the enrollment screen and cannot reach the app until enrollment completes. The check lives in the web app. The REST API and the CLI do not require an enrolled second factor.
+
+<Note>Local development builds skip the enrollment redirect.</Note>
+
+### Enroll
+
+1. Confirm your password.
+2. Scan the QR code with your authenticator app (Google Authenticator, Authy, 1Password). If you cannot scan the code, reveal the manual entry key and type it in.
+3. Enter the 6-digit code from your app to verify.
+4. Save your backup codes. Copy them or download them as a text file.
+
+Each backup code works exactly once. Use one to sign in if you lose access to your authenticator app.
+
+### Why enrollment signs out your other devices
+
+After your code verifies, the enrollment screen revokes the account's other sessions. Any session opened before enrollment was authenticated with a password alone, and revoking it removes that password-only access. The session that completed enrollment stays signed in.
+
+## Sessions and session-only operations
+
+Signing in issues a session cookie. Sessions are stored server-side in the database and can be revoked individually.
+
+Operations that act on your identity are session-only and reject API keys: enrolling two-factor authentication, changing your password, creating an organization, switching your active organization, and accepting or rejecting an invitation through the user invitation endpoints (`/api/v1/users/invitations`). A request that presents an API key to these endpoints fails with `401`.
+
+The organization-scoped invitation endpoints (`/api/v1/organizations/invitations`) apply weaker checks. Accept rejects an API key with `403` rather than `401`. Reject does not check the credential type, so an API key whose owner's email matches the invitation can reject it.
+
+Session-only enforcement keeps an automation credential from changing the identity that owns it. See [Secrets and device tokens](/security/secrets-and-device-tokens) for how machine credentials are contained elsewhere in the system.
+
+## API keys
+
+API keys (prefix `brk_`) authenticate programmatic access. Create and revoke them on the API Keys page under your organization. Each key can carry an expiration date.
+
+A key is bound to the user who created it and to that user's organization:
+
+- The key's effective permissions never exceed what the owner's [role](/organizations/rbac) allows, and a key can be scoped to a narrower subset.
+- If the owner leaves the organization or is banned, or the organization is deleted, the key stops working.
+- Each key is rate limited to 100 requests per minute. Requests beyond the limit return `429`.
+
+Send the key in the `x-api-key` header:
+
+```bash
+curl -H "x-api-key: brk_..." https://your-hub.example.com/api/v1/organizations/active
+```
+
+Full endpoint-level detail is in [API authentication](/brokkr-api-authentication).
+
+### API keys in the CLI
+
+The [CLI](/api/cli) signs in as you or with a key. `brokkr login` prompts for your email, password, and 6-digit code. `brokkr login --api-key` prompts for the key.
+
+<Warning>
+  Avoid passing the key value on the command line. The CLI warns that it leaks through shell history and process
+  listings. Use the environment variable or the interactive prompt instead.
+</Warning>
+
+Most commands resolve credentials in this order:
+
+1. The `BROKKR_API_KEY` environment variable (whitespace-trimmed).
+2. The saved session for the active environment (`~/.config/brokkr/session-<env>.json`). An API-key login stores the key here, and a password login stores the session cookie.
+3. The `apiKey` field on the active environment in `~/.config/brokkr/config.json`.
+
+If none resolve, the CLI exits with `Not logged in. Run: brokkr login`.
+
+<Note>
+  The profile fetch and organization listing skip the environment variable and start at the saved session. With
+  `BROKKR_API_KEY` set and a password session still on disk, those two commands answer as the session user while other
+  commands, including `brokkr whoami`, act as the key.
+</Note>
+
+Credential files are written with restrictive permissions. The `~/.config/brokkr` directory is created mode `0700`, and the config and session files are written mode `0600`. `brokkr logout` deletes the session file and clears the config-file key, so a logged-out machine cannot fall back to a stale credential.
+
+### API keys and MCP
+
+The CLI ships an MCP server (stdio transport) that exposes deployment, inventory, DCIM, organization, and account tools to AI agents. See [AI agents and MCP](/api/ai-agents-and-mcp). The MCP server authenticates with the same resolution order as the CLI. Most tools re-read config and session state on every call, so a long-running MCP server picks up an external `brokkr login` or `brokkr env use` without a restart. The identity tools (`whoami`, `list_organizations`, `get_profile`) read cached state and can report a stale identity until another tool call refreshes it.

@@ -1,2 +1,0 @@
--- AlterEnum
-ALTER TYPE "LayerKind" ADD VALUE IF NOT EXISTS 'LIVE';

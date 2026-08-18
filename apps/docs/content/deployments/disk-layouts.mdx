@@ -1,0 +1,117 @@
+---
+title: 'Disk layouts'
+description: Declare disk groups (direct, LVM, or software RAID 0 through 60). Discovery offers only the layouts your hardware supports.
+section: deployments
+order: 4
+slug: deployments/disk-layouts
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+Every deployment carries a declarative storage spec, and {BRAND_NAME} builds the disks exactly as declared. The spec covers partitions, LVM volumes, and software RAID from a mirror up to RAID 60, with boot geometry matched to the machine's firmware. The options are derived from [discovered hardware](/infrastructure/inventory-and-discovery), so only layouts the hardware supports are offered. Invalid arrays are rejected before anything is written to disk.
+
+## Disk groups
+
+A layout is a list of **disk groups**. Each group binds a set of same-type disks to one strategy, one filesystem, and one mountpoint:
+
+| Field        | Meaning                                                                      | Values                                                         |
+| ------------ | ---------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `config`     | Layout strategy                                                              | `direct`, `lvm`, `raid0/1/5/6/10/50/60`                        |
+| `format`     | Filesystem                                                                   | `ext4` or `xfs` (the only formats the deploy pipeline creates) |
+| `mountpoint` | Absolute path, up to two `/`, letters/digits/`._-` only                      | `/`, `/data0`, `/var/lib`, …                                   |
+| `diskType`   | Media type of the group                                                      | `nvme`, `ssd`, `hdd`                                           |
+| `disks`      | Member disks, addressed by WWN, serial, or device name                       | `["eui.0025388581b8e1a4", …]`                                  |
+| `wipe`       | Wipe (`true`) or preserve (`false`, reprovision only); required and explicit | boolean                                                        |
+| `encrypt`    | LUKS2 encryption for this group (data volumes only)                          | boolean, default `false`                                       |
+
+Every submission must satisfy three rules:
+
+- Exactly one group must mount `/`. That group hosts the boot partitions. Without it, GRUB installation fails because no EFI or root partition exists.
+- Each disk belongs to exactly one group. Duplicates are rejected.
+- `direct` partitions exactly one disk and always mounts `/`. When you pick `direct`, every other disk on the machine stays unpartitioned.
+
+<Note>
+  Address disks by WWN or serial. Device names like `nvme0n1` can drift between boots. The Brokkr Live Agent resolves
+  whichever identifier matches, and the provisioning form shows each disk's WWN or serial next to its name.
+</Note>
+
+```json
+{
+  "diskLayouts": [
+    {
+      "config": "raid1",
+      "format": "ext4",
+      "mountpoint": "/",
+      "diskType": "nvme",
+      "disks": ["eui.0025388581b8e1a4", "eui.0025388581b8e1a5"],
+      "wipe": true
+    },
+    {
+      "config": "raid5",
+      "format": "xfs",
+      "mountpoint": "/data0",
+      "diskType": "hdd",
+      "disks": ["ZC12A8B4", "ZC12A8B7", "ZC12A9F1"],
+      "wipe": true
+    }
+  ]
+}
+```
+
+## Discovery derives the options
+
+When a server is discovered, {BRAND_NAME} groups its physical disks by media type and identical size (virtual disks are excluded), then computes what each group can do:
+
+- **Strategies**: `direct` and `lvm` are always offered. RAID levels are offered only when every disk in the group reports the same model, subject to the member-count rules below.
+- **Filesystems**: `ext4` and `xfs`. `ext4` is withheld when disks exceed 4768 GiB (~5.1 TB) or when a group has more than 8 disks. A known board family is additionally pinned to `ext4`.
+- **A default layout**: the smallest SSD/NVMe group becomes `/` on LVM + ext4. The remaining SSD/NVMe groups become LVM data volumes at `/data0`, `/data1`, and so on. Non-OS HDD groups are listed both as data volumes and as cold storage, which the provisioning form prefills at `/cold0`, `/cold1`, and so on. HDD-only hosts boot from the smallest HDD group.
+
+The result is stored on the server record and drives both the provisioning form and the API. The dropdowns in the form list exactly the capabilities the hardware supports.
+
+## Software RAID, 0 through 60
+
+RAID groups compile to Linux mdraid arrays. No hardware controller is required. Guardrails run three times: the provisioning form and the API validate with identical rules before anything touches a disk, and the Bridge re-checks minimum member counts when it compiles the curtin layout, before any partitioning.
+
+| Level    | Minimum disks | Even count required |
+| -------- | ------------- | ------------------- |
+| `raid0`  | 2             | no                  |
+| `raid1`  | 2             | yes                 |
+| `raid5`  | 3             | no                  |
+| `raid6`  | 4             | no                  |
+| `raid10` | 4             | yes                 |
+| `raid50` | 6             | no                  |
+| `raid60` | 8             | no                  |
+
+Brokkr additionally rejects RAID groups whose members report differing types, sizes, or models.
+
+curtin cannot create RAID 50 or 60 as a single array, so {BRAND_NAME} decomposes them. The members split into two halves. Each half becomes an inner RAID 5 or RAID 6 array, and an outer RAID 0 stripes across the pair. A RAID 60 of eight disks is two 4-disk RAID 6 arrays under one stripe. After install, the Brokkr Live Agent writes `mdadm.conf` into the target OS so arrays assemble by UUID on every boot.
+
+## LVM composition
+
+An `lvm` group creates one volume group (`vg0`, `vg1`, …) over its member disks and a single logical volume spanning it. Array and volume group names skip any `mdN` or `vgN` already live on the machine, so a [preserved data stack](/deployments/preserving-data-disks) is not overwritten by a name collision. Data volumes (every mountpoint except `/` and the boot paths) are mounted `nofail,defaults`, so a degraded data volume does not block boot.
+
+## Boot geometry per firmware mode
+
+The `/` group's disks carry the boot partitions. All partitioning is GPT. Root takes the remainder of each disk minus a ~5 MiB tail reserve that covers the GPT secondary header plus end-of-disk slack.
+
+| Firmware        | Per-disk partitions                                     | Boot redundancy                                                            |
+| --------------- | ------------------------------------------------------- | -------------------------------------------------------------------------- |
+| **UEFI**        | ~1 GiB FAT32 EFI partition + root partition             | Every member disk gets its own EFI partition: `/boot/efi`, `/boot/efi2`, … |
+| **Legacy BIOS** | 1 MiB `bios_grub` + 2 GiB ext4 `/boot` + root partition | Multi-disk groups place `/boot` on a RAID 1 across all members             |
+
+Under `direct`, only the first disk is partitioned in either mode.
+
+## Execution
+
+The Bridge compiles the disk groups into curtin `storage: version 2` YAML, and the Brokkr Live Agent executes it with curtin on the target machine. `encrypt: true` layers LUKS2 over a data group's RAID array or LVM volume. See [Disk encryption](/disk-encryption) for the zero-knowledge key model. `wipe: false` carries a data group's contents across a reprovision. See [Preserving data disks](/deployments/preserving-data-disks).
+
+## Hardware RAID is detection-only
+
+{BRAND_NAME} detects RAID host bus adapters at wipe time solely to choose safe wipe strategies for the disks behind them. It does not configure hardware RAID controllers. Software RAID, as described above, is the supported path to redundancy.
+
+## Related pages
+
+- [Deployment lifecycle](/deployments/lifecycle)
+- [Preserving data disks across reprovisions](/deployments/preserving-data-disks)
+- [Disk encryption](/disk-encryption)
+- [Disk sanitization](/security/disk-sanitization)

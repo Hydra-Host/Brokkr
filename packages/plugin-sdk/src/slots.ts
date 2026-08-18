@@ -14,6 +14,8 @@ export type ExtensionSlot = (typeof EXTENSION_SLOTS)[number];
 export interface PluginRouteProps {
   pluginId: string;
   splat: string;
+  /** Loading screen provided by the host. Render this while async data loads; omit or render nothing if absent. */
+  LoadingScreen?: ComponentType;
 }
 
 export interface PluginRoute {

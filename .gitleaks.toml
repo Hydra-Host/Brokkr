@@ -27,4 +27,8 @@ paths = [
 ]
 
 # matched against the secret VALUE — anchored so a real key merely containing these tokens isn't suppressed
-regexes = ['''(?i)^(example|placeholder|your[-_]?api[-_]?key|x{3,})$''']
+regexes = [
+  '''(?i)^(example|placeholder|your[-_]?api[-_]?key|x{3,})$''',
+  # documented decoy in the .env.example files, values.yaml, secretspec.toml and the self-host docs (base64 decodes to placeholder-not-for-real-use)
+  '''^whsec_cGxhY2Vob2xkZXItbm90LWZvci1yZWFsLXVzZQ==$''',
+]

@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@repo/ui/compo
 import { ServerDataTable } from '@repo/ui/components/server-data-table';
 import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
 import { useServerTable } from '@repo/ui/hooks/use-server-table';
+import { formatDuration } from '@repo/utils';
 import { keepPreviousData } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { CheckCircle, Clock, Eye, XCircle } from 'lucide-react';
@@ -16,17 +17,6 @@ const TEST_TYPE_LABELS: Record<string, string> = {
   GpuBurnIn: 'GPU Burn-in',
   NcclPerformance: 'NCCL Performance',
 };
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null) return '—';
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return `${hours}h ${remainingMinutes}m`;
-}
 
 function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleString();

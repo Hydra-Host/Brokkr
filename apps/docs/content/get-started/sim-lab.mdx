@@ -1,0 +1,79 @@
+---
+title: 'The sim lab'
+description: 'Drive the simulated fleet from the control center: one-click end-to-end test scenarios, fleet topology edits with drift detection, and a bare-metal mode for real machines.'
+section: get-started
+order: 3
+slug: get-started/sim-lab
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+The sim lab is the working environment for the simulated fleet you created in the [quickstart](/get-started/quickstart). From one browser tab you can power and console every machine, run the full provisioning lifecycle as a one-click test, and edit the fleet topology with a live drift check. The same control center also drives real hardware in bare-metal mode.
+
+## The control center
+
+The control center comes up with the stack. Open `http://localhost:5175` in a browser. The UI is backed by the lab API on `:3002`. Beyond the status view, the control center has three working surfaces:
+
+- **Fleet.** Power each VM on, off, or cycle it. Commands go through the simulated BMC first, with a `virsh` fallback that verifies and enforces the requested state. You can also attach a live serial console over WebSocket, tail or download a machine's console log, run a command on a booted node over SSH, reset a machine back to clean inventory, or verify-and-heal the whole fleet.
+- **Datastores.** Browse hub Postgres tables and rows, run read-only SQL, scan bridge Redis keys and inspect their values, query Thanos metrics, and check migration status. This is the data plane of a provision saga, and you can inspect it while a saga runs.
+- **Stack ops.** One-click operations for the stack itself: up, down, restart, reconcile/self-heal, seed the database, apply migrations, check schema drift, and the fleet verbs (up, down, rebuild, incremental apply, nuke). `Stack nuke` wipes datastore data and is labeled accordingly.
+
+<Warning>
+  The lab API exposes destructive, root-equivalent surfaces (SSH exec, stack nuke). The SQL console runs every query in
+  a read-only transaction and rejects writes, but it still reads the whole hub database. The API binds loopback by
+  default. Off-loopback requests require a token, and the destructive routes plus the SQL console stay loopback-only.
+  Keep it on your dev box.
+</Warning>
+
+## Test scenarios
+
+The Scenarios page ships 15 scenarios that exercise {BRAND_NAME} end to end against the live stack. Each scenario is a test suite whose output streams live into the control center. When a run targets a specific node, the lab first resets that device to clean inventory so stale state cannot affect the run, and holds a one-test-per-node lock. A run launched as **Auto** skips both guards in VM mode, and the suite picks the first device already in inventory. In bare-metal mode, Auto pins the lone registered machine and both guards apply. With more than one machine registered, Auto is rejected. Pick the target explicitly. When a run finishes, the Results tab holds the per-case breakdown plus hub and bridge log slices captured for exactly that run's window.
+
+| Scenario              | What it proves                                                                                           |
+| --------------------- | -------------------------------------------------------------------------------------------------------- |
+| Smoke (fast)          | Fast checks against the live stack, branched on fleet mode; non-destructive                              |
+| Zone Redis ACL (fast) | Per-zone Redis ACL: scoped credentials, rotation, revocation                                             |
+| Lifecycle: quick      | Provision → deprovision (end-rental) on one node                                                         |
+| Lifecycle: full       | Provision → reprovision → power-cycle → deprovision, with Redis/DB/IPMI timeline and serial log attached |
+| Rescue boot           | Boot into the live rescue OS, verify, exit back to the installed OS                                      |
+| Custom iPXE           | Validator negatives plus the stored custom-boot URL                                                      |
+| Cloud-init            | User-data verified section by section on the booted OS                                                   |
+| Layer Composition     | A chosen base + component [layer](/os-builds/customizations) stack, verified on the booted OS            |
+| Base OS Scan          | Every selected base OS provisioned and verified over SSH in turn                                         |
+| Disk layout           | Each selected layout provisioned and verified (`lsblk`, `findmnt`, LVM, RAID)                            |
+| Commissioning         | Full device commissioning through the qualify saga (in development)                                      |
+| Spoke: failover       | Kill the bridge working a saga; a second bridge replica picks up the job and reaches `PROVISIONED`       |
+| Spoke: restart-resume | Restart the bridge mid-saga; it resumes from its Redis-persisted plan instead of starting over           |
+| VRRP: VIP failover    | The real VRRP reconciler binds, moves, and releases the VIP across a leader change                       |
+| Custom Sequence       | Your own plan, assembled from the modular steps below                                                    |
+
+The two bridge scenarios require at least two bridge replicas in one zone and fail fast otherwise. Together with the [VRRP](/network/gateways-vrrp-bgp-circuits) scenario, they demonstrate the [high-availability](/zones/high-availability) model on your laptop.
+
+**Custom Sequence** assembles a plan from the same steps the presets use: provision, reprovision, power-cycle, rescue activate/deactivate, the verify steps, and end-rental. You can clone a preset, reorder it, and run the whole sequence on one node in a single deploy.
+
+## The Fleet Builder
+
+The Fleet Builder edits the fleet topology from the control center. There is no YAML to edit. Per node you set CPUs, memory, disk size, extra data disks, extra NICs (model, MTU, link state), pinned data and BMC IPs, per-node BMC credentials, and a zone assignment. The zone dropdown offers only the zones already declared in the fleet's Nix config, and the default fleet ships one. The builder cannot create zones. To model a multi-zone fleet (one bridge per zone by default), first declare more zones under `fleet.zones.<name>` in the config. On Linux amd64 hosts you can also pass a host PCI device (GPU, NIC) through to exactly one VM. The builder validates every save and rejects duplicate names, MACs, and IPs, gateway collisions, and passthrough exclusivity violations before anything is written.
+
+Saves land in a local overlay and do not touch the running fleet. The builder continuously diffs your desired topology against what is actually applied and shows the drift: nodes added, removed, or changed, network changes, and a severity that tells you whether an incremental `Fleet apply` suffices or a full `Fleet rebuild` (or a mode change) is required. You can preview the exact apply plan before running either.
+
+## Bare-metal mode
+
+To run the lab against real machines, switch the fleet mode to **bare-metal** in the Fleet Builder. Bare-metal mode requires a Linux host. Select an uplink NIC, then register each machine by name, BMC IP, BMC MAC, and PXE MAC. An architecture and a Redfish system id are optional. BMC credentials are stored in a mode-0600 secrets file. They are never written to the fleet overlay.
+
+In bare-metal mode the control center's power buttons drive the real BMC over Redfish. The lab negotiates the BMC's allowable reset types: a power-cycle prefers the native PowerCycle, falls back to ForceRestart, and sequences ForceOff-then-On itself only when the BMC advertises neither. The machines network-boot against the same bridge chain endpoint the VMs use. The smoke scenario re-targets its checks to the bare-metal preconditions (proxy-DHCP settings, the bridge's DHCP sockets, iPXE assets, the chain endpoint). Scenarios that need the VM simulator (the bridge failover pair and VRRP) are disabled with a stated reason.
+
+Commission a machine into inventory with the wipe-confirmed loop. The loop commissions the device, polls the qualify saga to completion, acknowledges it, and verifies the result: an active server in inventory with collected CPU, memory, and storage specs, the same as its simulated siblings.
+
+```bash
+python -m local.commission_baremetal --yes-wipe            # all registered machines
+python -m local.commission_baremetal --node bm-1 --yes-wipe
+```
+
+<Warning>Commissioning wipes the target machine's disk. The `--yes-wipe` flag is mandatory.</Warning>
+
+See [inventory and discovery](/infrastructure/inventory-and-discovery) for what happens after a machine lands in inventory.
+
+## Next steps
+
+You have now run the full lifecycle in simulation and, optionally, on real hardware. [Provision your first servers](/get-started/first-servers) against a production install, or read how [deployments](/deployments/lifecycle) behave once customers are renting them.

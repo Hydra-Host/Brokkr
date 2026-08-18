@@ -3,7 +3,10 @@ import { activeOrganizationTab, visibleOrganizationTabs } from '../organization-
 
 const denyAll = () => false;
 const allowAll = () => true;
-const allow = (...keys: string[]) => (resource: string, action: string) => keys.includes(`${resource}:${action}`);
+const allow =
+  (...keys: string[]) =>
+  (resource: string, action: string) =>
+    keys.includes(`${resource}:${action}`);
 
 describe('visibleOrganizationTabs', () => {
   it('hides the event log from a member without access', () => {

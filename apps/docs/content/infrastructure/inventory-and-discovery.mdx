@@ -1,0 +1,87 @@
+---
+title: 'Inventory and discovery'
+description: 'What {BRAND_NAME} collects from every machine: 25 collectors, the device registry, the NVLink topology graph, and per-run audit records.'
+section: infrastructure
+order: 1
+slug: infrastructure/inventory-and-discovery
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} collects hardware inventory directly from each server. A single boot runs 25 collectors on the machine itself, and their validated output lands in one device registry. The inventory covers every DIMM slot, InfiniBand port, PCIe device, and UEFI boot entry the hardware reports.
+
+## How discovery works
+
+Discovery is a pipeline from the device to the registry:
+
+1. Brokkr (the hub) schedules an inventory collection, and the Bridge (the zone's spoke) dispatches `collection.collectAll` to the device's [Brokkr Live Agent](/infrastructure/host-agent) over gRPC.
+2. The Brokkr Live Agent runs all 25 collectors in parallel. Each collector's output is validated against its Zod schema before it leaves the device. A collector that returns a malformed payload reports a failure and sends no data.
+3. Each collector emits an individual result with its status and duration. One failing collector does not fail the run, and the other 24 still land.
+4. The Bridge forwards the bundle to Brokkr, where a per-collector handler parses each payload again and translates it into registry mutations. Five collectors have no hub handler yet and are archived without reaching the registry (see below). Six composers then run over the assembled bundle. Four combine payloads to derive facts no single collector reports: TEE capability, storage layouts, network type, and per-interface IP addresses with NAT mappings. One builds the IPMI management interface record from the BMC payload. One moves a `DEPROVISIONING` or `OFFLINE` server's lifecycle status back to `INVENTORY`.
+5. A single database transaction commits everything, with automatic retry on deadlock or serialization failure.
+
+Callers can also request an explicit subset of collectors instead of the full default set.
+
+## What the collectors gather
+
+| Area              | Collectors                                            | What they read                                                                                                                                                                                                    |
+| ----------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| System identity   | `dmidecode`, `ghw`, `lshw`, `architecture`, `version` | SMBIOS system/chassis/baseboard serials and UUID, ten ghw domains (baseboard, bios, block, chassis, cpu, gpu, memory, net, pci, product), and the full `lshw -json` hardware tree                                 |
+| Compute           | `lscpu`, `memory`, `lstopo`                           | Sockets, cores, threads; per-DIMM layout from `dmidecode -t memory`; full hwloc topology (NUMA, caches, PCI bus)                                                                                                  |
+| GPUs              | `nvidia`, `nvidia_detailed`                           | GPU count, model, serial, UUID, VBIOS, memory; per-GPU PCIe link generation (current vs. max) and `lspci` link capability vs. status                                                                              |
+| Storage           | `lsblk`, `bdi`                                        | Block devices (loop and optical excluded); `bdi.*` kernel parameters                                                                                                                                              |
+| Network           | `ip`, `route`, `public_ip`, `lldp`, `ib_data`         | Interfaces and addresses, routing table, observed public IP, LLDP switch neighbors, per-InfiniBand-port GUID, speed, and link state                                                                               |
+| Firmware and boot | `efi`, `efibootmgr`, `secure_boot`, `kernel_params`   | UEFI vs. BIOS, boot entries and order, Secure Boot state with the full PK/KEK/db/dbx and MOK certificate stores (subjects, issuers, fingerprints, expiry), kernel cmdline with derived issues and recommendations |
+| Virtualization    | `is_virtual`, `virtualization`                        | Hypervisor detection; VT-x/AMD-V, IOMMU, and SR-IOV enablement                                                                                                                                                    |
+| Out-of-band       | `bmc`, `serial_ports`                                 | BMC IPv4/IPv6/MAC; detected UARTs, BMC Serial-over-LAN capability, and the resolved console port and baud rate                                                                                                    |
+
+The `lldp` and `ib_data` results feed interface records directly, so a discovered server's records include the switch port it is cabled to. Read [DCIM](/infrastructure/dcim) for rack placement and [out-of-band management](/infrastructure/out-of-band) for the BMC side.
+
+<Note>
+  Five of the default collectors (`secure_boot`, `nvidia_detailed`, `lstopo`, `is_virtual`, and `version`) have no hub
+  handler yet. Handlers for them are in development. Their payloads are validated on the device and archived with the
+  rest of the bundle, but they do not become registry mutations.
+</Note>
+
+## The device registry
+
+Everything lands in one `Device` table. The base row carries identity facts every device shares: chassis serial, SMBIOS UUID (unique among live rows), CPU architecture, and IOMMU and SR-IOV enablement. Discovery writes the SMBIOS system serial to the legacy `serial` column. The preferred `systemSerial` column is populated at commissioning, and discovery does not write it. Columns for Secure Boot and UEFI state exist, but discovery does not populate them yet (in development). Those payloads, including the full PK/KEK/db/dbx and MOK certificate stores, are stored only in the raw payload archive.
+
+Role-specific columns live in per-role extension tables: `Server`, `Bridge`, `Switch`, `Router`, `Pdu`, `Cdu`, `RackBrush`, and `PatchPanel`. Each extension table is 1:1 with the base row. A server's lifecycle status, power status, TEE capability, and storage layouts live on `Server` rather than on `Device`, so a switch row never carries null server-only columns.
+
+Hardware components are child tables keyed to the device: `Cpu`, `Gpu`, `StorageDrive`, `MemoryConfig`, `Interface`, `DeviceFirmware`, `PciDevice`, `UefiBootEntry`, `NvlinkEdge`, and `DeviceSolConfig`. Discovery reconciles these tables rather than appending to them. A GPU or drive the latest run did not report is deleted, so a pulled card disappears from the device's inventory. The sweep fires only on a non-empty report. A run where the driver could not enumerate GPUs preserves the existing rows instead of zeroing the count.
+
+## GPU detail and the NVLink topology graph
+
+The `nvidia` collector supplies each `Gpu` row's identity: index, model, vendor, UUID, VBIOS version, serial, and total memory. Columns for ECC state, MIG mode and profile, NVIDIA Confidential Computing mode (`OFF`, `ON`, or `DEVTOOLS`), driver version, compute capability, and architecture are in the schema but not yet populated (in development).
+
+`NvlinkEdge` models the GPU-to-GPU NVLink topology as a directed graph, with one row per source/target GPU pair carrying lane count, bandwidth in Gbps, and link status. The graph is directed because some NVLink generations report asymmetric link counts. Populating the edges is in development, and no collector writes them yet. The registry side is already live. Edges are swept automatically when either endpoint GPU leaves the registry.
+
+## Discovery run audits
+
+Every discovery pass that clears ingress writes a `DiscoveryRun` record. The record captures status (`SUCCEEDED`, `PARTIAL`, or `FAILED`), collectors expected versus received, which handlers and composers applied, the hub code version that wrote the data, and duration. A bundle rejected at ingress (an empty collector list, no live device row, or a zone mismatch) is logged and discarded without a run record. Each problem becomes a `DiscoveryRunIssue` row tagged with its phase (schema, handler, composer, or commit) and severity, so you can find the collectors that fail most often with one query across the fleet.
+
+<Note>
+  A collector without a hub handler counts as skipped and forces the run to `PARTIAL`. Until the five in-development
+  handlers ship, a default run reports `PARTIAL` rather than `SUCCEEDED`.
+</Note>
+
+Raw payloads are archived to object storage under a per-run prefix (`{deviceId}/{timestamp}/`), and the run record keeps a pointer to the exact bytes behind each registry row. Archival is best-effort. When object storage is unconfigured or an upload fails, discovery logs a warning. It commits the registry mutations anyway. The Bridge splits each collector's output by top-level key before it reaches Brokkr, so the archive holds one JSON file per field rather than one per collector. `ghw` alone yields ten files (`ghw_baseboard.json` through `ghw_product.json`), and the `memory` payload lands as `dmidecode_memory.json`. A full default run writes about 36 files.
+
+## Running collectors by hand
+
+For field debugging, you can run any collector directly through the Brokkr Live Agent's own handler. The agent build emits an `exec-cli.js` entry point next to the agent bundle (`main.js`):
+
+```bash
+node exec-cli.js collection.secure_boot '{}'
+node exec-cli.js collection.ib_data '{}'
+```
+
+The entry point validates the input, runs the real handler, and prints the JSON result. It exercises the same code path as production discovery without involving the Bridge or Brokkr.
+
+<Note>
+  Deployed devices receive only `main.js`, installed at `/opt/brokkr/agent` by default. `exec-cli.js` is not part of the
+  device install, so run it from an agent build checkout.
+</Note>
+
+The Brokkr Live Agent also snapshots every full collection run to `/var/lib/brokkr/collections/<collector>.json` (owner-only permissions, best-effort). When a registry value looks wrong, read the snapshot first. The snapshot shows what the machine reported on the last pass.

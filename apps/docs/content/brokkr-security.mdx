@@ -1,0 +1,94 @@
+---
+title: 'Security architecture'
+description: 'Trust boundaries, sealed-envelope encryption, and fail-closed defaults across the {BRAND_NAME} control plane.'
+section: security
+order: 1
+slug: brokkr-security
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} encrypts secrets in transit and at rest, and it fails closed when a key is missing. Queue traffic between Brokkr (the hub) and an enrolled zone's Bridges (the spokes) is sealed with X25519 and AES-256-GCM. Each Bridge encrypts the secrets it caches locally. Once a zone is enrolled, a missing key stops its traffic instead of downgrading it to plaintext.
+
+## Trust boundaries
+
+{BRAND_NAME} enforces security at three trust boundaries. Each boundary has its own identity model and its own controls.
+
+| Boundary               | Who is on the other side                                   | Primary controls                                                                                                                                 |
+| ---------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Humans                 | Operators, tenants, API clients                            | [RBAC](/organizations/rbac), framework-level [tenant isolation](/organizations/orgs-and-tenancy), [audit logging](/security/audit-and-event-log) |
+| Hub-to-spoke transport | Job queues shared between the hub and each zone's Bridges  | Sealed envelopes: X25519 authenticated Diffie-Hellman + HKDF-SHA256 + AES-256-GCM                                                                |
+| Devices                | Servers booting the discovery OS or a deployed customer OS | Per-device opaque bearer [tokens](/security/secrets-and-device-tokens), hashed at rest, bound to the OS context that presents them               |
+
+## Sealed envelopes on the hub-to-spoke transport
+
+Sealing is gated on [zone enrollment](/zones/create-and-enroll). Enrollment closes the downgrade path. Brokkr refuses to enqueue an unsealed payload for an enrolled zone and rejects any plaintext result arriving from one.
+
+<Warning>
+  A zone that has not enrolled exchanges plaintext queue traffic, and Brokkr logs every plaintext enqueue. Enroll a zone
+  before you dispatch work that carries credentials.
+</Warning>
+
+Once a zone is enrolled, every payload that crosses its queue is sealed per message:
+
+| Primitive      | Choice                                                                                                                                  |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Key agreement  | X25519 with two shared secrets, ephemeral→recipient and sender-static→recipient, so the recipient authenticates the sender's static key |
+| Key derivation | HKDF-SHA256 over the concatenated shares; salt = SHA-256 of the canonical AAD; info = `brokkr-auth-dh-v1`; 32-byte AES key              |
+| Cipher         | AES-256-GCM, 16-byte tag, 12-byte nonce derived from the ephemeral public key; a fresh key pair per envelope yields a fresh nonce       |
+| AAD            | Canonical sorted JSON of `aad_v`, `zone_id`, `queue_name`, `direction`, `job_id`, `created_at`                                          |
+
+The AAD is bound twice: it feeds both the HKDF salt and the GCM tag. Tampering with an envelope's AAD derives a different key and fails tag verification. A verbatim envelope replayed across routes is caught at open. Each receiver validates the embedded AAD against the route the message arrived on and refuses a mismatch. The Bridge checks zone, queue, and direction. Brokkr checks queue and direction. Every failure (malformed input, wrong key length, tampered ciphertext, or a routing mismatch) surfaces as a single uniform `SealOpenError`, so error paths do not leak key-material detail.
+
+The implementation has two properties:
+
+- **No third-party crypto dependencies.** Every primitive comes from Node's built-in `node:crypto`. The crypto package has no runtime dependencies, so there is no supply chain to audit under it.
+- **Frozen CI test vectors.** A test-vector corpus (`auth-dh-v1.json`) is pinned by SHA-256 checksum in the test suite, which replays every vector through seal and open. CI runs the suite whenever the crypto package changes, so any drift in the implementation or the corpus fails the build.
+
+## Hub key behavior matrix
+
+The hub's X25519 private key (`BROKKR_HUB_PRIVATE_KEY`) gates [zone enrollment](/zones/create-and-enroll). Hub behavior depends on the key's state:
+
+| `BROKKR_HUB_PRIVATE_KEY`                 | Hub behavior                                                                                                                                                                     |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unset or empty                           | Boots dormant: the enrollment endpoint returns `503`, and Brokkr logs a warning telling you what to set                                                                          |
+| Set but not a base64-encoded 32-byte key | Refuses to boot. A malformed key fails at startup rather than leaving the hub silently dormant                                                                                   |
+| Valid                                    | Enrollment active; the public key is logged for verification; the private key is held only in memory, never persisted or logged, and redacted from JSON and string serialization |
+
+See the [configuration reference](/self-host/configuration-reference) for how to set the key.
+
+## Bridge at-rest encryption
+
+Each Bridge encrypts the secrets it caches locally with a dedicated key (`BRIDGE_AT_REST_KEY`, a base64-encoded 32-byte AES key). Secret writes use AES-256-GCM with a fresh random 12-byte nonce per value. The stored envelope is `base64(nonce || ciphertext || tag)`.
+
+The secret store has no downgrade path:
+
+- There is no plaintext fallback. Secret reads always decrypt. A stored value that is not an authenticated envelope under the current key raises an error instead of being returned.
+- A missing or malformed key fails at construction, so the secret store never comes up unencrypted.
+- A mangled key or envelope never yields plaintext. The key must decode to exactly 32 bytes, and every read must pass GCM tag verification before anything is returned.
+
+For encryption of customer data disks, see [disk encryption](/disk-encryption).
+
+## Fail-closed everywhere
+
+The same pattern repeats across the stack. When {BRAND_NAME} cannot prove an operation is safe, it refuses the operation.
+
+- If the hub private key is unset, the enrollment endpoint answers `503`. A malformed key aborts boot.
+- If the Bridge at-rest key is missing, the secret store refuses to start.
+- A tenant-scoped read with no request context bound and no explicit tenant filter returns an error instead of silently widening to all tenants.
+- A permission-gated mutation with no identity returns an error. The only bypass is an explicit, greppable system-context call.
+- A tampered or misrouted envelope fails with `SealOpenError`. No branch accepts it.
+
+## Framework-level tenant isolation
+
+The record framework enforces tenant isolation for data access that goes through it. Enforcement does not depend on discipline at each call site. Every tenant-scoped record class declares its tenant column once. The framework injects the tenant filter on every scoped read, auto-fills it on create, and threads it into update and delete conditions. A stray tenant value in a query cannot widen scope past the bound request context. Repositories that query the Prisma client directly sit outside this guarantee and carry their tenant scoping in explicit `where` clauses.
+
+Deliberate cross-tenant access exists for admin, saga, and billing paths. Inside the framework, cross-tenant access runs through finders that carry an explicit `Unscoped` suffix, which keeps those calls greppable in review. Raw-client paths state their cross-tenant scope in their own queries. Bulk writes that the framework cannot pin to a tenant are refused rather than silently mis-scoped. See [organizations and tenancy](/organizations/orgs-and-tenancy) for the tenancy model this enforces.
+
+## Coordinated disclosure
+
+{BRAND_NAME} ships cryptographic and authentication code, so vulnerability reports are handled privately. Report a vulnerability through GitHub's private vulnerability reporting on the repository's Security tab. Include the affected component, reproduction steps, and impact.
+
+<Warning>Do not open a public issue for a security vulnerability.</Warning>
+
+Response targets are acknowledgment within 3 business days and an initial severity assessment within 7 business days. Security fixes land on the latest release, so confirm the issue reproduces there before reporting. Fixes are coordinated with the reporter before public disclosure. Reporters are credited in the published advisory with their consent.

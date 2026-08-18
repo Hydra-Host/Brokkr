@@ -20,7 +20,7 @@ import { LoggerModule } from './logger/logger.module';
 import { WebhookModule } from './webhook/webhook.module';
 
 import { PluginRuntimeModule } from '@hydrahost/plugin-runtime';
-import { PLUGIN_GATE_BUS } from '@hydrahost/plugin-sdk';
+import { PLUGIN_GATE_BUS, PLUGIN_REDIS_CLIENT } from '@hydrahost/plugin-sdk';
 import pluginsConfig, { editionOverrides } from '@hydrahost/plugins-config';
 import { BullModule } from '@nestjs/bullmq';
 import { ActiveRecordModule } from '@repo/active-record';
@@ -34,7 +34,7 @@ import { CommissioningModule } from './commissioning/commissioning.module';
 import { ActiveRecordContextProvider } from './common/context/active-record-context.provider';
 import { ContextMiddleware } from './common/context/context.middleware';
 import { LoggingMiddleware } from './common/logging-middleware';
-import { RedisModule } from './common/redis';
+import { REDIS_CLIENT, RedisModule } from './common/redis';
 import { createRedisConnectionConfig } from './common/redis/redis.config';
 import { DcimBridgesModule } from './dcim-bridges/dcim-bridges.module';
 import { CduModule } from './dcim/cdu/cdu.module';
@@ -63,6 +63,7 @@ import {
   PLUGIN_GATE_BUS_SCOPED_FACTORY,
   type ScopedGateBusFactory,
 } from './plugin-host/host-plugin-gate-bus.module';
+import { createNamespacedRedisClient } from './plugin-host/host-plugin-redis-client';
 import { PluginHostModule } from './plugin-host/plugin-host.module';
 import { PluginsMetaController } from './plugin-host/plugins-meta.controller';
 import { ProvisionModule } from './provision/provision.module';
@@ -195,7 +196,26 @@ export class AppModule {
   private static scopedPluginModule(moduleClass: Type<unknown>, pluginId: string): DynamicModule {
     return {
       module: moduleClass,
-      imports: [AppModule.scopedGateBusModule(pluginId)],
+      imports: [AppModule.scopedGateBusModule(pluginId), AppModule.scopedRedisModule(pluginId)],
+    };
+  }
+
+  private static scopedRedisModule(pluginId: string): DynamicModule {
+    const ScopedRedisModule = class {};
+    Object.defineProperty(ScopedRedisModule, 'name', { value: `ScopedRedisModule(${pluginId})` });
+    return {
+      module: ScopedRedisModule,
+      providers: [
+        {
+          provide: PLUGIN_REDIS_CLIENT,
+          useFactory: (redis: {
+            get(key: string): Promise<string | null>;
+            set(key: string, value: string, expiryMode: 'EX', ttlSeconds: number): Promise<unknown>;
+          }) => createNamespacedRedisClient(redis, pluginId),
+          inject: [REDIS_CLIENT],
+        },
+      ],
+      exports: [PLUGIN_REDIS_CLIENT],
     };
   }
 

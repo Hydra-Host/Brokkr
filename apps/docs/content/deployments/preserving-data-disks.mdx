@@ -1,0 +1,77 @@
+---
+title: 'Preserving data disks'
+description: Preserve is a per-group flag that keeps a data disk group's contents, including encrypted volumes and their passphrases, across a full OS reinstall.
+section: deployments
+order: 5
+slug: deployments/preserving-data-disks
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+Preserve keeps the contents of a data disk group across an OS reinstall. Check **Preserve** on a data disk group during a reprovision and {BRAND_NAME} installs a fresh operating system without touching that group. The new OS boots with the existing data in its mount table, and encrypted volumes keep their passphrase.
+
+Preserve is a per-group flag (`wipe: false`) on the [disk layout](/deployments/disk-layouts) you submit with a reprovision. Each stage that could destroy data enforces the flag:
+
+| Stage            | Protection                                                                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Installer config | The Bridge excludes the preserved group from the curtin storage config, so curtin never partitions, formats, or mounts its disks.                |
+| Holder teardown  | The Brokkr Live Agent skips preserved disks and leaves up any RAID array or LVM volume group with a member on a preserved disk.                  |
+| Selective wipe   | Only `wipe: true` groups are sanitized. A wipe target that shares a RAID or LVM stack with a preserved disk is excluded and recorded as skipped. |
+| Re-wiring        | After the install, the Brokkr Live Agent probes each preserved group by UUID and appends `nofail` entries to the new OS's fstab (and crypttab).  |
+
+## Mark a group as Preserve
+
+Set Preserve on the reprovision form.
+
+<Note>
+  Disk names can change between boots. Verify that the serial or WWN shown in the disk list matches the disks that hold
+  your data before you preserve a group. The form submits the WWN or serial when discovery captured one, and the Brokkr
+  Live Agent resolves each identifier against name, serial, and WWN on the live machine.
+</Note>
+
+1. Start a reprovision and open the **Disk Layouts** card.
+2. On the data disk group you want to keep, check **Preserve**.
+3. Choose the mountpoint where the existing data should appear in the new OS.
+4. Submit the reprovision.
+
+Checking Preserve hides the layout and format selectors. The group keeps its existing structure, so only the mountpoint remains editable.
+
+## What cannot be preserved
+
+- **The root group.** The Preserve checkbox never appears on the group mounted at `/`, and curtin config generation forces `wipe: true` there. A reprovision always reinstalls the OS disk.
+- **Preserve plus new encryption.** Checking Preserve clears the Encrypt checkbox, and the Bridge rejects a group with both flags because encrypting a group formats it. A group that is already encrypted keeps its encryption. See [Preserved encrypted volumes](#preserved-encrypted-volumes).
+
+## How the wipe avoids preserved data
+
+Reprovision runs a selective wipe. The Brokkr Live Agent tears down the device-mapper, LVM, and RAID stacks on the `wipe: true` disks. It then sanitizes the disks and verifies the result (see [disk sanitization](/security/disk-sanitization)). Three guards keep the wipe away from preserved groups:
+
+- **Stack-aware teardown.** Teardown runs top-down: crypt, then LVM, then RAID. The LVM and RAID passes skip any volume group or array whose members touch a preserved disk. Stopping the array or removing the group would destroy the preserved member's data path. Crypt mappers are always closed. Closing a dm-crypt mapping destroys no data, and [re-wiring](#preserved-encrypted-volumes) restores the preserved mapper through crypttab after the install. The guards fail closed. If the Brokkr Live Agent cannot enumerate an array's members or a volume group's physical volumes, it leaves the stack up instead of guessing.
+- **Shared-stack exclusion.** A `wipe: true` disk that shares a surviving RAID or LVM stack with a preserved disk is dropped from the wipe set and reported as skipped. Raw-wiping one member corrupts the whole array.
+- **NVMe sanitize suppression.** A single `nvme sanitize` command erases every namespace on the controller, including namespaces that were never a wipe target. If any namespace on a controller sits outside the wipe set (preserved or never listed in a group), the Brokkr Live Agent removes controller-wide Sanitize from that controller's method ladder and falls back to namespace-scoped `nvme format` and `blkdiscard`.
+
+The sanitization report records every preserved disk with the reason `wipe=false in disk_layouts`, so the wipe accounting stays complete.
+
+## Re-wiring into the new OS
+
+After curtin applies the new layout, the Brokkr Live Agent creates each preserved mountpoint inside the installed system. It probes the group's device with `blkid` and appends an fstab entry keyed on the filesystem UUID:
+
+```text
+# /data0 preserved disk
+UUID=6f4a1c2e-9b7d-4e0f-8a3c-2d5e7f9b1c3d /data0 ext4 nofail,defaults 0 2
+```
+
+Every preserved entry mounts with `nofail`. A missing or slow disk logs an error instead of dropping the server into an emergency shell. Because the entry is keyed on the filesystem UUID, the mount follows the data even when device names change after the reinstall.
+
+## Preserved encrypted volumes
+
+A preserved group that carries LUKS encryption survives with its passphrase unchanged. The Brokkr Live Agent detects the LUKS container on the group's leaf device, including whole-disk containers and LUKS on a RAID array. It claims a RAID-backed container by its header UUID, so detection succeeds even after mdadm renumbers the arrays. It wires the container into the new OS:
+
+```text
+# crypttab: preserved mappers use pcrypt-N, never colliding with curtin's crypt-N
+pcrypt-0 UUID=8d2e5f1a-3c4b-4a6d-9e0f-7b8c1d2e3f4a none luks,noauto,nofail
+
+# fstab: mounts by the mapper's dm-uuid
+/dev/disk/by-id/dm-uuid-CRYPT-LUKS2-8d2e5f1a3c4b4a6d9e0f7b8c1d2e3f4a-pcrypt-0 /data0 ext4 nofail,defaults 0 2
+```
+
+The `luks-rekey` helper takes ownership of newly encrypted volumes. It refuses any volume whose header UUID is in the preserved set, because reformatting the volume would destroy the data. Preserved volumes are never rekeyed. After the reprovision boots, unlock the volume over SSH with `luks-unlock` and the same passphrase you set before. The zero-knowledge model is unchanged. {BRAND_NAME} never stores your key. See [disk encryption](/disk-encryption) for the full unlock workflow.

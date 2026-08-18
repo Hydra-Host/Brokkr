@@ -1,4 +1,4 @@
-import { APIKey, Session } from '@repo/auth';
+import { Session } from '@repo/auth';
 import { Member, Organization, OrganizationMembershipRole, User } from '@repo/database';
 
 export enum AuthType {
@@ -19,9 +19,16 @@ export interface SessionContext {
   session: Session;
 }
 
+export interface ApiKeyPayload {
+  id: string;
+  name?: string | null;
+  referenceId: string;
+  organizationId: string;
+}
+
 export interface ApiKeyContext {
   authType: AuthType.ApiKey;
-  apiKey: APIKey;
+  apiKey: ApiKeyPayload;
   user: User;
 }
 

@@ -1,0 +1,106 @@
+---
+title: 'Reservations API'
+description: 'The reservation record behind each provision: price precedence, reservation invites, interruptible claims, and billing metadata export.'
+section: api
+order: 7
+slug: brokkr-api-reservations
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+Every server provisioned through {BRAND_NAME} carries a commercial record called a **reservation**. The reservation holds the pricing and billing terms the server was sold under and identifies the parties to the rental.
+
+All routes live under `/api/v1`. Authenticate as described in [API authentication](/brokkr-api-authentication). For end-to-end types, use the [TypeScript client](/api/typescript-client).
+
+## How reservations work
+
+You do not create a reservation directly. Provisioning a server creates one automatically and links the resulting deployment to it. [Deprovisioning](/brokkr-api-deployments) the deployment closes the reservation by stamping its end date. The open interval between the two timestamps is the billable window.
+
+Each reservation records:
+
+| Field                       | Meaning                                                                                                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `price`                     | Integer price per billing period.                                                                                                                                                          |
+| `billingFrequency`          | `HOURLY`, `WEEKLY`, or `MONTHLY`.                                                                                                                                                          |
+| `interruptibleNoticePeriod` | Notice window in milliseconds, recorded for billing. The window enforced at eviction is the deployment's own (see Interruptible reservations below). `null` for non-interruptible rentals. |
+| `reserverId` / `customerId` | The user who provisioned and the organization being billed.                                                                                                                                |
+| `internalProvision`         | Marks a supplier provisioning its own hardware, priced at zero.                                                                                                                            |
+| `notes`                     | Free-form terms carried over from the invite, if one applied.                                                                                                                              |
+
+### Price precedence
+
+When a provision starts, {BRAND_NAME} resolves the reservation's terms in strict order:
+
+1. **An open reservation invite on the device, addressed to the provisioning identity.** Matching checks the invitee organization first, then the invitee email. The invite's price, billing frequency, notice period, and notes are copied onto the reservation, and the invite is linked and marked accepted.
+2. **No invite, internal provision.** Price `0`, billed weekly.
+3. **No invite, direct rental.** The server's hourly rate × 168, rounded, billed weekly. Interruptible provisions use the server's floor hourly rate when one is set. Provisioning a server that has no hourly rate and no invite fails.
+
+<Note>
+  Only one open invite per device is considered during matching. If a device carries several, the match can land on an
+  invite addressed to someone else, and pricing falls through to the next rule. Keep each device to a single open
+  invite.
+</Note>
+
+## Reservation invites
+
+An **invite** is a priced offer on specific devices, addressed to a buyer. Suppliers use invites to sell capacity at negotiated terms instead of the listed rate. See [Selling capacity](/deployments/selling-capacity).
+
+### Supplier endpoints
+
+| Method   | Path                                     | Action                                                                                                                                  |
+| -------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/servers/:deviceId/reservation-invites` | Paginated open invites on a device you supply, including platform-issued ones. Accepted, expired, and deleted invites are not returned. |
+| `POST`   | `/servers/:deviceId/reservation-invites` | Creates an invite. Requires `reservation-invite:create`.                                                                                |
+| `PATCH`  | `/reservation-invites/:inviteId`         | Updates price, terms, expiry, or device list. Requires `reservation-invite:update`.                                                     |
+| `DELETE` | `/reservation-invites/:inviteId`         | Soft-deletes the invite. Requires `reservation-invite:delete`.                                                                          |
+
+Creating an invite takes:
+
+| Field                       | Required | Description                                                            |
+| --------------------------- | -------- | ---------------------------------------------------------------------- |
+| `inviterEmail`              | yes      | Must be the authenticated user's own email.                            |
+| `inviteeEmail`              | yes      | The buyer being invited. An email notification is sent on creation.    |
+| `organizationId`            | yes      | Overwritten with the authenticated supplier organization.              |
+| `price`                     | yes      | Non-negative price per billing period.                                 |
+| `billingFrequency`          | yes      | `HOURLY`, `WEEKLY`, or `MONTHLY`.                                      |
+| `dateExpires`               | yes      | Must be in the future.                                                 |
+| `deviceIds`                 | yes      | Devices covered. Every device must belong to your supply organization. |
+| `interruptibleNoticePeriod` | no       | Notice window in milliseconds, capped at 7 days.                       |
+| `notes`                     | no       | Internal notes, copied onto the resulting reservation.                 |
+
+<Note>
+  Validation checks the first device in `deviceIds` only. That device must be listed as available for invites. If it is
+  flagged interruptible-only, the invite must set a notice period. The request fails with `400` without one.
+</Note>
+
+### Invite lifecycle
+
+An invite is **active** while it is unaccepted, undeleted, and unexpired. Only active invites can be edited or deleted. Deletion is a soft delete, and accepted invites cannot be deleted. Expiry needs no cleanup call. An invite past `dateExpires` stops matching.
+
+Acceptance happens through provisioning. When the invited customer provisions a covered device, the invite's terms become the reservation and `dateAccepted` is stamped. The invite's `reservationId` then points at the reservation it produced.
+
+### Customer endpoints
+
+| Method | Path                       | Returns                                                                                                                       |
+| ------ | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/reservation-invites`     | Paginated open invites addressed to you, by email or organization, each with a hardware summary of the invite's first device. |
+| `GET`  | `/reservation-invites/:id` | One invite, with pricing and expiry.                                                                                          |
+
+Both routes return only invites addressed to the authenticated identity. To act on an invite, provision the device. See [Renting servers](/deployments/renting).
+
+## Interruptible reservations
+
+A deployment provisioned as interruptible can be claimed by another customer. The sitting tenant gets the deployment's own `interruptibleNoticePeriod` as a notice window before eviction. Today that window is always the 5-minute default.
+
+<Note>
+  Invites accept a notice period of up to 7 days and record it on the reservation for billing. Enforcement of the
+  invite's window at eviction is in development.
+</Note>
+
+Claims surface on the deployments API. `GET /deployments/interruptible-claims` lists your organization's claims with a `Pending` or `Complete` status and the scheduled `interruptAt` time. By default, evicting an active tenant requires instance operator authorization before the claim arms. Operators can disable the approval gate with `INTERRUPTIBLE_EVICTION_REQUIRES_APPROVAL=false`. See [Deployments API](/brokkr-api-deployments) for the claim endpoint and [Renting servers](/deployments/renting) for the tenant-side behavior.
+
+## Billing metadata
+
+{BRAND_NAME} records commercial terms. It does not charge cards. Every reservation carries the inputs a billing pipeline needs: the integer price, the billing cadence, the creation and end timestamps that bound the billable window, the customer organization, the reserving user, free-form notes, and a link back to the originating invite for provenance. Nothing in the model references a payment processor. An export job for Stripe or any other billing system reads your own data. The same is true for an ERP or a homegrown invoicing job.
+
+For suppliers and customers, that read happens at the database. The server detail response surfaces only the active reservation's pricing. The other fields (timestamps, parties, notes) are not included, so an export job queries the reservation table directly. The instance operator gets the full record over the API. The [Operator Hub](/organizations/orgs-and-tenancy) plugin's `GET /plugins/operator-hub/deployments/:deploymentId` returns a deployment's reservation with its timestamps, reserver, customer, notes, price, and billing frequency.

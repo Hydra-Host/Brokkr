@@ -1,0 +1,118 @@
+---
+title: 'OS customizations'
+description: 'A per-device customization catalog: GPU-specific driver and CUDA options, dependency filtering, server-side validation, TEE gating, and bring-your-own-OS provisioning via iPXE.'
+section: os-builds
+order: 2
+slug: os-builds/customizations
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+You provision a server by selecting a base OS and the customizations to install on it, such as a GPU driver, a CUDA toolkit, and an ML framework. {BRAND_NAME} composes the layers at provision time. There is no fixed image catalog. The catalog you choose from is computed per device: a B300 node is offered a different stack than an A100 node. Incompatible combinations are filtered out of the provision form, and the API rejects any stack the hardware cannot run. This page covers how the catalog adapts to hardware, what the server validates, legacy operating systems, and bring-your-own-OS provisioning through iPXE. For what a layer is, see [The layer model](/os-builds/layers). For how layer builds are versioned per zone, see [Layer builds](/os-builds/layer-builds).
+
+## Per-device catalog
+
+Customization options are not global. The hub computes the catalog for each device at request time from four inputs: the device's GPU model, its TEE capability, its CPU architecture, and the zone's active layer build. The options you see are the intersection of two filters:
+
+1. **Hardware eligibility**: which layers this GPU model can run at all.
+2. **Built artifacts**: which of those layers were actually built for the selected base OS (distro and codename) and the device's architecture in the zone's layer build.
+
+The hardware side is a per-GPU allowlist:
+
+| GPU model                                                                                             | Drivers offered     | CUDA offered       | PyTorch offered                      |
+| ----------------------------------------------------------------------------------------------------- | ------------------- | ------------------ | ------------------------------------ |
+| H100, H200, GH200, A100, A30, L40S, RTX 6000 Ada, RTX A6000, RTX 3080/3090/4090/5090, Quadro RTX 8000 | all (535, 580, 595) | all (11.8 to 13.2) | all                                  |
+| B200                                                                                                  | 580, 595            | 12.6, 13.0, 13.1   | cu126, cu130                         |
+| B300, RTX PRO 6000 Blackwell                                                                          | 580, 595            | 13.0, 13.1         | cu130                                |
+| No GPU                                                                                                | none                | none               | none (Mellanox OFED and Docker only) |
+| Unrecognized GPU model                                                                                | none                | none               | none (no customizations offered)     |
+
+The provision form groups options as `gpuDriver`, `gpuFramework` (CUDA), `mlFramework` (PyTorch), `miscSoftware`, and `tee`. Each group is single-select or multi-select. Misc software (Docker, Mellanox OFED, NVIDIA Container Toolkit) is available for every recognized GPU model. GPU-less devices are offered Docker and Mellanox OFED.
+
+## REQUIRES and reverse filtering
+
+Each built artifact carries **REQUIRES** relations to other layers. The artifact demands the related option. Relations are declared per artifact rather than per layer, so compatibility can differ across OS versions and architectures.
+
+<Note>A CONFLICTS relation type exists in the schema but is not yet produced or enforced. It is in development.</Note>
+
+The provision form applies REQUIRES in both directions:
+
+- **Forward**: an option is hidden when an existing selection in a group it requires violates its REQUIRES. While that group has no selection, the option stays visible.
+- **Reverse**: selecting an option narrows its dependencies' groups. Selecting `cuda-13.1` shrinks the driver dropdown to the drivers that CUDA artifact requires.
+
+Chained requirements cascade. Changing a selection re-filters every dependent group until the form is stable. A reference table beside the dropdowns maps each CUDA version to its minimum driver version, so you can check compatibility before choosing.
+
+## Server-side validation
+
+The form filtering is a convenience. The server-side validator is authoritative. Every provision request from the UI, the API, or the CLI passes the same validator. A stack that cannot work is rejected with a specific `400 Bad Request`:
+
+| Rule                                                              | Rejection                                                                                 |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Every slug must exist in the catalog                              | `Unknown OS Customization: "<slug>"`                                                      |
+| Legacy operating systems take no customizations                   | `OS customizations are not supported for legacy operating systems`                        |
+| At most one NVIDIA driver, one CUDA, one PyTorch                  | `Only one nvidia driver layer may be specified, got: ...`                                 |
+| CUDA needs a driver                                               | `A CUDA layer requires a compatible nvidia driver layer to also be specified`             |
+| Container toolkit needs a driver                                  | `nvidia-container-toolkit requires a compatible nvidia driver layer to also be specified` |
+| Hardware eligibility (the table above)                            | `OS customization(s) not compatible with this device: ...`                                |
+| Artifact-level REQUIRES for the selected base OS and architecture | `Driver "nvidia-driver-535" is not compatible with "cuda-13.1". Compatible drivers: ...`  |
+
+The last check resolves the actual artifacts for your selected base OS and device architecture in the zone's layer build. These are the same REQUIRES edges the form filters on, so driver and CUDA pairings that never shipped together are refused even if they look plausible.
+
+<Note>
+  PyTorch's driver pairing is enforced by the form filtering only. It is not covered by this artifact-level check.
+</Note>
+
+## TEE gating
+
+The `tee-setup` layer installs an Intel TDX confidential-computing host stack: the canonical/tdx packages, attestation tooling, NVIDIA nvtrust, and VFIO GPU pass-through modules. The layer is Ubuntu-only and amd64-only. The build itself refuses Debian and arm64.
+
+{BRAND_NAME} does not offer TEE on hardware that cannot deliver it. The layer is offered only when both conditions hold:
+
+- The server's TEE capability is verified `TRUE`, meaning CPU, vendor BIOS, CPLD, and NVIDIA vBIOS attestation all checked. Capable-but-unpatched (`PATCH`) and not-yet-evaluated (`UNVERIFIED`) hardware fails closed.
+- The GPU is a TEE-capable model: H100, H200, B200, B300, or RTX PRO 6000 Blackwell Server Edition.
+
+TEE can be requested three ways: the `tee-setup` customization, a `-tee` OS variant, or the `tee: true` request field (used with iPXE Custom, where there is no layer to select). All three paths run the same capability assertion. When the server's TEE capability is not verified `TRUE`, every path returns `400: TEE is not supported on this device`. The GPU-model requirement is enforced only on the `tee-setup` path, where an unlisted GPU is rejected by the hardware-eligibility check (`OS customization(s) not compatible with this device: tee-setup`).
+
+## Legacy operating systems
+
+Operating systems of kind `LEGACY` are pre-built monolithic images imported from before the layer model. They provision as-is. The validator rejects any customization on them. Prefer a layered base wherever one exists.
+
+## iPXE Custom
+
+To boot an OS that is not in the catalog, select the `ipxe-custom` operating system and supply the URL of your own iPXE script. The device network-boots whatever the script serves. For a confidential-computing boot, select the `ipxe-custom-tee` variant or pair `ipxe-custom` with the `tee: true` request field (see the TEE section above). The URL pairing is validated in both directions: an iPXE Custom OS without a URL is a `400`, and a URL on any other OS is a `400`. The CLI additionally requires the URL to be HTTPS and rejects SSRF-prone targets. See [Network boot](/network/network-boot) for the boot path.
+
+## Scripting
+
+Customizations are passed in the provision request as a record keyed by group slug. Values are a slug or an array of slugs. The server validates the flattened slug list, so the keys mirror the form groups:
+
+```json
+{
+  "gpuDriver": "nvidia-driver-580",
+  "gpuFramework": "cuda-13.0",
+  "miscSoftware": ["docker", "nvidia-container-toolkit"]
+}
+```
+
+The same field is a flag on the CLI:
+
+```bash
+brokkr dcim servers:provision <device-id> \
+  --name "training-node" \
+  --os ubuntu-noble-vanilla \
+  --ssh-keys "<key-uuid>" \
+  --customizations '{"gpuDriver":"nvidia-driver-580","gpuFramework":"cuda-13.0","miscSoftware":["docker"]}' \
+  --force
+```
+
+To provision with your own iPXE script:
+
+```bash
+brokkr dcim servers:provision <device-id> \
+  --name "byo-os" \
+  --os ipxe-custom \
+  --ssh-keys "<key-uuid>" \
+  --ipxe-url https://boot.example.com/my-os.ipxe \
+  --force
+```
+
+See the [CLI reference](/api/cli) and the [deployments API](/brokkr-api-deployments) for the full request shapes.

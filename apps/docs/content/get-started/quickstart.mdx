@@ -1,0 +1,123 @@
+---
+title: 'Quickstart'
+description: 'Boot a simulated bare-metal fleet on a laptop with one command: Brokkr, a Bridge, the control center, and per-VM BMCs that speak real IPMI and Redfish.'
+section: get-started
+order: 1
+slug: get-started/quickstart
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+This quickstart boots a simulated bare-metal cloud on your laptop. One command, `task up`, brings up Brokkr (the hub), a Bridge (the spoke), a simulated fleet of qemu virtual machines, and the control center that drives the fleet. Each virtual machine has its own BMC that speaks real IPMI and real Redfish. No physical hardware is required. The provision, power-cycle, reprovision, and deprovision lifecycles run the same lifecycle code {BRAND_NAME} runs against physical hardware. The only skipped step is the netplan publish, which needs network infrastructure the sim does not have.
+
+## What comes up
+
+| Component       | What it is                                                                           | Where                              |
+| --------------- | ------------------------------------------------------------------------------------ | ---------------------------------- |
+| Brokkr          | The control plane: API, customer web UI, and admin UI                                | `:3000`, `:5173`, `:5174`          |
+| Bridge          | The zone gateway that talks to BMCs and serves boot artifacts                        | `:8000`                            |
+| Simulated fleet | Four qemu VMs (`cpu-1` through `cpu-4`), 2 vCPUs / 2 GB RAM / 40 GB sparse disk each | data plane `192.168.200.10`+       |
+| BMCs            | One per VM: IPMI (OpenIPMI `ipmi_sim`) and Redfish (`sushy-emulator`)                | `192.168.105.10`+ `:623` / `:8443` |
+| Control center  | Web UI: power and console the VMs, run lifecycle tests                               | `http://localhost:5175`            |
+
+Postgres, Redis, and an OS-layer cache come up natively alongside the stack. The bring-up does not use Docker Compose or external infrastructure. It also does not need Vault. Every secret resolves from local defaults.
+
+## Prerequisites
+
+- **macOS**: Apple Silicon only. Intel Macs are not supported because the simulated machines are arm64 guests and need HVF acceleration. Homebrew is required if Docker is not already installed. The bootstrap installs Docker Desktop and leaves an existing Docker, Colima, or OrbStack install alone.
+- **Linux**: x86_64 or arm64 with KVM. The bootstrap installs the OS-level virtualization stack on Debian/Ubuntu, Fedora/RHEL, and Arch.
+- **Docker** on both platforms. It runs only the grub-build and iPXE-build containers.
+
+Everything else in the toolchain (Node, Python, qemu) comes from a declarative Nix environment that the bootstrap installs. You install nothing by hand. On a fresh machine, expect exactly two sudo prompts: one for system packages and one for a scoped passwordless-sudo drop-in. Later runs do not prompt for sudo.
+
+## Get the code
+
+Everything below runs from a checkout of the {BRAND_NAME} repository:
+
+```bash
+git clone https://github.com/Hydra-Host/Brokkr.git brokkr
+cd brokkr
+```
+
+## Boot the stack
+
+```bash
+bash apps/local-sim/provisioning/bootstrap.sh   # one-time host bootstrap (Nix, direnv, virt stack)
+exec $SHELL                                     # fresh shell so the direnv hook loads
+cd brokkr                                       # re-enter the checkout; direnv builds and loads the toolchain (first time is slow)
+task setup                                      # create the SSH key the provisioner needs (idempotent)
+task up                                         # everything: datastores + hub + bridge + control center + fleet
+```
+
+The `task` command comes from the Nix toolchain. If `task` is missing, the direnv hook has not loaded. Run `direnv allow` and re-enter the directory.
+
+`task up` is idempotent. Re-run it at any time to reconcile a wedged stack. Watch and inspect the stack with:
+
+```bash
+task status      # process list + the fleet status table
+task logs        # live TUI: per-process status, health, and logs (q detaches)
+```
+
+## First login
+
+The seed creates an owner account with the email `brokkr@brokkr.local` and the password `brokkr`.
+
+- **Admin UI**: `http://localhost:5174`. Sign in here. The four simulated servers already appear in the device list. They are inventoried and ready to provision.
+- **Customer UI**: `http://localhost:5173`.
+- **Control center**: `http://localhost:5175`. Use it for fleet power and interactive consoles. It also runs lifecycle tests and stack operations.
+
+<Warning>
+  The control center binds to loopback by default because its API is a privileged control surface. Keep the loopback
+  binding unless you trust the network.
+</Warning>
+
+## First provision
+
+Open a console before you start the provision so you see the boot from power-on:
+
+```bash
+task sim:node:console NAME=cpu-1    # tail one node's serial console
+task sim:fleet:consoles             # or a tmux window with one pane per VM
+```
+
+In the admin UI, pick `cpu-1` from the devices list and start a provision. On the console, the VM powers on. iPXE brings up the NIC and chains to the Bridge. The Bridge boots the discovery OS. The discovery OS wipes and partitions the disk and installs Ubuntu. The machine then reboots into the freshly installed OS.
+
+When the device reaches `provisioned`, SSH in. Data-plane IPs are deterministic and count up from `.10`. `cpu-1` is `.10` and `cpu-2` is `.11`:
+
+```bash
+ssh ubuntu@192.168.200.10    # the installed customer OS (user is ubuntu, not root)
+```
+
+The seed attaches your `~/.ssh` public keys to the owner account, so SSH works with the key you already have.
+
+## Query the BMCs
+
+The BMCs implement real IPMI and real Redfish. `ipmitool` and Redfish clients speak to them directly, the same way the Bridge does:
+
+```bash
+task sim:ipmi    -- cpu-1 chassis power status
+task sim:ipmi    -- cpu-1 chassis power reset    # note: IPMI 'power cycle' is not implemented, use reset
+task sim:redfish -- cpu-1 status                 # verbs: status | power-on | power-off | power-cycle
+```
+
+## Teardown
+
+```bash
+task down     # stop everything; the fleet's shutdown hook tears the VMs down
+```
+
+<Warning>
+  `task reset` is destructive. It stops the stack and then wipes the datastore data and the fleet's disk overlays. Use
+  it only to rebuild from scratch. The next `task up` recreates everything, including the seeded login.
+</Warning>
+
+```bash
+task reset    # DESTRUCTIVE: down + wipe datastores + fleet overlays
+```
+
+## Next steps
+
+- Read the [sim lab guide](/get-started/sim-lab) for fleet topology, the boot path, and multi-zone setups.
+- To provision physical machines, read [Provision your first servers](/get-started/first-servers).
+- To deploy the control plane for production, start with the [installation overview](/installation-overview) and the [Docker Compose stacks](/self-host/docker-compose).
+- Read [components](/brokkr-components) for the architecture behind the stack you booted.

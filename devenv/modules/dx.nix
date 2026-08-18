@@ -180,7 +180,7 @@ in
     devenv-shell-tests = {
       enable = true;
       entry = "${batsGate}";
-      files = "devenv/(lib/.*|modules/ports\\.nix|tests/([^/]*|nix/.*))$";
+      files = "(install\\.sh|devenv/(lib/.*|modules/ports\\.nix|tests/([^/]*|nix/.*)))$";
       pass_filenames = false;
       always_run = false;
       stages = [ "pre-push" ];

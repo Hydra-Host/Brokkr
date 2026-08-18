@@ -70,7 +70,7 @@ export class BridgeQueueService implements OnModuleDestroy {
   }
 
   // The bridge's collection queue (enrich → collection.run lands here). Read-only from the hub;
-  // used by onboarding cancel to sweep abandoned enrich jobs the lifecycle sweep can't reach.
+  // used by commissioning cancel to sweep abandoned enrich jobs the lifecycle sweep can't reach.
   getCollectionQueue(zonePrefix: string): Queue {
     const existing = this.collectionQueues.get(zonePrefix);
     if (existing) return existing;

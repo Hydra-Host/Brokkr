@@ -1,0 +1,86 @@
+---
+title: 'Create and enroll a zone'
+description: "Create a zone, mint a single-use registration token, and enroll the Bridge. The HMAC-bound handshake establishes the zone's keys."
+section: zones
+order: 1
+slug: zones/create-and-enroll
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+To bring a zone online, create the zone in Brokkr (the hub), mint a registration token, and set the token in the environment of the Bridge (the zone's spoke). On boot the Bridge generates the zone's X25519 keypair, proves possession of the token with an HMAC-bound handshake, and receives Brokkr's public key. From then on, Brokkr seals secrets bound for the zone to the zone's public key. Only the zone's private key can open them, and that key never leaves the zone.
+
+## Before you begin
+
+Enrollment is dormant until Brokkr has its own keypair. Set `BROKKR_HUB_PRIVATE_KEY` in Brokkr's environment to a base64-encoded 32-byte X25519 private key. If the variable is unset, Brokkr logs a warning at boot, and every enrollment attempt that presents a valid token and MAC returns `503`. Invalid attempts still receive the uniform `401`. If the variable is set but malformed, Brokkr refuses to boot. The failure is deliberately loud, so a bad key never leaves enrollment silently dormant. See the [configuration reference](/self-host/configuration-reference).
+
+You also need an interactive admin session in Brokkr with the `zone:register` permission, acting in the instance operator's organization. Registration-token operations reject API-key authentication. They also return `403` for any organization that is not the instance operator, even when the session holds the permission.
+
+## Step 1: Create the zone
+
+Create the zone in the web UI, or `POST /api/v1/zones` with a name, a primary address, and at least one contact. The response returns the zone's id, a UUID. This id identifies the zone everywhere: it is the Bridge's `BROKKR_ZONE_ID` and the prefix of the zone's job queues on the Redis bus.
+
+When per-zone Redis ACLs are enabled, the create response also carries the zone's Redis credential. The password is shown exactly once and cannot be retrieved later. Record it alongside the zone id.
+
+## Step 2: Mint the registration token
+
+Mint the token with `POST /api/v1/zones/:zoneId/registration-tokens`. The token is 32 bytes of CSPRNG entropy, base64url-encoded. Copy it from the response immediately. Brokkr stores only the token's SHA-256 hash, so the raw token is shown exactly once and cannot be recovered.
+
+Token rules:
+
+- **24-hour expiry.** An unused token expires 24 hours after minting. Once a Bridge consumes the token, the resulting enrollment does not expire.
+- **One live token per zone.** Minting while an unused, unexpired token exists returns `409` with the existing token's id. [Invalidate it](#managing-registration-tokens) first, or wait for it to expire. Consumed tokens do not block a new mint.
+- **Audited.** Every mint and invalidation is logged with the acting admin. The token id is the audit key. The raw token and its hash never appear in logs.
+
+## Step 3: Start the Bridge
+
+<Warning>
+  The token authenticates whoever presents it first. Deliver it to the Bridge host over a trusted channel only.
+</Warning>
+
+Set three variables in the Bridge's environment and start it:
+
+```bash
+BROKKR_HUB_URL=https://hub.example.com
+BROKKR_ZONE_ID=<zone id from step 1>
+BROKKR_REGISTRATION_TOKEN=<token from step 2>
+```
+
+On boot the Bridge generates a fresh X25519 keypair, then calls `POST /api/v1/zones/:zoneId/enroll` with the token, its public key (`zone_pub`), and a request MAC. Brokkr validates the token by hash and atomically marks it consumed with the presented `zone_pub`. It records the enrollment and returns its own public key (`hub_pub`) with a response MAC. The Bridge verifies the MAC and persists the key material encrypted in the zone's Redis. It also writes a sticky marker, so if it later fails to decrypt that cache it fails closed instead of silently downgrading. The Bridge retries network errors with exponential backoff, up to five attempts in total. It treats every other rejection as permanent and logs it with a reason.
+
+A zone with multiple Bridges performs a single enrollment. The Bridges compete for a bootstrap lock. One leader performs the handshake, and the others poll the shared encrypted cache for the result. A Bridge that already holds cached key material does not re-enroll. See [High availability](/zones/high-availability).
+
+## What the handshake guarantees
+
+- **The token keys the MAC.** The request MAC is an HMAC-SHA256 keyed by the raw token over the zone id and `zone_pub`. Brokkr accepts a public key only from a caller that holds the token, and only for the token's own zone.
+- **Brokkr's identity is verified.** The response MAC also covers `hub_pub`, so the Bridge rejects a spoofed hub public key even over a compromised transport.
+- **Token state cannot be probed.** Brokkr checks the MAC before consumption and expiry, and returns a uniform `401` for unknown tokens, wrong-zone tokens, and bad MACs.
+- **Retries are safe.** Re-presenting the same token with the same `zone_pub` replays the original response, so a dropped response is recoverable. A different `zone_pub` on a consumed token returns `409`.
+
+Once the enrollment exists, Brokkr seals device secrets destined for that zone to the zone's public key. See [Secrets and device tokens](/security/secrets-and-device-tokens) and the [security model](/brokkr-security).
+
+## Re-enrollment and key generations
+
+Each enrollment carries a generation number, starting at 1. To re-enroll a zone that is already enrolled, mint a new token and present a new `zone_pub`. Re-enrollment replaces the recorded key and increments the generation. In the same transaction, Brokkr invalidates every device secret sealed under an earlier generation and writes an `INVALIDATED` audit event per secret with cause `ZONE_REENROLLED`. No secret sealed to a retired key remains trusted.
+
+## Managing registration tokens
+
+| Action       | Endpoint                                                    | Behavior                                                                                                                                                                              |
+| ------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| List history | `GET /api/v1/zones/:zoneId/registration-tokens`             | Every token ever minted, newest first, with status `unused`, `consumed`, or `expired`. Metadata only. Raw tokens and hashes are never exposed.                                        |
+| Invalidate   | `DELETE /api/v1/zones/:zoneId/registration-tokens/:tokenId` | Expires the token effective now. Idempotent on an already-expired token (`204`). Returns `409` if a Bridge already consumed it. An enrollment cannot be undone by deleting its token. |
+
+## Enrollment errors
+
+The enroll endpoint returns:
+
+| HTTP  | Meaning                                                                                       | Bridge log reason         |
+| ----- | --------------------------------------------------------------------------------------------- | ------------------------- |
+| `401` | Token unknown, bound to a different zone, or bad request MAC. Deliberately indistinguishable. | `hub_rejected_token`      |
+| `409` | Token already consumed with a different `zone_pub`, or consumed concurrently                  | `token_consumed_no_cache` |
+| `410` | Token expired                                                                                 | `hub_rejected_token`      |
+| `503` | Hub enrollment dormant (`BROKKR_HUB_PRIVATE_KEY` unset)                                       | `hub_rejected_token`      |
+
+The Bridge logs additional reasons of its own. `network_error` covers a connection failure, a timeout, or a response dropped mid-read. In that case the request may have reached Brokkr, and the automatic retry is safe because [retries replay the original response](#what-the-handshake-guarantees). `hub_response_invalid` indicates a malformed response. `hub_response_mac_invalid` indicates the response MAC failed. Do not trust the returned key.
+
+With the zone enrolled, continue to [zone network setup](/zones/network-setup) to give the zone its provisioning and management networks, or step back to the [component architecture](/brokkr-components).

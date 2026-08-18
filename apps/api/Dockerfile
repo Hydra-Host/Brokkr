@@ -168,9 +168,11 @@ WORKDIR /app/apps/api
 
 ENV NODE_ENV=production
 
-# Public SPA keys — injected at runtime by docker-entrypoint.sh into env-config.js.
+# Public SPA config — injected at runtime by docker-entrypoint.sh into env-config.js.
 ENV STRIPE_PUBLISHABLE_KEY=""
 ENV RADAR_PUBLISHABLE_KEY=""
+# Docs site URL override; empty falls back to the SPA default (https://brokkr.hydrahost.com/).
+ENV BROKKR_DOCS_URL=""
 
 EXPOSE 3000
 

@@ -1,0 +1,135 @@
+---
+title: Glossary
+description: 'Definitions for the controlled vocabulary of the docs, covering architecture, provisioning, lifecycle, OS layers, storage, network, security, consoles, tenancy, and tooling.'
+section: help
+order: 5
+slug: help/glossary
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+Every {BRAND_NAME} page uses one name per concept. This page defines those names. If another page appears to disagree with a definition here, the glossary is correct.
+
+## Platform architecture
+
+Read [Components](/brokkr-components) and [High availability](/zones/high-availability).
+
+| Term                  | Meaning                                                                                                                                                                 |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Hub**               | The architectural role of Brokkr, the central control plane. Brokkr owns the database of record and issues every command. It never touches hardware directly.           |
+| **Bridge**            | The per-zone product that executes physical operations (PXE, IPMI/Redfish, DHCP/DNS/TFTP) for Brokkr. Architecturally, the spoke of the hub-and-spoke model.            |
+| **Zone**              | A failure domain, usually one data center, served by one or more Bridges. The entity name is zone (not data center).                                                    |
+| **Brokkr Live Agent** | The device-side executor (architecturally, the agent). It runs inside `brokkr-live` and holds outbound gRPC sessions to every Bridge in its zone.                       |
+| **`brokkr-live`**     | The ephemeral RAM-booted OS used for discovery, provisioning, and deprovision. It leaves nothing on disk. Rescue mode boots a separate rescue OS.                       |
+| **Config atom**       | A JSON value Brokkr writes at a zone-prefixed Redis key. Bridges poll these keys for configuration. The per-device **device record** atom decides what a machine boots. |
+| **Saga**              | A resumable multi-step workflow. Brokkr dispatches it and a Bridge executes it. Its plan state survives Bridge failover.                                                |
+| **Leader election**   | Redis TTL-key election among a zone's Bridges. The leader answers DHCP and holds the VRRP VIP.                                                                          |
+| **VRRP VIP**          | The floating IP the leader Bridge binds. It gives boot clients one stable address across failover.                                                                      |
+| **Out-of-band (OOB)** | Hardware control through the BMC (IPMI, Redfish, SOL, power), independent of any installed OS.                                                                          |
+
+## Provisioning and boot
+
+Read [Network boot](/network/network-boot) and [Inventory and discovery](/infrastructure/inventory-and-discovery).
+
+| Term              | Meaning                                                                                                                     |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Chain**         | The iPXE hop to the Bridge's `/api/chain` endpoint, which renders the boot decision server-side.                            |
+| **ProxyDHCP**     | The DHCP mode where the Bridge supplies only PXE boot options alongside your existing DHCP server.                          |
+| **Commissioning** | The scan → enrich → validate → commission pipeline that discovers BMCs on a subnet and drives devices into inventory.       |
+| **Phone-home**    | The authenticated callback a booted OS makes to Brokkr. Only the call from the deployed OS moves a device to `provisioned`. |
+| **Operation**     | A named unit of device work (for example `storage.wipeDisks`) with a schema-validated input/output contract.                |
+| **Dial-back**     | The agent's outbound, long-lived gRPC stream to a Bridge. Devices never accept inbound connections.                         |
+
+## Lifecycle
+
+Read [Deployment lifecycle](/deployments/lifecycle) and [Renting](/deployments/renting).
+
+| Term                         | Meaning                                                                                                                                                          |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Lifecycle job**            | One lifecycle operation (provision, reprovision, deprovision, reboot, power) against one device.                                                                 |
+| **Phase**                    | The job's position in the state machine, from `REQUESTED` through `COMPLETED`, `FAILED`, or `ABORTED`.                                                           |
+| **Gate**                     | A plugin hook that can approve, reject, or defer (`DEFERRED`) a lifecycle operation. Gates fail closed.                                                          |
+| **Deployment**               | One customer rental on one server: the provisioned OS plus its power, rescue, reprovision, and lock controls. Deployments are grouped into **projects**.         |
+| **Rescue mode**              | Rebooting a deployed server into a temporary in-memory OS for repair, then back into the installed OS.                                                           |
+| **Reservation / invite**     | The commercial record behind a provision: who holds which device, at what price. An **invite** is an expiring, priced offer to a specific organization or email. |
+| **Interruptible deployment** | A spot-style rental the operator may reclaim after a notice period. Evictions need explicit operator approval.                                                   |
+| **Listing**                  | The rental offer attached to a supplier's server.                                                                                                                |
+
+## OS layers
+
+Read [Layers](/os-builds/layers) and [Layer builds](/os-builds/layer-builds).
+
+| Term                | Meaning                                                                                                                                                                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Layer**           | A sha256-addressed tarball of filesystem content and the atomic unit of OS composition. The docs never call a layer an image.                                                                                                          |
+| **Layer kind**      | `BASE` (a complete bootable root filesystem), `COMPONENT` (the diff of one install script against a pristine base), `LIVE` (rescue/discovery), or `LEGACY`. The schema also defines `INTERNAL`, a vestigial kind that nothing assigns. |
+| **Layer group**     | A provision-form selection grouping (`gpuDriver`, `mlFramework`, ...) with single- or multi-select semantics.                                                                                                                          |
+| **Layer build**     | An immutable, versioned import of the whole layer catalog from a manifest. Only `READY` builds serve artifacts.                                                                                                                        |
+| **Customizations**  | The user's per-group layer selections at provision time, applied as content-addressed overlays.                                                                                                                                        |
+| **Manifest**        | The pipeline-generated JSON that is the sole source of truth for the layer catalog.                                                                                                                                                    |
+| **Effective build** | The build a device provisions from: the zone's pin (in development), otherwise the platform default.                                                                                                                                   |
+| **System layers**   | Code-seeded entries: the rescue OS, the discovery OS, and the custom-iPXE bring-your-own-OS chainload.                                                                                                                                 |
+| **TEE**             | Trusted Execution Environment (GPU confidential computing). Capability (hardware support) is distinct from `teeEnabled` (live BMC state).                                                                                              |
+
+## Storage
+
+Read [Disk layouts](/deployments/disk-layouts), [Preserving data disks](/deployments/preserving-data-disks), and [Disk encryption](/disk-encryption).
+
+| Term                      | Meaning                                                                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Disk group**            | The unit of layout intent: same-type disks with one strategy, filesystem, mountpoint, and wipe/encrypt flags.                                           |
+| **Layout strategy**       | `direct`, `lvm`, or `raid0` through `raid60` (software RAID; hardware RAID is not configured).                                                          |
+| **Preserve**              | `wipe: false` on a data group: its contents survive reprovision. The root group is never preservable.                                                   |
+| **curtin**                | Canonical's installer engine. Disk groups compile to curtin storage YAML.                                                                               |
+| **Throwaway install key** | The random LUKS install key, discarded immediately. Discarding it is the basis of the zero-knowledge model. Customers take ownership with `luks-rekey`. |
+| **Sanitization report**   | The structured NIST SP 800-88 / IEEE 2883 evidence record from a disk wipe. See [Disk sanitization](/security/disk-sanitization).                       |
+
+## Network
+
+Read [IPAM](/network/ipam) and [DHCP and PXE](/network/dhcp-and-pxe).
+
+| Term                        | Meaning                                                                                                                                            |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **IPAM**                    | The built-in source of truth for prefixes, IPs, VLANs, VRFs, and gateways. The record you edit is the configuration Bridges converge on.           |
+| **Prefix**                  | A CIDR subnet carrying status, role, VRF, zone, DHCP policy (its **DHCP mode**: `AUTHORITATIVE`, `PROXY`, or `OFF`), gateway, and VRRP references. |
+| **VRF**                     | A routing namespace that lets address ranges overlap per tenant.                                                                                   |
+| **IPAM role**               | Prefix classification. `MANAGEMENT` scopes commissioning scans. `PRIMARY` marks the Bridge data plane and is the only VRRP-eligible role.          |
+| **BGP registry / circuits** | Record-keeping registries for peering and WAN circuits. No router configuration is pushed.                                                         |
+
+## Security and crypto
+
+Read [Security](/brokkr-security) and [Secrets and device tokens](/security/secrets-and-device-tokens).
+
+| Term                   | Meaning                                                                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Sealed envelope**    | The authenticated-encryption wire format (X25519 → HKDF-SHA256 → AES-256-GCM) for hub↔bridge payloads and device secrets.          |
+| **Hub key**            | Brokkr's single X25519 private key (`BROKKR_HUB_PRIVATE_KEY`). It roots all zone crypto.                                            |
+| **Zone enrollment**    | The one-time handshake that registers a zone's public key. Re-enrollment increments the key generation and invalidates old secrets. |
+| **Registration token** | A single-use, 24-hour enrollment credential, shown exactly once and hashed at rest.                                                 |
+| **Device secret**      | A per-device BMC or console credential sealed to the zone's key. The hub stores ciphertext only.                                    |
+| **Secret reveal**      | The audited round-trip by which an operator views a device secret through the zone's Bridge.                                        |
+| **Device token**       | The per-device phone-home bearer token, hashed under a server-side pepper.                                                          |
+| **Fail closed**        | The default when keys or context are missing: deny rather than widen scope or downgrade to plaintext.                               |
+
+## Tenancy and editions
+
+Read [Orgs and tenancy](/organizations/orgs-and-tenancy) and [Editions](/about/editions).
+
+| Term                  | Meaning                                                                                                                                        |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Organization**      | The tenancy boundary. Supply orgs own hardware and see the operator surface. Demand orgs rent capacity.                                        |
+| **Instance operator** | The single organization operating a self-hosted instance. This role enables **Operator Hub**, the plugin that provides the in-app admin panel. |
+| **BOSS edition**      | The public, Apache-2.0, self-hosted edition.                                                                                                   |
+| **Managed edition**   | Hydra Host's hosted edition: the same codebase plus override packages and multi-supplier tenancy.                                              |
+
+## Tooling
+
+Read [CLI](/api/cli), [AI agents and MCP](/api/ai-agents-and-mcp), and [Plugins](/extend/plugins-overview).
+
+| Term             | Meaning                                                                                                                                |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| **`brokkr`**     | The CLI binary. With no arguments it opens a TUI; otherwise it runs one-shot commands. Every command supports `--json`.                |
+| **`brokkr-mcp`** | The bundled MCP stdio server that exposes platform tools to AI agents.                                                                 |
+| **Contract**     | The single typed definition of every [hub API](/brokkr-api-overview) route, from which the server, clients, and OpenAPI docs derive.   |
+| **Plugin**       | One npm package that extends any combination of the hub, the Bridge, and the host agent.                                               |
+| **Sim lab**      | The [zero-hardware evaluation environment](/get-started/sim-lab): simulated servers with emulated BMCs speaking real IPMI and Redfish. |

@@ -115,6 +115,33 @@ export function loadOptionalPluginEntries(requireFn: RequireFn = createRequire(i
       });
     },
   );
+  // Lender device associations: always enabled when present — operator routes are gated by the
+  // plugin's own guard; tenant list is scoped to the caller organization.
+  loadOptionalManifest(
+    requireFn,
+    '@hydrahost/plugin-lender-device-associations',
+    'lenderDeviceAssociationsManifest',
+    (plugin) => {
+      entries.push({
+        plugin,
+        enabled: true,
+        settings: { adminOrganizationId: process.env.BROKKR_ADMIN_ORG_ID ?? '' },
+      });
+    },
+  );
+  // Device-monitoring Prometheus proxy: always enabled when present. Empty Thanos
+  // settings fail closed per request (503); the adapter constructor must not throw at boot.
+  loadOptionalManifest(requireFn, '@hydrahost/plugin-device-monitoring', 'deviceMonitoringManifest', (plugin) => {
+    entries.push({
+      plugin,
+      enabled: true,
+      settings: {
+        thanosBaseUrl: process.env.AIVEN_THANOS_BASE_URL ?? '',
+        thanosUsername: process.env.AIVEN_THANOS_USERNAME ?? '',
+        thanosPassword: process.env.AIVEN_THANOS_PASSWORD ?? '',
+      },
+    });
+  });
   loadOptionalManifest(requireFn, '@hydrahost/plugin-email-mailgun', 'emailMailgunManifest', (plugin) => {
     entries.push({
       plugin,

@@ -1,0 +1,101 @@
+---
+title: 'API authentication'
+description: Authenticate to the {BRAND_NAME} API with organization-scoped API keys or a browser session. Covers self-serve key creation, permission scoping, and per-key rate limits.
+section: api
+order: 2
+slug: brokkr-api-authentication
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+The {BRAND_NAME} API accepts two credentials: an organization-scoped API key or a browser session. Any member with the required permission creates API keys directly from the {BRAND_NAME} UI. There is no approval step and no support ticket to file. You scope a key to the permissions a job needs, and a key never grants more access than its owner holds, even after the owner's role changes.
+
+## Authentication methods
+
+| Method  | Credential                       | Built for                                                                     |
+| ------- | -------------------------------- | ----------------------------------------------------------------------------- |
+| API key | `x-api-key` request header       | Scripts, CI, the [CLI](/api/cli), [AI agents and MCP](/api/ai-agents-and-mcp) |
+| Session | Browser cookie issued at sign-in | People using the web UI                                                       |
+
+All endpoints live under the `/api/v1` base path. See the [API overview](/brokkr-api-overview).
+
+## API keys
+
+API keys carry the `brk_` prefix. Every key is scoped to one organization and bound to the member who created it, the **key owner**. Requests made with the key are permission-checked as that owner, inside that organization.
+
+### Create a key
+
+Creating a key requires the `api-key:create` permission ([RBAC](/organizations/rbac)).
+
+<Warning>
+  The full key value appears exactly once, in the creation response. It cannot be retrieved again. Copy it before you
+  close the dialog.
+</Warning>
+
+1. Open the API Keys page under your organization.
+2. Click **Create Key**.
+3. Enter a name (up to 32 characters).
+4. Optionally set an expiration between 1 and 365 days. A key with no expiration never expires. Set an expiration to limit the impact of a leaked key.
+5. Optionally check **Limit this key to specific permissions** and select a scope (see below).
+6. Click **Create Key**, then copy the key value.
+
+The same operation is available programmatically as `POST /api/v1/organizations/api-keys`. Pass `expiresIn` in milliseconds. The same 365-day cap applies, and longer durations are rejected at creation.
+
+### Use a key
+
+Send the key in the `x-api-key` header:
+
+```bash
+curl -H "x-api-key: brk_..." \
+  https://your-hub.example.com/api/v1/organizations/api-keys
+```
+
+A request authenticates only while the whole chain is valid. The API returns `401` when the key is expired, disabled, or deleted, or when the key owner has left the organization. It returns `403` when the owner has been banned or the organization has been deleted.
+
+### Permission scope
+
+A key runs in one of two scope modes:
+
+| Mode              | Behavior                                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Inherit (default) | The key mirrors the owner's live role permissions. Change the owner's role and the key's access changes with it.   |
+| Explicit          | The key is restricted to the selected permissions, intersected with the owner's live permissions on every request. |
+
+An explicit scope is capped twice. At grant time, the API accepts only permissions that are delegable and that the key owner holds. It rejects anything else. When you create a key, you are its owner, so a key you mint cannot exceed your own permissions. At request time, the scope is intersected again with the owner's current permissions. If the owner's access is reduced, the key narrows automatically with no rotation or update step.
+
+Some permissions are never delegable to an explicit scope, because a leaked key holding them would be a standing escalation path:
+
+- `api-key:create`, `api-key:update`, `api-key:delete` (`api-key:read` is delegable)
+- Any permission ending in `:manage-owners`
+- Any permission ending in `-api-keys`
+
+A key whose stored scope is malformed fails closed and resolves to no permissions.
+
+### Manage keys
+
+Viewing keys requires `api-key:read`. The list and detail views show only the prefix and the first few characters of each key, alongside the owner, creation date, and expiration. The detail view also shows last use and request counts.
+
+- **Update the scope**: `PATCH /api/v1/organizations/api-keys/:apiKeyId` sets a new explicit scope or, with an empty scope, restores inheritance. Updating never rotates the key's secret. The new scope is validated against the key owner's live permissions.
+- **Delete a key**: deletion is permanent. Requests using the key fail immediately.
+
+You can always update or delete your own keys. Managing another member's key requires `api-key:update` or `api-key:delete`. Creating a key and deleting another member's key are recorded with the acting identity. Deleting your own key is not written to the event log. The key value itself is never logged. See [Audit and event log](/security/audit-and-event-log).
+
+### Rate limits
+
+Each key is limited to 100 requests per minute. Beyond that, the API responds `429 Too Many Requests`. Back off and retry after the window resets. The limit is per key, so separate integrations should use separate keys.
+
+## Session authentication
+
+Signing in to the web UI issues a session cookie. Sessions are stored server-side and can be revoked individually. Every session request acts against your active organization. Switch organizations to act elsewhere. Passwords, mandatory two-factor authentication, and sign-in rate limiting are covered in [Accounts, sessions, MFA, and API keys](/brokkr-mfa).
+
+## Session-only endpoints
+
+Endpoints that change your identity or your organization's ownership reject API keys. This design prevents an automation credential from changing the identity that owns it.
+
+- Creating an organization, listing your organizations, and switching your active organization fail with `401` when presented an API key.
+- Accepting or rejecting an invitation through the `/users/invitations` endpoints fails with `401`. Accepting one through `/organizations/invitations` fails with `403`.
+- Inviting members fails with `403` under API-key authentication.
+- Managing organization owners fails with `403`. Owner management requires a browser session.
+- Two-factor enrollment and password changes are session-only.
+
+Use a browser session for these operations. Use API keys for everything else.

@@ -1,0 +1,108 @@
+---
+title: 'IPAM'
+description: The built-in source of truth for prefixes, IP addresses, IP ranges, VLANs, VRFs, and ASNs. Bridges converge on IPAM records directly.
+section: network
+order: 1
+slug: network/ipam
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} builds IPAM into Brokkr (the hub) as a NetBox-class source of truth, so you do not need to run a separate IPAM next to your provisioning system. It provides native CIDR prefix trees, overlap detection, atomic allocation, VRFs for overlapping tenant space, and an audit changelog. The record you edit is also the configuration the zone's Bridges converge on. When you set a gateway or a DHCP mode on a prefix, the Bridges reconcile to it. There is no export step and no sync job, because there is nothing to sync to.
+
+## The data model
+
+| Entity         | What it is                                                                                                                                                           |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **VRF**        | A routing namespace. Two tenants can both use `10.0.0.0/24` in separate VRFs. Carries an optional route distinguisher (`rd`, e.g. `65000:1`).                        |
+| **Prefix**     | A subnet in CIDR notation, stored as PostgreSQL native `cidr`. Prefixes form a tree via a parent link.                                                               |
+| **IP address** | A single address (`inet`), with status, optional DNS name, and an interface assignment linking it to [DCIM](/infrastructure/dcim).                                   |
+| **IP range**   | A contiguous block inside a prefix, defined by a start and end address. Carves out a DHCP pool or reservation block without minting individual IP records.           |
+| **VLAN**       | An 802.1Q broadcast domain. Stored VIDs are 2 to 4094, enforced by a database constraint (VID 1 and the reserved 0/4095 are excluded).                               |
+| **VLAN group** | A container with an optional zone and a `minVid`/`maxVid` window (defaults 2 to 4094). Assigning VLANs to a group is in development.                                 |
+| **ASN**        | An autonomous system number with a description, referenced by [BGP sessions](/network/gateways-vrrp-bgp-circuits). The number is unique across the whole deployment. |
+
+VRFs, prefixes, IP addresses, IP ranges, and VLANs are scoped to an organization. VLAN groups scope to a zone or are global. ASNs carry an optional owning organization. Every entity has its own page under **IPAM** in the web UI (VRFs, Prefixes, IP Addresses, IP Ranges, VLANs, VLAN Groups, ASNs, Roles).
+
+## Prefixes
+
+Prefixes are stored as native `cidr`, so containment and overlap checks run on PostgreSQL's network operators instead of string comparison. Each prefix carries a lifecycle status:
+
+| Status       | Meaning                                                            |
+| ------------ | ------------------------------------------------------------------ |
+| `CONTAINER`  | Parent-only block. Holds children; never allocates individual IPs. |
+| `ACTIVE`     | In use.                                                            |
+| `RESERVED`   | Earmarked for future use.                                          |
+| `DEPRECATED` | Being phased out.                                                  |
+
+A child prefix must be strictly contained within its parent and share the parent's VRF. Mark a prefix `isPool` to let allocation hand out its network and broadcast addresses too.
+
+### Overlap detection
+
+Creating a prefix checks for CIDR overlap against every other prefix in the same VRF. A collision is rejected with a `409 Conflict` naming the conflicting prefix. Check a candidate block before you commit to it:
+
+```bash
+curl -X POST https://<hub>/api/v1/ipam/prefixes/overlap-check \
+  -H "x-api-key: $BROKKR_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"prefix": "10.20.0.0/24"}'
+```
+
+The same check exists for IP ranges at `POST /api/v1/ipam/ip-ranges/overlap-check`.
+
+### Atomic allocation
+
+Allocation runs inside a database transaction holding a per-prefix advisory lock, so two concurrent requests can never receive the same block or address.
+
+**Next prefix** allocation carves the next free child of a given mask length out of a parent:
+
+```bash
+curl -X POST https://<hub>/api/v1/ipam/prefixes/<parentId>/allocate-prefix \
+  -H "x-api-key: $BROKKR_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"targetMask": 26, "isPool": true}'
+```
+
+The new child inherits the parent's VRF, links into the tree automatically, and defaults to `ACTIVE`. When no free block of that size remains, the request fails with `409` instead of allocating an overlapping block.
+
+<Note>Automatic prefix allocation currently supports IPv4 prefixes only.</Note>
+
+**Next IP** allocation picks the first free address in a prefix. The allocator skips the network and broadcast addresses unless the prefix is a pool, and `CONTAINER` prefixes refuse individual allocation. The same allocator backs plugin-driven provisioning, so plugin-managed fabrics draw device addresses from the same prefix tree.
+
+**Utilization** is computed on demand and never stored. `GET /api/v1/ipam/prefixes/<id>/utilization` returns assigned, available, and capacity counts plus the percentage used.
+
+## VRFs: overlapping tenant space
+
+A VRF scopes prefixes, IP addresses, VLANs, and IP ranges. Uniqueness and overlap checks apply within a VRF, so separate tenants can reuse the same private space without collision. Entities that reference each other must live in the same VRF, or all sit in the global (no-VRF) space, which behaves as a scope of its own. Names and route distinguishers are unique per organization.
+
+## VLANs and VLAN groups
+
+A VLAN's VID is unique within its organization and VRF. To reuse VID 100, place each VLAN in a separate VRF. A VLAN can join a VRF. The VRF-match check runs from the prefix side: attaching a VLAN to a prefix, or changing that prefix's VRF, is rejected unless the prefix and VLAN VRFs match.
+
+<Note>
+  Moving a VLAN to a different VRF is not validated against prefixes that already carry the VLAN. Re-home a VLAN's
+  prefixes before you move the VLAN itself.
+</Note>
+
+A VLAN group carries an optional zone and a `minVid`/`maxVid` window (defaults 2 to 4094, kept within that range). Assigning VLANs to a group, which scopes VID uniqueness to the group, is in development.
+
+## Derived configuration
+
+The prefix row carries the network's operational intent. Brokkr derives per-prefix configuration from it, and each zone's Bridges reconcile to that configuration:
+
+- **Gateway IP**: the subnet's default route, validated to be an address inside the prefix.
+- **DHCP policy**: serving mode, lease TTL, extra options, and iPXE build target live on the prefix. Pools, routers, and reservations derive from IPAM. See [DHCP and PXE](/network/dhcp-and-pxe).
+- **VRRP VIP**: the floating IP the zone's leader Bridge binds is a tracked IP address, so it gets containment and conflict checks like any other address. See [Gateways, VRRP, and BGP](/network/gateways-vrrp-bgp-circuits).
+
+When you edit the prefix, the Bridges converge on the new configuration. When you delete the setting, they release it.
+
+## Audit changelog
+
+Every create, update, and delete made through the IPAM API on a VRF, prefix, IP address, VLAN, or IP range appends a changelog entry: table, record, before and after snapshots, and a computed diff. VRF, VLAN, IP address, and prefix entries snapshot the full record on both sides. Prefix DHCP and DNS setting changes snapshot only those fields. IP range updates and deletes currently record only the after state, so a range's prior bounds live in its previous entry. Full before snapshots for IP ranges are in development.
+
+Query the log as a timeline at `GET /api/v1/ipam/changelog`, filtered by table or record.
+
+<Note>
+  Actor attribution is recorded on each entry but not yet returned by the API. Returning it is in development.
+  Plugin-driven allocation and rollback write to the database directly and do not appear in the changelog.
+</Note>

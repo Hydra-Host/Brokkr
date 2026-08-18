@@ -9,6 +9,7 @@ export * from './enums';
 export * from './error';
 export * from './format';
 export * from './gpu-family';
+export * from './html';
 export * from './power-control';
 export * from './reservation-invite-helpers';
 export * from './sleep';

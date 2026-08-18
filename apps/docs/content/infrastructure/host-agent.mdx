@@ -1,0 +1,97 @@
+---
+title: 'The Brokkr Live Agent'
+description: The device-side agent that dials out to every Bridge in its zone and runs provisioning work over authenticated TLS gRPC.
+section: infrastructure
+order: 4
+slug: infrastructure/host-agent
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+The Brokkr Live Agent (the agent) is the device-side component of {BRAND_NAME}. It executes provisioning work that the Bridges in its zone dispatch to it. The agent dials out from the device to every Bridge in the zone, so a server provisions without any open inbound port. This covers servers behind NAT or a strict firewall and servers on private fabrics. The agent also upgrades itself in place over the encrypted session it already holds, and it verifies the hash of each artifact before installing it.
+
+## What the agent is
+
+The agent is a Node.js bundle at `/opt/brokkr/agent/main.js`, supervised by systemd (`brokkr-bridge-agent.service`, `Restart=always`). A sibling bundle, `console-child.js`, is spawned by the console operation. The agent runs inside the ephemeral live OS during provisioning. It runs as root. Its work spans hardware probing, [disk sanitization](/security/disk-sanitization), storage preparation, and OS deployment, which require raw `/dev` access and `efibootmgr` and are incompatible with a capability-restricted profile. Bridges dispatch named operations to the agent, and the agent executes them and reports results. See [components](/brokkr-components) for where the agent sits between the hub and the Bridges.
+
+## Outbound-only dial-back
+
+The agent opens one long-lived server-streaming `OpenSession` RPC per Bridge, so a zone with N Bridges means N concurrent sessions. The Bridge's first message confirms registration and carries the current Bridge topology. The agent reconciles its session pool against that topology, opening sessions to new Bridges and pruning removed ones. Topology updates can also carry subnet-matched `/etc/hosts` rows, which the agent writes into a managed hosts block.
+
+The agent-to-Bridge direction is deliberately not a stream. Each result, progress update, and log batch is an independent unary RPC that can land on any Bridge replica. Results are idempotent by work id and deduplicated in the Bridges' shared Redis. Any Bridge can dispatch work, and any Bridge can collect results.
+
+Dropped sessions reconnect with full-jitter exponential backoff, starting at 1 s and doubling to a 60 s cap. The backoff counter resets only after a session stays healthy for a sustained window (`agent.heartbeat_interval_ms`), so a Bridge that accepts and then drops sessions cannot trigger a reconnect storm. A permanent rejection evicts that Bridge from the session pool. In practice the only permanent rejection is an unsupported protocol version. The agent treats authentication and registration errors as transient because they are usually a token-renewal race, and evicting on them would strand a single-Bridge zone.
+
+## Per-device bearer tokens
+
+Every gRPC call carries an `authorization: Bearer` header with a per-device token that the Bridge rendered into `agent.yaml`. Transport is TLS. The agent verifies the Bridge's server certificate against the CA bundle pinned by `tls.ca_bundle_path`, which the Bridge-rendered config points at the system store, `/etc/ssl/certs/ca-certificates.crt`. When the field is unset, verification falls back to Node's built-in Mozilla roots.
+
+The agent calls `RenewToken` on a fixed cadence (hourly by default) over any live session, which slides the token's 24-hour server-side TTL forward. Renewal is idempotent. The agent chooses the starting Bridge by hashing the device id and walks the remaining Bridges on failure. Discovery tokens, issued before commissioning, are not renewable. The Bridge answers a discovery-token renewal with `PERMISSION_DENIED`, which forces an exchange for a real device token through commissioning. See [secrets and device tokens](/security/secrets-and-device-tokens).
+
+## agent.yaml
+
+The agent reads `/opt/brokkr/agent.yaml` and validates it against a schema at startup. The file carries the bearer token, so it uses mode `0600`.
+
+| Field                                | Default                       | Purpose                                                                                                      |
+| ------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `device_id`                          | none                          | Device identifier the agent registers with each Bridge                                                       |
+| `zone_id`                            | none                          | UUID of the zone in Brokkr that the device belongs to                                                        |
+| `bridges[].address`                  | none                          | Bootstrap Bridge `host:port`; the first successful registration returns the full topology                    |
+| `bridges[].grpc_address`             | derived                       | Explicit URL override; otherwise `https://` is prepended to `address`                                        |
+| `auth.token`                         | none                          | Per-device bearer token, rendered by the Bridge                                                              |
+| `tls.ca_bundle_path`                 | Node's built-in roots         | CA bundle for server-cert verification; the Bridge-rendered config pins `/etc/ssl/certs/ca-certificates.crt` |
+| `tls.reject_unauthorized`            | `true`                        | Server-certificate verification; opt out in dev fixtures only                                                |
+| `agent.heartbeat_interval_ms`        | `30000`                       | How long a session must stay healthy before reconnect backoff resets                                         |
+| `agent.heartbeat_timeout_ms`         | `90000`                       | Accepted by the schema but not read by the current agent (in development)                                    |
+| `agent.reconnect_backoff_initial_ms` | `1000`                        | First reconnect delay; doubles per attempt                                                                   |
+| `agent.reconnect_backoff_max_ms`     | `60000`                       | Reconnect delay cap                                                                                          |
+| `agent.work_timeout_default_ms`      | `300000`                      | Applied when a dispatch omits `timeout_ms`                                                                   |
+| `agent.max_concurrent_dispatches`    | `96`                          | Excess work is rejected `THROTTLED`                                                                          |
+| `agent.token_renew_interval_ms`      | `3600000`                     | `RenewToken` cadence; keep well under the 24 h TTL                                                           |
+| `agent.log_level`                    | `info`                        | Structured JSON log threshold; `AGENT_LOG_LEVEL` env overrides                                               |
+| `agent.collection_snapshot_path`     | `/var/lib/brokkr/collections` | Per-collector JSON snapshots from inventory collection                                                       |
+| `telemetry.traces_enabled`           | `false`                       | Ship operation spans to the Bridge's OTLP relay                                                              |
+
+## Operations
+
+Every operation is named `namespace.name`. Its request and response shapes are Zod schemas defined once in a shared protocol package. The agent validates the input on receipt and parses its own output before sending it back. On the typed dispatch path, which covers the mainline provision, collection, benchmark, and deploy flows, the Bridge validates the returned output against the same schema. Self-upgrade, console start, and plugin dispatches skip the Bridge-side output check. A malformed dispatch produces a structured failure response rather than a crash.
+
+| Namespace    | Covers                                                                                                           |
+| ------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `agent`      | Self-upgrade                                                                                                     |
+| `system`     | Architecture probe, EFI boot-entry management                                                                    |
+| `collection` | Hardware [inventory collectors](/infrastructure/inventory-and-discovery): dmidecode, lshw, BMC, NVIDIA, and more |
+| `storage`    | Disk discovery, wipe and wipe validation, RAID/LVM/LUKS, storage layout                                          |
+| `deploy`     | OS deployment: chroot, fstab/crypttab, GRUB, EFI finalize, cloud-init                                            |
+| `console`    | Device console child process                                                                                     |
+| `benchmark`  | Hardware benchmarks, confidential-compute mode check                                                             |
+| `diagnostic` | GPU, thermal, storage, memory, network, power diagnostics                                                        |
+| `test`       | Connectivity, stress, and performance suites                                                                     |
+
+Duplicate work ids are answered `ALREADY_IN_PROGRESS`. A `cancel_work` message aborts in-flight work. The abort signal terminates any subprocess the work has running (SIGTERM, then SIGKILL), and the work reports a final `FAILURE` response with error code `CANCELLED`. [Plugins](/extend/bridge-and-agent-plugins) can register additional agent operations, auto-namespaced per plugin.
+
+<Warning>No operation shields itself from cancellation. Cancelling a wipe kills it mid-write.</Warning>
+
+## Self-upgrade
+
+The agent reports its version at registration, and the Bridge answers with the version it considers authoritative. On drift, the agent logs a warning and keeps the session alive. Staying connected is what lets the `agent.upgrade` dispatch land.
+
+The upgrade dispatch carries the expected SHA-256 of the new bundle, plus optional hashes for a new systemd unit and a freshly rendered `agent.yaml`. The agent fetches each artifact with `FetchBundle` over its existing session, using the same TLS channel and bearer token. There are no signed URLs and no side channel. The agent verifies the SHA-256 over the streamed bytes, then writes and atomically renames each file into place.
+
+Two protections gate the swap:
+
+- **Rollback-walk protection.** For the bundle and unit, the Bridge only serves bytes whose SHA-256 matches its own current on-disk copy. A request for any historical hash fails, so a stale or replayed dispatch cannot walk the agent back to an older bundle. The rendered `agent.yaml` is instead served from a hash-keyed cache with a 10-minute TTL.
+- **Confirm-before-restart.** The agent exits, letting systemd restart it on the new bundle, only after the success result reaches the Bridge. If delivery fails, the agent stays on the old code. Version-drift detection re-dispatches the upgrade, and the on-disk write is idempotent.
+
+## EFI boot-order management
+
+During provisioning, the agent manages the device's EFI boot entries directly:
+
+- `system.getEfiBootMenu` enumerates `BootCurrent`, `BootOrder`, `BootNext`, and all entries.
+- `system.removeEfiBootEntry` deletes one entry. The entry id is validated as 1 to 4 hex digits before it reaches `efibootmgr`, which blocks argument injection.
+- `system.cleanupOsBootEntries` removes entries matching known OS keywords (`ubuntu`, `debian`, `proxmox`, `ipxe disk`) so a stale install cannot hijack [network boot](/network/network-boot).
+- `system.forceBootDevice` snapshots the boot order, then removes every entry except the current one.
+
+## Crash-cart lockscreen
+
+The same bundle also serves as a console status screen. `main.js lockscreen` renders the device's identity to `/etc/issue` every 10 seconds: kernel and architecture, primary NIC MAC and addresses, BMC MAC and addresses read over IPMI, live OS version, device id, and job id. A technician at the rack with a crash cart can read which device they are looking at without credentials. The refresh restarts `getty@tty1` only when the content changed and nobody is logged in on tty1, so it does not interrupt an active session.

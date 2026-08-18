@@ -1,0 +1,69 @@
+---
+title: 'What is {BRAND_NAME}'
+description: 'An open-source, self-hostable bare-metal cloud. Brokkr and per-zone Bridges provision, rent, and manage GPU servers on hardware you own.'
+section: about
+order: 1
+slug: brokkr-overview
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} (Brokkr Open Source Software) is an open-source platform for running a bare-metal cloud on your own hardware. Brokkr provides the control plane, and a Bridge in each zone handles network boot and BMC control. Once installed, customers rent servers by the hour and manage them through the web UI, the REST API, or the CLI, and {BRAND_NAME} provisions each order over the network. The platform is designed for GPU fleets and is licensed under Apache 2.0.
+
+You can evaluate the full platform on a laptop against a simulated fleet, run it in production on your own racks, or skip operating it entirely and rent servers from an operator who already runs it.
+
+## One hub, a spoke per zone
+
+{BRAND_NAME} is a hub-and-spoke system with three components:
+
+| Component             | Role  | Where it runs                     | What it does                                                                                                                       |
+| --------------------- | ----- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Brokkr**            | hub   | one central machine               | The control plane: database, authentication, organizations, provisioning workflows, the web UI, and the API.                       |
+| **Bridge**            | spoke | each zone, next to the bare metal | Drives BMCs and PXE provisioning, serves the zone's boot services, and pulls jobs from Brokkr over a password-protected Redis bus. |
+| **Brokkr Live Agent** | agent | each server                       | Holds a persistent gRPC session to its zone's Bridges and executes operations on the device.                                       |
+
+Deploy Brokkr first. Then create a zone in the UI, mint a registration token, and start the Bridge with that token to enroll it. A Bridge reaches Brokkr over the Redis bus and one enrollment call; Brokkr never connects into the zone. See [{BRAND_NAME} components](/brokkr-components) for the full architecture and [Create and enroll a zone](/zones/create-and-enroll) for the procedure.
+
+The web UI, the [REST API](/brokkr-api-overview), and the [CLI](/api/cli) are built on the same typed API contract. The REST API is documented with OpenAPI, and the CLI supports `--json` output for scripting.
+
+## Product surfaces
+
+### Provisioning
+
+A customer orders a server and receives a running OS. Brokkr owns the deployment lifecycle. The Bridge power-cycles the server through its BMC and network-boots it into the OS the customer selected. Read [Deployment lifecycle](/deployments/lifecycle) and [Network boot](/network/network-boot).
+
+### OS builds
+
+A deployed OS is assembled from a catalog of layers: a base OS plus components such as a GPU driver and CUDA toolkit, selected per deployment at provision time. The catalog is seeded from a release manifest. Compatibility rules, such as which driver a CUDA version requires and which hardware a layer supports, are enforced in the provision form. Read [Layers](/os-builds/layers) and [Customizations](/os-builds/customizations).
+
+### Network source of truth
+
+Brokkr's IPAM owns prefixes, addresses, and their roles. Bridges carry no network configuration of their own. Brokkr derives per-prefix DHCP configuration from IPAM and publishes it to each zone, and a leader-elected Bridge holds a VRRP virtual IP so boot services survive a Bridge failure. Read [IPAM](/network/ipam), [DHCP and PXE](/network/dhcp-and-pxe), and [Gateways, VRRP, BGP, and circuits](/network/gateways-vrrp-bgp-circuits).
+
+### Marketplace
+
+Operators list inventory by hardware category. Customers rent on demand by the hour or reserve capacity in advance. Hardware that is listed but not yet in service shows a pre-order badge. Organizations are the tenancy boundary, and every request is scoped to one organization. Read [Renting](/deployments/renting), [Selling capacity](/deployments/selling-capacity), and [Organizations and tenancy](/organizations/orgs-and-tenancy).
+
+### Operations
+
+Discovery collects hardware inventory from each server. Bridges report zone health with per-device checks. Operators get out-of-band power control. Read [Inventory and discovery](/infrastructure/inventory-and-discovery) and [Out-of-band](/infrastructure/out-of-band).
+
+## How provisioning is verified
+
+A completed provisioning workflow does not mark a server `provisioned`. The deployed OS must phone home to Brokkr, authenticated with its per-device token, before the status updates. Orchestration success proves the work was dispatched and executed. The phone-home call proves the server booted the OS the customer ordered. Device tokens identify which OS is calling, the discovery OS or the deployed OS, so Brokkr always knows what is running on the machine.
+
+The same check protects teardown. If a deployed OS phones home while a server is being deprovisioned, the wipe failed, and Brokkr records the failure instead of returning the machine to inventory. Read [Secrets and device tokens](/security/secrets-and-device-tokens).
+
+## Open source, open core
+
+Brokkr, the Bridge, the Brokkr Live Agent, the CLI, and the sim lab all ship in the open-source core under Apache 2.0. A proprietary managed edition adds policy overrides for hosted operators, such as allowed organization types and operator and supply-tenancy policies. When no overrides are present, Brokkr runs with its core defaults and is fully functional. The open-source edition is complete on its own. Read [Editions](/about/editions).
+
+## Where to start
+
+| Entry point   | You have                       | Start here                                                                                                                                                                            |
+| ------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Sim lab**   | a laptop, no hardware          | One command brings up Brokkr, a Bridge, and a simulated fleet with simulated IPMI and Redfish BMCs. Read [Sim lab](/get-started/sim-lab).                                             |
+| **Self-host** | racks and a machine for Brokkr | Two Docker Compose units: Brokkr on one central machine, a Bridge at each site. Read [Installation overview](/installation-overview) and [Docker Compose](/self-host/docker-compose). |
+| **Hosted**    | a workload                     | Sign in to a platform an operator already runs and deploy servers from its marketplace. Read [Quickstart](/get-started/quickstart).                                                   |
+
+Wherever you start, read [{BRAND_NAME} components](/brokkr-components) next for the architecture behind these surfaces.

@@ -1,0 +1,211 @@
+---
+title: 'Writing a plugin'
+description: 'Build a hello-world plugin end to end: two manifests, a plugin-owned Postgres schema, a typed endpoint under /plugins/{id}/, and your own UI.'
+section: extend
+order: 3
+slug: extend/writing-a-plugin
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+This page builds a plugin end to end. A plugin is a single npm package that extends {BRAND_NAME} with its own Postgres schema and boot-time migrations, a typed HTTP endpoint, validated configuration, and React components rendered inside the host UI. You do not fork the host or patch it. The finished reference, `@hydrahost/plugin-hello-world`, ships in the host repository at `packages/plugins/hello-world/`. It is about 400 lines and exercises every layer described here.
+
+Read [Plugins Overview](/extend/plugins-overview) first.
+
+<Warning>
+  A plugin runs in the host process with full database access. Treat authoring and installing a plugin as running code
+  with your production credentials.
+</Warning>
+
+## The package contract
+
+A plugin package contains two manifests, and the manifests never reference each other. The host API imports the backend manifest, which is the package's default export. The host web app imports the frontend manifest from the `./frontend-manifest` subpath. This separation keeps NestJS out of the web bundle.
+
+```
+hello-world/
+├── plugin.ts            # backend manifest (default export)
+├── plugin-frontend.ts   # frontend manifest (./frontend-manifest subpath)
+├── contract.ts          # ts-rest fragment, shared by both manifests
+├── schemas.ts           # Zod schemas: config + response shapes
+├── backend/             # NestJS module, controller, service
+├── frontend/            # React components + slot contributions
+├── database/migrations/ # numbered SQL files
+└── dist/                # compiled CJS, published to npm
+```
+
+Compile to `dist/`. The host loads compiled CJS through your `exports` map and does not load source `.ts`. Ship `database/migrations/` in the tarball. Migrations are read at runtime and are not compiled.
+
+The backend manifest declares everything the host needs:
+
+```typescript
+// plugin.ts
+import { join } from 'path';
+import { definePlugin } from '@hydrahost/plugin-sdk';
+import { contractFragment } from './contract';
+import { HelloWorldConfigSchema } from './schemas';
+
+export const helloWorldManifest = definePlugin({
+  id: 'hello-world',
+  version: '0.1.0',
+  schemaName: 'plugin_hello_world',
+  migrationsDir: join(__dirname, '..', 'database', 'migrations'),
+  backendModule: () => import('./backend'), // lazy thunk, never a static class reference
+  contract: contractFragment,
+  configSchema: HelloWorldConfigSchema,
+});
+export default helloWorldManifest;
+```
+
+Export the manifest by name first, then add `export default`. Installers import the named export to avoid ESM-to-CJS default-import quirks. Plugins with no state of their own omit `schemaName` and `migrationsDir`, and the migrator skips them entirely.
+
+## Own a Postgres schema
+
+Migrations are plain SQL files named `NNNN_name.sql` (digits, then `[a-zA-Z0-9_-]`). Files apply in numeric order, so zero-padding is a convention rather than a requirement. The host creates your Postgres schema before it runs the files, applies each file in its own transaction, and records a sha256 checksum per file.
+
+```sql
+-- database/migrations/0001_create_greetings.sql
+CREATE TABLE plugin_hello_world.greetings (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  message    TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+<Warning>
+  Never edit a migration after it has been applied. The runner verifies every checksum on every boot, and a mismatch is
+  a fatal error.
+</Warning>
+
+Migrations are forward-only. There is no rollback, and the runner rejects `.down.sql` files as invalid filenames. To change the schema, add a new numbered file. Always schema-qualify your tables. Foreign keys into core `public.*` tables are allowed, but core never references plugin tables.
+
+## Declare a typed endpoint
+
+Plugin endpoints are ts-rest routes. Every path must start with `/plugins/{your-plugin-id}/`. The host validates this at boot and fails fast. Route keys must be unique across all enabled plugins, so prefix them with your plugin id.
+
+```typescript
+// contract.ts
+import { API_PREFIX } from '@hydrahost/plugin-sdk';
+import { initContract } from '@ts-rest/core';
+import { GreetingsListResponseSchema } from './schemas';
+
+const c = initContract();
+export const contractFragment = c.router(
+  {
+    helloWorldListGreetings: {
+      method: 'GET',
+      path: '/plugins/hello-world/greetings',
+      responses: { 200: GreetingsListResponseSchema },
+      summary: 'List hello-world greetings',
+    },
+  },
+  { pathPrefix: API_PREFIX },
+);
+```
+
+The backend is a normal NestJS module. Bind handlers with `@TsRestHandler`, inject the host database client through `PLUGIN_PRISMA_CLIENT`, and validate raw rows with Zod before returning them:
+
+```typescript
+// backend/hello-world.service.ts
+import { Inject, Injectable } from '@nestjs/common';
+import { getPluginConfigToken, PLUGIN_PRISMA_CLIENT, type PluginDb } from '@hydrahost/plugin-sdk';
+import { GreetingsListResponseSchema, type HelloWorldConfig } from '../schemas';
+
+@Injectable()
+export class HelloWorldService {
+  constructor(
+    @Inject(PLUGIN_PRISMA_CLIENT) private readonly db: PluginDb,
+    @Inject(getPluginConfigToken('hello-world')) private readonly config: HelloWorldConfig,
+  ) {}
+
+  async listGreetings() {
+    const rows = await this.db.$queryRawUnsafe(
+      'SELECT id, message, created_at AS "createdAt" FROM plugin_hello_world.greetings ORDER BY created_at',
+    );
+    return GreetingsListResponseSchema.parse(rows);
+  }
+}
+```
+
+Authentication is automatic. The host's identity guard runs before every plugin route, and the injectable request context exposes the caller's identity and permission checks. See [Events, Gates, and Host Services](/extend/events-gates-and-host-services).
+
+## Validate configuration with Zod
+
+Declare a `configSchema` and the host parses installer-supplied settings at boot. It injects the typed result under `getPluginConfigToken(id)`. A validation failure aborts host boot and lists each Zod issue.
+
+```typescript
+// schemas.ts
+import { z } from 'zod';
+export const HelloWorldConfigSchema = z.object({
+  messagePrefix: z.string().default(''),
+});
+export type HelloWorldConfig = z.infer<typeof HelloWorldConfigSchema>;
+```
+
+Secrets come from environment variables in the installer's config. Never hardcode them. Use `.default(...)` wherever possible so the plugin boots with `settings: {}`.
+
+## Ship your own UI
+
+The frontend manifest mirrors the backend manifest: the same `id`, the same `contract` reference, and a lazy thunk to your React code. It must contain nothing Node-only:
+
+```typescript
+// plugin-frontend.ts
+import { defineFrontendPlugin } from '@hydrahost/plugin-sdk';
+import { contractFragment } from './contract';
+
+export const helloWorldFrontendManifest = defineFrontendPlugin({
+  id: 'hello-world',
+  version: '0.1.0',
+  frontend: () => import('./frontend'),
+  contract: contractFragment,
+});
+export default helloWorldFrontendManifest;
+```
+
+Your frontend module contributes components to named slots, and optionally a root route:
+
+```typescript
+// frontend/index.ts
+import { defineFrontendModule } from '@hydrahost/plugin-sdk';
+import { GreetingWidget } from './greeting-widget';
+import { HelloWorldPage } from './hello-world-page';
+
+export default defineFrontendModule({
+  slots: {
+    'dashboard-widget': [{ component: GreetingWidget, label: 'Greetings' }],
+    'sidebar-nav': [{ label: 'Overview', to: '/plugins/hello-world', section: 'Reference' }],
+  },
+  rootRoute: { component: HelloWorldPage, label: 'Hello World' },
+});
+```
+
+The `sidebar-nav` entry appears in the host sidebar, and the root route mounts at its URL.
+
+<Note>
+  The `dashboard-widget` slot is declared in the SDK, but no host page renders it yet. Host support is in development.
+  The contribution registers, but nothing displays.
+</Note>
+
+Every slot the host renders is wrapped in an error boundary, as is the root route. A plugin render crash never takes down the host page. The root route owns the whole `/plugins/hello-world` URL namespace. The component receives a `splat` prop (`''` at the bare URL, `about` at `/plugins/hello-world/about`) and dispatches its own sub-views.
+
+Call your endpoint with a typed client built from the same contract: `initClient(contractFragment, { baseUrl: '', baseHeaders: {} })`, then plain `useState` and `useEffect`.
+
+<Warning>
+  Do not import router, query, or state libraries in plugin code. The plugin chunk and the host
+  bundle can resolve them to different module instances at runtime. Use plain `<a>` anchors for
+  internal navigation.
+</Warning>
+
+## Publish checklist
+
+Before `npm publish`, verify:
+
+1. `files` includes `dist`, `database`, both manifest sources, `contract.ts`, `schemas.ts`, `backend`, and `frontend`.
+2. Both manifests use a named export first, then `export default`.
+3. `backendModule` and `frontend` are lazy thunks rather than static references.
+4. All route paths start with `/plugins/{id}/` and all route keys are prefixed with the plugin id.
+5. Peer dependencies are declared: `@nestjs/common`, `@ts-rest/core`, `@ts-rest/nest`, and `react` if shipping UI. Context-bearing UI libraries are excluded.
+6. `@hydrahost/plugin-sdk` is pinned with a caret. The SDK follows semver, and these fields are stable within the 0.x line.
+7. At least one migration is tested against a real Postgres, and `npm pack --dry-run` shows `dist/` and `database/migrations/` in the tarball.
+8. The README documents what the plugin reads, writes, and contacts over the network.
+
+To install the finished package into a host, register it in both plugins-config files. See [Installing Plugins](/extend/installing-plugins).

@@ -1,0 +1,82 @@
+---
+title: 'Upgrades and backups'
+description: How to upgrade the hub and Bridges, how CI verifies the migration path, and what to back up and restore.
+section: self-host
+order: 5
+slug: self-host/upgrades-and-backups
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+To upgrade a self-hosted {BRAND_NAME} hub, bump the image tag and restart the stack. The stack applies its own schema changes before the new app boots, and CI replays the exact migration path you run from an empty database on every merge. The backup set is Postgres plus a small set of secrets. The configuration state in Redis is rebuilt from the database automatically, so Redis is not backed up.
+
+## How an upgrade runs
+
+The app image bundles the schema migrations alongside the Prisma client, and the hub container runs `prisma migrate deploy` from that bundle at every start (`RUN_DB_MIGRATIONS` defaults to true). The migrations applied always match the app version in the image. Applying zero pending migrations is a no-op, so every `docker compose up -d` is safe to repeat.
+
+A migration that fails stops the app from booting, and the container restarts until it succeeds. The migration output is at the top of `docker compose logs brokkr-hub`.
+
+```bash
+cd deploy/self-hosted/hub
+# edit .env: BROKKR_APP_IMAGE=hydrahost/brokkr-hub:<new-tag>
+docker compose pull
+docker compose up -d
+docker compose logs brokkr-hub | head   # migration output precedes app boot
+```
+
+Upgrade a Bridge the same way in each zone: set `BROKKR_BRIDGE_IMAGE` in the Bridge's `.env`, then run `docker compose pull && docker compose up -d`. Bridges have no migration step. They receive their configuration from Brokkr over Redis.
+
+## How the migration path is verified
+
+Schema history is a single append-only lineage: 354 consecutive Prisma migrations under `packages/database/prisma/migrations/`, applied in order by `migrate deploy`. Live schemas are never edited by hand.
+
+Two checks verify the lineage:
+
+1. CI replays it from an empty database. The merge-train pipeline provisions a fresh Postgres 16, runs `prisma migrate deploy` from an empty database, then runs `prisma migrate diff --from-config-datasource --to-schema ./prisma --exit-code`. If the migrated database differs from the declared schema in any way, the merge fails.
+2. `pnpm db:drift` runs the same diff against any live database and exits nonzero on divergence.
+
+Your instance's hub container runs the identical `migrate deploy` that CI verified end-to-end. Every merge exercises the upgrade path.
+
+## What to back up
+
+| What           | Where                              | Why it is irreplaceable                                                                             |
+| -------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Postgres data  | `pgdata` volume on the hub machine | The system of record: devices, zones, deployments, IPAM, organizations, zone enrollments            |
+| Hub secrets    | `deploy/self-hosted/hub/.env`      | `DEVICE_TOKEN_PEPPER`, `BETTER_AUTH_SECRET`, and `BROKKR_HUB_PRIVATE_KEY` are unrecoverable if lost |
+| Bridge secrets | each zone's `.env` + `keys/`       | `BRIDGE_AT_REST_KEY` (one per zone, never rotated) and the SSH keypair baked into discovery images  |
+
+<Warning>
+  Back up the database and the hub `.env` together. They are one unit. A restored database needs its original secrets:
+  rotating `DEVICE_TOKEN_PEPPER` invalidates every device token, rotating `BETTER_AUTH_SECRET` invalidates every
+  session, and rotating `BROKKR_HUB_PRIVATE_KEY` invalidates every zone enrollment. See [Secrets and device
+  tokens](/security/secrets-and-device-tokens).
+</Warning>
+
+A plain-SQL dump works from inside the stack:
+
+```bash
+cd deploy/self-hosted/hub
+docker compose exec postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' \
+  > brokkr-$(date +%F).sql
+```
+
+TLS certificates in `certs/` can be reissued, so they are not part of the backup set.
+
+## What Redis rebuilds
+
+Redis is the message bus between the hub and the spokes and a configuration cache. It is not a system of record. Brokkr writes per-prefix and per-device configuration atoms into Redis and continuously re-derives them from Postgres. Reconciler crons converge the VRRP and DHCP atoms every cycle, and a Bridge that finds a device atom missing requests a re-render from Brokkr. If you wipe Redis, the reconcile loops repopulate it.
+
+Losing Redis does cost in-flight work: queued saga jobs (provisions, power operations) disappear and must be re-issued. The stack persists Redis with an append-only file on the `redis-data` volume, so ordinary restarts drop nothing. Redis still does not belong in your recovery point.
+
+## Restores and sealed secrets
+
+Restore the `pgdata` volume (or load your SQL dump) and the matching `.env` onto the new machine, then run `docker compose up -d`. The hub app brings the schema to the version the image expects at start.
+
+<Warning>
+  The sealed-secret subsystem sets two restore rules. First, restore the original `BROKKR_HUB_PRIVATE_KEY`: the hub's
+  X25519 key backs every zone enrollment, and if the hub boots with a new key, no existing Bridge can complete encrypted
+  exchanges with it until every zone re-enrolls. Second, never regenerate `BRIDGE_AT_REST_KEY`: it encrypts the device
+  secrets that a zone's Bridges cache, every Bridge in the zone shares it, and rotating it orphans the stored secrets.
+</Warning>
+
+Zone registration tokens are outside the backup set by design. They are single-use, stored only as hashes, and expire after 24 hours if unused. When you rebuild a Bridge, mint a fresh token in the hub UI and enroll again. See [Create and enroll a zone](/zones/create-and-enroll). Re-enrollment replaces the zone's enrollment record and increments its key generation. Brokkr stamps every sealed device secret with the generation that sealed it, so secrets sealed under a previous key are detected as stale instead of silently trusted.

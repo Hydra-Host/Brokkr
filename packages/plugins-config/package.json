@@ -36,10 +36,12 @@
   "optionalDependencies": {
     "@hydrahost/managed-edition": "workspace:*",
     "@hydrahost/plugin-analytics": "workspace:*",
+    "@hydrahost/plugin-device-monitoring": "workspace:*",
     "@hydrahost/plugin-email-mailgun": "workspace:*",
     "@hydrahost/plugin-google-maps-geocoding": "workspace:*",
     "@hydrahost/plugin-helpdesk-pylon": "workspace:*",
     "@hydrahost/plugin-hubspot-leads": "workspace:*",
+    "@hydrahost/plugin-lender-device-associations": "workspace:*",
     "@hydrahost/plugin-operator-bridge-requests": "workspace:*",
     "@hydrahost/plugin-operator-hub": "workspace:*",
     "@hydrahost/plugin-operator-lifecycle": "workspace:*",

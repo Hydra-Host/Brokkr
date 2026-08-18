@@ -1,0 +1,110 @@
+---
+title: 'Network boot'
+description: 'How {BRAND_NAME} network-boots bare metal without per-machine PXE configuration: DHCP and ProxyDHCP, TFTP, the iPXE chain, boot decisions, and per-device initrds.'
+section: network
+order: 3
+slug: network/network-boot
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+Every server in a zone boots from a shared set of iPXE builds: three firmware targets per CPU architecture, with no build per machine. The Bridge computes device identity, the boot decision, and secrets per request from live state. There is no per-machine PXE configuration file to create or template, and none to clean up.
+
+## The pipeline at a glance
+
+| Stage            | Transport     | What happens                                                                                                                               |
+| ---------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| DHCP / ProxyDHCP | UDP 67 / 4011 | The Bridge answers PXE requests with a TFTP server and an architecture-matched bootfile name                                               |
+| TFTP             | UDP 69        | The firmware downloads the {BRAND_NAME} iPXE binary; the filename resolves dynamically to the shared build for its target and architecture |
+| iPXE chain       | HTTP(S)       | The embedded boot script collects hardware and BMC identifiers and posts them to `/api/chain` on the Bridge                                |
+| Boot decision    | HTTP(S)       | The Bridge resolves the device and returns the iPXE script for its current state                                                           |
+| Kernel + initrds | HTTP(S)       | Discovery and rescue boots fetch a kernel and a stack of initrds, including one built on demand for the device                             |
+
+Only the iPXE binary travels over TFTP. Every later stage uses HTTP(S) against the Bridge.
+
+## DHCP and ProxyDHCP
+
+The Bridge's DHCP engine serves each subnet in one of two modes. In authoritative mode it leases addresses and supplies PXE boot options in the same exchange. In proxy mode an existing DHCP server keeps address assignment while the Bridge answers only PXE requests. The Bridge sends a supplemental offer on port 67 and acknowledges the PXE follow-up on port 4011. A per-subnet MAC allowlist can restrict which machines receive boot options in proxy mode. See [DHCP and PXE](/network/dhcp-and-pxe) for configuration.
+
+<Note>The proxy-mode allowlist fails closed. An empty allowlist denies boot options to every machine.</Note>
+
+The Bridge derives the bootfile name from DHCP option 93 (client system architecture):
+
+| Option 93                      | Architecture | Bootfile            |
+| ------------------------------ | ------------ | ------------------- |
+| 0x0000, 0x0006, 0x0007, 0x0009 | amd64        | `snponly-amd64.efi` |
+| 0x000b                         | arm64        | `snponly-arm64.efi` |
+
+A per-device firmware-target override can substitute a different target (`ipxe` or `snp`) for one machine. The override still selects one of the shared per-architecture builds. It cannot produce a custom binary.
+
+## TFTP with dynamic binary resolution
+
+The TFTP server serves files from `/opt/brokkr/ipxe-builds`. A requested file that exists under that root is served as-is. Any other name resolves to the per-architecture binary on disk through the first two dash-separated segments of its stem. The first segment names the target (`ipxe`, `snp`, or `snponly`), the second names the architecture (`amd64` or `arm64`), and the extension must be `efi`. The resolver ignores anything after the architecture segment, such as a version hash:
+
+```text
+RRQ snponly-amd64.efi         ->  /opt/brokkr/ipxe-builds/amd64/snponly.efi
+RRQ snponly-amd64-<hash>.efi  ->  /opt/brokkr/ipxe-builds/amd64/snponly.efi
+```
+
+Names that neither exist on disk nor carry a valid target-arch prefix are refused. The TFTP tree holds the per-architecture binaries and a bootable `ipxe.iso` at the root. There is no `pxelinux.cfg` directory and no per-MAC file.
+
+## Firmware that reads its own BMC
+
+{BRAND_NAME} builds its own iPXE firmware. A source overlay adds an IPMI stack with SSIF (SMBus) transport, BMC LAN-configuration reads, and a DCMI asset-tag reader. The stack exposes `${ipmi/mac}`, `${ipmi/ip}`, and `${ipmi/tag}` as iPXE settings, so the firmware can identify the machine through its BMC before any OS exists.
+
+The boot script is embedded in the binary at build time. The script:
+
+1. Reads the BMC LAN configuration and asset tag as fallback identifiers.
+2. Configures the NIC via DHCP.
+3. Posts to `/api/chain` on the Bridge: NIC MAC and IP, SMBIOS serial, board serial, chassis serial, system UUID, manufacturer, the BMC identifiers, platform, and build architecture.
+4. On failure, retries with doubling backoff up to 8 attempts, then beacons `/api/chain-unreachable` to the DHCP next-server and drops to an iPXE shell.
+
+The BMC identifiers matter because a factory-fresh machine's NIC MAC may not be registered anywhere yet, and SMBIOS fields can hold blank placeholder values. The BMC MAC and IP give the Bridge stable identities to resolve against. The asset tag is not used for resolution. The Bridge records it as a commissioning fact for pending devices.
+
+<Note>
+  When the chain URL is HTTPS, the matching CA is compiled into the firmware as a trust anchor. Without the trust
+  anchor, the handshake fails.
+</Note>
+
+## The `/api/chain` decision
+
+The Bridge rejects requests with an unsupported build architecture before resolution. It returns HTTP 400 and no script. For every other request, the Bridge drops locally administered MACs and BIOS placeholder values, resolves the remaining identifiers to a device record, and renders a script from live state:
+
+| Device state                                                    | Rendered script                                                                                                                        |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Unknown device                                                  | Discovery boot into the discovery OS; the identifiers are registered as a pending device                                               |
+| Known device, record not yet published                          | Retry: wait 5 seconds, re-chain with the same identifiers and an incremented retry count; after 5 retries, fall back to discovery boot |
+| Provisioning with a customer iPXE script                        | Phone home with credentials minted by Brokkr, clear them, then chainload the customer's script URL                                     |
+| Rescue requested, or no OS installed, or discovery OS installed | Discovery boot (a missing OS also triggers inventory collection)                                                                       |
+| OS installed                                                    | Disk boot: chainload GRUB from the Bridge where the platform supports it, otherwise boot the local disk directly                       |
+
+Customer iPXE script URLs pass an injection guard before the Bridge chains them: HTTP or HTTPS only, with no control characters. A failed lookup degrades to the status-based boot rather than failing the request. Unknown machines appear in commissioning as soon as they chain, before any OS has run on them. See [Inventory and discovery](/infrastructure/inventory-and-discovery).
+
+The discovery and disk-boot scripts tag their downloads with an `x-brokkr-job-id` header, so operators can correlate fetches with the originating job.
+
+## Per-device initrd construction
+
+A discovery boot loads a kernel plus a stack of initrds:
+
+```text
+initrd.img                          distro initramfs (per architecture)
+brokkr-live.img                     the discovery OS (shared)
+bridge-agent.img                    the Brokkr Live Agent (shared)
+brokkr-discovery-<device-id>.img    built on demand for this device
+```
+
+The Bridge assembles the last image per request. It copies a template tree, renders every template with device-specific values, and packs the result as a cpio archive. The image bakes in:
+
+- **Agent credentials** (`agent.yaml`): device ID, zone ID, the gRPC endpoint of every Bridge in the zone, and a bearer token. Commissioned devices receive a device-scoped token whose expiry slides on agent activity. Machines that are not yet commissioned receive a per-MAC discovery token with a fixed expiry. See [Secrets and device tokens](/security/secrets-and-device-tokens).
+- **Network identity**: the device's netplan rendered to `etc/netplan/zz-brokkr.yaml`, plus `/etc/hosts` entries mapping Bridge hostnames to IPs reachable from the device's own subnet.
+- **SSH access**: the Bridge's SSH public keys in root's `authorized_keys`.
+- **CA trust**: the Brokkr Live Agent pins TLS to the system CA bundle. The discovery OS image carries the platform CAs in its trust store, and an initramfs hook re-runs `update-ca-certificates` when the initrd stack adds new certificates.
+
+Rescue boots replace both the agent image and the per-device discovery image with `ubuntu-rescue-os-<device-id>.img`, which additionally bakes in phone-home credentials minted by Brokkr.
+
+<Note>
+  These images embed live secrets. Key and token files are written with mode 0600. Responses are served with
+  `Cache-Control: no-store`. The Bridge deletes the built image from disk after a short delay.
+</Note>
+
+If a boot stalls anywhere in this pipeline, start with [Troubleshooting provisioning](/help/getting-help).

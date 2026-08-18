@@ -1,0 +1,101 @@
+---
+title: 'Self-hosting overview'
+description: 'How a self-hosted {BRAND_NAME} deployment fits together: one hub, a Bridge per zone, and a Docker Compose unit for each.'
+section: self-host
+order: 1
+slug: installation-overview
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+A self-hosted {BRAND_NAME} deployment runs entirely on machines you control. Brokkr (the hub) provides the control plane on one central machine, and a Bridge (the spoke) runs in each zone. The only infrastructure dependencies are Postgres and Redis. Every other integration is internal to the app or optional. None is a silent requirement.
+
+## The two-unit model
+
+A self-hosted deployment ships as two Docker Compose units that mirror the topology. Each unit is a Compose project with its own `.env`. Both units are self-contained: copy the unit folder onto the target machine, write the `.env`, and start the stack. The hub app applies pending database migrations from its own image at every start.
+
+| Unit       | Runs on                              | What it is                                                                                                            |
+| ---------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| **Hub**    | one central machine                  | Control plane: Postgres, Redis, the hub app (`:3000`), and nginx terminating TLS                                      |
+| **Bridge** | one per zone, next to the bare metal | Drives BMCs over IPMI/Redfish, serves PXE/TFTP/HTTP boot to the provisioning network, pulls jobs from the hub's Redis |
+
+Brokkr never calls a Bridge directly. All hub-to-spoke traffic flows over the hub's Redis bus (BullMQ), keyed by a Zone UUID. The one exception is a single enrollment call from the Bridge to the hub API when it first joins. A Bridge needs network reachability to the hub's Redis for the ongoing link and to the hub API (`BROKKR_HUB_URL`) for enrollment. It needs no Postgres access. A Bridge can run on a separate machine and a separate network from the hub.
+
+Deploy in this order:
+
+1. Bring up the hub.
+2. Create a Zone in the hub UI and mint a registration token (see [Create and enroll a zone](/zones/create-and-enroll)).
+3. Bring up the Bridge with that token.
+
+## What each unit contains
+
+The hub unit runs five services on one machine:
+
+| Service      | Image                  | Role                                        |
+| ------------ | ---------------------- | ------------------------------------------- |
+| `postgres`   | `postgres:16-alpine`   | Hub database, the source of truth           |
+| `redis`      | `redis:7-alpine`       | Cache and the hub-to-bridge message bus     |
+| `brokkr-hub` | `hydrahost/brokkr-hub` | Operator and customer app and API (`:3000`) |
+| `nginx`      | `nginx:1.27-alpine`    | TLS termination at the edge (`80`/`443`)    |
+
+The Bridge unit is a single container, `brokkr-bridge` (`hydrahost/brokkr-bridge`). It uses host networking with `CAP_NET_ADMIN` because DHCP, TFTP, and VRRP need the machine's real NICs. The machine must be attached to both the BMC network and the provisioning network the servers boot on.
+
+CI publishes both images to the public Docker Hub repositories `hydrahost/brokkr-hub` and `hydrahost/brokkr-bridge` on each tagged release. Both images are multi-arch (amd64 and arm64).
+
+<Note>
+  The platform is in development and no release has been tagged yet. The repositories are empty, so the default image
+  references pull nothing. Until the first release, build from source. Point `BROKKR_APP_IMAGE` and
+  `BROKKR_BRIDGE_IMAGE` at your own tags.
+</Note>
+
+## Trial stack vs production stack
+
+The repository carries two Compose stacks. They have different security postures, so pick deliberately.
+
+| Stack           | Location                 | Posture                                                                                                                                                              |
+| --------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Trial / sim** | `deploy/docker-compose/` | The stack CI exercises in its end-to-end provision job. Auth is bypassed, there is no TLS, and no real provisioning takes place. Runs on one machine for evaluation. |
+| **Production**  | `deploy/self-hosted/`    | Real authentication, the web UI, TLS at the edge, and registration-token Bridge enrollment.                                                                          |
+
+<Warning>Never expose the trial stack to an untrusted network.</Warning>
+
+This section documents the production stack. To evaluate the platform without hardware first, see the [quickstart](/get-started/quickstart) and the [simulation lab](/get-started/sim-lab).
+
+## Configuration contract
+
+Every deployment target sets the same keys. Only the delivery mechanism differs. The `.env.example` in each Compose unit is the authoritative, fully commented listing of the configuration surface.
+
+| Group          | Keys                                      | Notes                                                                   |
+| -------------- | ----------------------------------------- | ----------------------------------------------------------------------- |
+| Images         | `BROKKR_APP_IMAGE`, `BROKKR_BRIDGE_IMAGE` | Default to the Docker Hub images (empty until the first tagged release) |
+| Identity       | `BROKKR_ZONE_ID`                          | The Bridge's Redis namespace. Must match a Zone in the hub              |
+| Datastores     | `DATABASE_URL`, `REDIS_URL`               | The two hard dependencies                                               |
+| Auth           | `BETTER_AUTH_SECRET`                      | Session signing secret                                                  |
+| Mode / toggles | `GRPC_INSECURE`, `LOG_LEVEL`, and others  | Operator-facing behavior switches                                       |
+
+The full key-by-key listing lives in the [configuration reference](/self-host/configuration-reference).
+
+## Security posture
+
+- Expose only ports 80 and 443 at the hub machine's edge. Keep the hub `:3000` published on the internal network, because provisioned machines phone home to `PHONE_HOME_BASE_URL` over it. Never forward `:3000`, Postgres `:5432`, or Redis `:6379` to the internet.
+- Redis is published beyond loopback so Bridges can reach it. Keep it password-protected on a private network or VPN. Never expose it to the internet.
+- Keep the BMC and provisioning networks isolated from general traffic.
+- The provisioning boot path defaults to plain HTTP, and the Bridge's host-agent gRPC server always listens in plaintext. This is acceptable on an isolated provisioning network. To put the host-agent leg on TLS, build the Bridge image with your root CA in `apps/bridge/ca/`, front the Bridge's gRPC port with a TLS terminator presenting a certificate that CA signed, then set `GRPC_INSECURE=false` so agents stop receiving the plaintext address override.
+
+See [security](/brokkr-security) for the broader model.
+
+## Deployment targets
+
+Docker Compose is the supported deploy target today. One configuration contract drives the whole stack. See the [configuration reference](/self-host/configuration-reference).
+
+## Map of this section
+
+Work through the pages in order for a first deployment:
+
+1. [System requirements](/self-host/system-requirements): machine sizing, OS, and network prerequisites for hub and bridge.
+2. [Docker Compose bring-up](/self-host/docker-compose): deploy the hub, enroll a Bridge, verify both.
+3. [Configuration reference](/self-host/configuration-reference): every `.env` key, grouped and explained.
+4. [Upgrades and backups](/self-host/upgrades-and-backups): image upgrades, database migrations, and what to back up together.
+5. [Observability](/self-host/observability): logs and health signals for a running deployment.
+
+Continue to [Create and enroll a zone](/zones/create-and-enroll) after bring-up.

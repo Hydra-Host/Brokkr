@@ -13,6 +13,8 @@ const SIDEBAR_ORDER = [
   'radar-geocoding',
   'hubspot-leads',
   'salesforce-leads',
+  'lender-device-associations',
+  'device-monitoring',
 ];
 
 export const sidebarOrder: readonly string[] = SIDEBAR_ORDER;

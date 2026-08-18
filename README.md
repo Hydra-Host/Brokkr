@@ -1,4 +1,9 @@
-# Brokkr
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/brokkr-white.png" />
+    <img alt="Brokkr" src="brand/brokkr-primary.png" width="420" />
+  </picture>
+</p>
 
 Brokkr is Hydra's bare-metal orchestration platform. This is a **Turborepo monorepo** holding the full stack — the customer-facing hub, the zone-side spoke gateway, the device agent, a CLI, and an in-repo simulated-fleet dev environment — sharing contracts and types via workspace packages.
 
@@ -13,7 +18,7 @@ Brokkr is **hub-and-spoke**:
 
 Results flow hub-ward through a shared `results:inbox` queue. See [`docs/architecture.md`](./docs/architecture.md) for diagrams (product topology, the local-dev stack, and the bring-up DAG).
 
-**Deploying Brokkr on your own infrastructure?** Start with [`wiki/getting-started.md`](./wiki/getting-started.md) — a Docker Compose walkthrough covering the hub, HTTPS, zones, spokes, and adding machines. The [Getting started](#getting-started) section below is the local _development_ environment, which is a different thing.
+**Deploying Brokkr on your own infrastructure?** Start with the [self-hosting guide](apps/docs/content/self-host/docker-compose.mdx), a Docker Compose walkthrough covering the hub, HTTPS, zones, spokes, and adding machines. The [Getting started](#getting-started) section below is the local _development_ environment, which is a different thing.
 
 ## Project structure
 
@@ -81,13 +86,18 @@ It asks once, up front, before it needs `sudo`, and it prints exactly what it wi
 
 Tune it with environment variables (or flags, via `| sh -s -- --no-up`):
 
-| Variable          | Flag      | Default                                    | What it does                       |
-| ----------------- | --------- | ------------------------------------------ | ---------------------------------- |
-| `BROKKR_REPO_URL` | `--repo`  | `https://github.com/Hydra-Host/Brokkr.git` | Clone a fork or another remote     |
-| `BROKKR_REPO_REF` | `--ref`   | the default branch                         | Clone a branch or tag              |
-| `BROKKR_DIR`      | `--dir`   | `./boss`                                   | Clone somewhere else               |
-| `BROKKR_NO_UP=1`  | `--no-up` | unset                                      | Stop once the environment is ready |
-| `BROKKR_YES=1`    | `--yes`   | unset                                      | Never prompt (unattended)          |
+| Variable          | Flag       | Default                                    | What it does                       |
+| ----------------- | ---------- | ------------------------------------------ | ---------------------------------- |
+| `BROKKR_REPO_URL` | `--repo`   | `https://github.com/Hydra-Host/Brokkr.git` | Clone a fork or another remote     |
+| `BROKKR_REPO_REF` | `--ref`    | the default branch                         | Clone a branch or tag              |
+| `BROKKR_DIR`      | `--dir`    | `./boss`                                   | Clone somewhere else               |
+| `BROKKR_NO_UP=1`  | `--no-up`  | unset                                      | Stop once the environment is ready |
+| `BROKKR_YES=1`    | `--yes`    | unset                                      | Never prompt (unattended)          |
+| `BROKKR_LOG`      | `--log`    | `~/.local/state/brokkr-local/logs/`        | Write the run log somewhere else   |
+| `BROKKR_NO_LOG=1` | `--no-log` | unset                                      | Write no run log                   |
+| `BROKKR_LOG_KEEP` |            | `10`                                       | Number of run logs to keep         |
+
+Every run also writes a log to `~/.local/state/brokkr-local/logs/install-<timestamp>.log`, with `latest.log` pointing at the newest and the 10 newest kept. It holds the same narrative plus devenv's **complete** output, including the lines the terminal view filters out, so a run that fails leaves something to attach to a bug report.
 
 The installer never handles a credential. Pointing it at a private remote reuses whatever `git` already has — an SSH agent, or a stored HTTPS credential.
 

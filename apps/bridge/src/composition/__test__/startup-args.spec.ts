@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { buildStartupArgs, closeZoneCryptoBootstrapCache } from '../startup-args.js';
 
 const { closeSpy } = vi.hoisted(() => ({ closeSpy: vi.fn(() => Promise.resolve()) }));
 
@@ -8,39 +10,34 @@ vi.mock('../../common/redis/redis-client/redis.client.js', () => ({
   },
 }));
 
-async function loadFreshStartupArgs(): Promise<typeof import('../startup-args.js')> {
-  vi.resetModules();
-  return import('../startup-args.js');
-}
-
 describe('closeZoneCryptoBootstrapCache', () => {
   beforeEach(() => {
     closeSpy.mockClear();
   });
 
-  it('closes the client held by the bootstrap cache singleton exactly once', async () => {
-    const startupArgs = await loadFreshStartupArgs();
-    startupArgs.buildStartupArgs({}).zoneCryptoBootstrap.createBootstrap('job-1');
+  afterEach(async () => {
+    await closeZoneCryptoBootstrapCache();
+  });
 
-    await startupArgs.closeZoneCryptoBootstrapCache();
+  it('closes the client held by the bootstrap cache singleton exactly once', async () => {
+    buildStartupArgs({}).zoneCryptoBootstrap.createBootstrap('job-1');
+
+    await closeZoneCryptoBootstrapCache();
 
     expect(closeSpy).toHaveBeenCalledTimes(1);
   });
 
   it('clears the singleton so a repeat call does not close the same client twice', async () => {
-    const startupArgs = await loadFreshStartupArgs();
-    startupArgs.buildStartupArgs({}).zoneCryptoBootstrap.createBootstrap('job-1');
+    buildStartupArgs({}).zoneCryptoBootstrap.createBootstrap('job-1');
 
-    await startupArgs.closeZoneCryptoBootstrapCache();
-    await startupArgs.closeZoneCryptoBootstrapCache();
+    await closeZoneCryptoBootstrapCache();
+    await closeZoneCryptoBootstrapCache();
 
     expect(closeSpy).toHaveBeenCalledTimes(1);
   });
 
   it('resolves without closing anything when the cache was never created', async () => {
-    const startupArgs = await loadFreshStartupArgs();
-
-    await expect(startupArgs.closeZoneCryptoBootstrapCache()).resolves.toBeUndefined();
+    await expect(closeZoneCryptoBootstrapCache()).resolves.toBeUndefined();
     expect(closeSpy).not.toHaveBeenCalled();
   });
 });

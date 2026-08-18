@@ -1,0 +1,127 @@
+---
+title: Bridge and Agent Plugins
+description: Run plugin code inside each zone's Bridge and on the devices. The host provides namespaced state, typed events, and cancellable device-side operations.
+section: extend
+order: 5
+slug: extend/bridge-and-agent-plugins
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+The same plugin package that extends {BRAND_NAME}'s control plane (the hub) can run a module inside each zone's Bridge (the zone gateway) and register operations on the Brokkr Live Agent on each device. The host namespaces every key and operation name, so a plugin cannot collide with the core or with another plugin.
+
+## The Bridge module
+
+Add a `bridgeModule` thunk to your plugin manifest. The Bridge lazy-imports it at boot and mounts it as a NestJS module:
+
+```typescript
+import { definePlugin } from '@hydrahost/plugin-sdk';
+import { BridgeHelloWorldConfigSchema } from './schemas';
+
+export default definePlugin({
+  id: 'bridge-hello-world',
+  version: '0.1.0',
+  bridgeModule: () => import('./backend'),
+  configSchema: BridgeHelloWorldConfigSchema,
+});
+```
+
+Each Bridge decides whether the plugin runs. The Bridge's plugin registry reads one environment variable per plugin (`BRIDGE_PLUGIN_HELLO_WORLD_ENABLED=true` for this plugin), so you enable a plugin per Bridge rather than fleet-wide. A zone runs multiple Bridges, so set the flag on every Bridge in the zone. The Bridge never imports a disabled plugin's module.
+
+If the manifest declares a Zod `configSchema`, the Bridge parses the installer-supplied settings at boot. A validation failure aborts boot with a per-field error list that names the plugin. A Bridge never starts on a config it cannot trust.
+
+## What the Bridge injects
+
+An enabled Bridge module can inject four tokens from `@hydrahost/plugin-sdk`. The key-value store and agent dispatch are bound in a private per-plugin scope. The event bus is a single shared instance, and the plugin host module provides the config tokens app-wide.
+
+| Token                      | What you get                                                    |
+| -------------------------- | --------------------------------------------------------------- |
+| `PLUGIN_EVENT_BUS`         | Typed, fire-and-forget notifications of Bridge activity         |
+| `BRIDGE_PLUGIN_KV`         | Redis-backed key-value store, keys prefixed `plugin:<id>:`      |
+| `BRIDGE_AGENT_DISPATCH`    | Dispatch operations to a device's agent, names prefixed `<id>.` |
+| `getPluginConfigToken(id)` | Your parsed, schema-validated configuration object              |
+
+**Key-value store.** The store exposes `get`, `set` (with an optional TTL in seconds), `delete`, and `scan`. Every key is transparently prefixed with your plugin id, and `scan` strips the prefix and filters to your namespace. A plugin cannot read or overwrite another plugin's state.
+
+**Agent dispatch.** `dispatch(deviceId, operation, input, { timeoutS, signal })` sends work to a connected agent. The Bridge prefixes the operation name with your plugin id, so `dispatch(deviceId, 'ping', input)` invokes the agent operation `bridge-hello-world.ping`, the same name the agent side registers below. If you omit `timeoutS`, the Bridge applies its 300-second default. `dispatch` throws when the device has no live agent session.
+
+**Events.** The bus carries four Bridge events today:
+
+| Event                        | Payload                          |
+| ---------------------------- | -------------------------------- |
+| `bridge.leadership.changed`  | `{ instanceId, isLeader }`       |
+| `bridge.saga.step.completed` | `{ sagaName, stepName, planId }` |
+| `bridge.saga.completed`      | `{ sagaName, planId }`           |
+| `bridge.saga.failed`         | `{ sagaName, planId, error }`    |
+
+Handlers observe events and cannot intercept them. A handler that throws or rejects is logged as a warning, and sibling handlers still run. Pass `{ pluginId }` to `on()` so those warnings are attributed to your plugin. A handler registered without it is logged as the host's. `on()` returns an unsubscribe function. Call it in `onModuleDestroy` to avoid leaks:
+
+```typescript
+onModuleInit(): void {
+  this.unsubscribes.push(
+    this.events.on('bridge.saga.completed', async (payload) => {
+      await this.kv.set(`last-saga:${payload.sagaName}`, payload.planId, 24 * 60 * 60);
+    }, { pluginId: PLUGIN_ID }),
+  );
+}
+
+onModuleDestroy(): void {
+  for (const unsubscribe of this.unsubscribes.splice(0)) unsubscribe();
+}
+```
+
+## Agent operations
+
+Device-side operations live in the plugin's `./agent` subpath. Define them with `defineAgentPlugin`. Each operation declares a Zod input schema, a Zod output schema, and a handler:
+
+```typescript
+import { defineAgentPlugin } from '@hydrahost/plugin-sdk';
+import { z } from 'zod';
+
+export default defineAgentPlugin({
+  id: 'bridge-hello-world',
+  setup({ registerOperation }) {
+    registerOperation(
+      'ping',
+      z.object({ message: z.string() }),
+      z.object({ echo: z.string(), respondedAt: z.string() }),
+      (input) => ({ echo: input.message, respondedAt: new Date().toISOString() }),
+    );
+  },
+});
+```
+
+Registration is atomic per plugin. Operations are staged while `setup` runs and committed only if every name is valid and collision-free. If `setup` throws or a name collides, the agent logs an error, registers none of that plugin's operations, and keeps running.
+
+<Warning>
+  That isolation covers registration and execution but not module load. Agent plugins are statically imported into the
+  bundle, so a plugin module whose top-level code throws crashes the agent at startup, even when the plugin is disabled.
+  Keep the module's top level free of side effects.
+</Warning>
+
+The execution contract is strict in both directions:
+
+- The agent validates input against your schema before the handler runs. A mismatch returns `INVALID_INPUT` without invoking your code.
+- The agent validates output after the handler returns. A result that fails your schema returns `INTERNAL_ERROR` and never leaves the device.
+- The handler receives `{ work_id, job_id, signal, reportProgress }`. Honor `signal`. The agent aborts it when the dispatch timeout fires or when the Bridge cancels the work, and the caller then sees a timeout or a `CANCELLED` result.
+- `reportProgress(progress, message?)` streams progress back to the Bridge while long work runs.
+
+## Enable a plugin
+
+On the Bridge, the flag takes effect at that Bridge's next restart. The restart imports the module, validates the config, and brings the plugin live on that Bridge. The plugin is live in the zone once every Bridge in the zone restarts with the flag set.
+
+On the Brokkr Live Agent, plugins are statically imported into the agent's plugin registry and bundled at compile time. There is no dynamic loading on devices. The registry checks the same environment variable as the Bridge, `BRIDGE_PLUGIN_HELLO_WORLD_ENABLED` for this plugin. Each registry entry names its own flag rather than deriving it from the plugin id.
+
+<Note>
+  The Bridge does not forward `BRIDGE_PLUGIN_*` variables to the agent's environment, so the environment toggle is
+  Bridge-only today.
+</Note>
+
+Enabling an agent plugin means building a new agent version and rolling it out to the fleet. Plan agent-side plugin changes as agent upgrades rather than config toggles.
+
+## Next steps
+
+- [Plugins overview](/extend/plugins-overview): how the Bridge and agent tiers fit into a single plugin package
+- [Writing your first plugin](/extend/writing-a-plugin): the hub-side manifest, schema, and endpoint walkthrough
+- [Events, gates, and host services](/extend/events-gates-and-host-services): the hub's larger event and gate surface
+- [The Brokkr Live Agent](/infrastructure/host-agent): what the agent is and how it stays connected

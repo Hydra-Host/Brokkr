@@ -20,6 +20,7 @@ set -eu
 DEFAULT_REPO_URL='https://github.com/Hydra-Host/Brokkr.git'
 DEFAULT_DIR='boss'
 DEFAULT_DOCKER_WAIT='180'
+DEFAULT_LOG_KEEP='10'
 
 # exit code the group-activation wrapper uses to say "the new groups still are not live"
 RC_GROUPS_STALE=78
@@ -50,6 +51,11 @@ STEP_START=''
 PHASE_DIR=''
 PHASE_FILE=''
 RUN_START=''
+LOG_FILE=''
+LOG_DIR=''
+LOG_KEEP=''
+NO_LOG=''
+LOG_FOOTER_DONE=''
 C_RESET='' C_BOLD='' C_DIM='' C_BLUE='' C_GREEN='' C_YELLOW='' C_RED=''
 
 # setup_colors — colour only a real terminal. Piped output (CI logs, `| tee`) and NO_COLOR must
@@ -68,13 +74,34 @@ setup_colors() {
   C_RED="$(printf '\033[31m')"
 }
 
-log() { printf '%s==>%s %s%s%s\n' "$C_BLUE" "$C_RESET" "$C_BOLD" "$*" "$C_RESET"; }
-info() { printf '    %s\n' "$*"; }
-ok() { printf '    %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
-warn() { printf '%s⚠%s  %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
+log() {
+  log_write "==> $*"
+  printf '%s==>%s %s%s%s\n' "$C_BLUE" "$C_RESET" "$C_BOLD" "$*" "$C_RESET"
+}
+info() {
+  log_write "    $*"
+  printf '    %s\n' "$*"
+}
+ok() {
+  log_write "  ok $*"
+  printf '    %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"
+}
+warn() {
+  log_write "  warn $*"
+  printf '%s⚠%s  %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2
+}
 die() {
+  log_write "  FAIL $*"
   printf '%s✗%s  %s\n' "$C_RED" "$C_RESET" "$*" >&2
+  print_log_hint
   exit 1
+}
+
+# print_log_hint — name the log on the way out. A failing run is exactly when the reader needs
+# the path, and scrollback is the thing they are about to lose.
+print_log_hint() {
+  [ -n "$LOG_FILE" ] || return 0
+  printf '    log: %s\n' "$LOG_FILE" >&2
 }
 
 usage() {
@@ -95,12 +122,20 @@ Options:
   --docker-wait N   macOS Docker budget   (env BROKKR_DOCKER_WAIT,   default 180)
   --stop-after P    stop after a phase    (env BROKKR_STOP_AFTER)
                     P is one of: deps clone bootstrap path ready
+  --log PATH        write the run log here (env BROKKR_LOG)
+  --no-log          write no run log      (env BROKKR_NO_LOG=1)
   --help            this text
 
 Progress: the devenv build is mostly Nix evaluation, which prints nothing on its own for
 minutes. The installer streams devenv's phase markers and, during genuine silence, names
 the phase it is waiting on every 30s. BROKKR_PROGRESS_INTERVAL changes that interval (0
 disables it); BROKKR_VERBOSE=1 streams devenv's full -v output unfiltered.
+
+Log file: every run appends a plain-text log under ~/.local/state/brokkr-local/logs, named
+install-<timestamp>.log, with latest.log pointing at the newest and the 10 newest kept. It
+holds this narrative plus devenv's COMPLETE output, including the lines the terminal view
+filters out, so a failed run leaves something to attach to a bug report. --log writes
+somewhere else, --no-log writes nothing, and BROKKR_LOG_KEEP changes how many are kept.
 
 The installer stores no credential of its own. With no --ssh-key it reuses whatever git
 already has (an ssh agent, or a stored https credential). --ssh-key points it at an ssh
@@ -121,6 +156,9 @@ parse_args() {
   DOCKER_WAIT="${BROKKR_DOCKER_WAIT:-$DEFAULT_DOCKER_WAIT}"
   STOP_AFTER="${BROKKR_STOP_AFTER:-}"
   PROGRESS_INTERVAL="${BROKKR_PROGRESS_INTERVAL:-$DEFAULT_PROGRESS_INTERVAL}"
+  LOG_FILE="${BROKKR_LOG:-}"
+  NO_LOG="${BROKKR_NO_LOG:-}"
+  LOG_KEEP="${BROKKR_LOG_KEEP:-$DEFAULT_LOG_KEEP}"
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -147,6 +185,14 @@ parse_args() {
     --stop-after)
       STOP_AFTER="${2:?--stop-after needs a phase}"
       shift 2
+      ;;
+    --log)
+      LOG_FILE="${2:?--log needs a path}"
+      shift 2
+      ;;
+    --no-log)
+      NO_LOG=1
+      shift
       ;;
     --no-up)
       NO_UP=1
@@ -178,6 +224,14 @@ parse_args() {
 
   case "$PROGRESS_INTERVAL" in
   '' | *[!0-9]*) die "BROKKR_PROGRESS_INTERVAL must be a whole number of seconds (0 disables)" ;;
+  esac
+
+  # --no-log outranks --log, so that a NO_LOG in the environment cannot be defeated by a
+  # --log that a wrapper script adds
+  [ -z "$NO_LOG" ] || LOG_FILE=''
+
+  case "$LOG_KEEP" in
+  '' | *[!0-9]*) die "BROKKR_LOG_KEEP must be a whole number of log files to keep" ;;
   esac
 }
 
@@ -242,6 +296,7 @@ print_plan() {
   [ -z "$SSH_KEY" ] || info "ssh key    : $SSH_KEY"
   info "clone into : $TARGET_DIR"
   info "host       : $HOST_OS $(uname -m)"
+  [ -z "$LOG_FILE" ] || info "log        : $LOG_FILE"
   # --stop-after outranks --no-up, and both outrank the default: the plan must name the phase
   # the run will actually end at, or a bounded run advertises work it never does
   if [ -n "$STOP_AFTER" ]; then
@@ -305,6 +360,110 @@ stop_keepalive() {
   SUDO_KEEPALIVE_PID=''
 }
 
+# ---------------------------------------------------------------- logging
+
+# The log exists because the terminal narrative is ephemeral and deliberately partial:
+# filter_devenv_line keeps only devenv's phase markers, so the phase most likely to fail is
+# the one with the least evidence on screen. Everything here is best-effort by design — a
+# full disk or a read-only HOME must cost a warning, never the install.
+
+# log_write <text> — one timestamped line. Piped through strip_ansi because several callers
+# embed colour in the message itself (end_step, print_epilogue), and escape sequences in a
+# file that gets pasted into a bug report are worse than no file.
+log_write() {
+  [ -n "$LOG_FILE" ] || return 0
+  printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" |
+    strip_ansi >>"$LOG_FILE" 2>/dev/null || true
+}
+
+# log_raw <text> — an already-plain line, verbatim and unstamped. No forks: this runs once per
+# line of devenv output, where log_write's date+awk pair would be thousands of them.
+log_raw() {
+  [ -n "$LOG_FILE" ] || return 0
+  printf '%s\n' "$*" >>"$LOG_FILE" 2>/dev/null || true
+}
+
+# link_latest_log — rm then ln, never `ln -sfn`: -n is understood by BSD and GNU ln alike but
+# is not POSIX, and the two-step needs no such assumption.
+link_latest_log() {
+  rm -f "$LOG_DIR/latest.log" 2>/dev/null || true
+  ln -s "$LOG_FILE" "$LOG_DIR/latest.log" 2>/dev/null || true
+}
+
+# prune_logs — keep the newest LOG_KEEP. A glob expands in ascending order and the timestamped
+# names sort chronologically, so the oldest are simply the leading ones. The positional
+# parameters are a function's own in POSIX, so `set --` here cannot disturb the caller. The
+# latest.log symlink is named so this glob can never match it.
+prune_logs() {
+  [ "$LOG_KEEP" -gt 0 ] 2>/dev/null || return 0
+  set -- "$LOG_DIR"/install-*.log
+  [ -e "$1" ] || return 0
+  _pl_drop=$(($# - LOG_KEEP))
+  while [ "$_pl_drop" -gt 0 ]; do
+    rm -f "$1" 2>/dev/null || true
+    shift
+    _pl_drop=$((_pl_drop - 1))
+  done
+}
+
+# init_log — resolve and create the log before anything can want to write to it. brokkr-local
+# is the state prefix bootstrap.sh and devenv/lib/stack-registry.sh already share; it is also
+# the only one available here, since DEVENV_STATE needs a checkout that does not exist yet.
+# Never PHASE_DIR: cleanup deletes that on every exit path, including the failing one.
+init_log() {
+  [ -z "$NO_LOG" ] || {
+    LOG_FILE=''
+    return 0
+  }
+  _il_default=''
+  if [ -z "$LOG_FILE" ]; then
+    _il_default=1
+    LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/brokkr-local/logs"
+    LOG_FILE="$LOG_DIR/install-$(date '+%Y%m%d-%H%M%S').log"
+  else
+    LOG_DIR="$(dirname -- "$LOG_FILE")"
+  fi
+  # 0600 by umask: the file records hostnames, absolute paths and devenv's whole output
+  if ! (umask 077 && mkdir -p "$LOG_DIR" && : >>"$LOG_FILE") 2>/dev/null; then
+    # clear the path BEFORE warning — warn() writes to the log, and appending to the file we
+    # just failed to create would only fail again
+    _il_bad="$LOG_FILE"
+    LOG_FILE=''
+    LOG_DIR=''
+    warn "cannot write a log at $_il_bad — continuing without one"
+    return 0
+  fi
+  # only the default directory is ours to curate; an explicit --log path gets that file alone
+  [ -z "$_il_default" ] || {
+    link_latest_log
+    prune_logs
+  }
+}
+
+# log_header — make the file self-describing, because it is read detached from the terminal
+# that produced it. The resolved repo/ref/target are not logged here: they are not final until
+# resolve_target_dir and resolve_ssh_key have run, and print_plan logs them through info().
+log_header() {
+  [ -n "$LOG_FILE" ] || return 0
+  log_write "--- brokkr installer log"
+  log_write "    argv      : $*"
+  log_write "    uname     : $(uname -a 2>/dev/null)"
+  log_write "    user      : $(id -un 2>/dev/null) (uid $(id -u))"
+  log_write "    home      : $HOME"
+  log_write "    cwd       : $PWD"
+  log_write "    keep      : $LOG_KEEP log files"
+}
+
+# log_tool_versions — what actually got installed, which is the first thing worth knowing when
+# a build fails. Called once the toolchain is on PATH; nix and devenv do not exist before that.
+log_tool_versions() {
+  [ -n "$LOG_FILE" ] || return 0
+  log_write "    git       : $(git --version 2>/dev/null)"
+  log_write "    curl      : $(curl --version 2>/dev/null | head -n 1)"
+  log_write "    nix       : $(nix --version 2>/dev/null)"
+  log_write "    devenv    : $(devenv --version 2>/dev/null)"
+}
+
 # ---------------------------------------------------------------- progress
 
 # elapsed <start-epoch> — "4m07s" since start.
@@ -317,9 +476,11 @@ elapsed() {
 # file_mtime <path> — epoch seconds, on GNU and BSD stat alike. Validate rather than rely on
 # exit status: GNU `stat -f` is "filesystem info" and exits 0, so a plain `-f %m || -c %Y`
 # chain silently returns a block-size report on a GNU host instead of falling through.
+# The `|| true` is what makes the second try reachable at all: BSD stat rejects `-c` and exits
+# 1, and an assignment inherits that status, so `set -e` would kill the caller first.
 file_mtime() {
-  _fm_v="$(stat -c %Y "$1" 2>/dev/null)"
-  case "$_fm_v" in '' | *[!0-9]*) _fm_v="$(stat -f %m "$1" 2>/dev/null)" ;; esac
+  _fm_v="$(stat -c %Y "$1" 2>/dev/null || true)"
+  case "$_fm_v" in '' | *[!0-9]*) _fm_v="$(stat -f %m "$1" 2>/dev/null || true)" ;; esac
   case "$_fm_v" in '' | *[!0-9]*) return 1 ;; esac
   printf '%s' "$_fm_v"
 }
@@ -327,8 +488,8 @@ file_mtime() {
 # file_mode <path> — octal mode, on GNU and BSD stat alike. Same two-try shape as file_mtime,
 # and for the same reason: neither flag spelling exists on both.
 file_mode() {
-  _fo_v="$(stat -c %a "$1" 2>/dev/null)"
-  case "$_fo_v" in '' | *[!0-7]*) _fo_v="$(stat -f %Lp "$1" 2>/dev/null)" ;; esac
+  _fo_v="$(stat -c %a "$1" 2>/dev/null || true)"
+  case "$_fo_v" in '' | *[!0-7]*) _fo_v="$(stat -f %Lp "$1" 2>/dev/null || true)" ;; esac
   printf '%s' "$_fo_v"
 }
 
@@ -401,8 +562,13 @@ stop_ticker() {
 
 # one owner for every background loop, so an interrupt cannot orphan a ticker or a keepalive
 cleanup() {
+  _cu_rc=$?
   stop_ticker
   stop_keepalive
+  if [ -z "$LOG_FOOTER_DONE" ]; then
+    LOG_FOOTER_DONE=1
+    log_write "--- finished rc=$_cu_rc${RUN_START:+ after $(elapsed "$RUN_START")}"
+  fi
   [ -n "$PHASE_DIR" ] && rm -rf "$PHASE_DIR"
   PHASE_DIR=''
 }
@@ -559,6 +725,7 @@ resolve_ssh_url() {
   info "  $REPO_URL"
   info "Re-run with the ssh spelling:"
   info "  --repo $(to_ssh_url "$REPO_URL")"
+  print_log_hint
   exit 1
 }
 
@@ -664,12 +831,14 @@ clone_failed() {
     info "               means it authenticated as something else"
     info "  transport  : an ssh key works over ssh only (git@host:owner/repo.git)"
     info "  check it   : ssh -i $SSH_KEY -o IdentitiesOnly=yes -T git@github.com"
+    print_log_hint
     exit 1
   fi
   info "For a private remote the installer reuses git's own credentials — it never takes one."
   info "  ssh URL   : make sure your key is loaded (ssh-add -l) and authorized on the host"
   info "  https URL : make sure a credential helper has a token stored"
   info "  elsewhere : point at another remote with BROKKR_REPO_URL (or --repo)"
+  print_log_hint
   exit 1
 }
 
@@ -716,6 +885,7 @@ activate_nix_path() {
 
   command -v nix >/dev/null 2>&1 || die "nix is not on PATH after the bootstrap — re-run the installer."
   command -v devenv >/dev/null 2>&1 || die "devenv is not on PATH after the bootstrap — re-run the installer."
+  log_tool_versions
 }
 
 # ---------------------------------------------------------------- phase: readiness
@@ -795,7 +965,7 @@ strip_ansi() {
 # filter_devenv_line <line> — keep devenv's own phase markers, drop its debug noise.
 # `devenv -v` is the only way to get progress out of it: with no flag it prints 48 bytes for an
 # entire multi-minute build. Markers begin `•` (starting) or `✓` (finished, with a duration);
-# everything else is lock fingerprints and cache chatter.
+# everything else is lock fingerprints and cache chatter — which the log keeps regardless.
 filter_devenv_line() {
   _fl_plain="$(printf '%s' "$1" | strip_ansi)"
   case "$_fl_plain" in
@@ -815,20 +985,25 @@ filter_devenv_line() {
 }
 
 # devenv_stream <command-string> — like devenv_run, but surfaces devenv's phase markers as they
-# arrive. The while loop runs in a subshell, so devenv's exit status comes back through a file
-# rather than a variable. BROKKR_VERBOSE=1 skips the filter entirely.
+# arrive and records the unfiltered stream. The while loop runs in a subshell, so devenv's exit
+# status comes back through a file rather than a variable. BROKKR_VERBOSE=1 prints every line
+# instead of only the markers.
 devenv_stream() {
   _ds_rcfile="$PHASE_DIR/rc"
   : >"$_ds_rcfile"
-  if [ -n "${BROKKR_VERBOSE:-}" ]; then
-    (cd "$TARGET_DIR" && devenv --no-tui -v shell -- sh -c "$1")
-    return $?
-  fi
   {
     (cd "$TARGET_DIR" && devenv --no-tui -v shell -- sh -c "$1" 2>&1)
     printf '%s\n' "$?" >"$_ds_rcfile"
   } | strip_ansi | while IFS= read -r _ds_line; do
-    filter_devenv_line "$_ds_line"
+    # the log gets every line; the terminal gets only the markers, which is the whole point of
+    # having a log at all. BROKKR_VERBOSE shares this pipeline rather than bypassing it, so the
+    # debugging mode is not the one mode that records nothing.
+    log_raw "$_ds_line"
+    if [ -n "${BROKKR_VERBOSE:-}" ]; then
+      printf '%s\n' "$_ds_line"
+    else
+      filter_devenv_line "$_ds_line"
+    fi
   done
   _ds_rc="$(cat "$_ds_rcfile" 2>/dev/null)"
   [ -n "$_ds_rc" ] || _ds_rc=1
@@ -975,6 +1150,9 @@ main() {
   trap 'cleanup' EXIT INT TERM
   init_phase_state
   RUN_START="$(date +%s)"
+  # before detect_host: an unsupported-host rejection is worth having on disk too
+  init_log
+  log_header "$@"
   detect_host
   detect_tty
   # before print_plan so the plan shows the absolute path the clone will really land in, and
@@ -1029,6 +1207,7 @@ main() {
     info "  cd $TARGET_DIR && devenv --no-tui shell -- task status   # what is down"
     info "  cd $TARGET_DIR && devenv --no-tui shell -- task logs     # why"
     info "  cd $TARGET_DIR && devenv --no-tui shell -- task up       # reconcile (idempotent)"
+    print_log_hint
     exit 1
   fi
   end_step "stack up"

@@ -1,0 +1,106 @@
+---
+title: 'Observability'
+description: 'OpenTelemetry traces, logs, and metrics enabled by one environment variable, plus shipped Grafana dashboards and Telegraf hardware telemetry.'
+section: self-host
+order: 6
+slug: self-host/observability
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} emits OpenTelemetry traces, logs, and metrics. One environment variable turns telemetry on. Each provisioning saga becomes a single distributed trace from the hub enqueue to the Bridge worker and back. Log records carry the trace context that produced them. Hardware telemetry from GPU dies, PDU circuits, and coolant loops lands on Grafana dashboards that ship with the product.
+
+## Enable telemetry
+
+Telemetry is off by default. When no OTLP endpoint is configured, the OpenTelemetry SDK is not loaded. Point the hub or a Bridge at any OTLP-capable backend to turn tracing on:
+
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=https://collector.example.com:4318
+```
+
+The standard OTEL environment contract applies. Set these variables in the environment of each process (see [Configuration reference](/self-host/configuration-reference)):
+
+| Variable                             | Effect                                                                 |
+| ------------------------------------ | ---------------------------------------------------------------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`        | Base OTLP endpoint (`/v1/traces` appended). Presence turns tracing on. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Per-signal endpoint, used as-is. Also turns tracing on.                |
+| `OTEL_EXPORTER_OTLP_HEADERS`         | Auth headers, `key=value` comma-separated.                             |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`        | `http/protobuf` (default) or `http/json`. `grpc` is not supported.     |
+| `OTEL_SERVICE_NAME`                  | Overrides the per-app default (`brokkr-hub`).                          |
+| `OTEL_TRACES_SAMPLER_ARG`            | Sample ratio 0.0 to 1.0 (default 1.0).                                 |
+| `OTEL_METRIC_EXPORT_INTERVAL`        | Metric push cadence in ms (default 60000).                             |
+| `OTEL_SDK_DISABLED=true`             | Hard kill switch.                                                      |
+| `OTEL_TRACES_EXPORTER=console`       | Debug: print spans to stdout, no endpoint needed.                      |
+
+Empty-string values count as unset. Each app applies an instrumentation preset. The hub preset traces incoming and outgoing HTTP, Express, NestJS, ioredis (which covers BullMQ's connections), pg, undici/fetch, and Prisma. The Bridge preset swaps Express, pg, and Prisma for Fastify and gRPC. Health-probe paths (`/healthcheck` and `/api/health`) are never traced.
+
+## One saga, one trace
+
+Trace context rides on BullMQ job options. It is never stored in the job payload. As a result, a provisioning saga is one distributed trace across the hub enqueue, the Bridge worker, the Bridge results write, and the hub results consumer. When a [deployment](/deployments/lifecycle) stalls, open the trace to see which hop stalled.
+
+The hub stamps request identity onto active spans: request id, organization id, user id, auth type, request source, and device token context. These attributes are IDs only. Emails and names are never attached, because spans may be exported to third-party backends across all tenants.
+
+## Trace-correlated logs
+
+The hub and Bridge loggers emit OTLP log records that carry the active trace context in the record's native fields rather than as string attributes. A backend that keys on the record's `trace_id`, such as a Loki-to-Tempo derived-field link, can jump from a log line to its trace. Logs export when the configured endpoint accepts them: either a per-signal `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` or the base endpoint. An explicit `OTEL_LOGS_EXPORTER` setting (`otlp` or `none`) overrides this.
+
+## Domain metrics
+
+Metrics export alongside traces whenever an endpoint can receive them: the base endpoint or `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. An explicit `OTEL_METRICS_EXPORTER` setting overrides this. In addition to HTTP duration histograms and Node runtime metrics (event loop, GC, heap), {BRAND_NAME} emits a domain catalog:
+
+| Metric                                                                             | Emitter      | What it tells you                                                |
+| ---------------------------------------------------------------------------------- | ------------ | ---------------------------------------------------------------- |
+| `brokkr.saga.completed`                                                            | hub          | Saga completions, by saga name and status                        |
+| `brokkr.saga.duration_seconds`                                                     | hub          | Bridge-reported saga duration histogram                          |
+| `brokkr.bridge_results.processed` / `.rejected`                                    | hub          | Results-inbox throughput and rejected payloads                   |
+| `brokkr.queue.jobs`                                                                | hub + bridge | BullMQ queue depth                                               |
+| `brokkr.phone_home.processed`                                                      | hub          | Phone-home callbacks, by token context and resulting status      |
+| `brokkr.device_lifecycle.transitions`                                              | hub          | Lifecycle status writes, by target status and source             |
+| `brokkr.zones.online` / `brokkr.zone.status_changes` / `brokkr.zone.flap_episodes` | hub          | Zone health and flapping                                         |
+| `brokkr.dhcp.messages` / `.leases_active` / `.pool_size` / `.engine_rebuilds`      | bridge       | [DHCP](/network/dhcp-and-pxe) traffic, lease and pool state      |
+| `brokkr.vrrp.bound_vips` / `.vip_events` / `.reconcile_aborts`                     | bridge       | [VRRP](/network/gateways-vrrp-bgp-circuits) VIP binding activity |
+| `brokkr.leader.is_leader` / `brokkr.leader.transitions`                            | bridge       | Zone [leader election](/zones/high-availability)                 |
+
+<Note>
+  Sentry-only deployments (a per-signal traces endpoint with no base endpoint) keep metrics off automatically. Sentry
+  rejects OTLP metrics.
+</Note>
+
+## Shipped dashboards
+
+Four Grafana dashboards ship in `packages/telemetry/dashboards/` as importable JSON:
+
+| Dashboard                | UID                    | Covers                                                                                                                                                                                                                                                                                                                  |
+| ------------------------ | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Brokkr Hub: Traces (RED) | `brokkr-hub-red`       | RED panels (request rate, latency quantiles, error spans, per-route table, recent traces, service graph) built from Tempo's span-derived metrics. Its app-metric panels (4xx rate, HTTP p95 by route, event loop, heap, bridge/saga counters) and Loki logs panel stay empty without the OTLP metrics and logs pipeline |
+| Brokkr: Bridge & Zone HA | `brokkr-bridge-ha`     | Leadership, VRRP VIPs, DHCP leases and pool utilization, queue depth, bridge runtime, bridge RED                                                                                                                                                                                                                        |
+| Brokkr: Fleet & Devices  | `brokkr-fleet-devices` | Lifecycle transitions, saga completions and duration, phone-home conversions, zone health, hardware telemetry                                                                                                                                                                                                           |
+| Brokkr: Web Vitals       | `brokkr-web-vitals`    | LCP/INP/CLS/FCP/TTFB p75, by rating and route                                                                                                                                                                                                                                                                           |
+
+## Sentry as an OTLP backend
+
+{BRAND_NAME} does not embed a Sentry SDK. Sentry is treated as any other OTLP backend. Sentry's OTLP paths are non-standard, so use the per-signal variables. The base endpoint would append `/v1/traces` and miss Sentry's path:
+
+```sh
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://o<orgId>.ingest.sentry.io/api/<projectId>/integration/otlp/v1/traces"
+OTEL_EXPORTER_OTLP_TRACES_HEADERS="x-sentry-auth=sentry sentry_key=<publicKey>"
+OTEL_TRACES_SAMPLER_ARG="0.1"
+```
+
+Find these values in Sentry under Project settings → Client Keys (DSN). Sentry accepts OTLP traces and logs only. Point metrics at a Prometheus-compatible backend.
+
+## Hardware telemetry
+
+Each Bridge renders a Telegraf configuration for the devices it owns. A partitioner divides a zone's fleet across its Bridges. Rendering is deterministic and hash-compared, so an unchanged fleet causes no config rewrite.
+
+<Note>The Bridge regenerates the file on change. Do not edit it by hand.</Note>
+
+- **Servers** get two stanzas: an ICMP reachability probe and one sensors scrape against the Bridge's `/api/monitoring/device/sensors` endpoint. Vendor specifics live in the Bridge rather than in the config: which Redfish endpoints to read, GPU counts, and unit conversions. Every device returns the same uniform document keyed by metric name. Chassis series (`chassis_power_watts`, `sensor_temperature_celsius`, fan, voltage, PSU) are tagged by `sensor`. GPU series (`gpu_temperature_celsius`, `gpu_memory_temperature_celsius`, `gpu_power_watts`, `gpu_memory_power_watts`) are tagged by `gpu_index`.
+- **PDUs** are polled over SNMP directly from the Bridge host, using vendor OID profiles (Vertiv Geist, APC, Enconnex) and the shared v2c community from the `PDU_SNMP_COMMUNITY` env var. Series carry `device_id` and `pdu_vendor` tags.
+- **CDUs** (liquid cooling) use the same sensors endpoint with `kind: cdu` and emit the coolant catalog: primary and secondary loop supply and return temperatures, pressures, flow (L/min), heat removed, pump speed and health, reservoir levels, and leak detectors.
+
+All series carry a `device_id` tag. The Bridge renders only this inputs fragment and writes it to `TELEGRAF_OWNED_CONF_PATH` (default `/local/telegraf.d/owned.conf`). Your deployment runs the Telegraf agent that includes the fragment, adds global tags (`bridge_id` and `zone`, which match the Bridge's own telemetry resource attributes), and configures an output into your Prometheus-compatible store. The shipped Fleet & Devices dashboard queries these series from its Prometheus datasource. See [out-of-band management](/infrastructure/out-of-band) for the control side of the same BMCs.
+
+## Alert rules (in development)
+
+Packaged alert rules to pair with the shipped dashboards are in development. Until they ship, build alerts in your Grafana instance against the metric catalog above.

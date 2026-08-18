@@ -9,13 +9,14 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
-import { AuthClient, resolveEffectiveApiKeyPermissions } from '@repo/auth';
+import { AuthClient } from '@repo/auth';
 import { RbacResolverService } from '@repo/auth/rbac';
 import { Request } from 'express';
 import { ContextService } from 'src/common/context/context.service';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
+import { buildApiKeyIdentityContext } from './api-key-identity';
 import { AuthRepository } from './auth.repo';
 import { IS_PUBLIC_KEY } from './decorators/public.decorator';
 import { IS_SESSION_ONLY_KEY } from './decorators/session-only.decorator';
@@ -191,50 +192,19 @@ export class UnifiedIdentityGuard implements CanActivate {
     }
 
     const key = result.key;
-    if (!key) {
+    if (!key?.id || !key.referenceId) {
       this.logger.error('API key verification returned no key object');
       throw new UnauthorizedException();
     }
 
-    const keyRecord = key.id
-      ? await this.prisma.apiKey.findUnique({
-          where: { id: key.id },
-          select: { organizationId: true, permissions: true },
-        })
-      : null;
-    const organizationId = keyRecord?.organizationId;
-
-    if (!organizationId) {
-      this.logger.error('API key has no server-assigned organization');
-      throw new UnauthorizedException();
-    }
-
-    const member = await this.repo.findOrganizationMember(key.referenceId, organizationId);
-    if (!member) {
-      this.logger.error('API key owner is no longer assigned to the organization');
-      throw new UnauthorizedException();
-    }
-
-    assertOrganizationNotDeleted(member.organization);
-    assertUserNotBanned(member.user);
-
-    const permissionResolution = resolveEffectiveApiKeyPermissions(
-      keyRecord?.permissions,
-      await this.rbacResolver.resolveEffectivePermissions(member.assignedRoleId),
+    return buildApiKeyIdentityContext(
+      { id: key.id, referenceId: key.referenceId, name: key.name },
+      {
+        prisma: this.prisma,
+        repo: this.repo,
+        rbacResolver: this.rbacResolver,
+        logger: this.logger,
+      },
     );
-    if (permissionResolution.malformed) {
-      this.logger.warn('API key has malformed permission scope');
-    }
-
-    return {
-      authType: AuthType.ApiKey,
-      organizationId,
-      organization: member.organization,
-      role: member.role,
-      assignedRoleId: member.assignedRoleId,
-      permissions: permissionResolution.permissions,
-      apiKey: { ...key, organizationId },
-      user: member.user,
-    };
   }
 }

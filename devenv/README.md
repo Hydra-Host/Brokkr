@@ -45,7 +45,7 @@ On a machine with nothing on it, the root [`install.sh`](../install.sh) does all
 curl -fsSL https://raw.githubusercontent.com/Hydra-Host/Brokkr/master/install.sh | sh
 ```
 
-It streams devenv's own phase markers while it builds, so a long first run names the step it is on rather than going silent, and it passes `--no-tui` to every `devenv` call (devenv enables its interactive TUI whenever stdout is a terminal, which a scripted install must not opt into). `BROKKR_PROGRESS_INTERVAL` tunes the idle ticker and `BROKKR_VERBOSE=1` shows devenv's unfiltered `-v` output.
+It streams devenv's own phase markers while it builds, so a long first run names the step it is on rather than going silent, and it passes `--no-tui` to every `devenv` call (devenv enables its interactive TUI whenever stdout is a terminal, which a scripted install must not opt into). `BROKKR_PROGRESS_INTERVAL` tunes the idle ticker and `BROKKR_VERBOSE=1` shows devenv's unfiltered `-v` output. Every run logs to `~/.local/state/brokkr-local/logs/` (`latest.log` is the newest, 10 are kept) — that file always holds devenv's full output, including the lines the terminal view drops, so read it first when a build fails. `--log` moves it and `--no-log` disables it.
 
 Point it at another remote with `BROKKR_REPO_URL`, choose the clone directory with `BROKKR_DIR` (default `./boss`), or stop before the bring-up with `BROKKR_NO_UP=1`. It is idempotent: it adopts an existing checkout, lets `bootstrap.sh`'s own content-hash marker decide whether the OS-package step re-applies, and `task up` reconciles a stack that is already running.
 

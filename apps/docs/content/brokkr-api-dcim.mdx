@@ -1,0 +1,96 @@
+---
+title: 'DCIM API'
+description: 'Server lifecycle, bridge, zone, and IPAM routes in the public API, and which infrastructure routes stay internal.'
+section: api
+order: 5
+slug: brokkr-api-dcim
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+The DCIM API covers the infrastructure surfaces a supplier automates against: servers, bridges, zones, and IPAM. The routes run on the same typed contract as the web UI. You can commission a discovered server, collect its hardware inventory, list it, provision it, and retire it over the API. This page also documents which routes are public API and which exist only to serve the UI today.
+
+## Public versus internal
+
+Every route in the contract carries a visibility tag. **Public** routes appear in the generated OpenAPI document (Swagger UI at `/api/swagger`, ReDoc at `/api/redoc`) and are the supported automation surface. **Internal** routes serve the web UI and are excluded from the public document. The generator fails closed and treats any untagged route as internal.
+
+<Note>Internal routes can change without notice. Build against public routes only.</Note>
+
+All paths below are relative to `/api/v1`. Authenticate with an `x-api-key` header. See [Authentication](/brokkr-api-authentication). The [TypeScript client](/api/typescript-client) exposes each route as a typed method.
+
+## Servers
+
+The `/servers` surface manages your bare-metal fleet through its full lifecycle. Reads require authentication. Mutations are also role-gated and return `403` without the required role.
+
+| Method  | Path                                   | What it does                                                               |
+| ------- | -------------------------------------- | -------------------------------------------------------------------------- |
+| `GET`   | `/servers`                             | Paginated fleet list, filterable by device role and lifecycle status.      |
+| `GET`   | `/servers/filter-options`              | Distinct values for every filterable field, aggregated server-side.        |
+| `GET`   | `/servers/test-runs`                   | Paginated hardware test runs, filterable by device, test type, or status.  |
+| `GET`   | `/servers/:deviceId`                   | Full record: specs, networking, listing, and deployment information.       |
+| `GET`   | `/servers/:deviceId/eco-mode`          | Whether automatic power saving when idle is enabled.                       |
+| `POST`  | `/servers/commission`                  | Commission a discovered device using its BMC credentials.                  |
+| `POST`  | `/servers/:deviceId/collect-inventory` | Run hardware discovery collection (asynchronous; returns a stable job id). |
+| `PATCH` | `/servers/:deviceId`                   | Update nickname, eco mode, or the per-device PXE boot firmware override.   |
+| `PATCH` | `/servers/:deviceId/nickname`          | Update the nickname alone. Narrower than the general update above.         |
+| `PATCH` | `/servers/:deviceId/listing`           | Update marketplace pricing, visibility, and interruptible-only acceptance. |
+| `PATCH` | `/servers/:deviceId/provision`         | Start the provisioning workflow: OS install, networking, SSH keys.         |
+| `PATCH` | `/servers/:deviceId/decommission`      | Retire the server from active inventory; the record is kept for reporting. |
+| `PATCH` | `/servers/:deviceId/discovered-hosts`  | Return the server to discovered-hosts, ready for re-commissioning.         |
+
+Commissioning takes the device UUID, its primary MAC address, and BMC credentials. Brokkr derives the zone from the device:
+
+```bash
+curl -X POST https://your-hub.example.com/api/v1/servers/commission \
+  -H "x-api-key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"id": "<device-uuid>", "macAddress": "aa:bb:cc:dd:ee:ff", "ipmiLogin": "admin", "ipmiPassword": "..."}'
+```
+
+Reservation-invite routes also hang off `/servers/:deviceId`. See the [Reservations API](/brokkr-api-reservations). For what provisioning does on the wire, read [Deployment lifecycle](/deployments/lifecycle).
+
+## Bridges
+
+Bridges are read-only over the API. `GET /bridges` returns a paginated list of your organization's Bridges, filterable with `zoneId`. `GET /bridges/:bridgeId` returns one record. Bridge enrollment is not a public API call. The operator mints a one-time registration token over an internal, session-only route. The Bridge presents that token to Brokkr on first boot. Follow [Create and enroll a zone](/zones/create-and-enroll).
+
+## Zones
+
+The 15 zone-management routes are all public. Create a zone (`POST /zones`), list and fetch (`GET /zones`, `GET /zones/:zoneId`), update its name and primary or shipping address, manage its contacts (full CRUD under `/zones/:zoneId/contacts`), and soft-delete it. Two read routes summarize per-prefix network state for the zone. `/zones/:zoneId/dhcp/prefixes` returns the DHCP mode and eligibility per prefix. `/zones/:zoneId/vrrp/prefixes` returns the assigned floating IPs and per-bridge NIC bindings. More route groups hang off `/zones/:zoneId` and share the Zones tag in the generated document. Discovered-host commissioning, zone DNS, and service tuning are public (see [zone services and health](/zones/services-and-health)). The enrollment and registration-token routes are internal.
+
+`POST /zones/:zoneId/redis-credential/rotate` generates a fresh password for the zone's Redis ACL user and returns it exactly once. Brokkr stores only the hash. The route requires Brokkr to run with `REDIS_ACL_MANAGEMENT_ENABLED=true` and returns `503` otherwise.
+
+<Warning>
+  Rotation takes effect immediately. Bridges still using the old password lose access as soon as the new password is
+  generated.
+</Warning>
+
+See [Secrets and device tokens](/security/secrets-and-device-tokens).
+
+## IPAM
+
+IPAM is the network source of truth. Bridges derive DHCP and VRRP behavior from it. See [IPAM](/network/ipam) and [DHCP and PXE](/network/dhcp-and-pxe). The 40 public routes under `/ipam` cover:
+
+| Resource     | Routes | Covers                                                                                                                                              |
+| ------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VRFs         | 4      | List, create, update, archive.                                                                                                                      |
+| Prefixes     | 15     | CRUD plus gateway set/clear/validate, VRRP VIP set/clear/bindings, children, contained IPs, utilization, next-free child allocation, overlap check. |
+| VLANs        | 4      | List, create, update, archive.                                                                                                                      |
+| IP ranges    | 5      | CRUD plus overlap check.                                                                                                                            |
+| IP addresses | 4      | List, create, update, archive.                                                                                                                      |
+| DHCP         | 5      | Per-prefix DHCP config (get/replace), live leases, derived reservations, derived serving addresses.                                                 |
+| DNS          | 2      | Per-prefix DNS override (get/replace); fields set to null inherit the zone-level defaults.                                                          |
+| Changelog    | 1      | Audit log of IPAM record mutations, filterable by table and primary key.                                                                            |
+
+Two conventions hold across the surface. First, resource deletes are soft: `DELETE` on a VRF, prefix, VLAN, IP range, or IP address archives the record and returns it. The two assignment-clearing routes are the exception. `DELETE /ipam/prefixes/:id/gateway` and `DELETE /ipam/prefixes/:id/vrrp-vip` archive nothing. They remove the assignment and return the live prefix. Second, list routes are the public read path. The single-record `GET /ipam/<resource>/:id` routes are internal, so fetch a record by filtering the list.
+
+`POST /ipam/prefixes/:id/allocate-prefix` carves the next free child prefix of a requested mask length out of a parent. It is the building block for automated subnet assignment. The DHCP routes keep policy and state apart. Config is the only writable piece. Reservations and serving addresses are derived from IPAM, and leases are read live from the Bridge's shared lease store. None of the three are edited through these routes.
+
+## Internal-only today
+
+The heavier infrastructure surfaces are internal. They model concepts you manage through the web UI, and their routes are not part of the public document.
+
+- **Physical DCIM** (`/dcim/*`): interfaces, racks and rack elevations, cables, console and console-server ports, power ports and outlets, front and rear ports, connection listings. Concepts in [DCIM](/infrastructure/dcim).
+- **BGP** (`/bgp/*`): peer groups, prefix lists and rules, sessions. **Circuits** (`/circuits/*`): providers, provider networks, circuit types, circuits, terminations. **Gateways** (`/ipam/gateways`). Concepts in [Gateways, VRRP, BGP, and circuits](/network/gateways-vrrp-bgp-circuits).
+- **Catalog and non-server fleets**: ASNs, IPAM roles, VLAN groups, rack roles, and the switch, router, PDU, and CDU device routes.
+
+Routes move to public as the surfaces stabilize. If your automation needs one of these today, ask your {BRAND_NAME} operator before building against it.

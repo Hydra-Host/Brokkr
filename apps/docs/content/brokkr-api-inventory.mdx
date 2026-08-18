@@ -1,0 +1,138 @@
+---
+title: Inventory API
+description: Browse GPU categories and live listings, read availability and pricing, and rent and provision hardware over the REST API.
+section: api
+order: 4
+slug: brokkr-api-inventory
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+The {BRAND_NAME} inventory API exposes the marketplace over REST. It covers everything the marketplace UI does: browsing categories, comparing live prices, claiming a device. The listing and category endpoints require no credentials, and two requests take you from an anonymous category query to a provisioning deployment.
+
+All paths are relative to `/api/v1`. See the [API overview](/brokkr-api-overview). Authenticated endpoints take an API key in the `x-api-key` header. See [authentication](/brokkr-api-authentication). This page documents the wire contract. For the concepts behind it (contract types, stock statuses, and the rent form), read the [marketplace guide](/deployments/renting).
+
+| Method  | Path                               | Auth    | Returns                                    |
+| ------- | ---------------------------------- | ------- | ------------------------------------------ |
+| `GET`   | `/inventory`                       | None    | Paginated listings, with optional filters  |
+| `GET`   | `/inventory/regions`               | API key | All configured region names                |
+| `GET`   | `/inventory/category-prices`       | None    | Lowest per-GPU hourly rate per category    |
+| `GET`   | `/inventory/category-availability` | None    | Stock status counts per category           |
+| `GET`   | `/inventory/:id`                   | API key | Full detail for one listing                |
+| `PATCH` | `/inventory/:id/provision`         | API key | Rents the device and requests provisioning |
+
+Every list endpoint returns `{ data: [...], meta: { page, pageSize, totalItems, totalPages } }`. All of these endpoints are also available through the [typed TypeScript client](/api/typescript-client).
+
+## Browse categories
+
+A category is the device's first GPU model string, lowercased. `nvidia h100 80gb hbm3` is a category. `h100` is not. Short identifiers (`h100`, `h200`, `cpu`, …) are `GET /inventory` filter values only. GPU identifiers match as case-insensitive substrings of the model, adjusted where names collide: `h200` excludes GH200 models, `a10` excludes A100, `b200` and `b300` exclude GB200 and GB300 (which have their own `gb200` and `gb300` values), and `rtx6000` matches models containing `RTX PRO 6000`. CPU-only devices match the `cpu` filter, but the two category endpoints below skip them and cover GPU devices only:
+
+```bash
+curl https://<hub>/api/v1/inventory/category-availability
+```
+
+```json
+{
+  "data": [
+    {
+      "category": "nvidia h100 80gb hbm3",
+      "hasOnDemand": true,
+      "onDemandCount": 4,
+      "hasReserve": true,
+      "reserveCount": 12,
+      "hasPreorder": false,
+      "preorderCount": 0
+    }
+  ],
+  "meta": { "page": 1, "pageSize": 100, "totalItems": 1, "totalPages": 1 }
+}
+```
+
+`GET /inventory/category-prices` returns `{ category, startPrice }`. `startPrice` is the lowest per-GPU hourly rate in each category, using a listing's interruptible floor price when one is set. This is the "from $X" figure on marketplace cards. `GET /inventory/regions` returns every configured region name, including regions with no devices currently available. Unlike the category endpoints, it requires an API key.
+
+## List and filter listings
+
+`GET /inventory` returns the listings themselves. Filter with a pipe-delimited `filters` expression of `field:eq:value` terms. Only the `eq` operator is supported on this endpoint. Terms for different fields combine with AND. Pass each field once. Repeating a field does not OR its values; the last occurrence wins.
+
+| Filter field         | Values                                                                                                                  |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `category`           | A short identifier (`h100`, `cpu`, …)                                                                                   |
+| `status`             | `on demand`, `reserve`, or `preorder`                                                                                   |
+| `interruptibleReady` | `true` returns only listings with an interruptible floor price set. `false` is a no-op, identical to omitting the term. |
+
+```bash
+curl "https://<hub>/api/v1/inventory?filters=category:eq:h100|status:eq:on%20demand&pageSize=25"
+```
+
+`page` defaults to 1. `pageSize` defaults to 12 (max 100).
+
+## Availability and pricing fields
+
+Each listing carries a `stockStatus`, derived from the device's lifecycle state:
+
+| `stockStatus` | Meaning                                                                                                                                                                                      |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `on demand`   | Listed and idle, or listed and running an interruptible deployment you can take over. Rentable now.                                                                                          |
+| `reserve`     | The hardware exists but is busy: provisioned, provisioning, offline, or deprovisioning.                                                                                                      |
+| `preorder`    | Neither rentable nor reserved. In practice, a listed device in the failed lifecycle state, whether the failure came from provisioning, a health check, qualification, or a deprovision wipe. |
+
+The category-availability counts use the same bucket names but compute them separately, so they do not reconcile one-for-one with the listings:
+
+- A failed device counts as `reserve` there, while its listing shows `preorder`.
+- A device running an interruptible deployment with a pending takeover claim counts as `reserve`, even while its listing still shows `on demand`.
+- The counts include listed devices that `GET /inventory` hides: devices locked by an active reservation invite, and devices whose device record is not active.
+
+Pricing lives in the `listing` object: `isActive`, `isInterruptibleOnly`, and the two price blocks `onDemandPrice` and `interruptiblePrice`. Each block quotes `perHour`, `perWeek`, and `perMonth`. Each of those is `{ perGpu, perCpu, total }`, so you can compare per-GPU rates across differently sized machines.
+
+The listing also carries the fields a provision request needs:
+
+- `specs` (CPU, GPU, memory, storage) and `networking` (`ipv4`, `ipv6`, `networkType`, `vpcCapable`)
+- `isTeeCapable`: whether you can request a [trusted execution environment](/tee-environment)
+- `availableBaseLayers` and `availableComponentLayersByBase`: the OS base catalog (device-agnostic) and the per-base [customizations](/os-builds/customizations) this hardware can run. The per-base map is populated only on `GET /inventory/:id` and is empty in list responses.
+- `storageLayouts` and `defaultDiskLayouts`: the physical disk groups and a starting layout for your request. Add `wipe: true` to each copied group; the default omits it.
+- `isInterruptibleDeployment` and `interruptibleNoticePeriod`: whether an interruptible deployment currently occupies the device, and its eviction notice in milliseconds
+- `activeReservationInvite`: negotiated price, billing frequency, and expiry. Returned only to the invite's counterparty and always `null` in webhook deliveries. See the [reservations API](/brokkr-api-reservations).
+
+## Rent and provision
+
+`PATCH /inventory/:id/provision` claims the device and requests provisioning:
+
+```bash
+curl -X PATCH "https://<hub>/api/v1/inventory/<device-uuid>/provision" \
+  -H "x-api-key: $BROKKR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deploymentName": "train-01",
+    "operatingSystem": "<base layer slug from availableBaseLayers>",
+    "sshKeyIds": ["<ssh key uuid>"],
+    "diskLayouts": [
+      {
+        "config": "raid1",
+        "format": "ext4",
+        "mountpoint": "/",
+        "diskType": "NVMe",
+        "disks": ["/dev/nvme0n1", "/dev/nvme1n1"],
+        "wipe": true
+      }
+    ],
+    "isInterruptible": false
+  }'
+```
+
+Required fields: `deploymentName`, `operatingSystem` (a base layer slug from the listing's `availableBaseLayers`), `sshKeyIds` (at least one), and `diskLayouts` (at least one). Start `diskLayouts` from the listing's `defaultDiskLayouts` and add `wipe: true` to each group. See [disk layouts](/deployments/disk-layouts). Optional fields: `customizations` keyed by layer slug, `cloudInit` (or `cloudInitTemplateId`), `tee`, `projectId`, `isInterruptible`, and `ipxeUrl`. `ipxeUrl` is required when `operatingSystem` is an iPXE Custom slug. It must be an `http` or `https` URL.
+
+The request sets the contract type. The listing does not. The [marketplace guide](/deployments/renting) covers what each contract type means commercially.
+
+- Omit `isInterruptible` (or send `false`) for an on-demand contract at the listed rate.
+- Send `isInterruptible: true` for the lower floor rate, accepting eviction after the notice period.
+
+<Note title="Takeover rule">
+  If the device is occupied by another organization's interruptible deployment, only a request with `isInterruptible:
+  true` succeeds. Any other request is rejected with `400`.
+</Note>
+
+A successful call returns `{ "success": true }`. This means the request was accepted. It does not mean the request was fulfilled. By default, every provision waits for operator approval. A standard request creates the deployment and holds it at the approval gate. A takeover is held as a pending admin request and, once approved, also waits out the outgoing deployment's notice period. Track progress through the [deployments API](/brokkr-api-deployments) and the [deployment lifecycle](/deployments/lifecycle).
+
+## Watching inventory change
+
+Listing updates and decommissions emit `DEVICE_LISTING_UPDATED` and `DEVICE_LISTING_DECOMMISSIONED` webhook events that carry the full listing payload. Subscribe through the [webhooks API](/brokkr-api-webhooks) instead of polling. The supplier side of the marketplace (pricing and listing your own hardware) is covered in [selling capacity](/deployments/selling-capacity).

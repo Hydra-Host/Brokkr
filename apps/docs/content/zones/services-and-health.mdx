@@ -1,0 +1,102 @@
+---
+title: 'Zone services'
+description: Manage per-prefix DHCP policy, zone DNS, and Bridge service tuning from the hub. Monitor zone health with heartbeats, offline alerting, and maintenance windows.
+section: zones
+order: 3
+slug: zones/services-and-health
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} treats zone services as data. Brokkr (the hub) publishes the desired state, and each Bridge (the zone's spoke) reconciles its running DHCP and DNS engines toward it. When you change a zone's DHCP lease policy in Brokkr, every Bridge in the zone converges on the new policy. You do not open an SSH session or edit a config file on a Bridge, and no service restart is required.
+
+## How configuration reaches a zone
+
+Brokkr writes each piece of service configuration to Redis as a **config atom**: an envelope-wrapped JSON value under a key prefixed with the zone's UUID. Bridges poll these keys and rebuild their services when a value changes. Two paths keep atoms current:
+
+- **Eager publish**: saving a change in Brokkr republishes the affected atoms immediately.
+- **Reconcile cron**: Brokkr periodically re-derives the full desired set from the database. It republishes anything missing or stale and clears orphans.
+
+The database is the source of truth. If Redis is wiped or a publish fails, the reconcile loop repairs the gap. Bridges do not read DHCP or DNS service policy from local environment variables.
+
+## DHCP per prefix
+
+There is no separate DHCP configuration table. Each DHCP atom (`{zoneUuid}:prefix:{prefixId}:config:dhcp`) is derived from the prefix's stored policy plus its [IPAM](/network/ipam) data: pools come from the prefix's IP ranges, routers from its gateway, and static reservations from device interface addresses.
+
+The stored policy fields on a prefix:
+
+| Setting            | Effect                                                                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Mode               | `AUTHORITATIVE` serves full leases; `PROXY` offers PXE boot info only; `OFF` disables explicitly. Unset = DHCP not served.             |
+| Lease TTL (s)      | Lease duration; 600 when unset, 120 minimum. Renew (25%) and rebind (50%) timers derive from it.                                       |
+| DHCP options       | Extra options as `code`/`value` pairs sent beyond the standard fields.                                                                 |
+| iPXE build target  | PXE firmware flavor served to clients: `IPXE`, `SNP`, or `SNPONLY`.                                                                    |
+| Proxy allowed MACs | In `PROXY` mode, extra MACs permitted to PXE-boot on top of the prefix's known devices. Empty = only known devices boot (fail-closed). |
+| Peer authoritative | Declares that an external DHCP server owns the segment in `PROXY` mode, silencing the Bridge's no-lease-authority warning.             |
+| Relay agent IP     | DHCP relay (giaddr) configuration for relayed segments.                                                                                |
+
+The Bridge always derives the TFTP next-server and advertised DNS servers from its own address and peers. Brokkr never sets them.
+
+To change lease policy:
+
+1. Open the zone in DCIM, then open the prefix's DHCP page.
+2. Edit the configuration card and save. The atom republishes immediately, and Bridges apply it on their next poll (2 seconds by default).
+
+The same page shows read-only derived serving info, the prefix's IP ranges (managed in IPAM), derived reservations, and the live leases the zone's Bridge currently holds. The lease view refreshes every 30 seconds. These settings feed the boot flow described in [DHCP and PXE](/network/dhcp-and-pxe).
+
+## Zone DNS
+
+DNS is configured per zone on the zone's DNS page and delivered the same way (`{zoneUuid}:config:dns`). It is off by default. You set the upstream resolvers (IPv4), the owned domain (default `lan`), default and maximum TTLs, cache size and cache TTL bounds, negative TTL, upstream timeout, poll interval, and TCP connection limits.
+
+The Bridge DNS server listens on port 53 (UDP and TCP) on exactly the interfaces that host a DHCP-served subnet.
+
+- It answers `brokkr.<domain>` and each Bridge's `<hostname>.<domain>` with its own listen address.
+- It serves the zone's records: A/AAAA/PTR entries auto-derived from device hostnames and IP address DNS names, plus domains you define under DNS → Domains. The record set is published at `{zoneUuid}:config:dns-records`.
+- It returns NXDOMAIN for any other name under the owned domain.
+- It forwards everything else to the upstreams, caches replies with TTL clamping, and retries truncated UDP answers over TCP.
+- It drops queries from non-private source addresses instead of recursing. The client receives no reply rather than a refusal.
+
+A prefix can substitute the upstream list. The override publishes as `{zoneUuid}:prefix:{prefixId}:config:dns`. The atom is per prefix, but its effect is zone-wide: the Bridge merges all prefix overrides into the single zone config, and the first non-empty upstream list (in prefix-id order) replaces the zone's upstreams on every listen interface. Overrides from other prefixes are ignored.
+
+<Note>
+  The prefix's Serve DNS toggle travels in the same atom but is not yet enforced. The feature is in development. Whether
+  an interface serves DNS follows DHCP serving, as described above.
+</Note>
+
+All DNS changes apply live. The Bridge polls the atom and reconfigures without a restart. Withdrawing the zone atom returns the Bridge to its disabled baseline.
+
+## Service tuning
+
+The zone's Service Tuning page adjusts runtime behavior of the Bridge services. Updates are audit-logged and publish a zone-global atom (`{zoneUuid}:config:dhcp`).
+
+| Knob                           | Default | Effect                                                       |
+| ------------------------------ | ------- | ------------------------------------------------------------ |
+| DHCP leader poll (ms)          | 2000    | How often Bridges check leader status and DHCP config atoms. |
+| DHCP lease prune interval (ms) | 60000   | How often expired leases are pruned.                         |
+| DHCP decline backoff (s)       | 600     | Quarantine window for an address after a client DHCPDECLINE. |
+| VRRP gratuitous ARP count      | 5       | Gratuitous ARPs sent when the leader binds a VRRP VIP.       |
+
+A VRRP change has no eager path. Brokkr's reconcile cron republishes it within a minute. Leader election and VIP failover are covered in [High availability](/zones/high-availability) and [Gateways, VRRP, and BGP](/network/gateways-vrrp-bgp-circuits).
+
+## Heartbeats and zone status
+
+Every Bridge publishes a presence record in Redis. Brokkr sweeps these records every minute. A zone with at least one live Bridge is online. A zone whose presence records have all expired is marked offline. Each sweep stores a heartbeat row per Bridge (instance ID, leader status, and component versions) and stamps the zone's last-heartbeat and online/offline transition times.
+
+Separately, every 5 minutes Brokkr dispatches a health-check job for each eligible server to its zone's Bridge and stores the per-device results. An eligible server is a device with a management interface and IP that is not marked offline. Heartbeat and health-check history is purged nightly after 7 days. You can disable either sweep per hub instance with `HEARTBEAT_MONITOR_ENABLED=false` or `DEVICE_HEALTH_CHECK_ENABLED=false`.
+
+## Offline alerting and flap suppression
+
+When a zone goes offline on a hub running with `HH_ENV=prod`, Brokkr emits a `zone.alert` event on the plugin event bus. The payload carries the zone, the time the sweep detected the outage, the zone's device count, and its active rental count. The helpdesk integration subscribes to this event (see [Events, gates, and host services](/extend/events-gates-and-host-services)).
+
+<Note>
+  The payload's heartbeat timestamp is stamped when the sweep detects the outage. It does not reflect the zone's actual
+  last heartbeat.
+</Note>
+
+On other hubs, including self-hosted installs where `HH_ENV` is unset, the offline transition is logged and recorded but no event is emitted. One alert fires per offline episode. Repeat sweeps during the same outage never re-alert.
+
+A flapping zone is handled differently. If a zone has both gone offline and come back online within the last 20 minutes, Brokkr suppresses the offline alert. The episode is logged and counted instead, so a bouncing uplink produces one flapping signal rather than a page per bounce. Zone status transitions, online-zone counts, and flap episodes are all exported as hub metrics for [observability](/self-host/observability).
+
+## Maintenance windows
+
+Operators on the managed edition can place a zone into maintenance from the admin panel (see [Editions](/about/editions)). A window requires an internal reason and can carry a customer-facing message and an expected end time. Only one window can be active per zone at a time. Ending a window stamps who disabled it and when. Every window is kept as history for audit.

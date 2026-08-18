@@ -5,6 +5,7 @@ import {
   formatDriveCountSize,
   formatDriveSizeGroups,
   formatMillisecondsToDuration,
+  formatDuration,
   formatPriceFromCentsToDollars,
   formatReservationInvitePrice,
   formatSize,
@@ -24,6 +25,22 @@ describe('capitalizeFirstLetter', () => {
   it('returns empty string for null or undefined', () => {
     expect(capitalizeFirstLetter(null)).toBe('');
     expect(capitalizeFirstLetter(undefined)).toBe('');
+  });
+});
+
+describe('formatDuration', () => {
+  it('returns an em dash for missing values', () => {
+    expect(formatDuration(null)).toBe('—');
+    expect(formatDuration(undefined)).toBe('—');
+  });
+
+  it('formats zero seconds as 0s', () => {
+    expect(formatDuration(0)).toBe('0s');
+  });
+
+  it('formats minutes and hours', () => {
+    expect(formatDuration(90)).toBe('1m 30s');
+    expect(formatDuration(3661)).toBe('1h 1m');
   });
 });
 

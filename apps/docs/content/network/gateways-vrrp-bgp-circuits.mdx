@@ -1,0 +1,114 @@
+---
+title: 'Gateways, VRRP, and BGP'
+description: Gateway IPs that DHCP hands out, a floating VIP that survives Bridge failover, and registries for BGP and provider circuits.
+section: network
+order: 4
+slug: network/gateways-vrrp-bgp-circuits
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+This page covers prefix gateway IPs, standalone gateways, VRRP VIPs, the BGP registry, and the circuit registry. Three of these features are live configuration and two are registries:
+
+| Area                                            | What {BRAND_NAME} does with it                                                                           |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Prefix gateway IP                               | **Live**. Rendered into the zone's DHCP configuration as the default gateway handed to clients.          |
+| VRRP VIP                                        | **Live**. Published to the zone's Bridges. The leader Bridge binds it.                                   |
+| Standalone gateways                             | **Live**. Gateway records per prefix and VRF select the default route in each device's rendered netplan. |
+| BGP (ASNs, peer groups, prefix lists, sessions) | **Registry**. Source-of-truth records only. No router configuration is pushed.                           |
+| Circuits (providers, types, terminations)       | **Registry**. Source-of-truth records only. No provider integration.                                     |
+
+## Prefix gateway IPs
+
+Each [prefix](/network/ipam) can carry one gateway IP: an existing IP address record designated as the prefix's default gateway.
+
+1. Check eligibility without applying: `POST /api/v1/ipam/prefixes/validate-gateway` with `prefixId` and `gatewayIpId` returns `{ valid, reason }`.
+2. Assign it: `POST /api/v1/ipam/prefixes/:id/gateway` with the `gatewayIpId`.
+3. Remove it: `DELETE /api/v1/ipam/prefixes/:id/gateway`.
+
+When the zone's Bridge serves [DHCP](/network/dhcp-and-pxe) for the prefix, the gateway IP becomes the default gateway advertised to clients (the DHCP `routers` option).
+
+<Note>
+  This applies to IPv4 gateways only. A non-IPv4 gateway is omitted from the derived DHCP configuration with a warning.
+</Note>
+
+## Standalone gateways
+
+The gateway registry (`/api/v1/ipam/gateways`) records gateways as their own objects. Its endpoints are internal. They work as described here but are excluded from the public API reference. Each record ties a gateway IP to a prefix, optionally scoped to a VRF, with an optional integer `routingPriority`. Use it to model prefixes with more than one exit or per-VRF gateways. List queries filter by `prefixId` or `vrfId`.
+
+These records are live configuration for device networking. When {BRAND_NAME} renders a device's netplan, it picks the default route for each address from the gateway records matching the address's prefix and VRF. The record with the lowest `routingPriority` wins, and a record without a priority counts as 0.
+
+Bridges can also seed this registry, but only at bootstrap. A Bridge presence report that includes a default gateway creates a matching gateway record at priority 100. The record is created only when the prefix has no gateway IP assignment and no existing gateway record, whether operator-created or previously derived. The priority makes a creation race deterministic. An operator record created without a priority outranks the derived record.
+
+<Note>
+  Gateway records do not affect DHCP. Only the prefix's own gateway IP assignment (described above) feeds the derived
+  DHCP configuration.
+</Note>
+
+## VRRP VIPs
+
+A VRRP VIP is a floating IP address for a prefix. {BRAND_NAME} publishes it to the zone's Bridges. The leader-elected Bridge binds the VIP on its own NIC and answers for it, and non-leader Bridges release it. Clients keep one stable address for the Bridge's services across [Bridge failover](/zones/high-availability), so boot services survive a Bridge failure.
+
+Before you assign a VIP, confirm the following:
+
+- The prefix must be assigned to a zone. The prefix page's VRRP card stays inactive until it is.
+- The prefix's role must be `PRIMARY`, the Bridge data-plane subnet. Assigning a VIP to a prefix with any other role, or no role, returns 400.
+- The VIP must be an existing IP address record within the prefix.
+
+Assign the VIP with `POST /api/v1/ipam/prefixes/:id/vrrp-vip`:
+
+```json
+{
+  "vrrpVipId": "5f3c…",
+  "bindings": [
+    { "bridgeId": "a1b2…", "iface": "eth0.100" },
+    { "bridgeId": "c3d4…", "iface": "eno2" }
+  ]
+}
+```
+
+Bindings are declared per Bridge because Bridges in the same zone can name their VIP-facing NIC differently. Bindings follow these rules:
+
+- Each Bridge appears at most once.
+- `iface` is that Bridge's own NIC name, 1 to 15 characters (the Linux interface-name limit). The UI's dropdown lists each Bridge's real, presence-reported interfaces.
+- A Bridge you omit never binds the VIP.
+- Each set call replaces all existing bindings for the prefix.
+
+`GET /api/v1/ipam/prefixes/:id/vrrp-bindings` returns the current Bridge-and-NIC pairs. The prefix detail page shows the VIP address and each binding on its VRRP card.
+
+`GET /api/v1/ipam/prefixes/:id/dhcp/serving` reports hub-derived DHCP serving addresses for the prefix: the VIP as next-server and DNS when one is assigned, and Bridge NIC IPs otherwise.
+
+<Note>
+  The serving derivation is hub-side reporting only. VIP-derived serving on the Bridge is in development. Today the
+  serving Bridge ignores the VIP: the hub publishes no next-server, and the Bridge self-derives its next-server and DNS
+  from the first of its own NIC IPs inside the subnet.
+</Note>
+
+Clear the VIP with `DELETE /api/v1/ipam/prefixes/:id/vrrp-vip`. This withdraws it from the zone's Bridges.
+
+## BGP registry
+
+{BRAND_NAME} stores BGP records as source-of-truth data. Creating or editing them does not configure any router and does not enqueue a sync job. Enforcement on real routers is up to your tooling.
+
+| Record           | What it captures                                                                                                                                                                  | Guardrails                                                                                             |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| ASN              | An Autonomous System Number (1 to 2147483647) with a description, owned by an organization                                                                                        | Number unique across the system; delete returns 409 while sessions reference it as local or remote ASN |
+| Peer group       | A named session profile shared by sessions with common policy                                                                                                                     | Name unique per organization; delete returns 409 while sessions reference it                           |
+| Prefix list      | An ordered route filter, optionally pinned to an address family                                                                                                                   | Delete returns 409 while any session references it, inbound or outbound                                |
+| Prefix list rule | One entry: permit/deny `action`, optional `prefix` (CIDR), optional `ge`/`le` length bounds, `sequence`                                                                           | Sequence unique within its list; rules evaluate lowest sequence first, first match wins                |
+| BGP session      | A peering: device, local and remote ASN, local and remote IP address, peer group, and inbound and outbound prefix lists. Only the name is required; every other field is optional | Name unique per organization                                                                           |
+
+Sessions track a lifecycle status: `ACTIVE` (default), `PLANNED`, `OFFLINE`, or `DECOMMISSIONING`. The inbound prefix list filters routes accepted from the peer, and the outbound list filters routes advertised to it. Either or both can be omitted. Deleting a prefix list cascades to its rules. Deleting a session never cascades to the peer group or prefix lists it references.
+
+All BGP endpoints live under `/api/v1/bgp/*`, with ASNs at `/api/v1/asns`. All of them are internal and excluded from the public API reference.
+
+## Circuits
+
+The circuit registry tracks provider connectivity from order to deprovision. It holds records only, with no provider or router integration. Its endpoints (`/api/v1/circuits/*`) are internal and excluded from the public API reference. The registry stores the following records:
+
+- **Providers** (unique slug) and their **provider networks**.
+- **Circuit types**: named categories with an optional display color. A type cannot be deleted while circuits reference it (409).
+- **Circuits**: a unique circuit ID (`cid`), status, install and termination dates, committed rate in Kbps, and an owning organization.
+- **Terminations**: each circuit carries at most one **A**-side and one **Z**-side termination. Port speed and upstream speed in Kbps, a cross-connect identifier, and a zone attachment are each optional.
+
+Circuit status follows `ACTIVE` (default), `PLANNED`, `OFFLINE`, `DEPROVISIONING`, `DECOMMISSIONED`. Terminations attach to zones, so you can list the circuits that land in a zone with one filtered query: `GET /api/v1/circuits/circuit-terminations?zoneId=…`. Deleting a circuit cascades to its terminations.

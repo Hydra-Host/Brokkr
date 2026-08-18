@@ -1,0 +1,99 @@
+---
+title: 'Disk encryption (LUKS2)'
+description: 'Zero-knowledge LUKS2 encryption for data volumes. {BRAND_NAME} discards its single-use install key; you hold the only passphrase.'
+section: deployments
+order: 6
+slug: disk-encryption
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} encrypts data volumes with LUKS2 in a zero-knowledge model. The installer formats each encrypted volume with a random, single-use key and discards it immediately. You then seal the volume with a passphrase that never leaves your server. There is no key escrow and no recovery backdoor. {BRAND_NAME} never sees or stores your passphrase, so there is nothing for anyone else to hand over.
+
+## How zero-knowledge works
+
+To encrypt a data volume, check **Encrypt** on the disk group in the provision form, or set `encrypt: true` on the group in the API. Disk groups are covered in [Disk layouts](/deployments/disk-layouts).
+
+During installation:
+
+1. curtin formats the volume as LUKS2 using a random, single-use install key generated for that one run. The key exists only in the installer's storage configuration and is discarded. {BRAND_NAME} does not persist it.
+2. The Brokkr Live Agent installs three helper scripts into the deployed OS at `/usr/local/bin`: `luks-rekey`, `luks-unlock`, and `luks-lock`.
+3. You take ownership by running `luks-rekey`, which writes a fresh LUKS2 header keyed to your own passphrase.
+
+Until you run `luks-rekey`, the volume is sealed under the discarded install key and cannot be mounted. It holds no data at that point, so nothing is at risk. The volume is unusable until you claim it.
+
+## What you can encrypt
+
+Encryption works on data volumes with any layout strategy: a direct disk, a RAID array, or an LVM logical volume. For nested RAID 50/60, encryption wraps the outer array.
+
+Encryption is restricted to data volumes because unlocking is a manual step over SSH. The OS cannot prompt for a passphrase on a volume it needs to boot. These mountpoints are never encryptable:
+
+| Mountpoint                                        | Encryptable                                                                   |
+| ------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `/`, `/home`, `/tmp`, `/usr`, `/var`              | No. The API rejects the request, and the provision form disables **Encrypt**. |
+| Any other data mountpoint (`/data0`, `/data1`, …) | Yes                                                                           |
+
+Two more rules apply:
+
+- The API rejects encryption on a preserved disk group because encryption requires `wipe: true`. A spare disk that is already encrypted keeps its encryption across a reprovision (see below).
+- Encrypted volumes never auto-mount. Their fstab entries carry `nofail`, so the host always boots cleanly with the volumes locked.
+
+## Take ownership with luks-rekey
+
+<Warning>
+  `luks-rekey` destroys all data on the configured volumes. Run it once, immediately after your first login, before
+  writing any data.
+</Warning>
+
+```bash
+sudo luks-rekey
+```
+
+The script prompts for a passphrase (with confirmation) and asks you to type `REKEY` to proceed. For each volume it then:
+
+1. Writes a fresh LUKS2 header keyed to your passphrase.
+2. Opens the volume and creates the filesystem (ext4 or xfs, per your layout).
+3. Updates `/etc/fstab` with the filesystem UUID.
+4. Mounts everything via `mount -a`.
+
+For unattended use, pass the passphrase through the script's environment. Set the variable from a root shell, because sudo's default environment reset strips a variable set in front of `sudo`:
+
+```bash
+sudo -i
+LUKS_PASSPHRASE="your-passphrase" luks-rekey --yes
+```
+
+<Note>
+  A `--passphrase` flag also exists, but the value is visible to any local user in `/proc/<pid>/cmdline` while the
+  script runs. Prefer the interactive prompt or the environment variable.
+</Note>
+
+A re-run guard blocks accidental second runs. The `--force` flag overrides the guard and destroys the volumes again.
+
+## Unlock after a reboot
+
+Unlocking is a headless workflow over SSH. After every reboot, the host comes up with its encrypted volumes locked and unmounted. To attach them:
+
+```bash
+sudo luks-unlock
+```
+
+`luks-unlock` opens each configured volume with your passphrase and mounts it via fstab. For RAID-backed volumes, the script absorbs mdadm's renumbering between boots. Instead of trusting a baked `/dev/mdX` path, it scans the running arrays for LUKS containers. It matches a preserved volume by its recorded LUKS header UUID and claims the first unclaimed array for a newly provisioned one. Direct-disk volumes are opened at their original device path. If any volume fails to attach, the script continues with the rest and exits non-zero, so you can wire it into automation.
+
+To detach before maintenance:
+
+```bash
+sudo luks-lock
+```
+
+This unmounts each volume and closes its LUKS container.
+
+## Why the Brokkr Live Agent renders the scripts
+
+The [Brokkr Live Agent](/infrastructure/host-agent) renders the three helper scripts on the device from its own built-in templates. The Bridge sends only validated volume parameters: device paths, mapper names, and mountpoints. It never sends script bodies, so a compromised Bridge cannot inject shell code through these scripts. The Brokkr Live Agent writes each script atomically with mode `0755`. A template error aborts the install before anything is written.
+
+## Encrypted spare disks survive reprovision
+
+A preserved encrypted volume survives an OS reinstall with its passphrase and data unchanged. When you [preserve a data disk](/deployments/preserving-data-disks) that carries a LUKS container, whether on a whole disk or on a RAID array, the Brokkr Live Agent detects the container and records its LUKS header UUID. It then wires the new OS to receive the volume with a crypttab entry that carries `noauto,nofail` and an fstab entry addressed by the container's dm-uuid. Preserved volumes get distinct `pcrypt-N` mapper names, so they can never collide with newly provisioned `crypt-N` volumes.
+
+After the reprovision completes, run `luks-unlock` with your existing passphrase to reattach them. `luks-rekey` never targets preserved volumes. They are excluded from its volume list, and its device resolution refuses any array whose header UUID is recorded as preserved. Taking ownership of new volumes therefore cannot reformat the volumes that carry your data.

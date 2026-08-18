@@ -153,3 +153,6 @@ certs/
 
 # --- public-sync dry run (task publish:preview) ---
 public-mirror-preview/
+
+# Generated API reference (Redoc) for the docs app — produced by `pnpm --filter @repo/docs gen:api`
+apps/docs/public/api/

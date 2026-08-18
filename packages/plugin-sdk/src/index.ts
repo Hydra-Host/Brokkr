@@ -76,13 +76,19 @@ export type {
   PluginRenderNetplanRequest,
   PluginRenderNetplanResult,
 } from './netplan-renderer';
+export { PLUGIN_AUTH_CLIENT } from './plugin-auth-client';
+export type { PluginAuthClient, PluginVerifiedApiKey, PluginVerifyApiKeyResult } from './plugin-auth-client';
 export { getPluginConfigToken } from './plugin-config-token';
 export { PLUGIN_PRISMA_CLIENT } from './plugin-db';
 export type { PluginDb } from './plugin-db';
 export { PLUGIN_EMAIL } from './plugin-email';
 export type { PluginEmail } from './plugin-email';
 export type { PluginFrontendManifest } from './plugin-frontend-manifest';
+export { PLUGIN_IDENTITY_BINDER } from './plugin-identity-binder';
+export type { PluginIdentityBinder } from './plugin-identity-binder';
 export type { PluginManifest } from './plugin-manifest';
+export { PLUGIN_REDIS_CLIENT } from './plugin-redis';
+export type { PluginRedisClient } from './plugin-redis';
 export { definePluginsConfig } from './plugins-config';
 export type { PluginConfigEntry } from './plugins-config';
 export { PLUGIN_REQUEST_CONTEXT } from './request-context';

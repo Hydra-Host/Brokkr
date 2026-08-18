@@ -1,0 +1,99 @@
+---
+title: 'Organizations and tenancy'
+description: 'How supply and demand organizations share one instance, and how the instance operator runs it from the Operator Hub.'
+section: organizations
+order: 1
+slug: organizations/orgs-and-tenancy
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+One {BRAND_NAME} instance serves the operator who owns the racks and every customer renting from them. Each party works inside its own organization with its own members, roles, API keys, and resources. You run the platform, and your customers self-serve onto it. Tenant isolation is enforced on every request.
+
+## Supply and demand organizations
+
+Every organization has a tenant type, fixed at creation:
+
+| Tenant type             | Who they are                 | What they hold                                                                                         |
+| ----------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Supply organization** | The party that owns hardware | Zones, devices, racks, IPAM and BGP objects (the capacity being [sold](/deployments/selling-capacity)) |
+| **Demand organization** | A customer renting capacity  | Deployments, reservations, projects (the servers being [rented](/deployments/renting))                 |
+
+Every tenant resource in the table above is scoped to exactly one organization. Every API request executes in the context of the caller's active organization. Operations on racks, IPAM, and BGP objects also require that the active organization is a supply organization. Zone and device endpoints rely on permission checks and organization scoping alone. Instance-wide data sits outside this scoping: system roles are shared by every organization, and the hardware catalog of manufacturers and device models belongs to no organization.
+
+## Edition rules
+
+The BOSS edition is built for one operator serving many customers. Two policies encode that model:
+
+- **Self-serve creation is demand-only.** Any signed-in user can create a demand organization from the app. Requesting a supply organization returns `403` ("Organizations of type "SupplyCustomer" cannot be created on this instance."). The UI reads the allowed types from the API, so it never shows the supply option.
+- **One supply organization per instance.** BOSS caps supply organizations at one, the operator's own. The cap is enforced inside a database transaction under an advisory lock, so concurrent requests cannot race past it.
+
+Both policies are edition providers, and the managed edition replaces them wholesale. See [Editions](/about/editions). To run supply-side infrastructure without self-hosting, see [Become a supply partner](/about/become-a-supply-partner).
+
+## Users, memberships, and switching
+
+A user account is instance-wide. Memberships tie it to organizations:
+
+- A user can belong to any number of organizations, with at most one membership per organization.
+- Each membership carries exactly one role, which resolves to a permission set. See [Roles and permissions](/organizations/rbac).
+- The user who creates an organization in the app becomes its Owner, and the organization starts with a default deployment project. The operator organization is the exception: it gets its Owner from the [bootstrap](#the-instance-operator) and starts with no default project.
+- A session has one active organization at a time. Switching organizations updates all of the user's active sessions at once and invalidates their cached sessions, so stale permissions do not persist.
+- A user can mark one organization as their default.
+
+## Invitations
+
+Members join an organization by email invitation. An inviter needs the `invitation:create` permission and can only assign roles that their own permission set covers. An inviter cannot place a new member above their own level.
+
+Creating and accepting invitations require a browser session. API keys are rejected for both.
+
+1. Invite an email address and pick the role the member will hold.
+2. The invitee signs in with the invited email address and accepts. The sign-in address must match the invited address.
+3. On acceptance the membership is created with the invited role, and the organization is notified through the event bus.
+
+Invitations expire 48 hours after they are sent, and an organization can hold at most 100 pending invitations. A pending invitation ends in exactly one of four states: **accepted** or **rejected** by the invitee, **canceled** by the organization, or **expired**.
+
+## Ownership transfer
+
+Owner management is the highest-privilege operation in the app. It requires an owner-capable identity in a browser session and rejects API keys. Three operations exist:
+
+- **Grant** Owner access to an additional member.
+- **Revoke** a member's Owner access, moving them to a replacement role.
+- **Transfer** ownership: the recipient gains the Owner role and the departing owner moves to a replacement role in a single operation.
+
+Every owner change and every refused attempt is recorded in the [event log](/security/audit-and-event-log).
+
+## The instance operator
+
+Exactly one organization per instance is the **instance operator**, the organization that runs the platform. The designation is a flag on the organization. A partial unique index at the database level enforces the singleton, and every operator-only capability in the app checks the flag through a single policy.
+
+On boot, a BOSS hub bootstraps the operator: it creates the operator organization (a supply organization) and an admin Owner account. The account defaults to `admin@brokkr.local` with password `brokkr`. Override the defaults with environment variables:
+
+```bash
+BROKKR_ADMIN_ORG_NAME="Acme Metal"
+BROKKR_ADMIN_EMAIL="ops@acme.example"
+BROKKR_ADMIN_PASSWORD="a-strong-generated-secret"
+```
+
+<Warning>
+  Set `BROKKR_ADMIN_PASSWORD`, or rotate the credential after first login, before the hub is reachable from the
+  internet. The default is a well-known first-boot login.
+</Warning>
+
+The bootstrap is idempotent and re-runs on every boot. If you change `BROKKR_ADMIN_ORG_ID`, the bootstrap re-points the designation to the new organization and demotes the previous holder in the same transaction. See the [configuration reference](/self-host/configuration-reference) for the rest of the hub's environment variables.
+
+## The Operator Hub
+
+The Operator Hub is the in-app admin panel the instance operator runs the platform from. It ships as a built-in [plugin](/extend/plugins-overview) (`operator-hub`) and is always enabled. Only members of the operator organization see it. The frontend hides the panel from everyone else, and every backend endpoint independently rejects requests from any other organization. The backend checks are the security boundary. The UI gate is defense in depth.
+
+| Panel                   | What the operator can do                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Users**               | Browse every user on the instance, view signup trends, headline metrics, and active-session origins by country; reset a user's [MFA](/brokkr-mfa) |
+| **Deployments**         | Audit every [deployment](/deployments/lifecycle) across all tenants, with reservation summaries and per-deployment detail                         |
+| **Provision approvals** | Approve or reject parked provisioning requests                                                                                                    |
+
+While the plugin is enabled, it registers on the `provision.authorize` gate. Every customer-initiated provision parks as a pending approval until an operator approves or rejects it. Platform-internal provisions, and provisions already approved through an interruptible-capacity takeover, pass through without parking.
+
+<Note>
+  There is no switch to disable the approval step. `operator-hub` has no environment toggle, so the gate is removed only
+  by [uninstalling the plugin](/extend/installing-plugins).
+</Note>

@@ -1,0 +1,702 @@
+---
+title: 'Docker Compose'
+description: 'Production bring-up from deploy/self-hosted/: the hub unit with TLS and real authentication, then a registration-token-enrolled Bridge in each zone.'
+section: self-host
+order: 3
+slug: self-host/docker-compose
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+This page covers the production Compose stacks in `deploy/self-hosted/`. The production footprint is two Compose files: one hub unit on a central machine, and one bridge unit in each zone, next to the bare metal. Both come up with `docker compose up -d`. The stacks use real authentication and terminate TLS at the edge, and Bridges enroll with registration tokens. This is the same posture {BRAND_NAME} runs at scale. Check [system requirements](/self-host/system-requirements) first.
+
+<Warning>
+  `deploy/docker-compose/` is a different stack: the auth-bypassed sim stack that CI uses. Never expose it anywhere
+  untrusted.
+</Warning>
+
+The deploy order is fixed. Deploy the hub first. Create a zone and mint a registration token in the UI. Then deploy the Bridge. A Bridge reaches the hub only over the hub's Redis bus, plus one enrollment call to the hub API.
+
+| Unit      | Runs on                           | Services                                                     |
+| --------- | --------------------------------- | ------------------------------------------------------------ |
+| `hub/`    | one central machine               | Postgres, Redis, hub app (`:3000`), nginx (TLS)              |
+| `bridge/` | each zone, next to the bare metal | One container: BMC control, PXE/TFTP/HTTP boot, job consumer |
+
+## Deploy the hub
+
+You need the hub unit folder on the hub machine, a hub FQDN, and a TLS certificate for that FQDN. The hub app applies pending database migrations from its own image at every start.
+
+```bash
+cd deploy/self-hosted/hub
+cp .env.example .env
+```
+
+Generate the secrets. The block from the top of `.env.example` is idempotent. It only fills values still set to `CHANGE_ME`:
+
+```bash
+sed -i "s|^PG_PASSWORD=CHANGE_ME.*|PG_PASSWORD=$(openssl rand -hex 16)|" .env
+sed -i "s|^BETTER_AUTH_SECRET=CHANGE_ME.*|BETTER_AUTH_SECRET=$(openssl rand -hex 32)|" .env
+sed -i "s|^DEVICE_TOKEN_PEPPER=CHANGE_ME.*|DEVICE_TOKEN_PEPPER=$(openssl rand -hex 32)|" .env
+sed -i "s|^BROKKR_HUB_PRIVATE_KEY=CHANGE_ME.*|BROKKR_HUB_PRIVATE_KEY=$(openssl rand -base64 32)|" .env
+```
+
+Back these secrets up together with the `pgdata` volume. See [upgrades and backups](/self-host/upgrades-and-backups).
+
+<Warning>
+  Rotating `DEVICE_TOKEN_PEPPER` invalidates every device token. Rotating `BETTER_AUTH_SECRET` invalidates all sessions.
+  Rotating `BROKKR_HUB_PRIVATE_KEY` invalidates all zone enrollments.
+</Warning>
+
+Then edit `.env` and set:
+
+- `BASE_URL`: the public URL browsers hit (auth callbacks and CORS). It must match your TLS certificate.
+- `PHONE_HOME_BASE_URL`: the address provisioned servers call home to. It must be reachable from your provisioning networks. This is usually the host's internal IP. The public FQDN would hairpin provisioning traffic out to the internet and back.
+- `BROKKR_ADMIN_PASSWORD`: the initial admin credential, covered under first boot below. Set it before first boot on any reachable deployment.
+
+Place `fullchain.pem` and `privkey.pem` for your FQDN in `certs/`. Then start and verify:
+
+```bash
+mkdir -p certs   # fullchain.pem + privkey.pem
+docker compose up -d
+docker compose logs -f brokkr-hub   # look for: Hub crypto loaded; hub_pub=<hex>
+```
+
+<Note>
+  `BROKKR_HUB_PRIVATE_KEY` must load. If it is unset, the hub boots with "zone enrollment endpoint is dormant" in the
+  log and every enrollment call returns 503, so no Bridge can join. A malformed key does not go dormant. It fails the
+  boot outright.
+</Note>
+
+Expose only ports 80 and 443 at your edge. `:3000` stays published on the LAN because provisioned servers phone home to `PHONE_HOME_BASE_URL` over the internal network. Postgres binds to loopback only. Redis is published beyond loopback so Bridges can reach the bus. Keep Redis on a private network or VPN, and lock it down with Redis ACLs. See [{BRAND_NAME} security](/brokkr-security).
+
+<Warning>Never forward `:3000`, `:5432`, or `:6379` to the internet.</Warning>
+
+## First boot: rotate the admin credential
+
+On every boot, Brokkr ensures an operator organization and an admin Owner exist. This step is idempotent. The defaults are well known: `admin@brokkr.local` / `brokkr`. The password is written only on first creation. Changing `BROKKR_ADMIN_PASSWORD` in `.env` after that does nothing. If you booted with the default, log in at `https://<your-FQDN>`. Rotate the password in the app immediately.
+
+## Create a zone, mint a token
+
+In the hub UI, create a zone for the location the Bridge will serve, then mint a registration token on the zone's overview page. Mint the token right before you deploy the Bridge. The token is shown once and can be used once. It expires after 24 hours if unused. See [Create and enroll a zone](/zones/create-and-enroll).
+
+## Deploy the bridge
+
+The Bridge machine sits in the zone, attached to both the BMC network and the provisioning network servers boot on. It needs network reachability to the hub's Redis. The container uses host networking with `CAP_NET_ADMIN` because DHCP, TFTP, and the VRRP VIP must live on the host's real NICs.
+
+```bash
+cd deploy/self-hosted/bridge
+cp .env.example .env
+mkdir -p keys && ssh-keygen -t ed25519 -N '' -f keys/id_ed25519
+docker compose up -d
+docker compose logs -f brokkr-bridge
+```
+
+Set these in `.env` before starting:
+
+| Variable                    | Value                                                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `REDIS_URL`                 | The hub's Redis, including any Redis ACL credential you set.                                                                   |
+| `BROKKR_HUB_URL`            | The hub API, used for the enrollment call.                                                                                     |
+| `BROKKR_ZONE_ID`            | The zone's UUID from the hub UI. Also the Bridge's Redis namespace; it must match the zone the hub enqueues jobs under.        |
+| `BROKKR_REGISTRATION_TOKEN` | The freshly minted token.                                                                                                      |
+| `BRIDGE_HOSTNAME`           | Unique name for this Bridge (leader election and agent dial-back).                                                             |
+| `BRIDGE_AT_REST_KEY`        | AES-256-GCM key (`openssl rand -base64 32`) for device secrets this Bridge caches. The Bridge fails closed on the placeholder. |
+| `BRIDGE_URL`                | Base URL advertised to servers in iPXE chain scripts and phone-home.                                                           |
+
+<Warning>
+  Generate `BRIDGE_AT_REST_KEY` once per zone, use the same value on every Bridge in the zone, and keep it stable
+  forever. Rotating it orphans stored device secrets. See [secrets and device
+  tokens](/security/secrets-and-device-tokens).
+</Warning>
+
+<Warning>
+  `BRIDGE_URL` must be reachable from the servers on the provisioning network. Use the Bridge's provisioning-NIC IP. A
+  loopback address or a public name is almost always wrong.
+</Warning>
+
+The Bridge enrolls and appears under its zone. Configure the zone's DHCP subnets, DNS, and VIPs in the hub UI. The Bridge applies them on its reconcile loop. There are no bridge-side environment variables for them. [Zone network setup](/zones/network-setup) walks through the sequence, from gateway to DHCP pool to management subnet.
+
+## Fail-safe by default
+
+The Bridge's REST surface is unauthenticated, so the image fails safe. It binds loopback (`127.0.0.1`) by default, even in the container. It stays unreachable off-box until an operator opts in. This Compose unit opts in with `HOST=0.0.0.0` because host networking must serve the zone's L2.
+
+<Warning>
+  Firewall the REST port (`8000` here) to the management network. Treat reachability to that port as control over the
+  zone's fleet.
+</Warning>
+
+## HTTPS boot with your own CA
+
+The provisioning boot path defaults to plain HTTP, which is acceptable on an isolated provisioning network. For verified HTTPS end to end, build the Bridge image yourself with your PEM root CA in `apps/bridge/ca/`. The build threads the CA through every trust surface: iPXE's `TRUST=` store, the brokkr-live initrd trust bundle, and the runtime image's trust store. `*.crt` and `*.pem` files in that directory are gitignored, so no certificate is ever committed. The Brokkr Live Agent needs no extra wiring. It reads the system bundle the initrd feeds it.
+
+Front the Bridge port with a TLS terminator that presents a certificate signed by that CA. Keep the `CHAIN_BASE_URL` build argument, `BRIDGE_URL`, and `BRIDGE_PORT` consistent. See [network boot](/network/network-boot).
+
+## Add a second bridge (HA)
+
+A second Bridge in the same zone needs the same `BRIDGE_AT_REST_KEY` and a unique `BRIDGE_HOSTNAME`. It does not re-enroll. When it joins a live zone, it loads the zone's crypto snapshot from the hub Redis cache. A registration token is consumed only when that cache is empty, which is the case for the first Bridge or after a flushed Redis. Deploy the Bridge the same way on a second machine in the zone. See [high availability](/zones/high-availability) for failover behavior.
+
+<Note>The `HA_ENABLED` variable in the repo's Compose files is vestigial. Nothing reads it.</Note>
+
+## Per-zone Redis ACLs
+
+By default every Bridge connects to the hub's Redis as the **default user with full access**. Key-prefix isolation between zones is by convention only. To scope each zone to its own Redis credential, set on the hub:
+
+```
+REDIS_ACL_MANAGEMENT_ENABLED=true
+```
+
+With it on (default **off**, so leave it off if something else owns your Redis ACLs):
+
+- **Creating a zone** provisions a Redis ACL user `brokkr-spoke-<zoneId>` restricted to that zone's key namespace plus the shared results inbox (`~<zoneId>:* ~results:*`), and returns its password **exactly once** in the create response. The hub stores only the SHA-256 hash. Zone creation **fails** if the ACL user can't be provisioned. There is no zone without its credential.
+- Put that credential in the zone's Bridge `REDIS_URL`: `redis://brokkr-spoke-<zoneId>:<password>@<HUB_HOST>:6379`. HA Bridges in the same zone share the one user.
+- **Deleting a zone** revokes the user immediately (and fails the delete if revocation fails, since a torn-down zone must not keep Redis access).
+- On **startup** the hub reconciles from the stored hashes: it re-applies users (surviving a Redis restart or flush), creates **locked** users for zones that predate the flag (rotate to get a usable password), and removes users for deleted zones.
+
+### Rotate a zone's Redis credential
+
+Rotation is operator-driven. The hub does **not** push the new password to the Bridge. From the zone overview page (or `POST /zones/:zoneId/redis-credential/rotate`):
+
+1. Rotate on the hub and copy the new `REDIS_URL` from the show-once dialog.
+2. Update that zone's Bridge `.env` `REDIS_URL` (all HA Bridges in the zone share the one user). Paste it verbatim; the password is intentionally un-encoded and the Bridge encodes it for you.
+3. Recreate the Bridge container(s) so the new env takes effect (`docker compose up -d`).
+
+Until step 3 completes, the zone's Bridges fail Redis AUTH, so rotate during a maintenance window, or roll Bridges one at a time so the zone keeps a leader.
+
+<Note>
+  The zone users only confine clients that use them. Also set a password on (or otherwise lock down) the **default**
+  Redis user in your `redis.conf`, or a Bridge could just connect unauthenticated. The hub's own `REDIS_URL` user needs
+  ACL-admin rights (the default user on a stock Redis has them); only Bridges get scoped users.
+</Note>
+
+## Complete example files
+
+The files below are a complete working set from a single-zone lab: the hub on one LAN machine and one Bridge on a small fanless box next to the metal. Secrets and instance identifiers are placeholders; everything else is verbatim from the running deployment.
+
+### Hub: compose.yaml
+
+```yaml
+# Brokkr hub: self-hosted production deployment.
+#
+# The control plane: Postgres + Redis + the hub app (which applies schema migrations at start),
+# fronted by nginx terminating TLS for your hub FQDN. Runs on ONE machine.
+# Bridges (see ../bridge/) run at each site and connect back to THIS machine's
+# Redis, so Redis is published beyond loopback. Keep it on a private network and scope zones with Redis ACL users.
+#
+#   cp .env.example .env        # follow the "generate secrets" block inside
+#   mkdir -p certs              # fullchain.pem + privkey.pem for your FQDN
+#   docker compose up -d
+#
+# Expose ONLY 80/443 at your edge. :3000 stays LAN-published because provisioned
+# machines phone home to PHONE_HOME_BASE_URL over the internal network; never
+# forward :3000, :5432, or :6379 to the internet.
+
+name: brokkr-hub
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # Loopback-only: nothing off-box needs the database.
+    ports:
+      - '127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432'
+    environment:
+      POSTGRES_USER: ${PG_USER:?set in .env}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?set in .env}
+      POSTGRES_DB: ${PG_DB:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${PG_USER} -d ${PG_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Published so bridges on other machines can reach the bus. Keep it on a private network/VPN
+    # link, never expose to the public internet, and scope zones with Redis ACL users (see below).
+    ports:
+      - '${REDIS_HOST_PORT:-6379}:6379'
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  brokkr-hub:
+    image: ${BROKKR_APP_IMAGE:-hydrahost/brokkr-hub:latest}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Datastore URLs are assembled here (env_file values are literal, so they
+      # cannot interpolate ${PG_PASSWORD}), and these win over env_file keys.
+      DATABASE_URL: postgresql://${PG_USER}:${PG_PASSWORD}@postgres:5432/${PG_DB}
+      PGBOUNCER_CONNECTION_STRING: postgresql://${PG_USER}:${PG_PASSWORD}@postgres:5432/${PG_DB}
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '${HUB_HOST_PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/healthcheck').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      brokkr-hub:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redis-data:
+```
+
+### Hub: .env
+
+```bash
+# Brokkr HUB environment: self-hosted production posture.
+# Copy to .env:  cp .env.example .env, then run the "generate secrets" block below.
+#
+# Unlike the sim/trial stack (deploy/docker-compose/), this posture runs with
+# REAL authentication and serves the web UI. Every CHANGE_ME must be replaced;
+# the app fails closed (or worse, runs guessable) if you ship them.
+#
+# ---- generate secrets (idempotent: only fills values still at CHANGE_ME) ----
+#   sed -i "s|^PG_PASSWORD=CHANGE_ME.*|PG_PASSWORD=$(openssl rand -hex 16)|" .env
+#   sed -i "s|^BETTER_AUTH_SECRET=CHANGE_ME.*|BETTER_AUTH_SECRET=$(openssl rand -hex 32)|" .env
+#   sed -i "s|^DEVICE_TOKEN_PEPPER=CHANGE_ME.*|DEVICE_TOKEN_PEPPER=$(openssl rand -hex 32)|" .env
+#   sed -i "s|^BROKKR_HUB_PRIVATE_KEY=CHANGE_ME.*|BROKKR_HUB_PRIVATE_KEY=$(openssl rand -base64 32)|" .env
+#
+# Back these up. Rotating DEVICE_TOKEN_PEPPER invalidates every device token,
+# BETTER_AUTH_SECRET all sessions, BROKKR_HUB_PRIVATE_KEY all zone enrollments.
+
+# ---- image (published at release; override with your locally built image) ----
+BROKKR_APP_IMAGE=hydrahost/brokkr-hub:latest
+
+# ---- core posture ----
+# NODE_ENV=production turns auth ON (sim bypass is refused) and serves the web UI.
+NODE_ENV=production
+HH_ENV=prod
+LOG_LEVEL=info
+
+# Public URL users/browsers hit (auth callbacks + CORS). Must match your TLS cert.
+BASE_URL=https://hub.example.com
+# URL provisioned MACHINES call home to, an address reachable from your
+# provisioning networks, usually this host's internal IP, NOT the public FQDN
+# (which would hairpin provisioning traffic out to the internet and back).
+PHONE_HOME_BASE_URL=http://10.10.0.10:3000
+
+# ---- datastore credentials (compose assembles DATABASE_URL from these) ----
+PG_USER=brokkr
+PG_DB=brokkr
+PG_PASSWORD=CHANGE_ME_32_HEX
+# Only for an external TLS (rediss://) Redis. Path to the CA cert the hub trusts.
+# The bundled Redis below is plaintext on the internal network, so leave this unset.
+# REDIS_CA_CERT=/path/to/redis-ca.pem
+
+# ---- required secrets ----
+BETTER_AUTH_SECRET=CHANGE_ME_64_HEX
+DEVICE_TOKEN_PEPPER=CHANGE_ME_64_HEX
+# X25519 private key (base64, 32 bytes) for zone enrollment + device-secret
+# crypto. REQUIRED: without it the hub logs "crypto dormant" and every
+# POST /zones/<id>/enroll returns 503, so no bridge can ever enroll. Confirm it
+# loaded via the boot log line "Hub crypto loaded; hub_pub=<hex>".
+BROKKR_HUB_PRIVATE_KEY=CHANGE_ME_BASE64_32_BYTES
+
+# ---- first admin (operator bootstrap; all optional) ----
+# The hub idempotently ensures an operator org + admin Owner exist on boot.
+# The password is written ONLY on first creation. Changing it here later does
+# nothing (rotate in-app instead). Change it away from well-known defaults
+# BEFORE first boot on any reachable deployment.
+BROKKR_ADMIN_EMAIL=admin@example.com
+BROKKR_ADMIN_PASSWORD=CHANGE_ME_BEFORE_FIRST_BOOT
+# BROKKR_ADMIN_ORG_ID=00000000-0000-0000-0000-000000000000
+# BROKKR_ADMIN_ORG_NAME=Brokkr
+
+# ---- published HOST ports (container-internal ports are fixed) ----
+# HUB_HOST_PORT=3000
+# POSTGRES_HOST_PORT=5432
+# REDIS_HOST_PORT=6379
+
+# ---- auth origins (optional) ----
+# Only needed if browsers reach the hub via an origin other than BASE_URL
+# (extra domains, ports, or a split UI origin). Comma-separated.
+# BETTER_AUTH_TRUSTED_ORIGINS=
+
+```
+
+### Hub: nginx.conf
+
+```nginx
+# TLS front door for the Brokkr hub. Terminates HTTPS for your hub FQDN and
+# proxies to the hub app. Drop your certificate in ./certs/ as:
+#   certs/fullchain.pem   (leaf + intermediates)
+#   certs/privkey.pem
+# Let's Encrypt (certbot certonly --standalone, or DNS-01), a corporate CA, or
+# a self-signed pair all work. BASE_URL in .env must match the cert's name.
+
+worker_processes auto;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    # Websockets/SSE: pass Connection: upgrade through only when requested.
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+
+    server {
+        listen 80;
+        server_name _;
+        # Everything to HTTPS. (If you issue certs with certbot --webroot, add
+        # an ACME location block here before the redirect.)
+        return 301 https://$host$request_uri;
+    }
+
+    server {
+        listen 443 ssl;
+        http2 on;
+        server_name _;
+
+        ssl_certificate     /etc/nginx/certs/fullchain.pem;
+        ssl_certificate_key /etc/nginx/certs/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+
+        # Large uploads (firmware images, config bundles) + long-lived streams.
+        client_max_body_size 512m;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+
+        location / {
+            proxy_pass http://brokkr-hub:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+        }
+    }
+}
+```
+
+### Bridge: compose.yaml
+
+```yaml
+# Brokkr bridge (spoke): self-hosted production deployment.
+#
+# Runs on each SITE machine, next to the bare metal: it drives BMCs
+# (IPMI/Redfish) and PXE-boots machines on the provisioning network, and pulls
+# its work from the HUB machine's Redis bus. One bridge deployment per zone.
+#
+#   cp .env.example .env        # follow the comments inside (zone id, token, keys)
+#   mkdir -p keys && ssh-keygen -t ed25519 -N '' -f keys/id_ed25519
+#   docker compose up -d
+#
+# HTTPS/trust for the provisioning path: on isolated provisioning networks the
+# default plain-HTTP chainload posture needs no CA at all. To serve verified
+# HTTPS to booting machines instead, put your root CA in apps/bridge/ca/ before
+# building the image (see apps/bridge/ca/README.md) and front :${BRIDGE_PORT}
+# with a TLS terminator using a cert that CA signed.
+
+name: brokkr-bridge
+
+services:
+  brokkr-bridge:
+    image: ${BROKKR_BRIDGE_IMAGE:-hydrahost/brokkr-bridge:latest}
+    restart: unless-stopped
+    # Host networking: PXE/DHCP/TFTP and the VRRP floating IP must live on the
+    # host's real NICs, because an isolated container netns can't serve the site L2.
+    network_mode: host
+    # The VRRP reconciler adds the floating IP to a host NIC via `ip addr add`.
+    cap_add:
+      - NET_ADMIN
+    env_file: .env
+    environment:
+      HOST: '0.0.0.0'
+      GRPC_INTERNAL_HOST: '0.0.0.0'
+      PORT: '${BRIDGE_PORT:-8000}'
+      LOCAL_SIMULATION_ENABLED: 'false'
+      # Run the leader-election/BullMQ/gRPC startup tasks that process jobs.
+      BRIDGE_ORCHESTRATOR_ENABLED: 'true'
+      REDIS_ENABLED: 'true'
+      REDIS_PREFIX: ${BROKKR_ZONE_ID:?set in .env}
+      JOB_STORAGE_BACKEND: redis
+      # Serve boot artifacts to machines (iPXE over TFTP, kernel/initrd over HTTP).
+      TFTP_ENABLED: 'true'
+      PERSISTENT_STORAGE_PATH: /opt/brokkr/state
+      # SSH keypair the bridge bakes into discovery images so it can reach the
+      # machines it boots (generate into ./keys, see header).
+      SSH_KEY_PATH: /opt/brokkr/keys/id_ed25519
+      BRIDGE_SSH_PRIVKEY_PATH: /opt/brokkr/keys/id_ed25519
+      # Plaintext device-agent gRPC by default. For TLS, build the image with
+      # your CA in apps/bridge/ca/ and front the gRPC port with a terminator
+      # presenting a cert that CA signed, then set GRPC_INSECURE=false in .env.
+      GRPC_INSECURE: ${GRPC_INSECURE:-true}
+      HEARTBEAT_ENABLED: 'true'
+      HA_ENABLED: ${HA_ENABLED:-false}
+      MTLS_ENABLED: 'false'
+      VPN_ENABLED: 'false'
+      KAFKA_ENABLED: 'false'
+      ANALYTICS_ENABLED: 'false'
+      CIFS_ENABLED: 'false'
+      MONITORING_LOGS_ENABLED: 'false'
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-console}
+      # --- DHCP / DNS / VRRP ---
+      # Configured entirely from the hub via config atoms: create the zone's
+      # subnets/VIPs in the hub UI and the bridge applies them on its reconcile
+      # loop. There are no bridge-side env vars for them.
+    volumes:
+      - bridge-state:/opt/brokkr/state
+      - ./keys:/opt/brokkr/keys:ro
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:${BRIDGE_PORT:-8000}/api/health']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+
+volumes:
+  bridge-state:
+```
+
+### Bridge: .env
+
+```bash
+BROKKR_BRIDGE_IMAGE=hydrahost/brokkr-bridge:latest
+REDIS_URL=redis://brokkr-spoke-<zoneId>:CHANGE_ME@10.10.0.10:6379
+BROKKR_HUB_URL=https://hub.example.com
+BROKKR_ZONE_ID=00000000-0000-0000-0000-000000000000
+BROKKR_REGISTRATION_TOKEN=CHANGE_ME_TOKEN_FROM_HUB_UI
+BRIDGE_HOSTNAME=bridge-1
+BRIDGE_AT_REST_KEY=CHANGE_ME_BASE64_32_BYTES
+BRIDGE_URL=http://10.0.1.2:8080
+BRIDGE_PORT=8080
+BRIDGE_SYNC_ENABLED=true
+REDFISH_TLS_VERIFY=false
+DISCOVERY_BASE_URL=https://brokkr.assets.hydra.host/brokkr-live
+OS_LAYER_URL=https://brokkr.assets.hydra.host/os-layers/blobs
+DISCOVERY_ARCHITECTURES=amd64
+
+# match the plaintext gRPC listener (no nginx/TLS front in this lab)
+GRPC_EXTERNAL_PORT=9082
+```
+
+### Bridge: nginx.conf (optional)
+
+Production Bridges run an nginx sidecar in front of the Bridge API. It adds two things the bare container does not have: a local caching proxy for OS layer blobs (one cold fetch per blob per site, whatever the fleet size) and an optional TLS front for the API and agent gRPC. The plain-HTTP posture below works as shipped; the TLS server block is commented out until you provide certificates.
+
+```nginx
+# Brokkr Bridge nginx sidecar: iPXE ISO serve, R2 layer cache, optional TLS front.
+
+# Pinned: auto spawns one worker per host core and saturates the bridge with keepalive churn.
+worker_processes 4;
+error_log /dev/stderr info;
+pid /tmp/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent"';
+
+    access_log /dev/stdout main;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+
+    upstream bridge_api {
+        server 127.0.0.1:8080;
+        keepalive 32;
+        keepalive_requests 10000;
+    }
+
+    proxy_cache_path /layer-cache
+                     levels=1:2
+                     keys_zone=assets:10m
+                     max_size=100g
+                     inactive=90d
+                     use_temp_path=off;
+
+    # Variable proxy_pass forces per-request DNS resolution; R2 IPs rotate.
+    resolver 1.1.1.1 8.8.8.8 ipv6=off valid=300s;
+
+    server {
+        listen 80;
+        server_name _;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+
+        location /api/health {
+            proxy_pass http://bridge_api;
+        }
+
+        # Caching reverse proxy for R2 layer assets. Plain HTTP is safe here:
+        # blobs are sha256-addressed and the agent re-validates every byte, so
+        # a MITM can corrupt but not forge. Only serve content-addressed paths.
+        location /assets/ {
+            # set must precede rewrite...break, which halts all rewrite-module directives.
+            set $r2_origin "brokkr.assets.hydra.host";
+            rewrite ^/assets/(.*)$ /os-layers/blobs/$1 break;
+
+            proxy_pass https://$r2_origin;
+            proxy_http_version 1.1;
+            proxy_ssl_server_name on;
+            proxy_ssl_name $r2_origin;
+            proxy_set_header Host $r2_origin;
+
+            # The proxy is the trust boundary; never forward client auth upstream.
+            proxy_set_header Authorization "";
+            proxy_set_header Cookie "";
+
+            proxy_cache assets;
+            proxy_cache_key "$uri";
+            proxy_cache_valid 200 1y;
+            proxy_cache_valid 404 1m;
+            proxy_cache_revalidate on;
+            proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+            # Single-flight cold fetches: N hosts provisioning the same blob hit R2 once.
+            proxy_cache_lock on;
+            proxy_cache_lock_timeout 1800s;
+            proxy_cache_lock_age 600s;
+
+            add_header X-Cache-Status $upstream_cache_status always;
+
+            directio 4m;
+            aio threads;
+            output_buffers 4 256k;
+
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+            proxy_connect_timeout 30s;
+            send_timeout 3600s;
+
+            access_log /dev/stdout main buffer=64k flush=5s;
+        }
+
+        # With the TLS server below enabled, replace this catch-all with:
+        #   return 301 https://$host$request_uri;
+        location / {
+            proxy_pass http://bridge_api;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+
+            # IPMI calls can run for minutes; the 60s default would 504 them.
+            proxy_read_timeout 600s;
+            proxy_send_timeout 60s;
+        }
+    }
+
+    # ---------------------------------------------------------------------
+    # Optional TLS termination. Uncomment, provide certs, and switch the
+    # port-80 catch-all above to a 301 redirect.
+    # ---------------------------------------------------------------------
+    # server {
+    #     listen 443 ssl http2;
+    #     server_name _;
+    #
+    #     http2_max_concurrent_streams 1024;
+    #     keepalive_requests           100000;
+    #
+    #     ssl_certificate     /secrets/certs/fullchain.crt;
+    #     ssl_certificate_key /secrets/certs/server.key;
+    #
+    #     # MegaRAC BMC HTTPS streaming is fragile on TLS 1.3; pin to 1.2.
+    #     ssl_protocols TLSv1.2;
+    #     ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384;
+    #     ssl_prefer_server_ciphers on;
+    #     ssl_session_cache shared:SSL:10m;
+    #     ssl_session_timeout 1d;
+    #     ssl_session_tickets off;
+    #
+    #     proxy_set_header Host $host;
+    #     proxy_set_header X-Real-IP $remote_addr;
+    #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    #     proxy_set_header X-Forwarded-Proto $scheme;
+    #
+    #     location /api/health   { proxy_pass http://bridge_api; }
+    #     location /docs         { proxy_pass http://bridge_api; }
+    #     location /apispec.json { proxy_pass http://bridge_api; }
+    #
+    #
+    #
+    #     # Brokkr Live Agent gRPC, path-scoped so the catch-all keeps HTTP/1.1.
+    #     location /brokkr.agent.v1.AgentService/ {
+    #         grpc_pass grpc://127.0.0.1:9082;
+    #
+    #         # grpc_pass does not inherit proxy_set_header. Agents connect
+    #         # directly, so overwrite XFF with $remote_addr rather than append:
+    #         # a forged client XFF must not misrepresent an agent's subnet.
+    #         grpc_set_header X-Real-IP $remote_addr;
+    #         grpc_set_header X-Forwarded-For $remote_addr;
+    #
+    #         grpc_read_timeout 3600s;
+    #         grpc_send_timeout 3600s;
+    #
+    #         grpc_buffer_size 16k;
+    #         client_max_body_size 0;
+    #     }
+    #
+    #     location / {
+    #         proxy_pass http://bridge_api;
+    #         proxy_http_version 1.1;
+    #         # Connection "" wipes inherited headers; redeclare all of them.
+    #         proxy_set_header Host $host;
+    #         proxy_set_header X-Real-IP $remote_addr;
+    #         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    #         proxy_set_header X-Forwarded-Proto $scheme;
+    #         proxy_set_header Connection "";
+    #
+    #         proxy_read_timeout 600s;
+    #         proxy_send_timeout 60s;
+    #     }
+    # }
+}
+```
+
+## Next steps
+
+- [Configuration reference](/self-host/configuration-reference): every hub and bridge variable
+- [Zone network setup](/zones/network-setup): give the enrolled zone its provisioning and management networks
+- [Commissioning your first servers](/get-started/first-servers): turn the enrolled zone into inventory
+- [Upgrades and backups](/self-host/upgrades-and-backups): what to snapshot, and in what pairs

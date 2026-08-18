@@ -1,0 +1,86 @@
+---
+title: 'Out-of-band control'
+description: 'How the Bridge drives BMCs over IPMI and Redfish: verified power sequencing, vendor profiles, BIOS standardization, TEE mode, and the redacting proxy.'
+section: infrastructure
+order: 3
+slug: infrastructure/out-of-band
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} controls servers out of band through their BMCs. The Bridge drives each BMC over IPMI and Redfish and treats every command as unverified until the hardware confirms it. Pluggable profiles handle vendor-specific behavior for seven BMC vendors.
+
+## How commands reach the hardware
+
+Brokkr, the hub, enqueues power and Redfish work as **sagas** (named multi-step jobs) to the Bridge in each zone. The Bridge talks to BMCs directly over IPMI (RMCP+) and Redfish HTTPS. BMC credentials travel sealed inside the saga payload and are opened only inside the executing step. A malformed or unopenable credential fails the step before anything reaches the hardware. See [Secrets and device tokens](/security/secrets-and-device-tokens).
+
+## The IPMI stack
+
+Before power and monitoring commands, the Bridge probes reachability with a hand-built RMCP `Get Channel Authentication Capabilities` packet over UDP 623. The probe opens no session, sends no credentials, and times out after two seconds. Power operations retry the probe up to three times, two seconds apart. Monitoring probes once.
+
+Commands then run through `ipmitool` over the RMCP+ (`lanplus`) interface with three protections:
+
+- **Cipher-suite auto-detection.** The Bridge probes the tool default, then cipher suites 3 and 17, and caches the working suite per device in Redis with a TTL. A file cache serves as a fallback. Failed detection is never cached, so the next call retries.
+- **Credential hygiene.** The Bridge scrubs the password from logged command lines using a constant-time comparison. Every invocation is wrapped in two timeouts (`timeout --preserve-status` plus an outer kill deadline) so a hung BMC cannot wedge a job.
+- **RMCP+ channel repair.** When `lanplus` fails but plain `lan` works, the Bridge inspects the user's channel access, re-enables IPMI messaging, raises the privilege limit to ADMINISTRATOR, and re-verifies `lanplus`. This repair runs automatically as a step of the `enrich_via_pxe` saga described below.
+
+## Verified power sequencing
+
+Power operations are composed from small saga steps. Every mutating step is paired with a verify step that polls real chassis state. The reboot saga runs these steps:
+
+| Step                                     | Verifies                                                                                      |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `validate_ipmi`                          | Credentials work against the BMC (retried)                                                    |
+| `power_off` → `verify_power_off`         | ACPI soft shutdown; polls up to 90 s, then escalates to hard off with a further 30 s window   |
+| `set_boot_device` → `verify_boot_device` | Sets PXE/disk/CD/BIOS (UEFI-aware), then reads boot parameter 5 back and matches the selector |
+| `power_on` → `verify_power_on`           | Polls chassis state up to 60 s                                                                |
+| `wait_for_os`                            | Waits for the discovery OS to report ready                                                    |
+
+Each fallible step declares a **rewind target**. When an attempt fails and attempts remain, the saga rewinds to a named earlier step and replays the sequence from there (`verify_power_off` rewinds to `power_off`; `verify_boot_device` rewinds to `set_boot_device`). A step that exhausts its attempts fails the saga. Recovery replays the real sequence from the rewind target. It does not retry the failed call in isolation.
+
+BMC cold reset follows the same pattern: `mc reset cold` runs with three backoff attempts, then a recovery step waits 30 s and pings the BMC for up to 300 s total before declaring failure.
+
+The final confirmation does not come through the BMC. The device itself phones home. The phone-home endpoint is public but gated by a per-device bearer token, and the resulting status depends on which OS called. A discovery-OS token keeps a provisioning device in `provisioning`. A deployed-OS token moves it to `provisioned`. A deployed-OS phone-home during deprovisioning means the wipe failed and marks the device `failed`. See [Deployment lifecycle](/deployments/lifecycle).
+
+Serial-over-LAN console capture and boot-log shipping use the same IPMI stack.
+
+## Vendor-aware Redfish
+
+Redfish behavior varies by brand, so vendor logic lives in pluggable **profiles** instead of subclasses. Each device gets a tag of the form `vendor.controller.model`. The registry resolves the first registered profile whose pattern matches, checking the most specific pattern first:
+
+| Brand      | Tag pattern     |
+| ---------- | --------------- |
+| Dell       | `dell.idrac9.*` |
+| HPE        | `hp.*`          |
+| Lenovo     | `lenovo.xcc3.*` |
+| Supermicro | `supermicro.*`  |
+| Cisco      | `cisco.cbmc.*`  |
+| AMI        | `ami.*`         |
+| Aivres     | `aivres.*`      |
+
+An unmatched tag resolves to a default profile that logs the gap and performs no action. The Bridge never sends guessed commands to unknown hardware. Profiles also carry per-brand quirks, such as enum value normalization and whether BIOS PATCHes require an `If-Match` ETag.
+
+## BIOS standardization at commissioning
+
+Commissioning a server runs the `commission` saga: validate IPMI credentials, standardize BIOS via Redfish, disable OS boot options, then run a fully verified reboot into the discovery OS for disk wipe and hardware collection. A per-device **Enrich** action in the commissioning scan runs the separate `enrich_via_pxe` saga: a `reliable_boot` Redfish command (enable IPMI-over-LAN, set PXE boot, select the PXE interface, apply vendor pre-boot tweaks), the RMCP+ channel repair described above, then a fully verified power cycle into PXE for [discovery](/infrastructure/inventory-and-discovery).
+
+The Bridge validates BIOS writes against the BMC's attribute registry before sending them: booleans are coerced, integers are checked against bounds and increments, enumerations are matched against permitted values, and strings are checked against patterns and length limits. Already-correct values are skipped, read-only attributes are tolerated, and attributes that require a reset are tracked as pending until the next reboot. Transient "not ready" responses are retried automatically.
+
+## TEE mode
+
+Provisioning includes a `tee_config` step that compares the requested TEE state against the device's current state and enables, disables, or skips accordingly. TEE enablement is a set of vendor-profile BIOS writes. On TEE platforms the step then verifies the result: it reads the critical BIOS attributes back, re-applies the settings on mismatch, and fails the provision after three unsuccessful attempts. Vendors without a TEE readback model report a non-blocking "unchecked" result instead of a false pass. See [TEE environment](/tee-environment).
+
+## The redacting Redfish proxy
+
+The Bridge exposes a Redfish proxy for monitoring callers that do not hold BMC credentials. It resolves credentials per device and validates every request: required fields, port range, a method allowlist of GET/PATCH/PUT/POST, and body rules (a GET must not carry a payload, and writes must). It adds `If-Match: *` to PATCHes that lack one and retries once with re-resolved credentials when the BMC answers 401 or 403. Every logged payload passes through a redactor that masks `password`, `token`, `secret`, and `passphrase` fields.
+
+<Warning>
+  TLS verification toward BMCs is off by default because BMC fleets rarely carry trusted certificates. The Bridge warns
+  about the disabled verification in its logs.
+</Warning>
+
+For a CA-trusted fleet, turn verification on:
+
+```bash
+REDFISH_TLS_VERIFY=true
+```

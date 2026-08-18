@@ -1,0 +1,66 @@
+---
+title: 'Selling capacity'
+description: Listing and pricing servers in bulk, private reservation invites, and spot-style interruptible capacity with grace-period evictions.
+section: deployments
+order: 3
+slug: deployments/selling-capacity
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+You sell capacity on {BRAND_NAME} by listing servers as rentable. You can set on-demand and floor pricing across many servers at once, extend private reservation invites to specific customers, and sell idle hardware as interruptible capacity.
+
+{BRAND_NAME} contains no payment processor. A reservation records the agreed terms as plain data: the price in cents, the billing frequency (`HOURLY`, `WEEKLY`, or `MONTHLY`), and notes. The server detail response echoes the active reservation's price and billing frequency. Invoice through whatever billing system you already run.
+
+## Listing servers
+
+Each server carries four listing fields:
+
+| Field              | Meaning                                                                                                                                                                                                                                                                                                        |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Listed             | Whether the server appears as rentable. Unlisted servers stay private.                                                                                                                                                                                                                                         |
+| On-demand price    | The standard rate. Entered per hour, per week, or per GPU. Stored as an hourly rate in cents.                                                                                                                                                                                                                  |
+| Floor price        | Optional lower rate for interruptible rentals. Must not exceed the on-demand price.                                                                                                                                                                                                                            |
+| Interruptible only | Marks the server as capacity you can reclaim. The web UI forces marketplace deployments on it to be interruptible. The Zone Management provision form forces the same toggle, but the supplier-internal deployment it creates is never interruptible. Direct API provisions are not checked against this flag. |
+
+To price in bulk, open **Zone Management → Servers**, select the rows to change, and click **Update Monetization**. One form applies pricing and listing settings to every selected server. Each server is updated through `PATCH /servers/:deviceId/listing`, and the result toast reports how many succeeded. Per-GPU entry multiplies the rate by each server's GPU count, so one pass can price a rack of 8-GPU machines.
+
+## How a rental is priced
+
+Every provision creates a reservation that snapshots its commercial terms. Pricing resolves in this order:
+
+1. **Matching invite.** If the server has an active invite addressed to the provisioning customer, the reservation takes the invite's price, billing frequency, notes, and notice period. Only one active invite per server is considered. If a server carries several invites and the considered one is addressed to someone else, pricing falls through to the listing. Keep a server to a single active invite.
+2. **Listing.** If no invite matches, the listing prices the rental. The reservation bills weekly at the listed hourly rate multiplied by the hours in a week. An interruptible rental uses the floor price when one is set. Without a floor price it falls back to the on-demand rate.
+3. **Internal provisions.** Supplier-internal deployments create a reservation priced at 0. Utilization stays visible without recording revenue.
+
+## Private reservation invites
+
+An invite is a private offer on one or more servers. It records a price per billing period, a billing frequency, an expiry date, optional notes, and, for interruptible capacity, a notice period. Create one from a server with `POST /servers/:deviceId/reservation-invites`, addressed to a buyer email. Operator-issued invites that target a whole organization are in development. The accept check already honors either an email or an organization match. Creating an invite requires the `reservation-invite:create` permission. The inviter email must be your own, and every server on the invite must belong to your supply organization.
+
+<Note>
+  Give any invite that covers an interruptible-only server a notice period. The API rejects a missing notice period only
+  when the invite's first server is interruptible only. Other servers on the invite are not checked.
+</Note>
+
+The invited customer sees the offer under their reservation invites, and the invitee receives an email with the offer's end date. When they provision one of the invited servers, the invite's terms become the reservation and the invite is marked accepted. Pending invites can be edited or deleted. Accepted invites cannot be deleted. The per-server invite list shows a supplier every active invite on that hardware.
+
+## Interruptible capacity
+
+Interruptible deployments are spot-style capacity. The customer rents at the floor rate and accepts that another buyer can displace them after a grace period. The displacing request must itself be interruptible, and it must come from a different organization. A non-interruptible provision against the occupied host is rejected with a `400`. Because the displacing request is interruptible, the new rental is priced as interruptible and can be evicted in turn. When such a provision arrives, {BRAND_NAME} runs an eviction:
+
+1. **Claim the server.** {BRAND_NAME} creates an interruptible claim row in `Pending` status. A partial unique index (`WHERE status = 'Pending'`) allows at most one pending claim per server. A concurrent second buyer gets a `409 Conflict` ("host already has a pending interruptible claim") from the database index. Application-level locking is not involved. If the incoming provision later fails, the claim is deleted and the server is claimable again. On success the claim flips to `Complete`.
+2. **Start the notice clock.** The grace period comes from the outgoing deployment's notice period. Today this is always the 5-minute default. Honoring an invite's notice period (up to 7 days, recorded on the reservation) in the eviction clock is in development. The deprovision is scheduled for `now + notice`. The outgoing customer is notified immediately by email and by the `DEPLOYMENT_INTERRUPTED` [webhook](/brokkr-api-webhooks). The notice period is their window to checkpoint and drain work.
+3. **Evict and hand over.** When the clock expires, the outgoing deployment is deprovisioned (see [deployment lifecycle](/deployments/lifecycle)), `DEPLOYMENT_INTERRUPTION_COMPLETED` fires, and the linked incoming provision starts on the freed server.
+
+Customers can list their own claims, pending or complete, to track deployments waiting on an eviction.
+
+### Operator approval
+
+By default, evictions do not execute on their own. The eviction request lands in a pending queue, and an instance operator must authorize or reject it. Authorization re-verifies that the deployment captured in the request is still the server's active deployment and is still interruptible, then executes the eviction under the original requester's identity. The approving operator does not become the buyer. Set `INTERRUPTIBLE_EVICTION_REQUIRES_APPROVAL=false` on the hub to skip the queue and let evictions execute immediately.
+
+## Related pages
+
+- [Renting servers](/deployments/renting) for the demand side of the marketplace
+- [Become a supply partner](/about/become-a-supply-partner)
+- [Roles and permissions](/organizations/rbac) for the permission model behind invite management
+- [Reservations API](/brokkr-api-reservations) and [webhooks API](/brokkr-api-webhooks)

@@ -1,0 +1,87 @@
+---
+title: 'AI agents and MCP'
+description: An MCP server that gives Claude or any MCP client 58 tools to rent, provision, power-cycle, and rescue real servers, and an in-browser Debian terminal with a pre-authenticated CLI.
+section: api
+order: 10
+slug: api/ai-agents-and-mcp
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} ships an [MCP](https://modelcontextprotocol.io) server that exposes 58 infrastructure tools to Claude or any Model Context Protocol client, and a browser terminal that boots a full Debian VM with a `brokkr` CLI already authenticated as you. An AI agent can rent a real server, install an operating system on it, reboot it, and put it into rescue mode. Every call goes through the same authenticated, permission-checked API a human uses.
+
+## The MCP server
+
+The MCP server is part of the [CLI](/api/cli) package. It uses the standard MCP stdio transport and opens no network port. It shares authentication state with the CLI, so a machine that is logged in to `brokkr` is logged in to the MCP server.
+
+### Register with Claude Code
+
+Register the server once, globally:
+
+```bash
+claude mcp add --scope user brokkr -- brokkr-mcp
+```
+
+The `brokkr-mcp` binary ships with the CLI package (`npm install -g @hydrahost/brokkr-cli`). If you run from a source checkout, register the entry point directly: `claude mcp add --scope user brokkr -- npx tsx /path/to/boss/apps/cli/src/mcp/index.ts`. Use an absolute path. MCP clients do not resolve relative paths. Verify the registration:
+
+```bash
+claude mcp list
+```
+
+### Authentication
+
+Credentials resolve in this order:
+
+| Priority | Source                   | How to set                                                                                                                                          |
+| -------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1        | `BROKKR_API_KEY` env var | Set in your shell or the MCP client config                                                                                                          |
+| 2        | Session file API key     | `brokkr login -k`                                                                                                                                   |
+| 3        | Session file cookie      | `brokkr login` (email/password)                                                                                                                     |
+| 4        | Config file API key      | Add `"apiKey"` to the active environment's entry (for example `environments.brokkr`) in `~/.config/brokkr/config.json`. A top-level key is ignored. |
+
+For MCP use, set `BROKKR_API_KEY`. It requires no login flow and survives server restarts. API keys are org-scoped, so they carry organization context and `brokkr org select` is not needed. Create keys in the dashboard or with the `create_api_key` tool itself. See [API authentication](/brokkr-api-authentication).
+
+### Tool coverage
+
+The 58 tools cover these categories:
+
+| Category     | Tools | Examples                                                                                                         |
+| ------------ | ----- | ---------------------------------------------------------------------------------------------------------------- |
+| Deployments  | 14    | List and inspect deployments; power on/off/cycle; rescue mode; lock toggle; deprovision; reprovision; projects   |
+| Marketplace  | 3     | `list_inventory`, `get_inventory_item`, `provision_inventory_device` (rent a server)                             |
+| DCIM         | 11    | Zones, bridges, baremetal servers, marketplace listings and pricing, provisioning for a customer (supplier-only) |
+| Organization | 24    | Members, invitations, API keys, webhooks, org settings, `whoami`                                                 |
+| Account      | 6     | User profile and SSH keys                                                                                        |
+
+Supplier-side tools (server listings, pricing, decommissioning) are marked supplier-only in their descriptions. For a consumer organization they return no data. Baremetal records are tenant-scoped to the supplier, so list tools return empty lists and per-device tools return not-found errors. See [renting](/deployments/renting) and [selling capacity](/deployments/selling-capacity) for the two sides of the marketplace.
+
+### Guardrails
+
+Destructive tools protect themselves. `deprovision_deployment` and `reprovision_deployment` check the deployment's lock state before acting. They refuse locked deployments with an error that names the `toggle_deployment_lock` tool, so an agent cannot wipe a locked server by accident. Tool descriptions for irreversible operations state that the operation is irreversible, so the model sees the warning before it calls the tool. Every tool runs under your credentials with normal [RBAC](/organizations/rbac) enforcement. The MCP server adds no privileges.
+
+### Example: an agent rents and manages a server
+
+The following workflow shows how an MCP client chains the tools end to end:
+
+1. `create_ssh_key`: register a public key and note the returned ID. At least one SSH key is required to provision.
+2. `list_inventory`: browse available servers with specs and pricing, then pick a device ID.
+3. `get_inventory_item`: fetch the device's base layer slugs (for example `ubuntu-plucky-vanilla`) and `defaultDiskLayouts`.
+4. `provision_inventory_device`: rent the device. Pass the device ID, a deployment name, the OS slug, the SSH key IDs, and the disk layouts from step 3. Optional inputs are cloud-init user data, OS customization layers, and interruptible pricing.
+5. `get_deployment`: watch the [deployment lifecycle](/deployments/lifecycle). Once the deployment is provisioned, the agent has networking details and can call `power_cycle_deployment` or `activate_rescue_mode`.
+
+Agents that drive the CLI instead of MCP have their own reference. `brokkr docs` prints the full command reference to stdout, written for LLM consumption with the JSON output shape of every command. Pass `--json` to any list or detail command for machine-readable output.
+
+## The browser terminal (WebVM)
+
+The **Linux Terminal** sidebar entry opens a popup window that boots a full Debian VM entirely in your browser, powered by [WebVM](https://webvm.io)/CheerpX. There is nothing to download or install locally, and no SSH target is involved. Inside the VM, the `brokkr` shell command runs the {BRAND_NAME} CLI and bridges its API calls to the host using your logged-in session. You are authenticated when the prompt appears, and tab completion for `brokkr` is already configured.
+
+The popup is required for cross-origin isolation. CheerpX needs `SharedArrayBuffer`, which browsers grant only to cross-origin-isolated documents. The host sets the COOP half of that isolation on every response. It serves the COEP header only on the dedicated `/webvm-terminal` path. COEP breaks third-party iframes, so this scoping keeps the main app and its payment iframes unaffected.
+
+<Note title="One window at a time">
+  The VM persists its disk changes to a local IndexedDB overlay, and a second window would mean two writers on one disk.
+  Opening the terminal again focuses the running window instead of booting a second VM.
+</Note>
+
+At boot, the page loads the CheerpX runtime from Leaning Technologies' CDN and streams the Debian disk image from `disks.webvm.io`. Nothing else leaves the browser. `brokkr` API calls go to the host's own API with your session.
+
+The terminal ships as a frontend-only [plugin](/extend/plugins-overview) and is enabled by default. Set `WEBVM_TERMINAL_ENABLED=false` on the hub to disable it and hide the sidebar entry.

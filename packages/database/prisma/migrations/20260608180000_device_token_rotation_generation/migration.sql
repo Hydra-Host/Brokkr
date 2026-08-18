@@ -1,1 +1,0 @@
-ALTER TABLE "DeviceToken" ADD COLUMN "rotationGeneration" INTEGER NOT NULL DEFAULT 0;

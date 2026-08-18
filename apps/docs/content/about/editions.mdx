@@ -1,0 +1,101 @@
+---
+title: 'Editions'
+description: 'The differences between the BOSS and managed editions: the edition seam, fail-closed loading, the instance-operator bootstrap, and the public-mirror allowlist.'
+section: about
+order: 3
+slug: about/editions
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+The open-source edition (**BOSS**) and the **managed edition** are built from one codebase. BOSS runs the same hub, Bridges, provisioning engine, and API as the managed service. Inside the hub, the two editions differ by exactly three injectable policies and a plugin set. Outside the hub, the managed edition adds a standalone admin panel. There are no license keys or feature flags, and nothing phones home. The packages installed on disk decide which edition an instance runs. The one exception is `HH_FORCE_BOSS`, a local-development environment variable that can only force the BOSS edition.
+
+## One codebase, one seam
+
+Every edition difference passes through a single composition point in Brokkr (the hub). At boot, a global module binds three core policy providers, then appends the edition's overrides last. For any given token, the last binding wins:
+
+| Token                   | BOSS default                                                               | What it controls                                               |
+| ----------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `ALLOWED_ORG_TYPES`     | Demand organizations only                                                  | Which organization types users can create through self-service |
+| `OPERATOR_POLICY`       | Designation: the organization flagged as instance operator is the operator | Who administers this instance                                  |
+| `SUPPLY_TENANCY_POLICY` | Single supply organization (cap of 1)                                      | How many supply organizations one instance hosts               |
+
+Domain modules inject these tokens without binding their own defaults. An edition swaps behavior by replacing a provider. No code branches on an edition flag, and there is no `EDITION` variable anywhere in the code.
+
+## Fail-closed loading
+
+The overrides come from the plugin registry, which attempts a guarded runtime load of the proprietary `@hydrahost/managed-edition` package. That package is an optional dependency and does not exist in the public source tree. The boot log states the outcome:
+
+```text
+edition: BOSS (managed-edition not installed)
+edition: managed (<N> override(s) active)
+```
+
+Every load failure falls back to the open-source defaults. The one malformed shape the seam cannot repair aborts the boot:
+
+| Condition at boot                           | Result                     |
+| ------------------------------------------- | -------------------------- |
+| Managed package not installed               | BOSS                       |
+| Managed package installed and loads         | Managed (overrides active) |
+| Managed package installed but fails to load | BOSS (with a warning)      |
+| Overrides arrive `undefined` at the seam    | BOSS (with a warning)      |
+| Overrides arrive as a non-array             | Boot aborts with an error  |
+
+A missing or broken proprietary package can only remove managed behavior. It cannot grant managed behavior. One escape hatch exists for local development:
+
+```bash
+# Force the BOSS edition even when managed-edition is installed (local dev only)
+HH_FORCE_BOSS=true
+```
+
+## The instance operator in BOSS
+
+In BOSS, you are the operator. On every boot, Brokkr designates exactly one organization as the **instance operator**. It creates (or adopts) a supply organization, flags it as the operator, and seeds an admin user with the Owner role. The same transaction demotes any previous holder of the flag, so there is never more than one operator organization. Changing `BROKKR_ADMIN_ORG_ID` on a later boot re-designates the operator to the new organization.
+
+<Warning>
+  The seeded admin credential is a well-known first-boot login. Set `BROKKR_ADMIN_PASSWORD` before the first boot of any
+  internet-reachable deployment, or rotate the password immediately after first login.
+</Warning>
+
+Configure the bootstrap with environment variables:
+
+```bash
+BROKKR_ADMIN_ORG_ID=...      # operator organization id
+BROKKR_ADMIN_ORG_NAME=...    # operator organization name
+BROKKR_ADMIN_EMAIL=...       # admin login
+BROKKR_ADMIN_PASSWORD=...    # admin password, set this
+```
+
+The operator organization gets **Operator Hub**, a first-party open-source [plugin](/extend/plugins-overview) that is always enabled. Operator Hub is the instance operator's panel for managing users, deployments, and approvals. It is gated to the operator organization, so other organizations never see it.
+
+## The single-supplier cap
+
+BOSS is built for one operator selling their own capacity. The supply-tenancy policy caps supply organizations at one. Brokkr enforces the cap inside a transaction under a Postgres advisory lock, so concurrent creates cannot race past it. A create beyond the cap is rejected: `This instance has reached its supply-organization limit.`
+
+Self-service organization creation is demand-only. The one supply organization is the operator organization that the bootstrap created. See [organizations and tenancy](/organizations/orgs-and-tenancy) for the tenancy model and [selling capacity](/deployments/selling-capacity) for the supply side.
+
+## The open-source boundary
+
+The open-source boundary is a file. `.public-paths` at the repo root is an explicit allowlist of every path published to the public mirror. Everything not listed is scrubbed by `git-filter-repo` before push. The posture is default-deny: adding a new internal directory without touching the file keeps it private.
+
+Published files are copied as written, with no content redaction step. Proprietary packages are optional dependencies loaded through guarded runtime requires. No install or build step needs proprietary code. Diffing the mirror against the allowlist verifies the boundary, which makes the boundary machine auditable. The allowlist is not itself published. Under default-deny, it is scrubbed like any other unlisted path, so the audit runs from the internal repository rather than from the mirror alone.
+
+<Note>
+  A public tree that installs, type-checks, and builds standalone is in development. The allowlist does not yet list
+  every open-source plugin the workspace depends on.
+</Note>
+
+## What the managed edition adds
+
+The managed edition layers proprietary packages on top of the same core:
+
+- **Edition overrides** replace the three policy providers above. Under the managed policy, instance-operator designation is denied and the operator bootstrap is skipped.
+- **A standalone admin panel** (separate backend and SPA) is the proprietary counterpart to Operator Hub. Instance administration moves there instead of running inside the hub.
+- **Proprietary plugins** add analytics and helpdesk integration. They also add operator lifecycle and bridge-request APIs whose access is gated to the operator or the admin organization.
+
+None of these paths appear in `.public-paths`, so none of them reach the public mirror.
+
+## Next steps
+
+- To learn the platform, start with the [{BRAND_NAME} overview](/brokkr-overview) and [components](/brokkr-components).
+- To run BOSS, follow the [installation overview](/installation-overview) and the [quickstart](/get-started/quickstart).

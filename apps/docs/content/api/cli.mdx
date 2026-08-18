@@ -1,0 +1,173 @@
+---
+title: 'The Brokkr CLI'
+description: 'Command-line interface for the {BRAND_NAME} hub: an interactive TUI, one-shot commands with --json output, and multi-environment profiles.'
+section: api
+order: 9
+slug: api/cli
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+The Brokkr CLI manages deployments, servers, members, and webhooks in your {BRAND_NAME} organization. One package installs two binaries. `brokkr` runs as an interactive TUI for browsing or as one-shot commands with `--json` output for scripting. `brokkr-mcp` is an [MCP server](/api/ai-agents-and-mcp) that exposes the same operations to AI agents. Every list command returns the same envelope, so a script that parses deployment output works unchanged for servers, members, or API keys.
+
+## Install and log in
+
+Install the CLI globally. A postinstall hook installs tab completion. You can also run `brokkr completion install`.
+
+```bash
+npm install -g @hydrahost/brokkr-cli
+```
+
+Authenticate in one of three ways.
+
+**Interactive login.** `brokkr login` prompts for email and password, and for a [2FA code](/brokkr-mfa) if your account has one. It then selects an organization. If you belong to only one organization, the CLI selects it automatically. Otherwise it prompts you to choose.
+
+```bash
+brokkr login
+brokkr whoami         # verify user, org, environment
+brokkr org select     # switch organizations later
+```
+
+**API key via login.** [API keys](/brokkr-api-authentication) are org-scoped. The key embeds the organization, so `org select` is not needed.
+
+```bash
+BROKKR_API_KEY=brk_... brokkr login   # preferred: no argv leak
+brokkr login -k                       # interactive, masked prompt
+```
+
+<Warning>
+  Prefer the environment variable form. An inline `--api-key` leaks the key into shell history and `ps` output, and the
+  CLI warns when you use it.
+</Warning>
+
+**`BROKKR_API_KEY` directly.** For CI and scripts, skip `login`. Set the variable and run commands:
+
+```bash
+BROKKR_API_KEY=brk_... brokkr deployments --json
+```
+
+Credentials resolve in this order: the `BROKKR_API_KEY` environment variable, then the session file's API key, then the session cookie, then an `apiKey` in the config file. `brokkr logout` clears the session and deletes the `apiKey` from the active environment's profile in the config file. Keys on other environment profiles are untouched.
+
+## Environments
+
+The CLI ships with three environment profiles: `local` (`http://localhost:3000`), `brokkr` (the hosted hub), and `vm`. Only the browser-embedded build of the CLI uses the `vm` profile. It authenticates through the browser's {BRAND_NAME} session and is not usable from a terminal. To point the CLI at your [self-hosted hub](/self-host/docker-compose), add a profile to `~/.config/brokkr/config.json`:
+
+```json
+{
+  "activeEnv": "myhub",
+  "environments": {
+    "local": { "apiUrl": "http://localhost:3000" },
+    "brokkr": { "apiUrl": "https://brokkr.hydrahost.com" },
+    "myhub": { "apiUrl": "https://brokkr.example.com", "apiKey": "brk_..." }
+  }
+}
+```
+
+An `apiKey` in a profile persists across `brokkr logout` only while that profile is not the active environment. Logging out deletes the active profile's key. Switch and inspect environments with:
+
+```bash
+brokkr env list
+brokkr env use myhub
+```
+
+Sessions and org selections are stored per environment (`session-{env}.json`, `org-{env}.json`), so switching environments never mixes credentials.
+
+## The TUI
+
+Run `brokkr` with no arguments to launch the interactive TUI. The TUI is read-only. It provides lists and detail views for navigation and visualization, with no forms. Every write operation is a CLI command, so nothing destructive can happen from a browsing session. Two keys work everywhere: `q` quits, and `esc` or backspace goes back.
+
+## Scripting with `--json`
+
+Every list and detail command that queries the hub accepts `--json`. List commands return a consistent envelope:
+
+```json
+{
+  "data": [ ... ],
+  "meta": { "page": 1, "pageSize": 20, "totalItems": 100, "totalPages": 5 }
+}
+```
+
+Detail commands return the object directly, with no wrapper. Null values are preserved rather than omitted, so key presence is stable. Any field ending in `Cents` is denominated in cents. Divide by 100 for dollars.
+
+List commands share these flags. Individual commands vary in which flags they honor. Check `brokkr <cmd> --help`, or run `brokkr docs` to print the full reference.
+
+| Flag               | Description                                                   |
+| ------------------ | ------------------------------------------------------------- |
+| `--page <N>`       | Page number, 1-indexed                                        |
+| `--page-size <N>`  | Items per page, max 100 (default 20)                          |
+| `--sort <expr>`    | `field:dir` pairs, comma-delimited; `dir` is `asc` or `desc`  |
+| `--search <query>` | Server-side free-text search, case-insensitive, max 200 chars |
+| `--filters <expr>` | Pipe-delimited filter tuples (on supported commands)          |
+| `--json`           | Machine-readable output                                       |
+
+The filter grammar is `field:op:value|field:op:value` with operators `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, and `contains`. Repeating the same field with `eq` OR-combines the values. Different fields AND together. Unknown fields are silently dropped.
+
+<Note>
+  `brokkr inventory` accepts only the `eq` operator. Repeating a field there overwrites the value instead of
+  OR-combining, so the last value wins.
+</Note>
+
+```bash
+# (zone dc1 OR dc2) AND type managed
+brokkr dcim bridges --filters "zoneName:eq:dc1|zoneName:eq:dc2|type:eq:managed" --json
+```
+
+## Recipes
+
+Destructive commands that prompt for confirmation take `--force`. Pass it in scripts so they never block on a prompt.
+
+<Warning>
+  `org remove-member <id>` and `deployments:lock <id>` confirm only in interactive mode and have no `--force` flag. As one-shot commands they run with no prompt at all.
+</Warning>
+
+### Deployments
+
+Manage the full [deployment lifecycle](/deployments/lifecycle) with one-shot commands:
+
+```bash
+brokkr deployments --project "prod" --json                # CLI-side project filter (current page only)
+brokkr deployments:power <id> --action cycle --force      # hard power cycle
+brokkr deployments:lock <id>                              # toggle the lock on destructive actions
+brokkr deployments:reprovision <id> --name "srv" --os ubuntu-noble-vanilla \
+  --ssh-keys "key-uuid" --force --json                    # wipe and reinstall
+```
+
+### DCIM
+
+Query and operate on [physical infrastructure](/infrastructure/dcim):
+
+```bash
+brokkr dcim servers --filters "gpuModel:contains:H100" --json      # server list, filtered by GPU model
+brokkr dcim servers:listing <id> --hourly-price 4.50 --listed on   # price and list (input in dollars)
+```
+
+Provision a server end to end. Discover its OS slugs first, then provision:
+
+```bash
+brokkr dcim servers <id> --json | jq -r '.availableBaseLayers[].slug'
+brokkr dcim servers:provision <id> --name "my-server" --os ubuntu-noble-vanilla \
+  --ssh-keys "key-uuid" --force --json
+```
+
+### Org admin
+
+```bash
+brokkr org create-api-key "ci-pipeline" --expires-in 30d --json   # full key shown once
+brokkr org invite user@example.com --role-id <role-id> --json
+brokkr org create-webhook https://example.com/hook --events DEPLOYMENT_INTERRUPTED --json
+brokkr org webhooks stats --json
+```
+
+See [webhooks](/brokkr-api-webhooks) for event payloads and signature verification.
+
+### CI
+
+Combine `BROKKR_API_KEY` with `--force` and `--json` for fully non-interactive pipelines:
+
+```bash
+export BROKKR_API_KEY=brk_...
+IP=$(brokkr deployments <id> --json | jq -r '.networking.ipv4')
+brokkr deployments:power <id> --action on --json | jq -e '.success'
+```
+
+For the complete command reference with every flag and JSON schema, run `brokkr docs`. To call the hub without the CLI, see the [API overview](/brokkr-api-overview).

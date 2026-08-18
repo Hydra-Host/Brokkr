@@ -1,3 +1,0 @@
-ALTER TABLE "BridgeHeartbeat"
-ADD COLUMN "reportedDeviceCount" INTEGER NOT NULL DEFAULT 0,
-ADD COLUMN "reportedDeviceIds" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

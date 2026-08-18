@@ -1,13 +1,21 @@
 import { buildPluginConfigProviders } from '@hydrahost/plugin-runtime';
-import { PLUGIN_PRISMA_CLIENT, PLUGIN_REQUEST_CONTEXT } from '@hydrahost/plugin-sdk';
+import {
+  PLUGIN_AUTH_CLIENT,
+  PLUGIN_IDENTITY_BINDER,
+  PLUGIN_PRISMA_CLIENT,
+  PLUGIN_REQUEST_CONTEXT,
+} from '@hydrahost/plugin-sdk';
 import { Global, Module, type Provider } from '@nestjs/common';
 
 import pluginsConfig from '@hydrahost/plugins-config';
+import { AuthClientModule } from '../auth/auth-client.module';
 import { ContextModule } from '../common/context/context.module';
 import { PrismaClient } from '../prisma/prisma.client';
 import { PrismaModule } from '../prisma/prisma.module';
+import { HostPluginAuthClient } from './host-plugin-auth-client';
 import { HostPluginGateBus } from './host-plugin-gate-bus';
 import { HostPluginGateBusModule } from './host-plugin-gate-bus.module';
+import { HostPluginIdentityBinder } from './host-plugin-identity-binder';
 import { HostPluginRequestContext } from './host-plugin-request-context';
 import { PluginEventBusModule } from './plugin-event-bus.module';
 
@@ -26,14 +34,25 @@ function seedGateAllowlist(gateBus: HostPluginGateBus): HostPluginGateBus {
 
 @Global()
 @Module({
-  imports: [PrismaModule, PluginEventBusModule, HostPluginGateBusModule, ContextModule],
+  imports: [PrismaModule, PluginEventBusModule, HostPluginGateBusModule, ContextModule, AuthClientModule],
   providers: [
     { provide: PLUGIN_PRISMA_CLIENT, useExisting: PrismaClient },
     HostPluginRequestContext,
     { provide: PLUGIN_REQUEST_CONTEXT, useExisting: HostPluginRequestContext },
+    HostPluginIdentityBinder,
+    { provide: PLUGIN_IDENTITY_BINDER, useExisting: HostPluginIdentityBinder },
+    HostPluginAuthClient,
+    { provide: PLUGIN_AUTH_CLIENT, useExisting: HostPluginAuthClient },
     { provide: GATE_ALLOWLIST_SEEDED, useFactory: seedGateAllowlist, inject: [HostPluginGateBus] },
     ...pluginConfigProviders,
   ],
-  exports: [PLUGIN_PRISMA_CLIENT, PLUGIN_REQUEST_CONTEXT, PluginEventBusModule, ...pluginConfigTokens],
+  exports: [
+    PLUGIN_PRISMA_CLIENT,
+    PLUGIN_REQUEST_CONTEXT,
+    PLUGIN_IDENTITY_BINDER,
+    PLUGIN_AUTH_CLIENT,
+    PluginEventBusModule,
+    ...pluginConfigTokens,
+  ],
 })
 export class PluginHostModule {}

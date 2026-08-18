@@ -1,0 +1,90 @@
+---
+title: 'Layer builds'
+description: Import release manifests into the layer catalog, host the content-addressed blob store, and pin zones to a layer build.
+section: os-builds
+order: 3
+slug: os-builds/layer-builds
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+An OS release in {BRAND_NAME} is one JSON manifest plus a set of immutable blobs. You import the manifest and host the blobs. Every zone then provisions the exact bytes the release was built from, and the sha256 of each layer is verified before extraction.
+
+## The release manifest
+
+The build pipeline publishes each release as a **release manifest**, a single JSON document at `os-layers/releases/<version>` in the blob store. A sibling pointer at `os-layers/releases/latest` names the current release and its manifest URL. The manifest drives the layer catalog. Brokkr never scans the bucket, and a manifest import is the only write path. The importer also reconciles a fixed set of system layers (rescue OS, discovery, custom iPXE) on every run. The manifest does not carry these layers.
+
+The manifest is a cross-repo contract with a pinned schema. The importer accepts `schema_version: 7` exactly and rejects unknown fields, so a pipeline-side schema change fails the import instead of importing partially.
+
+| Top-level field                                           | Meaning                                                                                                |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `schema_version`                                          | Must be `7`. Any other value fails the import.                                                         |
+| `version`, `env`                                          | Release version and environment (`dev`, `stg`, or `prod`). Together they identify one immutable build. |
+| `generated_at`, `pipeline_id`                             | Build provenance.                                                                                      |
+| `promoted_from`, `promoted_at`, `promoted_by_pipeline_id` | Present on promoted releases (optional).                                                               |
+| `groups[]`                                                | UI groups (`slug`, `name`, `SINGLE_SELECT` or `MULTI_SELECT`).                                         |
+| `layers[]`                                                | One entry per layer artifact.                                                                          |
+
+Each `layers[]` entry carries the artifact identity (`kind`, `name`, `sha256`, `size`, `filename`, `url`), its target (`os_distro`, `os_version`, `os_codename`, `arch`), and catalog metadata (`group`, `family`, `display_name`, `requires[]`). The `arch` value is `amd64` or `arm64`. Kinds are constrained: `base` entries must have `group: baseOS`, `legacy` entries `group: legacy`, and `component` entries one of the component-capable groups. Read [The Layer Model](/os-builds/layers) for the layer kinds and [Customizations](/os-builds/customizations) for how `groups` and `requires[]` drive the provisioning form.
+
+## The blob store
+
+Every layer is stored once under a content-addressed key: `os-layers/blobs/sha256:<sha>`, where `<sha>` is the sha256 of the tarball bytes. The key carries no filename or extension. A release manifest only points at blobs, so two releases that share a layer share one copy. A release is never more than the manifest, about 50 KB, plus whatever blobs are new.
+
+Any static HTTPS host that answers `GET` on those keys works, including object storage and plain web servers. Compression is inferred from the manifest `filename`: `.tar.zst` or `.zst` is zstd, and `.tar.gz`, `.tgz`, or `.gz` is gzip. Any other suffix fails the import. These are the only two compressions the Bridge accepts at deploy time.
+
+## `OS_LAYER_URL`
+
+The Bridge resolves every layer download as `{OS_LAYER_URL}/sha256:<hash>`. Set `OS_LAYER_URL` to your blob prefix (for example `https://assets.example.com/os-layers/blobs`) in the Bridge environment. See the [configuration reference](/self-host/configuration-reference). The Bridge validates the value at startup. It must be an HTTP or HTTPS URL and must not contain shell-unsafe characters.
+
+## Import a release
+
+The importer is `apps/api/src/scripts/layers/seed-from-manifest.ts`. It requires a direct `DATABASE_URL` and the manifest URL:
+
+```bash
+DATABASE_URL=postgres://... npx tsx apps/api/src/scripts/layers/seed-from-manifest.ts \
+  --url=https://assets.example.com/os-layers/releases/<version> \
+  --seed-script
+```
+
+The import creates a **layer build**, an immutable record of one `(version, env)` manifest, with status `IMPORTING`. It then reconciles the catalog: layer groups, layers, one artifact row per manifest entry, and the `requires[]` relations, including an automatic requirement on the matching base layer for every component. Layer reconciliation creates, updates, and prunes. A layer is pruned when it is absent from this manifest and unreferenced by any deployment, and its artifacts in earlier builds are pruned with it. On success the importer marks the build `READY`. On any failure it marks the build `FAILED` with the error. Only `READY` builds can serve artifacts, so a crashed import never exposes the new build's artifacts to provisioning.
+
+<Warning>
+  Catalog reconciliation is not transactional. Layer and group changes already applied, including prunes, stay in place
+  and are visible against the existing `READY` build until a re-run completes the import.
+</Warning>
+
+Re-running is safe and deterministic:
+
+| Existing build for this `(version, env)` | Result                                                      |
+| ---------------------------------------- | ----------------------------------------------------------- |
+| None                                     | Creates the build.                                          |
+| `IMPORTING` or `FAILED`                  | Deletes the stale build and re-imports.                     |
+| `READY`                                  | Refuses. Each manifest version is a single immutable build. |
+
+A Postgres advisory lock serializes concurrent runs. If the lock is unavailable, schema constraints still keep concurrent imports consistent. The first build ever marked `READY` becomes the global default build automatically. Later imports never override an existing default.
+
+## Promotion
+
+Releases move from `dev` to `stg` to `prod` by server-side copy. A promotion never rebuilds artifacts. The promotion job copies every blob the manifest references into the destination bucket, rewrites only the manifest's identity fields (`version`, `env`, promotion provenance), and writes the manifest last as the commit point. Force-rebuild flags are hard-blocked on production tag pipelines. Production serves byte-for-byte what you imported and tested in staging.
+
+## End-to-end sha256 verification
+
+The digest is carried through every step of the chain:
+
+1. The pipeline names each blob by the sha256 of its bytes.
+2. The manifest carries that sha256. The importer validates that it is 64 hex characters and stores it per artifact.
+3. The provision payload carries each layer's sha256 to the Bridge. The Bridge resolves the download URL from `OS_LAYER_URL` and sends both to the agent.
+4. The Brokkr Live Agent verifies the digest after fetching and before extracting. A mismatch aborts the deploy.
+
+The agent stages each download to a temporary file and deletes the file on a mismatch. A corrupted or tampered blob never reaches the provisioned filesystem.
+
+## Zone build pinning (in development)
+
+Every provision resolves which layer build to serve from: the zone's pinned build if set, otherwise the global default. Resolution fails closed. A pin to a missing or non-`READY` build stops provisioning with an explicit error instead of falling back silently.
+
+<Note>
+  Today the pin is the `layerBuildId` column on the zone record, set at the database level. The API and UI surface for
+  managing pins is in development. Until it lands, most installs run every [zone](/zones/create-and-enroll) on the
+  global default set by the first import.
+</Note>

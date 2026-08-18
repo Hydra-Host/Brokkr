@@ -1,0 +1,173 @@
+---
+title: 'TypeScript client'
+description: 'Call the {BRAND_NAME} API with the compile-time-checked ts-rest client that the product web app uses.'
+section: api
+order: 3
+slug: api/typescript-client
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} publishes its product API as a [ts-rest](https://ts-rest.com/) contract. Every resource route, request body, query parameter, and response is a Zod schema, so the compiler checks your automation against the API contract. Code that type-checks uses correct paths, methods, and payload shapes. Runtime rules the types cannot express (Zod refinements, server-side validators) still apply.
+
+The client lives in the repository at `packages/api-client` and is consumed as the workspace package `@repo/api-client`.
+
+## Pick your entry point
+
+The package exposes subpath exports so each consumer imports only what it needs:
+
+| Import                      | What you get                                                                                                                                                | Use it for                                                   |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `@repo/api-client/core`     | `createApiClient()`, a plain fetch client with no React dependency                                                                                          | Node scripts, CI jobs, backend services                      |
+| `@repo/api-client/client`   | `createTsrReactQueryClient()`, TanStack Query v5 hooks (plus a re-export of `createApiClient`)                                                              | React apps                                                   |
+| `@repo/api-client/contract` | The raw contract and the `AppContract` type                                                                                                                 | Custom transports, OpenAPI tooling, test mocks               |
+| `@repo/api-client/schemas`  | Zod schemas and their inferred types                                                                                                                        | Validating payloads, building forms                          |
+| `@repo/api-client`          | The contract, `createApiClient()`, and most schemas from one root export. Excludes the React Query client so the root stays safe for Node and CLI consumers | Convenience in non-React code when bundle size is irrelevant |
+
+The contract prefixes every path with `/api/v1` and declares strict status codes. Each call's response type is a discriminated union of exactly the statuses that the endpoint declares. Narrow on `status` and TypeScript infers the `body` type for that status.
+
+## Create a client for scripts
+
+Authenticate with an API key in the `x-api-key` header. Create keys and read the full auth model in [API authentication](/brokkr-api-authentication).
+
+```ts
+import { createApiClient } from '@repo/api-client/core';
+
+const api = createApiClient({
+  baseUrl: 'https://hub.example.com',
+  baseHeaders: { 'x-api-key': process.env.BROKKR_API_KEY! },
+});
+```
+
+`createApiClient()` takes `baseUrl` plus any ts-rest client argument (custom `api` fetcher, extra headers). Paths, methods, and the version prefix come from the contract, so you never assemble a URL by hand.
+
+## Example: list servers with filters
+
+`getServers` returns the organization's devices as a paginated list. The typed query accepts `role`, `status`, and `decommissioned` on top of the shared pagination parameters (see [inventory endpoints](/brokkr-api-inventory)):
+
+```ts
+const res = await api.getServers({
+  query: { page: 1, pageSize: 50, status: 'ACTIVE', role: 'baremetal' },
+});
+
+if (res.status !== 200) throw new Error(`list failed: ${res.status}`);
+
+for (const server of res.body.data) {
+  console.log(server.id);
+}
+console.log(`${res.body.meta.totalItems} matching devices`);
+```
+
+Page-numbered list endpoints share the same query parameters and response envelope: a `data` array plus `meta` with `page`, `pageSize`, `totalItems`, and `totalPages`. A few endpoints diverge. The event log accepts no `filters`, and the device boot-log timeline is cursor-paginated with its own envelope:
+
+| Parameter  | Behavior                                                                                                                                                                                                                            |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `page`     | 1-indexed page number                                                                                                                                                                                                               |
+| `pageSize` | Items per page, max 100                                                                                                                                                                                                             |
+| `sort`     | `"field:dir,field:dir"`; `dir` is `asc` (default) or `desc`. Unknown fields are dropped                                                                                                                                             |
+| `search`   | Case-insensitive substring match across the resource's searchable fields, max 200 characters                                                                                                                                        |
+| `filters`  | Pipe-delimited `"field:op:value\|field:op:value"`. Operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `contains`. Repeating a field with `eq` OR-combines values; different fields AND together. Unknown fields are silently dropped |
+
+## Example: provision a server
+
+`provisionBaremetalServer` starts the provisioning workflow, which installs the OS, configures the network, and deploys SSH keys. The body requires a deployment name, a base OS layer slug from your catalog (see [layers](/os-builds/layers)), at least one SSH key ID, and at least one disk layout. On an initial provision, `wipe` must be `true` because there is no existing data to preserve (see [disk layouts](/deployments/disk-layouts)).
+
+```ts
+const provision = await api.provisionBaremetalServer({
+  params: { deviceId },
+  body: {
+    deploymentName: 'training-node-01',
+    operatingSystem: 'ubuntu-24.04',
+    sshKeyIds: ['9f3d2c1a-0000-4000-8000-000000000000'],
+    diskLayouts: [
+      {
+        config: 'raid1',
+        format: 'ext4',
+        mountpoint: '/',
+        diskType: 'NVMe',
+        disks: ['nvme0n1', 'nvme1n1'],
+        wipe: true,
+      },
+    ],
+  },
+});
+
+if (provision.status !== 200 || !provision.body.success) {
+  throw new Error('provision request rejected');
+}
+```
+
+<Note>
+  Provisioning is asynchronous. A `200` with `success: true` means the workflow started. The OS is not installed yet.
+  The deployment lifecycle continues in the background. See [deployment lifecycle](/deployments/lifecycle).
+</Note>
+
+## Example: poll deployment status
+
+The new deployment's customer-facing name is the `deploymentName` you provided. Find the deployment in `getDeployments`, then watch its `status` field (a `{ value, label }` pair) until it reaches a terminal value:
+
+```ts
+const TERMINAL = new Set(['provisioned', 'failed']);
+
+for (;;) {
+  const res = await api.getDeployments({ query: { page: 1, pageSize: 100 } });
+  if (res.status !== 200) throw new Error(`poll failed: ${res.status}`);
+
+  const deployment = res.body.data.find((d) => d.customer.deviceName === 'training-node-01');
+  if (deployment && TERMINAL.has(deployment.status.value)) {
+    console.log(`${deployment.customer.deviceName}: ${deployment.status.label}`);
+    console.log(`ssh root@${deployment.networking.ipv4}`);
+    break;
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 15_000));
+}
+```
+
+<Note>
+  There is no webhook for a deployment reaching `provisioned` or `failed`. [Webhooks](/brokkr-api-webhooks) cover
+  listing changes and deployment interruptions. Poll `getDeployments` to watch a provision finish.
+</Note>
+
+## React Query hooks for apps
+
+Use `createTsrReactQueryClient()` to build a UI on top of {BRAND_NAME}. It wraps the same contract in TanStack Query v5 hooks. The product web app consumes the API through this client.
+
+Create the client once:
+
+```ts
+import { createTsrReactQueryClient } from '@repo/api-client/client';
+
+export const tsr = createTsrReactQueryClient({ baseUrl: '' });
+```
+
+Wrap your tree in both providers:
+
+```tsx
+<QueryClientProvider client={queryClient}>
+  <tsr.ReactQueryProvider>
+    <App />
+  </tsr.ReactQueryProvider>
+</QueryClientProvider>
+```
+
+Every contract route is then available as a hook. Narrow on `status` before reading the body, as with the fetch client:
+
+```tsx
+const { data, isPending } = tsr.getServers.useQuery({
+  queryKey: ['servers', query],
+  queryData: { query: { status: 'ACTIVE' } },
+});
+
+const servers = data?.status === 200 ? data.body.data : [];
+const meta = data?.status === 200 ? data.body.meta : undefined;
+```
+
+Mutations follow the same pattern via `tsr.<route>.useMutation()`.
+
+## Next steps
+
+- [API overview](/brokkr-api-overview): REST surface, versioning, and generated OpenAPI docs
+- [API authentication](/brokkr-api-authentication): create and scope API keys
+- [Deployment endpoints](/brokkr-api-deployments): reprovision, power control, and deprovision
+- [The CLI](/api/cli): the same contract with one-shot commands and `--json` output

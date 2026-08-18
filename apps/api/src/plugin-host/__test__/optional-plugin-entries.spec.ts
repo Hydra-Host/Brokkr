@@ -13,6 +13,7 @@ const MANIFEST_EXPORTS: Record<string, string> = {
   '@hydrahost/plugin-analytics': 'analyticsManifest',
   '@hydrahost/plugin-operator-lifecycle': 'operatorLifecycleManifest',
   '@hydrahost/plugin-operator-bridge-requests': 'operatorBridgeRequestsManifest',
+  '@hydrahost/plugin-lender-device-associations': 'lenderDeviceAssociationsManifest',
   '@hydrahost/plugin-email-mailgun': 'emailMailgunManifest',
   '@hydrahost/plugin-operator-hub': 'operatorHubManifest',
   '@hydrahost/plugin-google-maps-geocoding': 'googleMapsGeocodingManifest',

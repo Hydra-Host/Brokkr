@@ -1,0 +1,146 @@
+---
+title: 'API overview'
+description: 'One typed contract behind /api/v1: the pagination envelope, the sort, search, and filter grammar, and where the generated reference lives.'
+section: api
+order: 1
+slug: brokkr-api-overview
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+Every screen in the {BRAND_NAME} web app runs on the same API you script against. All 377 core endpoints live behind `/api/v1` and are generated from a single typed contract. The reference documentation, the [TypeScript client](/api/typescript-client), and the server implementation cannot drift apart.
+
+## One contract, one prefix
+
+The API is defined as a [ts-rest](https://ts-rest.com/) contract with Zod schemas for every response and every non-empty request body. [Brokkr](/brokkr-components) implements its handlers against that contract. The OpenAPI reference is generated from the contract, and the TypeScript client is derived from it. Endpoints are grouped by domain, including servers, deployments, zones, IPAM, DCIM, organizations, and webhooks. A few surfaces share the prefix without being in the contract: the web app's session-auth endpoints under `/api/v1/auth`, the WebSocket attach endpoints that console sessions return, and the interactive reference pages.
+
+Every endpoint carries a visibility tag of `public` or `internal`:
+
+- **Public** endpoints are the supported surface. They appear in the generated reference.
+- **Internal** endpoints exist to serve the web app. They are excluded from the reference and may change without notice.
+
+The curation fails closed. An endpoint missing its visibility tag is treated as internal, so a forgotten tag cannot add an endpoint to the public reference.
+
+Enabled [plugins](/extend/plugins-overview) merge their routes into the same contract. A disabled plugin's routes do not register. The plugin registry decides what is enabled: integrations turn on when their environment variables are set, and the Operator Hub is enabled by default. The same visibility rules apply. A plugin's public endpoints appear in the reference tagged `Plugin: <name>`.
+
+## Authentication and rate limits
+
+Authenticate every request with an API key in the `x-api-key` header:
+
+```http
+x-api-key: YOUR_API_KEY
+```
+
+The API is rate limited to 100 requests per minute. Requests over the limit return `429`. See [API Authentication](/brokkr-api-authentication) for creating and managing keys.
+
+## The pagination envelope
+
+Every paginated list endpoint in the public reference returns the same envelope:
+
+```json
+{
+  "data": [],
+  "meta": {
+    "page": 1,
+    "pageSize": 20,
+    "totalItems": 137,
+    "totalPages": 7
+  }
+}
+```
+
+Not every list endpoint paginates. Roughly half of the public list surface returns a bare JSON array instead: all of IPAM, plus regions, DNS domains and records, organization roles and permissions, and the zone DHCP and VRRP prefix listings. These endpoints define typed query parameters of their own and take none of the parameters below. The paginated endpoints accept the common set with two exceptions. Inventory listings take only `page`, `pageSize`, and `eq`-operator filters. The event log replaces the `filters` expression with typed parameters of its own. The generated reference shows each endpoint's exact set.
+
+| Parameter  | Type    | Behavior                                                                   |
+| ---------- | ------- | -------------------------------------------------------------------------- |
+| `page`     | integer | 1-indexed. Defaults to `1`.                                                |
+| `pageSize` | integer | 1 to 100. Each resource has its own default (`20` unless it overrides it). |
+| `sort`     | string  | Comma-delimited sort expression. See [Sorting](#sorting).                  |
+| `search`   | string  | Free-text query, max 200 characters. See [Search](#search).                |
+| `filters`  | string  | Pipe-delimited filter expression. See [Filtering](#filtering).             |
+
+## Sorting
+
+Pass `sort` as a comma-delimited list of `field:dir` pairs. `dir` is `asc` (the default) or `desc`:
+
+```text
+sort=name:asc,createdAt:desc
+```
+
+Fields the resource does not expose for sorting are dropped. Brokkr appends the resource's default sort as tie-breakers after yours.
+
+<Note>
+  The default sorts do not always end in a unique key. Rows that tie on every sort field can still repeat or vanish
+  across page boundaries.
+</Note>
+
+## Search
+
+Pass `search` for a case-insensitive substring match across a resource-specific set of searchable fields. Resources with numeric searchable fields also match when the query parses as a number.
+
+## Filtering
+
+Pass `filters` as one or more `field:op:value` tuples joined by `|`:
+
+```text
+filters=role:eq:Baremetal|createdAt:gte:2026-01-01
+```
+
+| Operator   | Meaning                                  |
+| ---------- | ---------------------------------------- |
+| `eq`       | Equals (case-insensitive for strings)    |
+| `neq`      | Not equal (case-insensitive for strings) |
+| `gt`       | Greater than                             |
+| `gte`      | Greater than or equal                    |
+| `lt`       | Less than                                |
+| `lte`      | Less than or equal                       |
+| `contains` | Case-insensitive substring               |
+
+Grammar rules:
+
+- Everything after the second colon is the value, so values may contain colons. ISO timestamps are safe.
+- Repeat the same field with `eq` to OR the values together: `role:eq:Baremetal|role:eq:DiscoveredHost` matches either role. Inventory listings are the exception. They keep only the last value for a repeated field, so send one `eq` per field there.
+- Different fields AND together.
+- The filterable field set is resource-specific.
+
+<Note>
+  Unknown fields, unknown operators, and number or date values that fail to parse are silently dropped. If a filter
+  appears to do nothing, check `meta.totalItems` against an unfiltered request.
+</Note>
+
+A complete request:
+
+```bash
+curl -H "x-api-key: $API_KEY" \
+  "https://hub.example.com/api/v1/servers?page=2&pageSize=50&sort=name:asc&filters=role:eq:Baremetal"
+```
+
+## Browse the reference
+
+Every running instance serves its own interactive reference, generated from the contract at startup:
+
+| Documentation    | Path                                    |
+| ---------------- | --------------------------------------- |
+| Swagger UI       | `/api/swagger` (also `/api/v1/swagger`) |
+| ReDoc            | `/api/redoc`                            |
+| Raw OpenAPI JSON | `/api/v1/swagger-json`                  |
+
+The live reference reflects the instance that serves it. OS slug fields are enriched with an enum of the base [layers](/os-builds/layers) in the instance's catalog, so you see real slugs instead of a bare string.
+
+## Generate the spec offline
+
+To produce the OpenAPI document without a running server, run the generator from a source checkout:
+
+```bash
+pnpm --filter api docs:generate -- --seed-script
+```
+
+This writes two files under `apps/api/openapi/`:
+
+- `public.json`: the public OpenAPI 3 document
+- `index.html`: a static ReDoc page with the spec inlined. The ReDoc renderer and fonts load from CDNs, so viewing the page requires network access.
+
+<Note>
+  The generator boots neither the server nor a database. Because there is no database, OS slug fields stay generic
+  strings instead of instance-specific enums.
+</Note>

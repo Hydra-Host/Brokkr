@@ -1,0 +1,95 @@
+---
+title: 'Installing plugins'
+description: Environment-variable enablement for built-in plugins, boot-time validation, and the guided uninstall script.
+section: extend
+order: 2
+slug: extend/installing-plugins
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+Built-in plugins add email delivery, geocoding, CRM lead capture, and an in-browser terminal without changes to application code. Set a plugin's environment variables and restart to enable it. {BRAND_NAME} enables the plugin on the backend, mounts its UI, and runs its database migrations automatically, all from one registry.
+
+## One registry, one edit point
+
+`packages/plugins-config` is the plugin registry and the single edit point for installing, configuring, and disabling plugins. Both the hub API and the web SPA import it. Backend modules and frontend routes stay in lockstep:
+
+- `src/index.ts` is the backend registry. Each entry pairs a plugin manifest with an `enabled` flag and its `settings`, both derived from environment variables at startup.
+- `src/frontend.ts` is the frontend registry. It lists only the plugins that ship a frontend manifest, so backend-only plugins such as `email-mailgun` do not appear. It declares no enablement. The SPA fetches enablement from the server at runtime.
+
+You do not edit these files to use the built-in catalog. Edit them only when you add a plugin you wrote yourself (see [Writing a Plugin](/extend/writing-a-plugin)) or when you remove a plugin permanently (below).
+
+## The built-in catalog
+
+Each built-in plugin enables itself when all of its required environment variables are set. It stays disabled when any is missing. There is no separate install step.
+
+| Plugin             | Enabled when                                    | Required variables                                                                                                                                 |
+| ------------------ | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `email-mailgun`    | All three are set                               | `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, `MAILGUN_FROM_ADDRESS` (falls back to `EMAIL_FROM`)                                                           |
+| `radar-geocoding`  | The key is set                                  | `RADAR_SECRET_KEY`                                                                                                                                 |
+| `hubspot-leads`    | All five are set                                | `HUBSPOT_ACCESS_TOKEN`, `HUBSPOT_PORTAL_ID`, `HUBSPOT_CONTACT_OWNER_ID`, `HUBSPOT_FORM_ID_DEMAND_REQUEST`, `HUBSPOT_DEMAND_REQUEST_OBJECT_TYPE_ID` |
+| `salesforce-leads` | All three are set and HubSpot is not configured | `SALESFORCE_MY_DOMAIN_URL`, `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET`                                                                     |
+| `webvm-terminal`   | Always (frontend-only, no secrets)              | None. Set `WEBVM_TERMINAL_ENABLED=false` to turn it off                                                                                            |
+| `operator-hub`     | Always                                          | None                                                                                                                                               |
+
+For `email-mailgun`, setting the three variables enables the plugin and registers its transport. The hub keeps delivering mail through the default nodemailer/SMTP sender until you also set `EMAIL_PROVIDER=mailgun` on the hub.
+
+Optional overrides: `MAILGUN_API_URL` (default `https://api.mailgun.net`), `RADAR_API_URL` (default `https://api.radar.io`), `SALESFORCE_LEAD_OWNER_ID`, `SALESFORCE_API_VERSION`, and `HUBSPOT_TRACKER_PORTAL_ID` (set it to `off` to disable the tracker while keeping lead capture). Set these variables wherever your deployment defines the hub environment. See the [configuration reference](/self-host/configuration-reference).
+
+Additional proprietary plugins load only when their packages are installed. On the open-source tree the registry logs each proprietary plugin as `not installed (BOSS tree)` and continues.
+
+### HubSpot and Salesforce are mutually exclusive
+
+`hubspot-leads` and `salesforce-leads` contribute to the same inventory UI slots, so only one can be active. If both are fully configured, HubSpot takes precedence. The hub logs a warning at startup and disables `salesforce-leads`. Clear the `HUBSPOT_*` variables and restart to switch lead capture to Salesforce.
+
+## The UI follows the server
+
+The SPA does not decide which plugin UI to show. At load time it calls `GET /api/v1/plugins/enabled` and mounts routes and slot contributions only for plugins the server reports as enabled. Plugins marked operator-only also require the instance-operator context. One environment change governs both the backend and the UI. There is no separate frontend flag to keep in sync, and a disabled plugin's pages do not exist in the UI.
+
+## When boot fails
+
+The plugin runtime validates everything up front. A misconfigured plugin fails the hub at startup instead of misbehaving later. Three checks can stop boot:
+
+1. **Settings validation.** The runtime parses each enabled plugin's settings against its config schema. Failure throws `Plugin "<id>" config validation failed:` with one bullet per bad field. Disabled plugins skip this check, so unset variables never throw.
+2. **Contract validation.** Every plugin API route must live under `/api/v1/plugins/<plugin-id>/`, and route keys must be unique across core and all enabled plugins. A path outside the namespace or a key collision throws with the offending plugin and key named.
+3. **Migrations.** On application bootstrap the runtime applies each stateful plugin's SQL migrations into that plugin's own Postgres schema. It takes an advisory lock so concurrent replicas cannot race, and it runs one transaction per migration file. It requires `DATABASE_URL`. Hard errors include an invalid schema name, an unreadable migrations directory, a migration file whose name does not match `NNNN_name.sql`, SQL that fails to apply (the transaction rolls back and boot aborts), and a checksum mismatch on an already-applied migration. Never edit an applied migration. Add a new one instead.
+
+## Disable or uninstall
+
+Disabling and uninstalling are different operations. Choose deliberately.
+
+**Disable** a plugin when you may want it back. Clear its environment variables (or set `WEBVM_TERMINAL_ENABLED=false`) and restart. The backend module does not mount and the UI disappears. The plugin's Postgres schema and data remain untouched. Set the variables again to bring the plugin back exactly as it was.
+
+**Uninstall** a plugin when you are removing it permanently. The repo ships a guided script:
+
+```bash
+pnpm plugins:uninstall <plugin-id>
+```
+
+The script resolves the plugin's Postgres schema from the built registry. Run `pnpm --filter @hydrahost/plugins-config build` first for a precise lookup, or pass `--schema-name=<name>`. The script prints the exact SQL it will run (a `DROP SCHEMA ... CASCADE` plus removal of the plugin's migration-tracking rows) and asks for confirmation before executing against `DATABASE_URL`.
+
+| Flag                 | Effect                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| `--dry-run`          | Print the SQL and follow-up steps without executing                                  |
+| `--keep-data`        | Skip the database entirely; keep the schema and data, print only the follow-up steps |
+| `--force`            | Skip the confirmation prompt                                                         |
+| `--database-url=...` | Target a specific database instead of `DATABASE_URL`                                 |
+
+<Warning>
+  The database drop is permanent. Run with `--dry-run` first. If there is any chance you will reinstall the plugin, use
+  `--keep-data`, which prints the same follow-up steps and leaves Postgres untouched.
+</Warning>
+
+The script automates only the database side. It ends by printing the manual follow-up steps: remove the plugin's entries from `packages/plugins-config/src/index.ts` and `src/frontend.ts`, remove the package dependency, then rebuild the registry, hub, and web app.
+
+<Note>
+  The printed steps also mention removing the plugin's `COPY` directives from the API Dockerfile. The current Dockerfile
+  copies the whole `packages/plugins` tree in one line, so there are no per-plugin lines to remove.
+</Note>
+
+## Next steps
+
+- [Plugins overview](/extend/plugins-overview) describes the architecture behind the registry.
+- [Writing a plugin](/extend/writing-a-plugin) shows how to build and register your own.
+- [Events, gates, and host services](/extend/events-gates-and-host-services) lists what plugins can hook into.
+- [Bridge and agent plugins](/extend/bridge-and-agent-plugins) covers extending the Bridge and the Brokkr Live Agent.

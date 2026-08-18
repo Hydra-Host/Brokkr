@@ -1,1 +1,0 @@
-ALTER TABLE "Device" RENAME TO "DeprecatedDevice";

@@ -1,0 +1,57 @@
+{
+  "name": "@repo/docs",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Brokkr documentation site (MDX) — standalone Vite + React app. Run with `pnpm --filter @repo/docs dev`.",
+  "sideEffects": [
+    "*.css",
+    "./src/main.tsx"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsr generate && tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsr generate && tsc --noEmit",
+    "test": "node --test scripts/*.test.mjs",
+    "gen:api": "node scripts/gen-api-reference.mjs",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@repo/ui": "workspace:*",
+    "@tailwindcss/vite": "^4.1.18",
+    "@tanstack/react-router": "^1.158.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.562.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "tailwind-merge": "^3.4.0",
+    "tailwindcss": "^4.1.18",
+    "tailwindcss-animate": "^1.0.7"
+  },
+  "devDependencies": {
+    "@mdx-js/react": "^3.1.1",
+    "@mdx-js/rollup": "^3.1.1",
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@tanstack/router-cli": "^1.158.0",
+    "@tanstack/router-plugin": "^1.158.0",
+    "@terrastruct/d2": "^0.1.33",
+    "@types/node": "^22.19.3",
+    "@types/react": "^19.2.8",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "eslint": "^9.31.0",
+    "globals": "^16.3.0",
+    "hast-util-from-html": "^2.0.3",
+    "rehype-pretty-code": "^0.14.5",
+    "remark-frontmatter": "^5.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-mdx-frontmatter": "^5.2.0",
+    "shiki": "^4.4.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

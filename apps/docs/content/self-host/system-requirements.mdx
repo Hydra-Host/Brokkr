@@ -1,0 +1,83 @@
+---
+title: System requirements
+description: 'Host sizing, network prerequisites, and the supported BMC protocol matrix for self-hosting {BRAND_NAME}.'
+section: self-host
+order: 2
+slug: self-host/system-requirements
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} runs as two Compose units on ordinary Linux hosts. One central machine runs Brokkr (the hub), the control plane. One Bridge (the spoke) deployment runs per zone, next to the bare metal. Postgres and Redis are the only hard dependencies. Both ship inside the hub unit, so there is no external database, broker, or orchestrator to stand up first.
+
+Check the requirements below before starting the [installation](/installation-overview).
+
+## Host requirements
+
+| Unit   | Runs on                          | Requirements                                                                                   |
+| ------ | -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Hub    | one central machine              | Docker Engine + Compose v2 on Linux; ~4 vCPU / 8 GB RAM / 50 GB disk                           |
+| Bridge | one deployment per zone, on site | Docker Engine + Compose v2 on Linux; NICs on both the BMC network and the provisioning network |
+
+The hub unit runs Postgres 16, Redis 7, a one-shot database migration, the hub app, and nginx terminating TLS. The hub machine also needs:
+
+- A hub FQDN and a TLS certificate for it. The FQDN is a DNS record that points at the machine or your edge.
+- A checkout of the repository. The migration step bind-mounts `packages/database/` from it.
+
+The Bridge container runs with host networking and `CAP_NET_ADMIN`. DHCP, TFTP, and the VRRP VIP must live on the host's real NICs, so an isolated container network cannot serve the zone. Give the Bridge host one interface on the BMC network and one on the provisioning network that machines boot from.
+
+Hub and Bridge images are published for both `linux/amd64` and `linux/arm64`. `docker compose up` pulls the variant that matches your host.
+
+## Network prerequisites
+
+Keep three networks distinct:
+
+- **BMC network**: carries out-of-band traffic between the Bridge and the machines' BMCs. Keep it isolated from general traffic.
+- **Provisioning network**: the network machines PXE-boot on. Keep it isolated as well. The boot path defaults to plain HTTP, which is safe only on an isolated network. For verified HTTPS end-to-end, build the Bridge image with your own root CA. See [Docker Compose deployment](/self-host/docker-compose).
+- **Hub-to-Bridge link**: Bridges reach Brokkr over two paths: the password-protected Redis bus and one enrollment call to the hub API. Redis is published beyond loopback so Bridges can reach it. Route this link over a private network or VPN. Do not route it over the internet.
+
+### Ports
+
+| Where                        | Port           | Purpose                                                                                                                                        |
+| ---------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hub edge                     | `80, 443 TCP`  | nginx terminating TLS for the UI and API. These are the only ports to expose publicly.                                                         |
+| Hub, private link            | `6379 TCP`     | Redis bus for Bridges. Private network or VPN only.                                                                                            |
+| Hub, internal network        | `3000 TCP`     | Phone-home from provisioned machines (`PHONE_HOME_BASE_URL`). LAN only.                                                                        |
+| Bridge, provisioning network | `67, 4011 UDP` | DHCP and PXE                                                                                                                                   |
+| Bridge, provisioning network | `69 UDP`       | TFTP (iPXE binaries)                                                                                                                           |
+| Bridge, provisioning network | `53 UDP + TCP` | DNS, when enabled for the zone in the hub                                                                                                      |
+| Bridge, provisioning network | `8000 TCP`     | HTTP boot artifacts (kernel/initrd). The Compose unit sets it via `BRIDGE_PORT` (default `8000`). The app's bare `PORT` default is `8080`.     |
+| Bridge, provisioning network | `9082 TCP`     | gRPC for the Brokkr Live Agent. Booted machines dial the Bridge back for registration and operations. Default `9082` via `GRPC_INTERNAL_PORT`. |
+
+<Warning>Never forward the hub's `:3000`, `:5432`, or `:6379` to the internet.</Warning>
+
+The Bridge's HTTP port must be reachable from the machines on the provisioning network. Set `BRIDGE_URL` to the Bridge host's address on the provisioning NIC. Do not use a loopback address or a public name.
+
+DHCP subnets, DNS, and VIPs are not Bridge-side settings. Configure them per zone in the hub UI, and the Bridge applies them on its reconcile loop. See [DHCP and PXE](/network/dhcp-and-pxe).
+
+## Supported BMC protocols
+
+The Bridge drives BMCs over two protocols. See [Out-of-band management](/infrastructure/out-of-band).
+
+- **IPMI over LAN (RMCP+)**: session establishment, power operations, and serial-over-LAN console for BMCs that speak IPMI 2.0.
+- **Redfish**: per-brand vendor profiles adapt discovery, power, boot, and BIOS handling to each vendor's implementation.
+
+| Brand      | Redfish support                         |
+| ---------- | --------------------------------------- |
+| Dell       | Dedicated vendor profile                |
+| HPE        | Dedicated vendor profile                |
+| Lenovo     | Dedicated vendor profile                |
+| Supermicro | Dedicated vendor profile                |
+| Cisco      | Dedicated vendor profile                |
+| AMI        | Dedicated vendor profile                |
+| Aivres     | Dedicated vendor profile                |
+| Other      | Default profile (base Redfish behavior) |
+
+The Bridge does not reject hardware from unlisted brands. Unlisted hardware resolves to the default profile, and the Bridge drives it with base Redfish behavior.
+
+## Next steps
+
+Deploy the hub. Then create a zone and enroll its Bridge:
+
+- [Docker Compose deployment](/self-host/docker-compose)
+- [Create and enroll a zone](/zones/create-and-enroll)

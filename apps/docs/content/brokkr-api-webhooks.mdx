@@ -1,0 +1,120 @@
+---
+title: Webhooks
+description: Subscribe HTTPS endpoints to platform events. Deliveries are signed JSON, retried on failure, and validated against SSRF.
+section: api
+order: 8
+slug: brokkr-api-webhooks
+---
+
+import { BRAND_NAME } from '~/lib/branding';
+
+{BRAND_NAME} webhooks deliver platform events to an HTTPS endpoint you register, so you do not have to poll the API. Each delivery is a signed JSON request. Failed deliveries are retried automatically, and every delivery is recorded in full for forensics. The delivery path is engineered to be safe to point at the open internet.
+
+## Event types
+
+A webhook subscribes to one or more event types. Only subscribed events produce deliveries.
+
+| Event                               | Fires when                                                                   |
+| ----------------------------------- | ---------------------------------------------------------------------------- |
+| `DEVICE_LISTING_CREATED`            | Accepted at subscription time; nothing emits this event yet (in development) |
+| `DEVICE_LISTING_UPDATED`            | A device listing changes                                                     |
+| `DEVICE_LISTING_DECOMMISSIONED`     | A device listing is decommissioned                                           |
+| `DEPLOYMENT_INTERRUPTED`            | An interruption is scheduled for one of your deployments                     |
+| `DEPLOYMENT_INTERRUPTION_COMPLETED` | That interruption finishes                                                   |
+
+## Anatomy of a delivery
+
+A delivery is one event sent to one webhook. Each delivery is an HTTPS `POST` with a JSON body of three fields:
+
+| Field       | Content                                                                                                                                                                                               |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `eventType` | One of the event types above                                                                                                                                                                          |
+| `data`      | The affected resource, rendered by the same presenter as the corresponding read API. Webhook payloads carry no caller identity, so a device listing's `activeReservationInvite` is always `null` here |
+| `timestamp` | When the event occurred                                                                                                                                                                               |
+
+The request carries these headers:
+
+| Header                | Content                                                         |
+| --------------------- | --------------------------------------------------------------- |
+| `X-Webhook-Signature` | HMAC-SHA256 of the request body as `sha256=<hex>` (see below)   |
+| `X-Webhook-Event`     | The event type                                                  |
+| `X-Webhook-Delivery`  | The delivery ID, stable across every retry of the same delivery |
+| `X-Webhook-Timestamp` | ISO 8601 time of this attempt                                   |
+| `User-Agent`          | Identifies the {BRAND_NAME} webhook dispatcher                  |
+
+`X-Webhook-Delivery` is your idempotency key. Retries re-send the identical delivery ID, so deduplicate on that header if your handler is not naturally idempotent. The payload's `timestamp` is the time of the event. `X-Webhook-Timestamp` is the time of the individual attempt.
+
+Respond with any `2xx` status within 10 seconds. Any other status, or a timeout, counts as a failed attempt. Payloads are capped at 1 MiB. A payload over the cap fails the delivery without sending a request.
+
+## Verify the signature
+
+Every webhook has a signing secret of 64 hex characters. The secret is generated server-side and returned exactly once, in the create response. Store it before leaving that response.
+
+Reject any request that fails verification:
+
+1. Read the raw request body bytes before any JSON parsing or re-serialization.
+2. Compute HMAC-SHA256 of those bytes with the webhook secret, hex-encoded, prefixed with `sha256=`.
+3. Compare the result against `X-Webhook-Signature` with a constant-time comparison.
+
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+function verifySignature(rawBody, signatureHeader, secret) {
+  const expected = `sha256=${createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')}`;
+  const a = Buffer.from(signatureHeader ?? '');
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+```
+
+## Retries and automatic disable
+
+A delivery gets up to five attempts: the initial send, then retries after one, two, three, and four minutes. A per-minute scheduler processes due retries. In multi-instance deployments, the scheduler claims each delivery under a row-level lock with a five-minute lease, so hub replicas do not race for the same delivery.
+
+<Note>
+  The lease is a claim and does not guarantee exactly-once delivery. Another replica can claim and re-send the same
+  delivery if processing outlives the lease. Deduplicate on `X-Webhook-Delivery` to handle this case.
+</Note>
+
+A delivery that exhausts all attempts increments the webhook's failure count. Any successful delivery resets the count to zero. At ten accumulated failures, the webhook is disabled. A disabled webhook attempts no further deliveries. Every pending or retrying delivery is marked failed with an explanatory message.
+
+The SSRF policy (below) is re-checked before every attempt. A delivery blocked by the policy fails permanently on the attempt where the block occurs, and the retry schedule ends immediately.
+
+## Delivery records and manual retry
+
+Every delivery is a queryable record: event type, full payload, status (`PENDING`, `SUCCESS`, `FAILED`, `RETRYING`), the latest attempt's HTTP status and response body (first 1,000 characters), the error message, the attempt count, and creation and delivery timestamps. Succeeded and failed deliveries are purged after 30 days.
+
+To replay a failed delivery, call the retry route. Manual retry resets the attempt counter and clears the recorded response, then re-sends immediately. If the webhook is inactive, the same call reactivates it. This applies whether the webhook was auto-disabled or you disabled it yourself. A delivery that is still pending or retrying cannot be manually retried.
+
+## The delivery security model
+
+Webhook dispatch is a server-side request to a customer-supplied URL, which makes it a classic SSRF surface. {BRAND_NAME} defends this surface in three layers:
+
+1. **Registration-time validation.** An endpoint must be a public HTTPS URL. Plain HTTP, `localhost` and `.local` hosts, private and link-local IPv4 literals, and IPv6 loopback, unique-local, and link-local literals are rejected at create and update time.
+2. **Resolve-time re-validation on every attempt.** Before each attempt on a hostname endpoint, the dispatcher itself resolves the A and AAAA records and rejects the delivery if any resolved address fails validation. Private and link-local IPv4 addresses are rejected. IPv6-mapped IPv4 addresses (hex and dotted forms) are unwrapped and held to the same IPv4 rules. All other IPv6 is allowlisted: only global unicast passes, and NAT64, 6to4, Teredo, documentation, and discard prefixes are explicitly rejected. Transient DNS errors are retried. A definitive resolution failure is a permanent SSRF block. Endpoints whose host is an IP literal skip this layer. With no DNS lookup there is no rebinding window, but the only address check those endpoints receive is the registration-time one.
+3. **IP pinning against DNS rebinding.** The address that passed validation is pinned into the TLS agent. The socket connects to that exact IP while the original hostname is kept as SNI, so certificate validation still applies (untrusted certificates are rejected). There is no second DNS lookup between the check and the connection, so a rebinding attacker has no TOCTOU window to swap in an internal address. Connections are not kept alive, so no pinned socket outlives its validation.
+
+Attempts also run under the 10-second timeout and the 1 MiB request cap, and stored response bodies are truncated. A hostile receiver cannot stall the dispatcher or bloat delivery records.
+
+## Manage webhooks over the API
+
+All routes live under `/api/v1/organizations/webhooks` and act on the active organization. Authenticate as described in [Authentication](/brokkr-api-authentication). Every route also requires a role with the matching webhook permission. The `GET` routes need read permission. Create, update, delete, and retry need the corresponding write permission, and manual retry counts as an update. See [RBAC](/organizations/rbac).
+
+| Method   | Path                                                   | Purpose                                                                                                                 |
+| -------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/organizations/webhooks`                              | Create a webhook. The create response is the only one that includes the secret                                          |
+| `GET`    | `/organizations/webhooks`                              | List webhooks (paginated)                                                                                               |
+| `GET`    | `/organizations/webhooks/:webhookId`                   | Get one webhook                                                                                                         |
+| `PATCH`  | `/organizations/webhooks/:webhookId`                   | Update a webhook. `endpoint` and `events` are required in every request. Only `description` and `isActive` are optional |
+| `DELETE` | `/organizations/webhooks/:webhookId`                   | Delete a webhook. Deletion hides the webhook and its delivery records from these routes (see the warning below)         |
+| `GET`    | `/organizations/webhooks/deliveries`                   | List deliveries across all webhooks (paginated)                                                                         |
+| `POST`   | `/organizations/webhooks/deliveries/:deliveryId/retry` | Manually retry a failed delivery                                                                                        |
+| `GET`    | `/organizations/webhooks/stats`                        | Webhook counts (total, active, and active-with-failures) plus the 20 most recent deliveries                             |
+
+<Warning>
+  Dispatch does not yet honor webhook deletion (in development). A deleted webhook that is still active keeps receiving
+  deliveries. Disable the webhook (`PATCH` with `isActive: false`) before you delete it. A deleted webhook cannot be
+  patched.
+</Warning>
+
+For the API's general conventions and error shapes, start at the [API overview](/brokkr-api-overview).
