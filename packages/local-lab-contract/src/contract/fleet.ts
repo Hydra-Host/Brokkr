@@ -8,7 +8,9 @@ import {
   ConsoleLogSchema,
   ExecResultSchema,
   FleetConfigSchema,
+  FleetDefaultsSchema,
   FleetModeSchema,
+  FleetNetworkSchema,
   FleetNodeSchema,
   FleetVerifyReportSchema,
   HostInfoSchema,
@@ -17,6 +19,7 @@ import {
   MachineSchema,
   PciDeviceSchema,
 } from '../schemas/fleet';
+import { RejectedEntrySchema } from '../schemas/stack';
 
 export const fleetRoutes = {
   listMachines: {
@@ -148,6 +151,19 @@ export const fleetRoutes = {
     description:
       'Read-only: classifies the desired-vs-applied drift into the minimal per-node ops (or a full rebuild) and returns the plan + ETA so the UI can confirm before applying. Changes nothing.',
   },
+  previewFleetApplyPlan: {
+    method: 'POST',
+    path: '/api/fleet/apply-plan/preview',
+    body: z.object({
+      nodes: z.array(FleetNodeSchema).describe('Draft VM topology to classify, as the editor currently holds it'),
+      defaults: FleetDefaultsSchema.optional().describe('Draft fleet-wide node defaults'),
+      network: FleetNetworkSchema.optional().describe('Draft network planes'),
+    }),
+    responses: { 200: ApplyPlanSchema, 400: ErrorBodySchema, 503: ErrorBodySchema },
+    summary: 'Classify a draft fleet before it is saved',
+    description:
+      'Renders the draft to a temporary file and classifies it with the same engine planner the real apply uses (`local.fleet apply --plan --source`), so the editor can state the cost of a change before the operator consents. The engine returns the plan before it checks the pinned fleet path and before it copies any file, so nothing is written and no pinned topology is disturbed. 400 when the draft itself is invalid, 503 when the devenv seed has failed. Loopback-only: a valid LAB_API_TOKEN is not sufficient and a remote caller gets 403.',
+  },
   getFleetVerify: {
     method: 'GET',
     path: '/api/fleet/verify',
@@ -184,17 +200,37 @@ export const fleetRoutes = {
       nodes: z
         .array(FleetNodeSchema)
         .describe('Full current VM topology (always sent; preserved when saving bare-metal)'),
+      defaults: FleetDefaultsSchema.optional().describe(
+        'Fleet-wide fallbacks for node size. A null leaf clears that default, so the engine value applies instead',
+      ),
       bmcDefaults: BmcCredsSchema.optional().describe('Default VM BMC creds'),
       baremetal: BareMetalConfigWriteSchema.describe(
         'Full current bare-metal config incl. write-only per-node + default BMC creds; creds are split into the 0600 secrets file, never the overlay.',
       ),
+      network: FleetNetworkSchema.optional().describe(
+        'Both network planes. Omitted leaves the persisted network untouched',
+      ),
+      prune: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Tombstoned node names to drop from the overlay outright. A base-declared name is refused, because dropping its tombstone restores the node',
+        ),
     }),
     responses: {
       200: z.object({
         ok: z.boolean(),
         pending: FleetConfigSchema.shape.pending,
+        rejected: z
+          .array(RejectedEntrySchema)
+          .describe(
+            'Parts of the request the overlay did not write as sent — a pinned fleet.mode, or a removed node the overlay holds out as a tombstone instead of dropping. Empty when the whole request landed.',
+          ),
       }),
       400: ErrorBodySchema,
+      503: ErrorBodySchema.describe(
+        'The devenv eval seed failed, so the control center does not know the live overlay. Rebuilding stack.local.nix from its stale mirror would erase the fleet topology and every port override, so nothing was written. The read path retries the seed on its own, so a later save can succeed.',
+      ),
     },
     summary: 'Write the fleet topology overlay',
     description:

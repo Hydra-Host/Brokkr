@@ -1,6 +1,7 @@
 import type { WebhookStats } from '@repo/api-client';
 import { Badge } from '@repo/ui/components/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
+import { cn } from '@repo/ui/utils';
 import { createFileRoute } from '@tanstack/react-router';
 import { Activity, CheckCircle2, Clock, RefreshCw, XCircle } from 'lucide-react';
 import { BootScreen } from '~/components/boot-screen';
@@ -36,7 +37,7 @@ function HttpStatusBadge({ status }: { status: number | null }) {
   if (status === null) return <span className="text-muted-foreground text-sm">—</span>;
   const variant =
     status >= 200 && status < 300 ? 'text-status-online' : status >= 400 ? 'text-red-500' : 'text-amber-500';
-  return <code className={`text-sm font-medium ${variant}`}>{status}</code>;
+  return <code className={cn('text-sm font-medium', variant)}>{status}</code>;
 }
 
 export const Route = createFileRoute('/_app/organizations/webhooks/stats')({

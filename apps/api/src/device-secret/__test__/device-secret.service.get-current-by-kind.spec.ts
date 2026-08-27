@@ -1,5 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { DeviceSecretActorType, DeviceSecretAuditEventType, DeviceSecretKind, DeviceSecretPurpose } from '@repo/database';
+import {
+  DeviceSecretActorType,
+  DeviceSecretAuditEventType,
+  DeviceSecretKind,
+  DeviceSecretPurpose,
+} from '@repo/database';
 import { Buffer } from 'node:buffer';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { ZoneCryptoConfig } from 'src/zone-crypto/zone-crypto.config';
@@ -37,12 +42,14 @@ describe('DeviceSecretService.getCurrentSealedByKind', () => {
   let update: Mock;
   let findEnrollmentByZoneId: Mock;
   let auditRecord: Mock;
+  let loggerLog: Mock;
 
   beforeEach(async () => {
     findFirst = vi.fn();
     update = vi.fn().mockResolvedValue(undefined);
     findEnrollmentByZoneId = vi.fn();
     auditRecord = vi.fn().mockResolvedValue(undefined);
+    loggerLog = vi.fn();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -54,7 +61,7 @@ describe('DeviceSecretService.getCurrentSealedByKind', () => {
         {
           provide: `LoggerService${DeviceSecretService.name}`,
           useValue: {
-            log: vi.fn(),
+            log: loggerLog,
             warn: vi.fn(),
             error: vi.fn(),
             debug: vi.fn(),
@@ -82,7 +89,12 @@ describe('DeviceSecretService.getCurrentSealedByKind', () => {
     );
 
     expect(findFirst).toHaveBeenCalledWith({
-      where: { deviceId: DEVICE_UUID, purpose: DeviceSecretPurpose.BMC, kind: DeviceSecretKind.USER, invalidatedAt: null },
+      where: {
+        deviceId: DEVICE_UUID,
+        purpose: DeviceSecretPurpose.BMC,
+        kind: DeviceSecretKind.USER,
+        invalidatedAt: null,
+      },
       orderBy: { version: 'desc' },
     });
     expect(result).not.toBeNull();
@@ -107,6 +119,27 @@ describe('DeviceSecretService.getCurrentSealedByKind', () => {
       actor: BRIDGE_ACTOR,
       payload: { zoneId: ZONE_UUID, keyGen: 5 },
     });
+  });
+
+  it('logs instead of persisting an audit row when the actor is SYSTEM', async () => {
+    findFirst.mockResolvedValueOnce(rowFixture());
+    findEnrollmentByZoneId.mockResolvedValueOnce({ id: KEY_UUID, generation: 5, zonePub: new Uint8Array() });
+
+    const result = await service.getCurrentSealedByKind(DEVICE_UUID, DeviceSecretPurpose.BMC, DeviceSecretKind.USER, {
+      type: DeviceSecretActorType.SYSTEM,
+      id: null,
+    });
+
+    expect(result).not.toBeNull();
+    expect(auditRecord).not.toHaveBeenCalled();
+    expect(loggerLog).toHaveBeenCalledOnce();
+    const line = loggerLog.mock.calls[0][0];
+    expect(line).toContain(`device ${DEVICE_UUID}`);
+    expect(line).toContain(`zone ${ZONE_UUID}`);
+    expect(line).toContain('v2');
+    expect(line).toContain('gen 5');
+    expect(line).toContain(DeviceSecretKind.USER);
+    expect(line).toContain(DeviceSecretPurpose.BMC);
   });
 
   it('returns null when there is no live version (none written / all invalidated)', async () => {

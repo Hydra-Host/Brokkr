@@ -1,5 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 
-import { SettingsPage } from '@/components/settings-page';
-
-export const Route = createFileRoute('/settings')({ component: SettingsPage });
+/** Bookmark shim for the pre-split editor. Drop it after a release. */
+export const Route = createFileRoute('/settings')({
+  beforeLoad: () => {
+    throw redirect({ to: '/config/stack', replace: true });
+  },
+});

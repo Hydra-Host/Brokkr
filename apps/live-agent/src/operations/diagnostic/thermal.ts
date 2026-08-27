@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@repo/utils';
 import { registerOperation } from '../../dispatch/registry';
 import { makeLogger } from '../../logger';
 import { readFile, sh, tryShell } from './utils';
@@ -104,7 +105,7 @@ async function readAcpiFans(fanStatus: Record<string, unknown>, failedFans: stri
         failedFans.push(`acpi_${fanName}`);
       }
     } catch (error) {
-      logger.trace('acpi fan state read failed', { path: fanPath, error: String(error) });
+      logger.trace('acpi fan state read failed', { path: fanPath, error: getErrorMessage(error) });
     }
   }
 }

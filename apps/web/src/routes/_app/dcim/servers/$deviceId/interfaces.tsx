@@ -1,6 +1,5 @@
 import { createFileRoute, getRouteApi } from '@tanstack/react-router';
 
-import type { Server } from '@repo/api-client';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { DeviceInterfaces } from '~/components/device-interfaces';
 
@@ -12,7 +11,7 @@ export const Route = createFileRoute('/_app/dcim/servers/$deviceId/interfaces')(
 });
 
 function ServerInterfaces() {
-  const device = parentRoute.useLoaderData() as Server;
+  const device = parentRoute.useLoaderData();
   useDocumentTitle(device.dcim?.nickname || device.name);
 
   return (

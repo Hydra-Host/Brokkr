@@ -1,4 +1,4 @@
-import type { CreateReservationInviteRequest, EditReservationInviteRequest, Server } from '@repo/api-client';
+import type { CreateReservationInviteRequest, EditReservationInviteRequest } from '@repo/api-client';
 import { useSession } from '@repo/auth/client';
 import {
   AlertDialog,
@@ -53,7 +53,7 @@ function ServerBlockedMessage({ message }: { message: string }) {
 }
 
 function ServerInvitePage() {
-  const device = parentRoute.useLoaderData() as Server;
+  const device = parentRoute.useLoaderData();
   const { existingInvite } = Route.useLoaderData();
   const { data: session } = useSession();
   const navigate = useNavigate();

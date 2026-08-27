@@ -1,6 +1,7 @@
 import { ExportResultCode, type ExportResult } from '@opentelemetry/core';
 import { ProtobufTraceSerializer } from '@opentelemetry/otlp-transformer';
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base';
+import { getErrorMessage } from '@repo/utils';
 
 export type TraceSender = (otlpTraces: Uint8Array) => Promise<void>;
 
@@ -16,7 +17,7 @@ export class RelaySpanExporter implements SpanExporter {
     try {
       bytes = ProtobufTraceSerializer.serializeRequest(spans);
     } catch (error) {
-      process.stderr.write(`relay-exporter: OTLP serialization failed: ${errorMessage(error)}\n`);
+      process.stderr.write(`relay-exporter: OTLP serialization failed: ${getErrorMessage(error)}\n`);
     }
     if (bytes === undefined) {
       resultCallback({ code: ExportResultCode.FAILED });
@@ -32,7 +33,7 @@ export class RelaySpanExporter implements SpanExporter {
     this.sender(bytes).then(
       () => resultCallback({ code: ExportResultCode.SUCCESS }),
       (error: unknown) => {
-        process.stderr.write(`relay-exporter: trace batch send failed: ${errorMessage(error)}\n`);
+        process.stderr.write(`relay-exporter: trace batch send failed: ${getErrorMessage(error)}\n`);
         resultCallback({ code: ExportResultCode.FAILED });
       },
     );
@@ -41,8 +42,4 @@ export class RelaySpanExporter implements SpanExporter {
   async shutdown(): Promise<void> {}
 
   async forceFlush(): Promise<void> {}
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

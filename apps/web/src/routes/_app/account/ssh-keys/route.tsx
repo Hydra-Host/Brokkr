@@ -3,12 +3,12 @@ import { ColumnDef } from '@tanstack/react-table';
 import { Plus, Trash2 } from 'lucide-react';
 
 import type { SshKey } from '@repo/api-client';
+import { ServerPagination } from '@repo/domain-ui/components/server-pagination';
+import { usePagination } from '@repo/domain-ui/hooks/use-pagination';
 import { Button } from '@repo/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { DataTable, DataTableSortHeader } from '@repo/ui/components/data-table';
-import { ServerPagination } from '@repo/ui/components/server-pagination';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import { usePagination } from '@repo/ui/hooks/use-pagination';
 import { keepPreviousData } from '@tanstack/react-query';
 import { tsr } from '~/lib/api';
 

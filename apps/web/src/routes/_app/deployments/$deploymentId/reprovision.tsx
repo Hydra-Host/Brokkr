@@ -13,9 +13,10 @@ import {
   ReprovisionDeploymentRequestSchema,
   SUPPORTED_DISK_FORMATS,
   validateDiskLayoutEncryption,
-  type Deployment,
-  type SshKeyWithUser,
 } from '@repo/api-client';
+import { CustomizationLayers, type CustomizationLayersData } from '@repo/domain-ui/provision/customization-layers';
+import { applyDirectModeToSubmission, getDefaultDiskLayouts } from '@repo/domain-ui/provision/disk-layout-selector';
+import { ProvisionAdvancedSettings } from '@repo/domain-ui/provision/provision-advanced-settings';
 import { Alert, AlertDescription } from '@repo/ui/components/alert';
 import {
   AlertDialog,
@@ -34,9 +35,7 @@ import { FormMultiSelect } from '@repo/ui/form/form-multi-select';
 import { FormSelect } from '@repo/ui/form/form-select';
 import { FormSubmitButton } from '@repo/ui/form/form-submit-button';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import { CustomizationLayers, type CustomizationLayersData } from '@repo/ui/provision/customization-layers';
-import { applyDirectModeToSubmission, getDefaultDiskLayouts } from '@repo/ui/provision/disk-layout-selector';
-import { ProvisionAdvancedSettings } from '@repo/ui/provision/provision-advanced-settings';
+import { unwrapErrorMessage } from '@repo/utils';
 import { tsr } from '~/lib/api';
 import { isLocalSimulationEnabled } from '~/lib/env';
 import {
@@ -135,7 +134,7 @@ const reprovisionFormSchema = ReprovisionDeploymentRequestSchema.omit({ customiz
       } catch (e) {
         ctx.addIssue({
           code: 'custom',
-          message: `Invalid YAML: ${e instanceof Error ? e.message.split('\n')[0] : 'Parse error'}`,
+          message: `Invalid YAML: ${unwrapErrorMessage(e, 'Parse error').split('\n')[0]}`,
           path: ['cloudInit'],
         });
       }
@@ -152,7 +151,7 @@ function ReprovisionPage() {
 }
 
 function ReprovisionForm() {
-  const deployment = parentRoute.useLoaderData() as Deployment;
+  const deployment = parentRoute.useLoaderData();
   const { sshKeys } = Route.useLoaderData();
   useDocumentTitle(`${deployment.customer?.deviceName ?? 'Deployment'} - Reprovision`);
 
@@ -174,7 +173,7 @@ function ReprovisionForm() {
     },
   });
 
-  const sshKeyOptions = (sshKeys as SshKeyWithUser[]).map((key) => ({
+  const sshKeyOptions = sshKeys.map((key) => ({
     label: `[${key.user.firstName} ${key.user.lastName}] - ${key.name}`,
     value: key.id,
   }));

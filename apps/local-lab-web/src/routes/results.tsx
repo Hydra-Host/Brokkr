@@ -25,6 +25,7 @@ const STATUS_COLOR: Record<ResultStatus | Run['status'], string> = {
   skipped: 'text-text-dim',
   unknown: 'text-text-dim',
   cancelled: 'text-text-dim',
+  orphaned: 'text-status-warning',
 };
 const STATUS_DOT: Record<ResultStatus, string> = {
   passed: 'bg-status-online',

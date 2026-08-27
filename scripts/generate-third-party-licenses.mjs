@@ -96,17 +96,56 @@ export function isPlatformNativePackage(name) {
   return name === 'fsevents' || PLATFORM_NATIVE_OS_ARCH.test(name);
 }
 
+// Linked workspace packages are omitted from `pnpm licenses list`; `file:` copies of @hydrahost/@repo are not.
+export function isFirstPartyPackage(name) {
+  return name.startsWith('@hydrahost/') || name.startsWith('@repo/');
+}
+
 let installedPackageIndex;
 function packageKey(name, version) {
   return `${name}\0${version}`;
+}
+
+// Every `<store>/<pkg>@<ver>/node_modules/<name>` directory, scoped names included. This is where
+// an isolated install puts packages; it writes no hoistedLocations at all.
+export function virtualStorePackagePaths(storeDir) {
+  if (!existsSync(storeDir)) return [];
+  const paths = [];
+  for (const entry of readdirSync(storeDir)) {
+    const nested = join(storeDir, entry, 'node_modules');
+    if (!existsSync(nested)) continue;
+    for (const name of readdirSync(nested)) {
+      if (name.startsWith('@')) {
+        const scope = join(nested, name);
+        if (!existsSync(scope)) continue;
+        for (const sub of readdirSync(scope)) paths.push(join(scope, sub));
+      } else {
+        paths.push(join(nested, name));
+      }
+    }
+  }
+  return paths;
+}
+
+// pnpm >=10 writes .modules.yaml as JSON; pnpm 8 wrote YAML scrapable only by indentation. Under
+// nodeLinker=isolated (what the licence CI jobs use) the JSON carries no hoistedLocations.
+export function installedPackagePaths(modulesState, modulesDir = 'node_modules') {
+  try {
+    const state = JSON.parse(modulesState);
+    const hoisted = Object.values(state.hoistedLocations ?? {}).flat();
+    if (hoisted.length) return hoisted;
+    const vsd = state.virtualStoreDir ?? '.pnpm';
+    return virtualStorePackagePaths(vsd.startsWith('/') ? vsd : join(modulesDir, vsd));
+  } catch {
+    return [...modulesState.matchAll(/^    - ((?:.+\/)?node_modules\/.+)$/gm)].map((m) => m[1]);
+  }
 }
 
 function getInstalledPackageIndex() {
   if (installedPackageIndex) return installedPackageIndex;
   const index = new Map();
   const modulesState = readFileSync('node_modules/.modules.yaml', 'utf8');
-  for (const match of modulesState.matchAll(/^    - ((?:.+\/)?node_modules\/.+)$/gm)) {
-    const path = match[1];
+  for (const path of installedPackagePaths(modulesState)) {
     try {
       const manifest = JSON.parse(readFileSync(join(path, 'package.json'), 'utf8'));
       if (typeof manifest.name !== 'string' || typeof manifest.version !== 'string') continue;
@@ -190,6 +229,7 @@ function main() {
   const resolutions = [];
   for (const [reported, entries] of Object.entries(data)) {
     for (const e of entries) {
+      if (isFirstPartyPackage(e.name)) continue;
       if (isPlatformNativePackage(e.name)) {
         skippedNatives++;
         continue;

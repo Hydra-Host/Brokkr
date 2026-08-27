@@ -7,30 +7,60 @@ import type { WikiEntry } from './types';
 export const HOW_TO_ENTRIES: WikiEntry[] = [
   {
     slug: 'fleet-builder',
-    title: 'Fleet Builder',
-    brief:
-      'The Fleet tab (under Config \u2192 Stack) where you compose the shape of your fleet and save a reusable config.',
+    title: 'Fleet nodes (config page)',
+    brief: 'The Fleet nodes page \u2014 compose the simulated machines, write the overlay, then apply it.',
     category: 'How-to',
-    related: ['fleet', 'hub', 'spoke', 'config'],
+    related: ['fleet', 'vm', 'hub', 'spoke', 'apply', 'fleet-topology', 'config'],
     body: (
       <>
         <P>
-          The <Term>fleet builder</Term> (the <Term>Fleet</Term> tab under <Term>Config → Stack</Term>) is where you
-          compose the shape of your <WikiLink slug="fleet">fleet</WikiLink>: how many{' '}
-          <WikiLink slug="hub">hub</WikiLink> nodes and <WikiLink slug="spoke">spoke</WikiLink> nodes there are and how
-          they're wired together. The result is saved as a reusable configuration you can bring up again later.
+          <Term>Fleet nodes</Term>, at <Term>Configuration → Fleet nodes</Term>, composes the{' '}
+          <WikiLink slug="fleet">fleet</WikiLink>: which <WikiLink slug="vm">machines</WikiLink> exist, which zone each
+          one is in, what hardware it has, and how the two networks are addressed.
         </P>
-        <H>The idea</H>
+        <Note>
+          This page does not save a named fleet you pick later. It writes one file — your <Code>stack.local.nix</Code>{' '}
+          overlay, which is gitignored and leaves the committed defaults alone. That overlay is the fleet. A save is not
+          an <WikiLink slug="apply">apply</WikiLink>.
+        </Note>
+        <H>What the page holds</H>
         <UL>
-          <LI>Decide the topology — count of hubs, count of spokes, and their connections.</LI>
-          <LI>Save it as a named config so the same fleet is reproducible.</LI>
           <LI>
-            Bring the stack up against that config, then run <WikiLink slug="scenario">scenarios</WikiLink> against it.
+            <Term>Mode</Term> — VM or bare metal. Bare metal needs a Linux host.
+          </LI>
+          <LI>
+            <Term>Network</Term> — the node CIDR, the BMC CIDR, the domain, DHCP, and rendered netplan. The engine
+            refuses rendered netplan on a multi-zone fleet, so the control is disabled with that reason rather than
+            failing late.
+          </LI>
+          <LI>
+            <Term>Fleet defaults</Term> — vCPUs, memory, OS disk size and arch.
+          </LI>
+          <LI>
+            <Term>Nodes</Term> — one card per machine, grouped by zone. A node in a zone nothing declares is marked, and
+            says to move the node or declare the zone on the zones page.
+          </LI>
+          <LI>
+            <Term>Removed</Term> — tombstones. Tick one to prune it on the next save.
           </LI>
         </UL>
+        <H>Own value, or inherited</H>
         <P>
-          It's the starting point for shaping the environment before any <WikiLink slug="testing">testing</WikiLink>{' '}
-          happens.
+          Each size field shows what the node actually gets. <Code>inherited</Code> means it follows the fleet default.
+          Type a value and the node owns it. Press <Code>inherit</Code> to give it back. A new node inherits everything.
+        </P>
+        <H>What the change costs</H>
+        <P>
+          <Term>Cost of this change</Term> classifies your draft with the engine planner and changes nothing. Each node
+          card then says what applying does to that node, how long it takes, and whether it wipes that disk.{' '}
+          <Term>Rebuild fleet</Term> is destructive: it nukes, re-seeds, and rebuilds every machine.
+        </P>
+        <H>Then apply</H>
+        <P>
+          Drift this page cannot clear itself is deferred to the shared panel above it — see{' '}
+          <WikiLink slug="apply">apply</WikiLink>. To see the same fleet as a picture, open the{' '}
+          <WikiLink slug="fleet-topology">fleet graph</WikiLink>. Then run{' '}
+          <WikiLink slug="scenario">scenarios</WikiLink> from <WikiLink slug="testing">Testing</WikiLink>.
         </P>
       </>
     ),
@@ -71,50 +101,56 @@ export const HOW_TO_ENTRIES: WikiEntry[] = [
   {
     slug: 'bring-up',
     title: 'Bring up the stack',
-    brief:
-      'Starting the local stack from the Stack page — booting the datastores, then the hub, then the spoke, and seeding data.',
+    brief: 'What task up already did, and what each Stack-page control is for once the stack is running.',
     category: 'How-to',
-    related: ['services', 'seed-data', 'local-environment', 'running-the-stack'],
+    related: ['services', 'seed-data', 'local-environment', 'running-the-stack', 'apply', 'fleet'],
     body: (
       <>
+        <Note>
+          <Code>task up</Code> already brought the stack up. It started the{' '}
+          <WikiLink slug="datastore">datastores</WikiLink>, the <WikiLink slug="hub">hub</WikiLink>, the{' '}
+          <WikiLink slug="spoke">spoke</WikiLink>, the <WikiLink slug="seed-data">seed</WikiLink> and the{' '}
+          <WikiLink slug="fleet">fleet</WikiLink> — and this control center is one of those processes, so it cannot be
+          on screen unless the rest is running. Nothing on the Stack page is a first-run step.
+        </Note>
         <P>
-          <Term>Bringing up the stack</Term> means starting the{' '}
-          <WikiLink slug="local-environment">local environment</WikiLink> — the simulated hub + spoke control plane and
-          their backing datastores — from the <Term>Stack</Term> page. It's the set of constructive operations that take
-          you from "nothing running" to a live stack: boot the datastores, start the hub, start the spoke, then seed
-          data. Each operation streams its output to the log pane so you can watch it work. (For getting the control
-          center itself running first, see <WikiLink slug="running-the-stack">running the stack</WikiLink>.)
+          The <Term>Bring up</Term> group holds the constructive operations. You reach for them to recover a process
+          that stopped, or to re-run one piece against a stack that is already live.
         </P>
-        <H>A sensible order</H>
-        <OL>
+        <H>What each control is for</H>
+        <UL>
           <LI>
-            <Term>
-              Boot the <WikiLink slug="datastore">datastores</WikiLink>
-            </Term>{' '}
-            — <WikiLink slug="postgres">Postgres</WikiLink> and <WikiLink slug="redis">Redis</WikiLink> first, since
-            everything else depends on them.
+            <Term>Stack up</Term> — the whole <WikiLink slug="datastore">datastores</WikiLink> →{' '}
+            <WikiLink slug="hub">hub</WikiLink>/<WikiLink slug="spoke">spoke</WikiLink> →{' '}
+            <WikiLink slug="seed-data">seed</WikiLink> sequence in one action. On a running stack it reconciles, and the
+            button says <Term>already up — use Stack restart</Term>.
           </LI>
           <LI>
-            <Term>
-              Start the <WikiLink slug="hub">hub</WikiLink>
-            </Term>{' '}
-            — the control plane comes up next.
+            <Term>Reconcile / self-heal</Term> — restart every process that stopped or gave up, in dependency order,
+            leaving disabled and already-running ones alone. Idempotent, so it is safe anytime.
           </LI>
           <LI>
-            <Term>
-              Start the <WikiLink slug="spoke">spoke</WikiLink>
-            </Term>{' '}
-            — the bridge connects to the hub.
+            <Term>Datastores up</Term> — the datastore processes only. No hub, no spoke.
           </LI>
           <LI>
-            <Term>Seed data</Term> — populate the baseline org/identities/fixtures (see{' '}
-            <WikiLink slug="seed-data">seed-data</WikiLink>).
+            <Term>Seed DB</Term> — re-run the sim fixtures (devices, OS catalog, SSH keys) against the running hub.
           </LI>
-        </OL>
+          <LI>
+            <Term>Seed zones</Term> — make a saved zone set live: seed the rows, provision each zone's Redis ACL user,
+            mint its registration token, then restart the bridges so they dial the new credentials.
+          </LI>
+          <LI>
+            <Term>DB migrate deploy</Term> — apply pending migrations. Forward-only, and a no-op when current.
+          </LI>
+        </UL>
         <P>
-          Once the stack is up and ready, the <WikiLink slug="web-ui">Web UIs</WikiLink> links light up and you can move
-          on to the <WikiLink slug="testing">Testing</WikiLink> page. If something won't start, open its service log to
-          see why.
+          Every operation streams its output to the log pane, so a failure explains itself there. A configuration change
+          is a separate matter: a save writes your overlay and needs an <WikiLink slug="apply">apply</WikiLink> before
+          the stack reads it.
+        </P>
+        <P>
+          With the stack live, the <WikiLink slug="web-ui">Web UIs</WikiLink> links light up and you can move on to{' '}
+          <WikiLink slug="testing">Testing</WikiLink>.
         </P>
       </>
     ),
@@ -306,6 +342,11 @@ EOF`}
             <Code>task stack:reslot</Code> — move this checkout to another slot. Destructive: it migrates slot-bound
             state.
           </LI>
+          <LI>
+            <Code>task stack:release</Code> — return this checkout's slot to the host registry. Destructive: it tears
+            the stack down, nukes the fleet, and wipes the slot state. Another checkout can then claim the slot.{' '}
+            <Code>task down</Code> stops the processes but keeps the claim.
+          </LI>
         </UL>
         <Note>
           <Term>
@@ -326,7 +367,7 @@ EOF`}
     title: 'The control-center MCP server',
     brief: 'How to give an AI agent read and write access to this stack, and what stays out of its reach.',
     category: 'How-to',
-    related: ['audit', 'queues', 'running-the-stack', 'local-environment'],
+    related: ['audit', 'queues', 'running-the-stack', 'local-environment', 'stack-slot'],
     body: (
       <>
         <P>
@@ -335,10 +376,12 @@ EOF`}
           datastores without you pasting output back and forth.
         </P>
         <H>Register it</H>
-        <CommandCheck
-          command="claude mcp add brokkr-lab -- pnpm --filter local-lab-mcp dev"
-          hint="The stack must already be up — the server is a client of the running control center."
-        />
+        <P>
+          There is no manual add step. Every checkout gets the <Code>brokkr-lab</Code> entry from tracked devenv. The
+          stack must be up, because the server is a client of the running control center, and it resolves its own{' '}
+          <WikiLink slug="stack-slot">slot</WikiLink> from the host registry — so a second checkout needs no edits.
+        </P>
+        <CommandCheck command="claude mcp list" hint="brokkr-lab is listed once the devenv is loaded." />
         <H>What it exposes</H>
         <UL>
           <LI>Status and stack control, service and datastore lifecycle.</LI>

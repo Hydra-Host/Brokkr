@@ -65,16 +65,18 @@ export function runFixture(overrides: Partial<Run> = {}): Run {
 
 export async function createTestServer(
   api: LabApiFetcher,
-  options: { allowDestructive?: boolean; sseByPath?: Record<string, string> } = {},
+  options: { allowDestructive?: boolean; sseByPath?: Record<string, string>; registryDir?: string } = {},
 ) {
   const server = new McpServer({ name: 'brokkr-lab-test', version: '0.0.0' });
-  registerAllTools(
-    server,
-    createLabContext({ baseUrl: 'http://lab.test', api, fetchImpl: stubFetch(options.sseByPath) }),
-    { allowDestructive: options.allowDestructive ?? false },
-  );
+  // a registryDir exercises real slot resolution; without one the pinned url keeps tools targetless
+  const ctx = createLabContext({
+    ...(options.registryDir === undefined ? { baseUrl: 'http://lab.test' } : { registryDir: options.registryDir }),
+    api,
+    fetchImpl: stubFetch(options.sseByPath),
+  });
+  registerAllTools(server, ctx, { allowDestructive: options.allowDestructive ?? false });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'brokkr-lab-test-client', version: '0.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-  return { server, client };
+  return { server, client, ctx };
 }

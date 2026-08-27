@@ -1,6 +1,6 @@
-/** Mirror of `modules/ports.nix` (the Nix SSOT) — the DEFAULTS only apply standalone and must be kept in sync by hand. */
-
-const DEFAULT_PORTS = {
+/** Bootstrap only: what a port resolves to before the first `devenv eval` can answer. `main.ts` binds
+ *  the lab listener at boot, so these cannot wait on the seed. */
+const BOOTSTRAP_PORTS = {
   lab: 3002,
   labWeb: 5175,
   hubApi: { base: 3000, step: 2 },
@@ -8,44 +8,104 @@ const DEFAULT_PORTS = {
   spoke: { base: 8000, step: 1 },
   spokeGrpc: { base: 9082, step: 1 },
   nginx: 8888,
-  pg: 5432,
+  postgres: 5432,
   redis: 6379,
   thanosQueryHttp: 10903,
 };
 
+// hosts are deliberately not overridable in Nix (modules/overrides.nix), so no eval reports them.
 const DEFAULT_HOSTS = {
   hubPublic: 'localhost',
   dataPlaneGateway: '192.168.200.1',
   loopback: '127.0.0.1',
 };
 
+const nixPorts: Record<string, number> = {};
+const nixPortPairs: Record<string, { base: number; step: number }> = {};
+
+const isTcpPort = (n: number): boolean => Number.isInteger(n) && n >= 1 && n <= 65535;
+const isPair = (v: unknown): v is { base: unknown; step: unknown } =>
+  typeof v === 'object' && v !== null && 'base' in v && 'step' in v;
+
+/** Adopt the effective ports the overlay store read from `devenv eval ports`, so a slot move or a
+ *  modules/ports.nix change reaches this process without a second copy of the map. */
+export const primeNixPorts = (raw: Record<string, unknown>): { adopted: number; skipped: string[] } => {
+  let adopted = 0;
+  const skipped: string[] = [];
+  for (const [key, value] of Object.entries(raw)) {
+    const flat = Number(value);
+    if (isTcpPort(flat)) {
+      nixPorts[key] = flat;
+      adopted += 1;
+      continue;
+    }
+    if (isPair(value)) {
+      const base = Number(value.base);
+      const step = Number(value.step);
+      if (isTcpPort(base) && Number.isInteger(step)) {
+        nixPortPairs[key] = { base, step };
+        adopted += 1;
+        continue;
+      }
+    }
+    skipped.push(key);
+  }
+  return { adopted, skipped };
+};
+
 const envNum = (v: string | undefined, d: number): number => (v && Number.isFinite(Number(v)) ? Number(v) : d);
+
+// env wins (the stack splices the effective port into this process), then the eval, then the bootstrap.
+const port = (env: string | undefined, key: string, bootstrap: number): number =>
+  envNum(env, nixPorts[key] ?? bootstrap);
+
+const portPair = (
+  baseEnv: string | undefined,
+  stepEnv: string | undefined,
+  key: string,
+  bootstrap: { base: number; step: number },
+): { base: number; step: number } => ({
+  base: envNum(baseEnv, nixPortPairs[key]?.base ?? bootstrap.base),
+  step: envNum(stepEnv, nixPortPairs[key]?.step ?? bootstrap.step),
+});
+
 const envStr = (v: string | undefined, d: string): string => v || d;
 
 // this stack's multi-stack slot (modules/ports.nix labPortEnv); standalone falls back to the legacy slot 0
 export const STACK_SLOT = envNum(process.env.STACK_SLOT, 0);
 
 export const PORTS = {
-  lab: envNum(process.env.LAB_PORT, DEFAULT_PORTS.lab),
-  labWeb: envNum(process.env.LAB_WEB_PORT, DEFAULT_PORTS.labWeb),
-  hubApi: {
-    base: envNum(process.env.HUB_API_PORT_BASE, DEFAULT_PORTS.hubApi.base),
-    step: envNum(process.env.HUB_API_PORT_STEP, DEFAULT_PORTS.hubApi.step),
+  get lab() {
+    return port(process.env.LAB_PORT, 'lab', BOOTSTRAP_PORTS.lab);
   },
-  hubWeb: envNum(process.env.HUB_WEB_PORT, DEFAULT_PORTS.hubWeb),
-  spoke: {
-    base: envNum(process.env.SPOKE_PORT_BASE, DEFAULT_PORTS.spoke.base),
-    step: envNum(process.env.SPOKE_PORT_STEP, DEFAULT_PORTS.spoke.step),
+  get labWeb() {
+    return port(process.env.LAB_WEB_PORT, 'labWeb', BOOTSTRAP_PORTS.labWeb);
   },
-  spokeGrpc: {
-    base: envNum(process.env.SPOKE_GRPC_BASE, DEFAULT_PORTS.spokeGrpc.base),
-    step: envNum(process.env.SPOKE_GRPC_STEP, DEFAULT_PORTS.spokeGrpc.step),
+  get hubApi() {
+    return portPair(process.env.HUB_API_PORT_BASE, process.env.HUB_API_PORT_STEP, 'hubApi', BOOTSTRAP_PORTS.hubApi);
   },
-  nginx: envNum(process.env.NGINX_PORT, DEFAULT_PORTS.nginx),
-  pg: envNum(process.env.PG_PORT, DEFAULT_PORTS.pg),
-  redis: envNum(process.env.REDIS_PORT, DEFAULT_PORTS.redis),
-  thanosQueryHttp: envNum(process.env.THANOS_QUERY_HTTP_PORT, DEFAULT_PORTS.thanosQueryHttp),
-} as const;
+  get hubWeb() {
+    return port(process.env.HUB_WEB_PORT, 'hubWeb', BOOTSTRAP_PORTS.hubWeb);
+  },
+  get spoke() {
+    return portPair(process.env.SPOKE_PORT_BASE, process.env.SPOKE_PORT_STEP, 'spoke', BOOTSTRAP_PORTS.spoke);
+  },
+  get spokeGrpc() {
+    return portPair(process.env.SPOKE_GRPC_BASE, process.env.SPOKE_GRPC_STEP, 'spokeGrpc', BOOTSTRAP_PORTS.spokeGrpc);
+  },
+  get nginx() {
+    return port(process.env.NGINX_PORT, 'nginx', BOOTSTRAP_PORTS.nginx);
+  },
+  get pg() {
+    return port(process.env.PG_PORT, 'postgres', BOOTSTRAP_PORTS.postgres);
+  },
+  get redis() {
+    return port(process.env.REDIS_PORT, 'redis', BOOTSTRAP_PORTS.redis);
+  },
+  get thanosQueryHttp() {
+    return port(process.env.THANOS_QUERY_HTTP_PORT, 'thanosQueryHttp', BOOTSTRAP_PORTS.thanosQueryHttp);
+  },
+};
 
 export const HOSTS = {
   hubPublic: envStr(process.env.HUB_PUBLIC_HOST, DEFAULT_HOSTS.hubPublic),
@@ -60,12 +120,22 @@ export const mkPgUrl = (pg: { user: string; password: string; db: string }, port
   `postgresql://${pg.user}:${pg.password}@${HOSTS.loopback}:${port}/${pg.db}`;
 
 export const URLS = {
-  pg: mkPgUrl({ user: 'brokkr', password: 'password', db: 'brokkr' }),
-  redis: `redis://${HOSTS.loopback}:${PORTS.redis}`,
-  thanosQuery: `http://${HOSTS.loopback}:${PORTS.thanosQueryHttp}`,
-  hubBase: `http://${HOSTS.hubPublic}:${PORTS.hubApi.base}`,
-  osLayer: `http://${HOSTS.dataPlaneGateway}:${PORTS.nginx}/assets`,
-} as const;
+  get pg() {
+    return mkPgUrl({ user: 'brokkr', password: 'password', db: 'brokkr' });
+  },
+  get redis() {
+    return `redis://${HOSTS.loopback}:${PORTS.redis}`;
+  },
+  get thanosQuery() {
+    return `http://${HOSTS.loopback}:${PORTS.thanosQueryHttp}`;
+  },
+  get hubBase() {
+    return `http://${HOSTS.hubPublic}:${PORTS.hubApi.base}`;
+  },
+  get osLayer() {
+    return `http://${HOSTS.dataPlaneGateway}:${PORTS.nginx}/assets`;
+  },
+};
 
 // shared hub-DSN resolution for PgService + the db stack ops — prisma.config.ts defaults to
 // postgres/postgres, so ops shelling out to prisma must inject this resolved URL explicitly.

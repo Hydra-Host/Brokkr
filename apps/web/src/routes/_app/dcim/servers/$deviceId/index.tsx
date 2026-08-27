@@ -1,7 +1,6 @@
 import { createFileRoute, getRouteApi } from '@tanstack/react-router';
 import { Cpu, HardDrive, MemoryStick, Network, Server as ServerIcon, Zap } from 'lucide-react';
 
-import type { Server } from '@repo/api-client';
 import { Badge } from '@repo/ui/components/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Separator } from '@repo/ui/components/separator';
@@ -32,7 +31,7 @@ function formatStorage(count: number | null | undefined, size: number | null | u
 }
 
 function ServerOverview() {
-  const device = parentRoute.useLoaderData() as Server;
+  const device = parentRoute.useLoaderData();
   const displayName = device.dcim?.nickname || device.name;
 
   useDocumentTitle(displayName);

@@ -1,7 +1,7 @@
 import { createFileRoute, getRouteApi, Link } from '@tanstack/react-router';
 import { Clipboard, ClipboardCheck, ExternalLink, Network } from 'lucide-react';
 
-import type { BridgeResponse, Interface } from '@repo/api-client';
+import type { Interface } from '@repo/api-client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { formatIpAddress } from '@repo/utils';
@@ -25,7 +25,7 @@ interface NetIp {
 }
 
 function BridgeOverview() {
-  const bridge = parentRoute.useLoaderData() as BridgeResponse;
+  const bridge = parentRoute.useLoaderData();
   useDocumentTitle(bridge.name ?? 'Bridge');
 
   const buckets: Record<NetBucket, NetIp[]> = { primary: [], management: [], virtual: [] };

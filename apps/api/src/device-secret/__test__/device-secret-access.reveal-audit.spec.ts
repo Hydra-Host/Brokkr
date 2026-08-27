@@ -37,9 +37,20 @@ function makeHarness(opts: { privateKey?: Buffer | null } = {}) {
   };
   const contextService = {
     userId: 'user-1',
+    organizationId: 'org-1',
+    requestId: 'req-1',
     identity: { authType: AuthType.Session },
     buildAuditPayload: vi.fn().mockReturnValue({ triggeredBy: 'user-1', triggeredByEmail: 'a@b.c' }),
     requirePermission: vi.fn(),
+    actorFields: vi.fn().mockReturnValue({
+      actorType: 'UI',
+      actorId: 'user-1',
+      actorLabel: 'a@b.c',
+      apiKeyId: null,
+      apiKeyLabel: null,
+    }),
+    requestFields: vi.fn().mockReturnValue({ method: null, path: null, ipAddress: null, userAgent: null }),
+    finalizeIntents: vi.fn(),
   };
   const auditEventStore: { findFirst: ReturnType<typeof vi.fn> } = {
     findFirst: vi.fn().mockResolvedValue({
@@ -68,6 +79,7 @@ function makeHarness(opts: { privateKey?: Buffer | null } = {}) {
   const audit = { record: auditRecord };
   const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const atomPublisher = { publishCurrent: vi.fn().mockResolvedValue({ written: true }) };
+  const eventLog = { record: vi.fn().mockResolvedValue(undefined) };
   const service = new DeviceSecretAccessService(
     deviceSecretService as never,
     contextService as never,
@@ -77,6 +89,7 @@ function makeHarness(opts: { privateKey?: Buffer | null } = {}) {
     zoneCryptoConfig as never,
     audit as never,
     atomPublisher as never,
+    eventLog as never,
     logger as never,
   );
   return {
@@ -90,6 +103,7 @@ function makeHarness(opts: { privateKey?: Buffer | null } = {}) {
     contextService,
     deviceSecretService,
     atomPublisher,
+    eventLog,
     logger,
   };
 }

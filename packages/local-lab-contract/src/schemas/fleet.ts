@@ -136,13 +136,40 @@ export const FleetNodeSchema = z.object({
   zone: z.string().describe('Hub Zone.name this node belongs to (e.g. sim-zone1) — drives the per-node zone selector'),
   ipmi_mac: z.string(),
   data_mac: z.string(),
-  cpus: z.number().int().positive(),
-  memory_mb: z.number().int().positive(),
-  disk_gb: z.number().int().positive(),
+  cpus: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .describe('Per-node vCPU override; null inherits fleet defaults.cpus. A written value pins this node'),
+  memory_mb: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .describe('Per-node RAM override in MiB; null inherits fleet defaults.memory_mb'),
+  disk_gb: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .describe('Per-node OS-disk override in GB; null inherits fleet defaults.disk_gb'),
+  arch: z
+    .string()
+    .nullable()
+    .describe(
+      'Per-node CPU architecture override (amd64 / arm64); null inherits fleet defaults.arch. Free-form because the engine types it as a plain string and derives its own default from the host',
+    ),
   disks: z.array(DiskSpecSchema),
   passthrough: z.array(z.string()),
   nics: z.array(NicSpecSchema),
   data_mtu: z.number().int().min(1280).max(9000).nullable(),
+  network_type: z
+    .enum(['nat', 'public'])
+    .nullable()
+    .describe(
+      "Data-plane attachment: 'nat' puts the node behind the host bridge, 'public' places it on the LAN. Null leaves the engine default",
+    ),
   ip: z.string().nullable().describe('Static data-plane IP override; null = index-derived (.10, .11, …)'),
   bmc_ip: z
     .string()
@@ -180,6 +207,13 @@ export const FleetNodeEffectiveSchema = FleetNodeSchema.extend({
     .describe(
       'Effective BMC-plane IP: the static `bmc_ip` override when set, else index-derived from network.bmcCidr with the same base+10+index rule (derived.effective_bmc_ip). Null when network.bmcCidr is missing or malformed.',
     ),
+  effective_cpus: z
+    .number()
+    .int()
+    .positive()
+    .describe('vCPUs this node actually gets: its own value, else the fleet default'),
+  effective_memory_mb: z.number().int().positive().describe('RAM in MiB this node actually gets'),
+  effective_disk_gb: z.number().int().positive().describe('OS-disk GB this node actually gets'),
 });
 export type FleetNodeEffective = z.infer<typeof FleetNodeEffectiveSchema>;
 
@@ -327,6 +361,57 @@ export const FleetVerifyReportSchema = z.object({
 });
 export type FleetVerifyReport = z.infer<typeof FleetVerifyReportSchema>;
 
+export const FleetDefaultsSchema = z.object({
+  cpus: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .describe('vCPUs every node with no own value inherits; null = the engine default (2)'),
+  memory_mb: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .describe('RAM in MiB inherited the same way; null = the engine default (4096)'),
+  disk_gb: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .describe('OS-disk GB inherited the same way; null = the engine default (40)'),
+  arch: z
+    .string()
+    .nullable()
+    .describe('CPU architecture inherited the same way; null = the engine default, which is the host architecture'),
+});
+export type FleetDefaults = z.infer<typeof FleetDefaultsSchema>;
+
+export const FleetNetworkSchema = z.object({
+  name: z.string().describe('libvirt network name the data plane is defined as (engine network.name)'),
+  cidr: z.string().describe('Data-plane CIDR. Per-node IPs derive from it as the network base + 10 + index'),
+  bmcCidr: z.string().describe('BMC out-of-band CIDR — the host loopback aliases ipmi_sim and sushy bind'),
+  domain: z.string().describe('DNS search domain the fleet hands to its guests (engine network.domain)'),
+  dhcp: z.boolean().describe('Seeded-prefix DHCP. Off by default, and macOS 26 and later disables vmnet DHCP outright'),
+  renderedNetplan: z
+    .boolean()
+    .describe(
+      "Make the fleet exercise the hub's netplan renderer instead of the override the seed writes. The engine refuses it on a multi-zone fleet and alongside dhcp, because both render the wildcard DHCP fallback and so prove nothing",
+    ),
+});
+export type FleetNetwork = z.infer<typeof FleetNetworkSchema>;
+
+export const FleetTombstoneSchema = z.object({
+  name: z.string().describe('Node name an `enable = false` line in the overlay holds out of the fleet'),
+  zone: z.string().describe('Zone the tombstone sits under, so a prune targets the right attribute path'),
+  baseDeclared: z
+    .boolean()
+    .describe(
+      'The committed base topology still declares this node, so the tombstone is what holds it out. A prune would restore the node on the next eval, so the write path refuses it',
+    ),
+});
+export type FleetTombstone = z.infer<typeof FleetTombstoneSchema>;
+
 export const FleetConfigSchema = z.object({
   source: z
     .enum(['local', 'default'])
@@ -343,14 +428,20 @@ export const FleetConfigSchema = z.object({
   zones: z
     .array(z.string())
     .describe('Available zone names (Hub Zone.name) in render order — populates the per-node zone selector'),
-  network: z
-    .object({ cidr: z.string(), bmcCidr: z.string() })
-    .describe('Data + BMC CIDRs, so the builder can show derived per-node IPs (base + 10 + index)'),
+  network: FleetNetworkSchema.describe(
+    'Both network planes. cidr and bmcCidr drive the derived per-node IPs (base + 10 + index)',
+  ),
+  tombstones: z
+    .array(FleetTombstoneSchema)
+    .describe('Removed nodes the overlay still carries as `enable = false`. Nothing prunes them, so they accumulate'),
   bmcDefaults: BmcCredsSchema.describe(
     'Default BMC creds (fleet defaults.bmc) — applied to the fleet on rebuild/re-seed',
   ),
   pending: FleetPendingSchema.optional().describe(
     'Desired-vs-applied drift for this fleet (drives the pending banner)',
+  ),
+  defaults: FleetDefaultsSchema.describe(
+    'Fleet-wide fallbacks. A node leaves a field null to inherit one; before this existed the read path folded them into every node and the write path wrote the folded value back, so changing a default changed nothing',
   ),
 });
 export type FleetConfig = z.infer<typeof FleetConfigSchema>;

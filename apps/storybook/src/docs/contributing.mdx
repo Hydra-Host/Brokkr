@@ -1,0 +1,48 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Guides/Contributing" />
+
+# Contributing
+
+How stories in this Storybook are written, and the rules that keep them portable.
+
+## Story conventions
+
+- **CSF3 + TypeScript.** Every story file exports a `const meta = { … } satisfies Meta<…>`
+  default and typed `StoryObj` stories. Autodocs is enabled globally in `preview.tsx`, so
+  story files never set `tags`.
+- **Title categories.** Titles follow `Category/ComponentName` using the categories from the
+  preview `storySort` order: `Guides`, `Foundations`, `Actions`, `Forms` (with `Primitives`
+  and `React Hook Form` subcategories), `Data Display`, `Charts`, `Feedback`, `Overlay`,
+  `Navigation`, `Branding`, `Domain`, `Hooks`, `Utilities`.
+- **Story order within a file.** `Default` first, then variants, then states (disabled,
+  loading, error), then a composed real-world example last.
+- **`StoryForm` harness for RHF.** Components under `@repo/ui/form/*` take a `control` prop
+  from react-hook-form. Stories wrap them in the `StoryForm` render-prop harness from
+  `src/lib/rhf` instead of hand-rolling `useForm` in every story.
+- **`withRouter` decorator.** Anything touching TanStack Router (`ButtonLink`,
+  `usePagination`, `useFilters`, `useNavigationShortcuts`, `useServerTable`) adds
+  `decorators: [withRouter]` from `src/lib/decorators`, which mounts the story as the root
+  route of an in-memory router so search-param reads and writes never touch the iframe URL.
+- **Unique localStorage `name` per DataTable story.** `DataTable` persists column state under
+  its `name` prop. Give every story a distinct name (e.g. `sb-people-basic`) so stories don't
+  overwrite each other's saved layouts.
+- **Fixtures.** Generic, reusable data (people, select options, chart series) lives in
+  `src/lib/fixtures.ts`. Domain-heavy fixtures (storage layouts, server prices,
+  customization layers) stay inline in their own story file so each story remains
+  self-contained.
+
+## Portability rule
+
+This app is mirrored between the Boss and Commerce repos and documents `@repo/ui` only, so
+its stories import **only** through `@repo/ui` subpaths (`@repo/ui/components/*`,
+`@repo/ui/hooks/*`, `@repo/ui/utils`, …) plus the local `src/lib/*` helpers — never from
+`apps/web`, an api-client package, Boss's `@repo/domain-ui`, or anything else specific to
+one repo.
+
+## packages/ui and this app are mirrored from Boss
+
+Boss's `packages/ui` and `apps/storybook` are the source of truth; the Commerce repo carries
+source-style copies. **Never edit either in Commerce alone.** Changes must be made in Boss
+(or in tandem) and re-copied; the only permitted divergence is Prettier formatting. If a
+story reveals a component bug, fix it upstream — don't patch the mirror.

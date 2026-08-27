@@ -2,7 +2,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, getRouteApi, useNavigate, useRouter } from '@tanstack/react-router';
 import { useState } from 'react';
 
-import type { Server } from '@repo/api-client';
 import { Alert, AlertDescription } from '@repo/ui/components/alert';
 import {
   AlertDialog,
@@ -26,7 +25,7 @@ export const Route = createFileRoute('/_app/dcim/servers/$deviceId/decommission'
 });
 
 function DecommissionDevicePage() {
-  const device = parentRoute.useLoaderData() as Server;
+  const device = parentRoute.useLoaderData();
   const params = Route.useParams();
   const navigate = useNavigate();
   const router = useRouter();

@@ -9,9 +9,15 @@
 
 FROM node:24-slim AS base
 ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
+# pnpm 11 installs global bins into $PNPM_HOME/bin and refuses `add -g` unless that exact
+# directory is on PATH; pnpm 8 used $PNPM_HOME itself. Both are listed so either resolves.
+ENV PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"
 # Pin must match the workspace packageManager (package.json).
-RUN corepack enable && corepack install -g pnpm@8.15.9
+RUN corepack enable && corepack install -g pnpm@11.21.0
+# pnpm 11 defaults verifyDepsBeforeRun to `install`, so `pnpm exec` / `pnpm run` fire an implicit
+# install mid-build that reaches the registry and prunes the layer below it. That layer is the
+# authority here; a build must never re-resolve dependencies.
+ENV pnpm_config_verify_deps_before_run=false
 
 # Stage 1: prune the monorepo to @repo/docs and api. api is pulled in so the docs
 # build can run api's offline OpenAPI/Redoc generator (no running hub needed).

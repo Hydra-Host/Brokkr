@@ -178,6 +178,46 @@ describe('InitTasksService', () => {
     expect(svc.list()[0]).toMatchObject({ state: 'failed', exitCode: null });
   });
 
+  it('reads the exit code off line one of a stamped status file', () => {
+    write('sim:seed.log', 'x\n', 1_100);
+    write('sim:seed.status', '0\n1764000000 41234\n', 1_100);
+    const { svc } = makeService();
+
+    expect(svc.list()[0]).toMatchObject({ state: 'completed', exitCode: 0 });
+  });
+
+  it('reads a non-zero code off line one of a stamped status file', () => {
+    write('sim:seed.log', 'boom\n', 1_100);
+    write('sim:seed.status', '7\n1764000000 41234\n', 1_100);
+    const { svc } = makeService();
+
+    expect(svc.list()[0]).toMatchObject({ state: 'failed', exitCode: 7 });
+  });
+
+  it('treats an empty status file as unreadable rather than a zero exit', () => {
+    write('sim:seed.log', 'x\n', 1_100);
+    write('sim:seed.status', '', 1_100);
+    const { svc } = makeService();
+
+    expect(svc.list()[0]).toMatchObject({ state: 'failed', exitCode: null, detail: 'unreadable exit-status sidecar' });
+  });
+
+  it('reads a stamped status from a previous bring-up as pending, never as a failure', () => {
+    write('fleet:init.log', 'boom\n', 900);
+    write('fleet:init.status', '1\n700 41234\n', 900);
+    const { svc } = makeService();
+
+    expect(svc.list()[0]).toMatchObject({ state: 'pending', exitCode: null });
+  });
+
+  it('reads a stale status under a fresh log as still running, not as a failure', () => {
+    write('fleet:init.log', 'x\n', 1_100);
+    write('fleet:init.status', '1\n700 41234\n', 900);
+    const { svc } = makeService();
+
+    expect(svc.list()[0]).toMatchObject({ state: 'running', exitCode: null });
+  });
+
   it('returns an empty roster when the log dir does not exist', () => {
     dir = join(dir, 'absent');
     const { svc } = makeService();

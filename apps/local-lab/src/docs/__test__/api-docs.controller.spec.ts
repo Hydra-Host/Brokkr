@@ -2,6 +2,8 @@ import { Module, type INestApplication } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, NestFactory } from '@nestjs/core';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { isRecord } from '@repo/utils';
+
 import { LabAuthGuard } from '../../common/lab-auth';
 import { LabExceptionFilter } from '../../common/lab-exception.filter';
 import { AuditStore } from '../../ledger/audit-store';
@@ -88,8 +90,16 @@ describe('ApiDocsController', () => {
     expect(body).toMatchObject({
       openapi: '3.0.2',
       info: { title: 'Brokkr Local — Lab API' },
-      paths: { '/api/docs/getting-started': { get: {} } },
+      paths: { '/api/services': { get: {} } },
     });
+  });
+
+  it('no longer publishes the retired getting-started route', async () => {
+    const res = await fetch(`${base}/api/swagger-json`, offLoopback({ authorization: `Bearer ${TOKEN}` }));
+    const body: unknown = await res.json();
+    const paths = isRecord(body) && isRecord(body.paths) ? Object.keys(body.paths) : [];
+    expect(paths).not.toContain('/api/docs/getting-started');
+    expect(paths.length).toBeGreaterThan(0);
   });
 
   it('serves the spec json to a non-loopback client bearing the query token', async () => {

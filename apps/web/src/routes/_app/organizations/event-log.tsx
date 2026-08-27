@@ -1,22 +1,23 @@
 import type { EventLogEntry, EventLogQuery } from '@repo/api-client';
+import { ServerDataTable } from '@repo/domain-ui/components/server-data-table';
+import type { ServerColumnDef } from '@repo/domain-ui/hooks/use-server-table';
+import { useServerTable } from '@repo/domain-ui/hooks/use-server-table';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Label } from '@repo/ui/components/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@repo/ui/components/select';
-import { ServerDataTable } from '@repo/ui/components/server-data-table';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@repo/ui/components/sheet';
 import { Switch } from '@repo/ui/components/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@repo/ui/components/tooltip';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
-import { useServerTable } from '@repo/ui/hooks/use-server-table';
 import { formatShortDateTime } from '@repo/utils';
 import { keepPreviousData } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { Eye, Info, ScrollText } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { BootScreen } from '~/components/boot-screen';
+import { DurabilityBadge, OutcomeBadge } from '~/components/event-log-badges';
 import { usePermissions } from '~/hooks/use-permissions';
 import { tsr } from '~/lib/api';
 import { actionDisplay, actorDisplay } from '~/lib/event-log';
@@ -33,38 +34,6 @@ const TIERS = ['EVIDENCE', 'ACTIVITY'] as const;
 
 const toOutcome = (value: string) => OUTCOMES.find((outcome) => outcome === value);
 const toTier = (value: string) => TIERS.find((tier) => tier === value);
-
-function OutcomeBadge({ outcome }: { outcome: EventLogEntry['outcome'] }) {
-  switch (outcome) {
-    case 'SUCCEEDED':
-      return (
-        <Badge variant="outline" className="border-status-online text-status-online">
-          Succeeded
-        </Badge>
-      );
-    case 'DENIED':
-      return (
-        <Badge variant="outline" className="border-amber-500 text-amber-500">
-          Denied
-        </Badge>
-      );
-    case 'FAILED':
-      return <Badge variant="destructive">Failed</Badge>;
-  }
-}
-
-/** ATOMIC rows shared the mutation's transaction; the rest can be missing after a crash, so the
- *  distinction is surfaced rather than hidden behind a uniform-looking feed. */
-function DurabilityBadge({ entry }: { entry: EventLogEntry }) {
-  if (entry.durability === 'ATOMIC') {
-    return <Badge variant="secondary">Evidence</Badge>;
-  }
-  return (
-    <Badge variant="outline" className="text-muted-foreground">
-      {entry.tier === 'EVIDENCE' ? 'Evidence (best effort)' : 'Activity'}
-    </Badge>
-  );
-}
 
 function RecordHeader() {
   return (
@@ -84,6 +53,10 @@ function RecordHeader() {
             <p className="mt-1">
               <span className="font-medium">Evidence (best effort)</span> — a governance action, but recorded after the
               fact. A crash in between can lose the record while the action stands.
+            </p>
+            <p className="mt-1">
+              <span className="font-medium">Mirrored</span> — recorded beside a preferred record kept in the device
+              secret audit trail. Neither is guaranteed: either row can be missing while the action itself stands.
             </p>
             <p className="mt-1">
               <span className="font-medium">Activity</span> — captured automatically and never allowed to delay a

@@ -16,6 +16,10 @@ GRPC_PORT_BASE = 9082
 # Bridge Device.id is derived from this ordinal (8000, 8001, …) so it stays deterministic
 # and distinct from the per-node server UUIDs (1, 2, …, see derived.sim_device_uuid).
 BRIDGE_ORDINAL_BASE = 8000
+# The sim runs one libvirt network, so every zone shares fleet.network.cidr. IPAM rows that describe
+# that subnet are emitted once under this zone — a row per zone is the same subnet twice, which
+# Prefix_active_unique and Vlan_active_unique_vid both reject.
+IPAM_OWNER_INDEX = 0
 
 
 @dataclass(frozen=True)

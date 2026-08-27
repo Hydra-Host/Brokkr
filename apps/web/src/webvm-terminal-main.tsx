@@ -2,8 +2,8 @@ import { type BrokkrCommandHandler, TerminalWindow } from '@hydrahost/plugin-web
 import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 
-import { BRAND_NAME } from '@/lib/branding';
-import { claimNavPopupLock } from '@/lib/nav';
+import { BRAND_NAME } from '~/lib/branding';
+import { claimNavPopupLock } from '~/lib/nav';
 
 import './brokkr.css';
 

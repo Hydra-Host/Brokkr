@@ -86,4 +86,23 @@
       '';
     };
   };
+
+  # Metadata only: the options are declared above, and registering them here is what puts them in
+  # the catalog — which is also what makes the env-pin refusal see them as read-only secrets.
+  config.knobMeta = {
+    "zoneCrypto.hubPrivateKey" = {
+      label = "Hub private key";
+      group = "Security";
+      secret = true;
+      danger = true;
+      editable = false;
+    };
+    "zoneCrypto.bridgeAtRestKey" = {
+      label = "Bridge at-rest key";
+      group = "Security";
+      secret = true;
+      danger = true;
+      editable = false;
+    };
+  };
 }

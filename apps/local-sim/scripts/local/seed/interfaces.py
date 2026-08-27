@@ -1,4 +1,4 @@
-"""Shared ``Interface`` + ``IpAddress`` SQL emitters for the per-device seed generators. Pure — no I/O."""
+"""Shared ``Device``/``Interface``/``IpAddress`` SQL emitters for the per-device seed generators. Pure — no I/O."""
 
 from __future__ import annotations
 
@@ -40,6 +40,42 @@ def emit_ip_delete(device_id: str, nic: SeededNic) -> str:
     """Clear every ``IpAddress`` on this device's live ``nic``, leaving a soft-deleted twin's alone."""
     return f"""DELETE FROM "IpAddress" WHERE "interfaceId" IN
     (SELECT id FROM "Interface" WHERE "deviceId" = {q(device_id)} AND name = {q(nic.name)} AND "deletedAt" IS NULL);"""
+
+
+def emit_device_name_clear(device_id: str, zone_id: str, name: str, org: str) -> str:
+    """Free (org, zone, name) when a DIFFERENT row holds it, so a shifted Device.id can take it.
+
+    Device.id derives from the node's flat list position, so removing a non-terminal node moves
+    every later id. The upsert then renames whichever row now sits at that id, which collides with
+    the row the node used to occupy on Device_active_onboarding_name_unique. `id <>` keeps a plain
+    re-seed a no-op: the clause only fires when some other row is squatting on the name.
+    """
+    return f"""UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()
+WHERE "deletedAt" IS NULL AND "zoneId" = {q(zone_id)} AND name = {q(name)}
+  AND id <> {q(device_id)} AND "organizationId" = {org};"""
+
+
+def emit_device_zone_move_prep(device_id: str, zone_id: str) -> str:
+    """Drop this device's seals bound to another zone, so its Device row can change custody zone.
+
+    ``DeviceSecret`` references ``Device(id, zoneId)`` with ``onUpdate: Restrict``: a seal is sealed
+    to one zone's enrollment key, so the FK refuses the zoneId rewrite rather than let a device carry
+    a secret its new zone cannot open. ``zone-crypto:seed-bmc`` re-seals after ``sim:seed``, so the
+    cost is one re-seal. ``zoneId <>`` keeps a plain re-seed a no-op.
+    """
+    return f"""DELETE FROM "DeviceSecret"
+WHERE "deviceId" = {q(device_id)} AND "zoneId" <> {q(zone_id)};"""
+
+
+def emit_role_trigger(on: bool) -> str:
+    """Toggle ``Device.role``'s write-once trigger around a generator's device writes.
+
+    ``block_device_role_change`` permits only Server->DiscoveredHost, while the seed partitions one
+    id space by ``seed_as_server`` — so flipping that flag asks for the refused Server->NULL.
+    ``scripts/local/reconcile_baremetal.py`` brackets it the same way. ``ALTER TABLE`` holds ACCESS
+    EXCLUSIVE on ``Device`` until COMMIT, and an aborted seed rolls the disable back with it.
+    """
+    return f'ALTER TABLE "Device" {"ENABLE" if on else "DISABLE"} TRIGGER device_role_write_once;'
 
 
 def emit_ip_on_interface(device_id: str, nic: SeededNic, address: str, org: str) -> list[str]:

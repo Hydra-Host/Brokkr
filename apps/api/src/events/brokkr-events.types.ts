@@ -33,6 +33,18 @@ declare module '@hydrahost/plugin-sdk' {
       activeRentalsCount: number;
     };
 
+    // Single-bridge outage inside an otherwise-online zone (zone.alert covers whole-zone outages).
+    'bridge.alert': {
+      deviceId: string;
+      instanceId: string;
+      zoneId: string;
+      zoneName: string;
+      lastSeenAt: Date;
+      offlineSince: Date;
+      timeSinceLastSeenSeconds: number;
+      bridgeVersion: string | null;
+    };
+
     'device.failed': {
       deviceId: string;
       deviceName: string;

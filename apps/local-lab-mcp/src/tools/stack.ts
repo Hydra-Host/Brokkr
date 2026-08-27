@@ -84,13 +84,30 @@ export function registerStackTools(server: McpServer, ctx: LabContext, options: 
 
   server.tool(
     'lab_redeploy_stack',
-    'Heavyweight: tear down and bring the full hub/spoke roster back up in dependency order so changed instance counts and overrides take effect. Prefer lab_reload_services for env-only tweaks.',
+    'Heavyweight: tear down and bring the full hub/spoke roster back up in dependency order so changed instance counts and overrides take effect. Prefer lab_reload_services for env-only tweaks. A redeploy that would migrate this checkout to another slot (staged stack config slot ≠ the serving selfSlot) releases the slot registry entry and wipes slot-bound state, so it requires this server to run with LAB_MCP_ALLOW_DESTRUCTIVE=1; the ordinary same-slot redeploy needs no flag.',
     { ...waitShape },
     (args) =>
       call(ctx, (client) =>
         runAndCollect(
           ctx,
           async () => {
+            if (!options.allowDestructive) {
+              const config = await client.getStackConfig({});
+              failOnError(config, 'getStackConfig');
+              const stacks = await client.listStacks({});
+              failOnError(stacks, 'listStacks');
+              if (!config.body.seeded) {
+                throw new Error(
+                  'cannot tell whether this redeploy would migrate the slot: the stack config eval is unseeded, so its slot is a bare default — restart the MCP server with LAB_MCP_ALLOW_DESTRUCTIVE=1 to redeploy anyway',
+                );
+              }
+              // the staged slot is eval-derived, so a mismatch with the serving slot is an armed reslot
+              if (config.body.slot !== stacks.body.selfSlot) {
+                throw new Error(
+                  `redeploy would migrate this checkout from slot ${stacks.body.selfSlot} to slot ${config.body.slot}, releasing the slot registry entry and wiping slot-bound state — restart the MCP server with LAB_MCP_ALLOW_DESTRUCTIVE=1 to run it`,
+                );
+              }
+            }
             const res = await client.redeployStack({ body: {} });
             failOnError(res, 'redeployStack');
             return res.body.runId;
@@ -118,40 +135,24 @@ export function registerStackTools(server: McpServer, ctx: LabContext, options: 
   if (options.allowDestructive) {
     server.tool(
       'lab_update_stack_config',
-      'DESTRUCTIVE-gated: write hub/spoke env overrides, counts, ports, LAN exposure, or the telemetry toggle to the stack.local.nix overlay. The server treats hub/spoke as full-replacement maps, so omitted sections are filled from the current effective overrides before sending — a ports-only call preserves existing env overrides. Inert until a lab_reload_services or lab_redeploy_stack applies them (telemetry auto-applies). Returns applied vs rejected keys.',
+      'DESTRUCTIVE-gated: write stack overrides to the stack.local.nix overlay, keyed by the canonical Nix path lab_get_stack_config reports. A path you omit is untouched, a string sets an override, and null reverts it to the value Nix declares — so no read-modify-write is needed. Inert until a lab_reload_services or lab_redeploy_stack applies them (telemetry auto-applies). Returns applied paths and, for each one it refused, the reason.',
       {
-        hub: z
-          .record(z.string(), z.string())
+        entries: z
+          .record(z.string(), z.string().nullable())
+          .describe(
+            'Canonical path → value, e.g. {"stackDefaults.hub.LOG_LEVEL": "warn", "ports.postgres": "5442", "lan.expose": "true"}. Null reverts a path.',
+          ),
+        slot: z
+          .number()
+          .int()
+          .min(0)
           .optional()
-          .describe('Hub env overrides (knob keys from lab_get_stack_config); omit to keep the current ones'),
-        spoke: z
-          .record(z.string(), z.string())
-          .optional()
-          .describe('Spoke env overrides; omit to keep the current ones'),
-        counts: z
-          .object({ hub: z.number().int().optional(), spoke: z.number().int().optional() })
-          .optional()
-          .describe('Instance counts per group'),
-        ports: z
-          .record(z.string(), z.number().int().min(1).max(65535))
-          .optional()
-          .describe('Editable port overrides (config.ports key → port)'),
-        lan: z.object({ expose: z.boolean() }).optional().describe('Bind sim services to 0.0.0.0 for LAN reach'),
-        telemetry: z.object({ enable: z.boolean() }).optional().describe('Local OTEL sink toggle (auto-applies)'),
+          .describe('Move the stack to this slot; drops fleet and port overrides'),
       },
       (args) =>
         call(ctx, async (client) => {
-          const current = await client.getStackConfig({});
-          failOnError(current, 'getStackConfig');
           const res = await client.putStackConfig({
-            body: {
-              hub: args.hub ?? current.body.values.hub,
-              spoke: args.spoke ?? current.body.values.spoke,
-              counts: args.counts,
-              ports: args.ports,
-              lan: args.lan,
-              telemetry: args.telemetry,
-            },
+            body: args.slot === undefined ? { entries: args.entries } : { entries: args.entries, slot: args.slot },
           });
           failOnError(res, 'putStackConfig');
           return res.body;

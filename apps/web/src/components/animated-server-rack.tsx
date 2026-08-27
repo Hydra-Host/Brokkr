@@ -1,6 +1,6 @@
-import { BRAND_NAME } from '@/lib/branding';
 import { serverRack } from '@repo/ui/ascii-art';
 import { Fragment, useEffect, useState } from 'react';
+import { BRAND_NAME } from '~/lib/branding';
 
 const INDICATOR_CHARS = ['●', '○'] as const;
 type Indicator = (typeof INDICATOR_CHARS)[number];

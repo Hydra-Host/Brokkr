@@ -16,7 +16,7 @@ from pathlib import Path
 
 from local.config import get_settings
 from local.logger import log
-from local.process_utils import ensure_docker_running, run
+from local.process_utils import ensure_docker_buildx, ensure_docker_running, run
 
 _OUTPUTS_PER_ARCH = ("ipxe.efi", "snp.efi", "snponly.efi")
 _IPXE_BUILDS_DIR = Path(os.environ.get("LOCAL_IPXE_BUILDS_DIR", "/opt/brokkr/ipxe-builds"))
@@ -85,6 +85,7 @@ def build_ipxe_binaries(force: bool = False, chain_base_url: str | None = None) 
     build_args = ["--build-arg", f"CHAIN_BASE_URL={effective_url}"]
 
     ensure_docker_running()
+    ensure_docker_buildx()
     for arch in ("amd64", "arm64"):
         (_IPXE_BUILDS_DIR / arch).mkdir(parents=True, exist_ok=True)
 

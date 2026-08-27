@@ -15,6 +15,7 @@ import {
   validateAuditSearch,
   type AuditSearch,
 } from '@/lib/audit-search';
+import { usePoll } from '@/lib/use-poll';
 
 const PAGE = 100;
 const COLUMNS = ['when', 'method', 'path', 'handler', 'outcome', 'status', 'took', 'origin', 'run'];
@@ -90,7 +91,7 @@ export function AuditView({
     queryKey: ['audit', outcome, method, page],
     queryData: { query: { outcome, method, limit: PAGE, offset: page * PAGE } },
     // only the newest page grows; a paged-back window is fixed, so polling it would refetch settled history
-    refetchInterval: page === 0 ? 2000 : false,
+    refetchInterval: usePoll(page === 0 ? 2000 : false),
   });
   const rows = events.data?.status === 200 ? events.data.body : [];
   const err = errText(events.data, events.error);

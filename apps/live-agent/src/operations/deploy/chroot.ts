@@ -1,7 +1,7 @@
 import { registerOperation } from '../../dispatch/registry';
 import { run } from '../../exec';
 import { makeLogger } from '../../logger';
-import { assertTargetPathSafe } from './targetPath';
+import { assertTargetPathSafe } from './target-path';
 const logger = makeLogger('deploy');
 
 type MountSpec = {

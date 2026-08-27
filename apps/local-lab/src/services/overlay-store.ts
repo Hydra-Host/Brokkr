@@ -1,26 +1,41 @@
 import { ConflictException, Injectable, Logger, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import type { ZoneApplyPlan, ZoneWrite } from '@repo/local-lab-contract';
+import {
+  APPLY_ACTION,
+  applyClassFor,
+  applySatisfies,
+  strongestApplyClass,
+  writableFor,
+  type ApplyClass,
+  type RejectedEntry,
+  type RestartState,
+  type StackPending,
+} from '@repo/local-lab-contract';
 import { getErrorMessage } from '../common/errors';
 import { resolveIfaceIp } from '../common/net';
-import { DevenvSeedEvalSchema, parseBoundary } from '../common/pc-schemas';
-import type { StackKnob } from '../contract';
-import { HOSTS, mkPgUrl, STACK_SLOT } from '../ports';
+import type { KnobCatalogEntry, KnobProvenance, KnobValue } from '../common/pc-schemas';
+import { DevenvEnvPinsEvalSchema, DevenvSeedEvalSchema, parseBoundary } from '../common/pc-schemas';
+import { secretDigest } from '../common/redact';
+import type { ConfigTree, ConfigTreeEntry, StackKnob } from '../contract';
+import { HOSTS, mkPgUrl, primeNixPorts, STACK_SLOT } from '../ports';
 import { devenvRoot } from './paths';
 import { RenderedConfigService } from './rendered-config.service';
 import {
+  catalogByPath,
   editablePortsFrom,
-  emptyStackDefaults,
-  OBSERVABILITY_PORT_KEYS,
-  observabilityPortsFrom,
-  resolvedKnobs,
+  envKnobPath,
+  knobsFromCatalog,
+  portDefaultsFromCatalog,
+  readOnlyPortRows,
+  readOnlyPortsFrom,
   servicePortRows,
-  STACK_KNOBS,
   STACK_PORTS,
-  type StackDefaults,
+  type EnvPins,
   type StackGroup,
 } from './stack-knobs';
 import { StackRegistryClient } from './stack-registry-client';
@@ -28,6 +43,19 @@ import { StackRegistryClient } from './stack-registry-client';
 const execFileP = promisify(execFile);
 
 type ZoneMeta = { name: string; index: number; bridges: number };
+
+/** Zones the overlay holds out with `enable = false`. They must be re-emitted on every write or the
+ *  next eval brings them back. */
+const disabledZoneNames = (fleet: FleetEval | undefined): string[] =>
+  Object.entries(fleet?.zones ?? {})
+    .filter(([, z]) => z.enable === false)
+    .map(([name]) => name)
+    .sort();
+
+/** The zone set the base renders byte-identically to the pre-zones output: one zone, index 0, one
+ *  bridge, the canonical name. modules/fleet-topology.nix keys `isDefaultSingle` on the same three. */
+const isDefaultSingleZoneSet = (zones: ZoneMeta[]): boolean =>
+  zones.length === 1 && zones[0].index === 0 && zones[0].bridges === 1 && zones[0].name === 'sim-zone';
 /** Every bridge process across every zone, from `devenv eval labBridges` — the naming and per-zone port
  *  math live in modules/spoke.nix, so nothing here re-derives them. */
 export type LabBridge = { proc: string; zone: string; replica: number; port: number; grpc: number };
@@ -50,6 +78,10 @@ export type FleetMirror = {
   nodes: Record<string, Record<string, unknown>>;
 };
 
+/** A node the overlay holds out with `enable = false`. `baseDeclared` says another file still declares
+ *  it, so dropping the tombstone restores the node — the write path refuses that prune. */
+export type FleetTombstoneMeta = { name: string; zone: string; baseDeclared: boolean };
+
 export type BareMetalMirror = {
   nics: string[];
   arch: string;
@@ -57,7 +89,7 @@ export type BareMetalMirror = {
 };
 
 type FleetEvalNode = Record<string, unknown> & { enable?: boolean; index?: number };
-type FleetEvalZone = { index?: number; bridges?: number; nodes?: Record<string, FleetEvalNode> };
+type FleetEvalZone = { enable?: boolean; index?: number; bridges?: number; nodes?: Record<string, FleetEvalNode> };
 type FleetEvalBareMetal = {
   iface?: string;
   nics?: string[];
@@ -77,7 +109,9 @@ type FleetEval = {
 function flattenFleetNodes(fleet: FleetEval): Record<string, FleetEvalNode> {
   const zones = fleet.zones;
   if (!zones || Object.keys(zones).length === 0) return fleet.nodes ?? {};
-  const byZoneIndex = Object.entries(zones).sort(([, a], [, b]) => (a.index ?? 0) - (b.index ?? 0));
+  const byZoneIndex = Object.entries(zones)
+    .filter(([, z]) => z.enable !== false)
+    .sort(([, a], [, b]) => (a.index ?? 0) - (b.index ?? 0));
   const flat: Record<string, FleetEvalNode> = {};
   let ordinal = 0;
   for (const [zoneName, zone] of byZoneIndex) {
@@ -102,25 +136,36 @@ type Mirror = {
   osLayerCache: OsLayerCfg;
   lan: LanCfg;
   telemetry: TelemetryCfg;
-  stackDefaults: StackDefaults;
+  catalog: KnobCatalogEntry[];
+  provenance: KnobProvenance[];
+  /** Per-path values as of the last eval; the typed fields below overlay anything saved since. */
+  values: KnobValue[];
+  /** Knob path -> the variable pinning it. A pinned path outranks the overlay, so a write to one is
+   *  rejected rather than persisted. */
+  envPins: EnvPins;
   portKeys: { editable: string[]; readOnly: string[] };
   ports: Record<string, number>;
-  /** Pre-override value of each editable port (`devenv eval portDefaults`) — what `ports` is diffed
-   *  against to decide which keys the overlay must pin. */
   portDefaults: Record<string, number>;
-  observabilityPorts: Record<string, number>;
+  readOnlyPorts: Record<string, number>;
   bridges: LabBridge[];
   fleet: FleetMirror | null;
   fleetOwned: boolean;
   mode: 'vm' | 'baremetal';
+  fleetAutoStart: boolean;
   baremetal: BareMetalMirror | null;
   baremetalOwned: boolean;
   zonesMeta: ZoneMeta[];
+  fleetNodeFiles: Record<string, Record<string, string[]>>;
+  zoneCapacity: number;
+  zoneFiles: Record<string, string[]>;
+  zoneTombstones: string[];
+  options: Record<string, string | number | boolean>;
 };
 
 /** Hub is pinned to 1: modules/hub.nix probes every replica on the base port, so a replica beyond the
  *  first reports the primary's health and nothing in Nix consumes stackCounts to start one anyway. */
 const MAX_HUBS = 1;
+const SECRET_MASK = '***';
 const MAX_SPOKES = 8;
 
 const clampCount = (v: unknown, max: number): number => {
@@ -131,11 +176,191 @@ const clampCount = (v: unknown, max: number): number => {
 const isPortOverride = (key: string, value: number, defaults: Record<string, number>): boolean =>
   defaults[key] !== value;
 
+/** An empty password stays empty: masking it would make "unset" and "hidden" read the same. The
+ *  overlay keeps the real value, and setStackConfig reads SECRET_MASK back as "unchanged". */
+const maskIdentity = (identity: IdentityCfg): IdentityCfg =>
+  identity.pg.password === '' ? identity : { ...identity, pg: { ...identity.pg, password: SECRET_MASK } };
+
 // ServiceSchema's port is a plain z.number(), which rejects NaN — never let one out of the eval boundary.
 const nonNegativeInt = (v: unknown): number => {
   const n = Number(v);
   return Number.isInteger(n) && n >= 0 ? n : 0;
 };
+
+/** The one file the control center writes. `labFleetNodeFiles` reports repo-relative paths, so a node
+ *  listing only this file is declared nowhere else. */
+const OVERLAY_FILE = 'stack.local.nix';
+
+/** Every field a stack write can touch, so one pass over the patch can route each path without
+ *  rebuilding the mirror per entry. */
+type Draft = {
+  hub: Record<string, string>;
+  spoke: Record<string, string>;
+  identity: IdentityCfg;
+  osLayerCache: OsLayerCfg;
+  lan: LanCfg;
+  telemetry: TelemetryCfg;
+  ports: Record<string, number>;
+  options: Record<string, string | number | boolean>;
+};
+
+const draftFrom = (cur: Mirror): Draft => ({
+  hub: { ...cur.hub },
+  spoke: { ...cur.spoke },
+  identity: { pg: { ...cur.identity.pg }, orgId: cur.identity.orgId },
+  osLayerCache: { ...cur.osLayerCache },
+  lan: { ...cur.lan },
+  telemetry: { ...cur.telemetry },
+  ports: { ...cur.ports },
+  options: { ...cur.options },
+});
+
+/** Types a submitted string against the kind and the range the catalog declares. Undefined means it
+ *  does not coerce, which is a rejection rather than a silent zero or false. */
+export function coerceOption(
+  entry: Pick<KnobCatalogEntry, 'kind' | 'bounds'>,
+  raw: string,
+): string | number | boolean | undefined {
+  const { kind, bounds } = entry;
+  if (kind === 'bool') return raw === 'true' ? true : raw === 'false' ? false : undefined;
+  if (kind === 'number' || kind === 'port') {
+    // Number('') is 0, which clears the integer test and any bounds a knob declares
+    if (raw === '') return undefined;
+    const n = Number(raw);
+    if (!Number.isInteger(n)) return undefined;
+    if (bounds && (n < bounds.min || n > bounds.max)) return undefined;
+    // stricter than unsignedInt16 on purpose: port 0 types fine and binds nothing
+    if (kind === 'port' && !(n >= 1 && n <= 65535)) return undefined;
+    return n;
+  }
+  return raw;
+}
+
+/** Paths a typed field already owns. The generic option writer must never also hold one, or the same
+ *  path would round-trip through two places. */
+export const RESERVED_OPTION_PREFIXES: readonly string[] = [
+  'stackDefaults.hub.',
+  'stackDefaults.spoke.',
+  'ports.',
+  'identity.',
+  'osLayerCache.',
+  'lan.expose',
+  'telemetry.enable',
+  'stack.slot',
+  'stackCounts.',
+  'fleet.',
+];
+
+const asString = (v: string | number | boolean): string => String(v);
+
+const declaredDefault = (entry: KnobCatalogEntry): string | null =>
+  entry.default === null || entry.default === undefined ? null : String(entry.default);
+
+/** True when the write leaves a line in the overlay, matching what renderOverlay emits per family: an
+ *  env knob is a line whenever the map holds it, everything else only when it differs from the default. */
+function leavesOverride(draft: Draft, path: string, entry: KnobCatalogEntry): boolean {
+  for (const group of ['hub', 'spoke'] as const) {
+    const prefix = `stackDefaults.${group}.`;
+    if (path.startsWith(prefix)) return draft[group][path.slice(prefix.length)] !== undefined;
+  }
+  return draftValue(draft, path) !== declaredDefault(entry);
+}
+
+function draftValue(draft: Draft, path: string): string | null {
+  for (const group of ['hub', 'spoke'] as const) {
+    const prefix = `stackDefaults.${group}.`;
+    if (path.startsWith(prefix)) return draft[group][path.slice(prefix.length)] ?? null;
+  }
+  if (path.startsWith('ports.')) {
+    const port = draft.ports[path.slice('ports.'.length)];
+    return port === undefined ? null : String(port);
+  }
+  const reads: Record<string, () => string> = {
+    'identity.pg.user': () => draft.identity.pg.user,
+    'identity.pg.password': () => draft.identity.pg.password,
+    'identity.pg.db': () => draft.identity.pg.db,
+    'identity.orgId': () => draft.identity.orgId,
+    'osLayerCache.originHost': () => draft.osLayerCache.originHost,
+    'osLayerCache.resolvers': () => draft.osLayerCache.resolvers,
+    'lan.expose': () => String(draft.lan.expose),
+    'telemetry.enable': () => String(draft.telemetry.enable),
+  };
+  const read = reads[path];
+  if (read) return read();
+  const opt = draft.options[path];
+  return opt === undefined ? null : String(opt);
+}
+
+/** Routes one coerced value into the draft. False means no writer owns the path. A null reverts:
+ *  a typed field falls back to the catalog default, and a generic option loses its line entirely. */
+function applyToDraft(
+  draft: Draft,
+  path: string,
+  value: string | number | boolean | null,
+  cur: Mirror,
+  entry: KnobCatalogEntry,
+): boolean {
+  const fallback = entry.default === null || entry.default === undefined ? '' : String(entry.default);
+  for (const group of ['hub', 'spoke'] as const) {
+    const prefix = `stackDefaults.${group}.`;
+    if (path.startsWith(prefix)) {
+      const key = path.slice(prefix.length);
+      if (value === null) delete draft[group][key];
+      else draft[group][key] = asString(value);
+      return true;
+    }
+  }
+  if (path.startsWith('ports.')) {
+    const key = path.slice('ports.'.length);
+    if (!cur.portKeys.editable.includes(key)) return false;
+    const fallbackPort = cur.portDefaults[key];
+    if (value === null) {
+      if (fallbackPort === undefined) delete draft.ports[key];
+      else draft.ports[key] = fallbackPort;
+      return true;
+    }
+    if (typeof value !== 'number') return false;
+    draft.ports[key] = value;
+    return true;
+  }
+  const typed: Record<string, (v: string) => void> = {
+    'identity.pg.user': (v) => void (draft.identity.pg.user = v),
+    // stackConfig() hands out SECRET_MASK, so a client echoing the field back means "leave it":
+    // without this the next save would store the mask itself as the Postgres password.
+    'identity.pg.password': (v) => void (v === SECRET_MASK ? undefined : (draft.identity.pg.password = v)),
+    'identity.pg.db': (v) => void (draft.identity.pg.db = v),
+    'identity.orgId': (v) => void (draft.identity.orgId = v),
+    'osLayerCache.originHost': (v) => void (draft.osLayerCache.originHost = v),
+    'osLayerCache.resolvers': (v) => void (draft.osLayerCache.resolvers = v),
+    'lan.expose': (v) => void (draft.lan.expose = v === 'true'),
+    'telemetry.enable': (v) => void (draft.telemetry.enable = v === 'true'),
+  };
+  const write = typed[path];
+  if (write) {
+    write(value === null ? fallback : asString(value));
+    return true;
+  }
+  if (RESERVED_OPTION_PREFIXES.some((prefix) => path.startsWith(prefix))) return false;
+  if (value === null) delete draft.options[path];
+  else draft.options[path] = value;
+  return true;
+}
+
+/** Comparison-only fingerprints, so an overridden secret is detectable without either value reaching
+ *  the client. */
+const digestPair = (value: string | null, fallback: string | null) => ({
+  valueDigest: secretDigest(value ?? ''),
+  defaultDigest: secretDigest(fallback ?? ''),
+});
+
+/** Null means the two cannot be told apart. It happens for a secret with nothing on either side: an
+ *  unset secret and one the server could not read look identical, and reporting `false` would lie. */
+function overriddenOf(secret: boolean, value: string | null, fallback: string | null): boolean | null {
+  if (!secret) return value !== fallback;
+  const { valueDigest, defaultDigest } = digestPair(value, fallback);
+  if (!valueDigest && !defaultDigest) return null;
+  return valueDigest !== defaultDigest;
+}
 
 function emptyMirror(): Mirror {
   return {
@@ -149,15 +374,24 @@ function emptyMirror(): Mirror {
     osLayerCache: UNSEEDED_OSLAYER,
     lan: { expose: false },
     telemetry: { enable: false },
-    stackDefaults: emptyStackDefaults(),
+    catalog: [],
+    provenance: [],
+    values: [],
+    envPins: {},
     portKeys: { editable: [], readOnly: [] },
     ports: {},
     portDefaults: {},
-    observabilityPorts: {},
+    readOnlyPorts: {},
     bridges: [],
     fleet: null,
+    fleetNodeFiles: {},
+    zoneCapacity: 0,
+    zoneFiles: {},
+    zoneTombstones: [],
+    options: {},
     fleetOwned: false,
     mode: 'vm',
+    fleetAutoStart: true,
     baremetal: null,
     baremetalOwned: false,
     zonesMeta: [],
@@ -175,6 +409,16 @@ export class OverlayStoreService implements OnModuleInit {
   private seedInFlight: Promise<void> | null = null;
 
   private rebindPending = false;
+
+  private savedNotApplied = new Set<string>();
+
+  private readonly startedAtMs = Date.now();
+
+  private ownWriteMtimeMs: number | null = null;
+
+  private seededMtimeMs: number | null = null;
+
+  private zoneSteps: ZoneApplyPlan['steps'] = [];
 
   private rebindReason = 'datastore/LAN bind changed';
 
@@ -220,6 +464,7 @@ export class OverlayStoreService implements OnModuleInit {
 
   clearRebindPending(): void {
     this.rebindPending = false;
+    this.clearSatisfiedBy('rebind-recreate');
     this.rebindWipe = undefined;
   }
 
@@ -236,6 +481,86 @@ export class OverlayStoreService implements OnModuleInit {
     return this.current().telemetry.enable;
   }
 
+  /** Nodes the overlay holds out with `enable = false`. An unknown or empty file list reads as
+   *  base-declared: a refused prune is recoverable, a silently restored node is not. */
+  fleetTombstones(): FleetTombstoneMeta[] {
+    const cur = this.current();
+    const firstZone = [...cur.zonesMeta].sort((a, b) => a.index - b.index)[0]?.name ?? 'sim-zone';
+    return Object.entries(cur.fleet?.nodes ?? {})
+      .filter(([, spec]) => spec.enable === false)
+      .map(([name, spec]) => {
+        const zone = typeof spec.zone === 'string' && spec.zone ? spec.zone : firstZone;
+        const files = cur.fleetNodeFiles[zone]?.[name];
+        const declaredElsewhere = (files ?? []).filter((f) => f !== OVERLAY_FILE);
+        return { name, zone, baseDeclared: files === undefined || declaredElsewhere.length > 0 };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  zonesMeta(): ZoneMeta[] {
+    return this.current().zonesMeta;
+  }
+
+  zoneFiles(): Record<string, string[]> {
+    return this.current().zoneFiles;
+  }
+
+  zoneCapacity(): number {
+    return this.current().zoneCapacity;
+  }
+
+  isSeeded(): boolean {
+    return this.current().seeded;
+  }
+
+  /** Enabled node names per zone, from the mirror rather than a second flatten. */
+  fleetNodesByZone(): Record<string, string[]> {
+    const cur = this.current();
+    const firstZone = [...cur.zonesMeta].sort((a, b) => a.index - b.index)[0]?.name ?? 'sim-zone';
+    const out: Record<string, string[]> = {};
+    for (const zone of cur.zonesMeta) out[zone.name] = [];
+    for (const [name, spec] of Object.entries(cur.fleet?.nodes ?? {})) {
+      if (spec.enable === false) continue;
+      const zone = typeof spec.zone === 'string' && spec.zone ? spec.zone : firstZone;
+      out[zone] = [...(out[zone] ?? []), name];
+    }
+    return out;
+  }
+
+  /** Replaces the declared zone set. A zone another file declares is tombstoned rather than dropped,
+   *  because dropping its key lets the base declaration come back. */
+  setZonesConfig(input: {
+    zones: ZoneWrite[];
+    nodeZones: Record<string, string>;
+    steps?: ZoneApplyPlan['steps'];
+  }): void {
+    const cur = this.writableMirror();
+    const desired = new Set(input.zones.map((z) => z.name));
+    const removed = cur.zonesMeta.filter((z) => !desired.has(z.name)).map((z) => z.name);
+    const tombstones = [
+      ...cur.zoneTombstones.filter((name) => !desired.has(name)),
+      ...removed.filter((name) => (cur.zoneFiles[name] ?? []).some((file) => file !== OVERLAY_FILE)),
+    ];
+    const nodes: Record<string, Record<string, unknown>> = {};
+    for (const [name, spec] of Object.entries(cur.fleet?.nodes ?? {})) {
+      const zone = input.nodeZones[name];
+      nodes[name] = zone === undefined ? spec : { ...spec, zone };
+    }
+    this.mirror = {
+      ...cur,
+      zonesMeta: [...input.zones].sort((a, b) => a.index - b.index),
+      zoneTombstones: [...new Set(tombstones)].sort(),
+      fleet: cur.fleet ? { ...cur.fleet, nodes } : cur.fleet,
+      fleetOwned: true,
+    };
+    this.writeOverlay();
+    // the plan lived in the page's own state, so a refresh lost work the stack still needed. it is
+    // outstanding until the zone-seed op reports it applied.
+    for (const zone of input.zones) this.savedNotApplied.add(`fleet.zones.${zone.name}`);
+    for (const name of removed) this.savedNotApplied.add(`fleet.zones.${name}`);
+    if (input.steps) this.zoneSteps = input.steps;
+  }
+
   labBridges(): LabBridge[] {
     return this.current().bridges;
   }
@@ -249,7 +574,7 @@ export class OverlayStoreService implements OnModuleInit {
           'stack.slot',
           'stackOverrides',
           'stackCounts',
-          'stackDefaults',
+          'configModel',
           'portGroups',
           'labBridges',
           'identity',
@@ -257,8 +582,10 @@ export class OverlayStoreService implements OnModuleInit {
           'lan',
           'telemetry',
           'ports',
-          'portDefaults',
           'fleet',
+          'labFleetNodeFiles',
+          'labZoneCapacity',
+          'labZoneFiles',
         ],
         {
           cwd: this.devenvRoot,
@@ -282,15 +609,18 @@ export class OverlayStoreService implements OnModuleInit {
       };
       const lan: LanCfg = { expose: j.lan?.expose ?? false };
       const telemetry: TelemetryCfg = { enable: j.telemetry?.enable ?? false };
-      const stackDefaults: StackDefaults = {
-        hub: j.stackDefaults?.hub ?? {},
-        spoke: j.stackDefaults?.spoke ?? {},
-        hubKnobEnv: j.stackDefaults?.hubKnobEnv ?? {},
-      };
+      const catalog = j.configModel?.catalog ?? [];
+      const provenance = j.configModel?.provenance ?? [];
+      const values = j.configModel?.values ?? [];
+      const envPins = await this.seedEnvPins();
       const portKeys = { editable: j.portGroups?.editable ?? [], readOnly: j.portGroups?.readOnly ?? [] };
       const ports = editablePortsFrom(j.ports, portKeys.editable);
-      const portDefaults = editablePortsFrom(j.portDefaults, portKeys.editable);
-      const observabilityPorts = observabilityPortsFrom(j.ports, portKeys.readOnly);
+      const portDefaults = portDefaultsFromCatalog(catalog);
+      const primed = primeNixPorts(j.ports ?? {});
+      if (primed.skipped.length > 0) {
+        this.log.warn(`ports eval reported unusable values, keeping the bootstrap port: ${primed.skipped.join(', ')}`);
+      }
+      const readOnlyPorts = readOnlyPortsFrom(j.ports, portKeys.readOnly);
       const bridges: LabBridge[] = (j.labBridges ?? []).flatMap((b) =>
         b.proc
           ? [
@@ -308,6 +638,7 @@ export class OverlayStoreService implements OnModuleInit {
         ? { network: j.fleet.network ?? {}, defaults: j.fleet.defaults ?? {}, nodes: flattenFleetNodes(j.fleet) }
         : null;
       const mode: 'vm' | 'baremetal' = j.fleet?.mode === 'baremetal' ? 'baremetal' : 'vm';
+      const fleetAutoStart = j.fleet?.autoStart ?? true;
       const bm = j.fleet?.baremetal;
       const baremetal: BareMetalMirror | null = bm
         ? {
@@ -326,11 +657,13 @@ export class OverlayStoreService implements OnModuleInit {
           }
         : null;
       const zonesMeta: ZoneMeta[] = j.fleet?.zones
-        ? Object.entries(j.fleet.zones).map(([name, z]) => ({
-            name,
-            index: z.index ?? 0,
-            bridges: Math.max(1, Number(z.bridges ?? 1)),
-          }))
+        ? Object.entries(j.fleet.zones)
+            .filter(([, z]) => z.enable !== false)
+            .map(([name, z]) => ({
+              name,
+              index: z.index ?? 0,
+              bridges: Math.max(1, Number(z.bridges ?? 1)),
+            }))
         : [];
       this.mirror = {
         seeded: true,
@@ -343,21 +676,31 @@ export class OverlayStoreService implements OnModuleInit {
         osLayerCache,
         lan,
         telemetry,
-        stackDefaults,
+        catalog,
+        provenance,
+        values,
+        envPins,
         portKeys,
         ports,
         portDefaults,
-        observabilityPorts,
+        readOnlyPorts,
         bridges,
         fleet,
         fleetOwned: this.overlayHasFleet(),
         mode,
+        fleetAutoStart,
         baremetal,
         baremetalOwned: this.overlayHasBaremetal(),
         zonesMeta,
+        fleetNodeFiles: j.labFleetNodeFiles ?? {},
+        zoneCapacity: j.labZoneCapacity ?? 0,
+        zoneFiles: j.labZoneFiles ?? {},
+        zoneTombstones: disabledZoneNames(j.fleet),
+        options: this.mirror?.options ?? {},
       };
+      this.seededMtimeMs = this.overlayMtimeMs();
       this.log.log(
-        `seeded stack overrides (hub=${Object.keys(this.mirror.hub).length} spoke=${Object.keys(this.mirror.spoke).length} knobs; pg user=${identity.pg.user}; bridges=${bridges.length}; fleet nodes=${Object.keys(fleet?.nodes ?? {}).length})`,
+        `seeded stack overrides (hub=${Object.keys(this.mirror.hub).length} spoke=${Object.keys(this.mirror.spoke).length} knobs; catalog=${catalog.length}; pins=${Object.keys(envPins).length}; pg user=${identity.pg.user}; bridges=${bridges.length}; fleet nodes=${Object.keys(fleet?.nodes ?? {}).length})`,
       );
     } catch (e) {
       // an earlier success keeps its values for reads, but fleetOwned/baremetalOwned were derived from
@@ -369,9 +712,29 @@ export class OverlayStoreService implements OnModuleInit {
     }
   }
 
+  /** Read on its own: modules/env-pins.nix may not be in this checkout, and a missing module means no
+   *  pin exists to protect — folding it into the seed eval would fail the whole seed instead. */
+  private async seedEnvPins(): Promise<EnvPins> {
+    try {
+      const { stdout } = await execFileP('devenv', ['eval', 'envPins'], {
+        cwd: this.devenvRoot,
+        timeout: 120_000,
+      });
+      const raw = parseBoundary(DevenvEnvPinsEvalSchema, JSON.parse(stdout), 'devenv envPins eval').envPins;
+      return Object.fromEntries((raw ?? []).map((pin) => [pin.path, pin.var]));
+    } catch (e) {
+      const message = getErrorMessage(e);
+      const log = /envPins.*not found/.test(message) ? this.log.debug : this.log.warn;
+      log.call(this.log, `no env pins read, treating every knob as unpinned: ${message}`);
+      return {};
+    }
+  }
+
   originHost(): string {
     return this.current().osLayerCache.originHost;
   }
+
+  private provenanceStale = false;
 
   private current(): Mirror {
     return this.mirror ?? emptyMirror();
@@ -387,11 +750,53 @@ export class OverlayStoreService implements OnModuleInit {
         'stack overlay state is unknown — the devenv eval seed failed, and saving now would wipe the fleet topology and port overrides in stack.local.nix. Fix the devenv eval and retry.',
       );
     }
+    // reseed() is async and writes are not, so a moved file can only be refused here: rebuilding from
+    // the mirror would re-render an edited-away or deleted override as if the operator never touched it.
+    if (this.overlayMtimeMs() !== this.seededMtimeMs) {
+      void this.reseed();
+      throw new ServiceUnavailableException(
+        'stack.local.nix changed on disk since it was last read, so saving now would rebuild it from overrides that file no longer has. It is being re-read — retry the save.',
+      );
+    }
     return m;
   }
 
+  /** Recovery: every other write rebuilds from the mirror, which an unseeded one cannot do, so a removal
+   *  is the only write still reachable. One-line assignments only — a half-removed block orphans its body. */
+  private dropOverlayLines(paths: string[]): { applied: string[]; rejected: RejectedEntry[] } {
+    const path = this.overlayPath();
+    if (!existsSync(path)) {
+      throw new ServiceUnavailableException(
+        'there is no stack.local.nix to recover from — the devenv eval is failing for another reason.',
+      );
+    }
+    const before = readFileSync(path, 'utf8');
+    const applied: string[] = [];
+    const rejected: RejectedEntry[] = [];
+    let text = before;
+    for (const p of paths) {
+      const line = new RegExp(`^ {2}${p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} = [^\n]*;[ \t]*\n`, 'm');
+      if (!line.test(text)) {
+        rejected.push({ path: p, reason: 'no-overlay-line' });
+        continue;
+      }
+      text = text.replace(line, '');
+      applied.push(p);
+    }
+    if (applied.length > 0) {
+      const tmp = `${path}.tmp`;
+      writeFileSync(tmp, text);
+      renameSync(tmp, path);
+      this.rendered.invalidateRenderedConfig();
+      this.rendered.armRefreshEval();
+      this.log.warn(`recovered stack.local.nix by dropping ${applied.join(', ')} — the mirror was unseeded`);
+      void this.reseed();
+    }
+    return { applied: applied.sort(), rejected: rejected.sort((a, b) => a.path.localeCompare(b.path)) };
+  }
+
   private overlayPath(): string {
-    return join(this.devenvRoot, 'stack.local.nix');
+    return join(this.devenvRoot, OVERLAY_FILE);
   }
 
   /** Before the root was corrected, a standalone lab wrote the overlay a level down, where devenv never
@@ -482,146 +887,279 @@ export class OverlayStoreService implements OnModuleInit {
   stackConfig() {
     const cur = this.current();
     if (!cur.seeded) void this.reseed();
-    const { seeded, identity, osLayerCache, lan, telemetry, stackDefaults, portKeys, ports, observabilityPorts } = cur;
-    const originHost = osLayerCache.originHost;
-    // `derived` knobs: the eval's copy lags an unrebuilt identity/origin edit that is already in the mirror.
-    const fillDynamic = (k: StackKnob): StackKnob => {
-      if (k.env === 'HUB_REPO_PATH') return { ...k, default: process.env.HUB_REPO_PATH ?? k.default };
-      if (k.env === 'DATABASE_URL' && identity.pg.user && identity.pg.db) {
-        return { ...k, default: mkPgUrl(identity.pg, ports.postgres) };
-      }
-      if (k.env === 'DISCOVERY_BASE_URL' && originHost) {
-        return { ...k, default: `https://${originHost}/brokkr-live-light` };
-      }
-      return k;
-    };
+    else this.reseedIfOverlayMoved();
+    const { seeded, identity, osLayerCache, lan, telemetry, catalog, envPins, portKeys, ports } = cur;
+    const byPath = catalogByPath(catalog);
+    // Same resolver the config tree reads, so the two surfaces cannot report different values.
+    const fillDynamic =
+      (group: StackGroup) =>
+      (k: StackKnob): StackKnob => {
+        const value = this.derivedValue(envKnobPath(group, k.env), cur);
+        return value === undefined ? k : { ...k, default: value, source: 'derived' };
+      };
     return {
       seeded,
       slot: cur.slot,
       knobs: {
-        hub: resolvedKnobs('hub', stackDefaults).map(fillDynamic),
-        spoke: resolvedKnobs('spoke', stackDefaults).map(fillDynamic),
+        hub: knobsFromCatalog('hub', catalog, envPins).map(fillDynamic('hub')),
+        spoke: knobsFromCatalog('spoke', catalog, envPins).map(fillDynamic('spoke')),
       },
+      topology: { zones: cur.zonesMeta.length, bridges: cur.bridges.length },
       ports: STACK_PORTS,
       servicePorts: [
-        ...servicePortRows(portKeys.editable, ports, false),
-        ...servicePortRows(OBSERVABILITY_PORT_KEYS, observabilityPorts, true),
+        ...servicePortRows(portKeys.editable, ports, false, byPath),
+        ...readOnlyPortRows(portKeys.readOnly, cur.readOnlyPorts, byPath),
       ],
       values: this.overrides(),
-      counts: this.counts(),
-      identity,
+      identity: maskIdentity(identity),
       osLayerCache,
       lan,
       telemetry,
     };
   }
 
+  /** Computed here, not read from Nix. Keyed by canonical path so the stack editor and the config
+   *  tree cannot resolve the same knob differently. */
+  private derivedValue(path: string, cur: Mirror): string | undefined {
+    if (path === envKnobPath('hub', 'HUB_REPO_PATH')) return process.env.HUB_REPO_PATH || undefined;
+    if (path === envKnobPath('hub', 'DATABASE_URL')) {
+      const { pg } = cur.identity;
+      return pg.user && pg.db ? mkPgUrl(pg, cur.ports.postgres) : undefined;
+    }
+    if (path === envKnobPath('spoke', 'DISCOVERY_BASE_URL')) {
+      const host = cur.osLayerCache.originHost;
+      return host ? `https://${host}/brokkr-live-light` : undefined;
+    }
+    return undefined;
+  }
+
+  /** Weakest first: the last eval, the mirror's own fields, then derived. The eval layer covers every
+   *  catalogued path, so a knob can no longer go missing here and report its default instead. */
+  private effectiveValues(cur: Mirror): Map<string, string | null> {
+    const values = new Map<string, string | null>();
+    for (const { path, value } of cur.values) {
+      values.set(path, value === null || value === undefined ? null : String(value));
+    }
+    const tracked: [string, string][] = [
+      ['stack.slot', String(cur.slot)],
+      ['stackCounts.hub', String(cur.counts.hub)],
+      ['stackCounts.spoke', String(cur.counts.spoke)],
+      ['identity.pg.user', cur.identity.pg.user],
+      ['identity.pg.password', cur.identity.pg.password],
+      ['identity.pg.db', cur.identity.pg.db],
+      ['identity.orgId', cur.identity.orgId],
+      ['osLayerCache.originHost', cur.osLayerCache.originHost],
+      ['osLayerCache.resolvers', cur.osLayerCache.resolvers],
+      ['lan.expose', String(cur.lan.expose)],
+      ['telemetry.enable', String(cur.telemetry.enable)],
+      ['fleet.mode', cur.mode],
+      ['fleet.autoStart', String(cur.fleetAutoStart)],
+    ];
+    for (const [key, value] of tracked) values.set(key, value);
+    for (const [key, port] of Object.entries(cur.ports)) values.set(`ports.${key}`, String(port));
+    for (const group of ['hub', 'spoke'] as const) {
+      for (const [key, value] of Object.entries(cur[group])) values.set(envKnobPath(group, key), value);
+    }
+    for (const entry of cur.catalog) {
+      const derived = this.derivedValue(entry.path, cur);
+      if (derived !== undefined) values.set(entry.path, derived);
+    }
+    return values;
+  }
+
+  /** The module system attributes an env knob's files to the containing attrset, not the key, so a knob
+   *  reads both its defaults block and the overrides block it merges with. */
+  private definedIn(entry: KnobCatalogEntry, provenance: Map<string, KnobProvenance>): string[] {
+    // per-key first: an env knob's own path names the module supplying its default, so returning
+    // that early reports every override as a default. containers stay weakest-first for the chip.
+    const cut = entry.path.lastIndexOf('.');
+    if (cut >= 0) {
+      const key = entry.path.slice(cut + 1);
+      const containers = [entry.path.slice(0, cut), ...(entry.overrideFrom ? [entry.overrideFrom] : [])];
+      const viaKey = [...new Set(containers.flatMap((c) => provenance.get(c)?.perKey[key] ?? []))];
+      if (viaKey.length > 0) return viaKey;
+    }
+    return provenance.get(entry.path)?.files ?? [];
+  }
+
+  configTree(): ConfigTree {
+    const cur = this.current();
+    if (!cur.seeded) void this.reseed();
+    else if (this.provenanceStale) {
+      this.provenanceStale = false;
+      void this.reseed();
+    } else this.reseedIfOverlayMoved();
+    const provenance = new Map(cur.provenance.map((entry) => [entry.path, entry]));
+    const values = this.effectiveValues(cur);
+    const entries: ConfigTreeEntry[] = cur.catalog.map((entry) => {
+      const fallback = entry.default === null || entry.default === undefined ? null : String(entry.default);
+      const value = values.has(entry.path) ? (values.get(entry.path) ?? null) : fallback;
+      const pinnedBy = cur.envPins[entry.path];
+      return {
+        path: entry.path,
+        label: entry.label,
+        group: entry.group,
+        description: entry.description,
+        value: entry.secret ? SECRET_MASK : value,
+        default: entry.secret ? SECRET_MASK : fallback,
+        overridden: overriddenOf(entry.secret, value, fallback),
+        writable: writableFor(entry.path, entry.editable),
+        kind: entry.kind,
+        choices: entry.choices,
+        danger: entry.danger,
+        applyClass: applyClassFor(entry.path),
+        definedIn: this.definedIn(entry, provenance),
+        secret: entry.secret,
+        ...(entry.secret ? digestPair(value, fallback) : {}),
+        ...(pinnedBy ? { pinnedBy } : {}),
+      };
+    });
+    return { seeded: cur.seeded, entries };
+  }
+
   async setStackConfig(cfg: {
-    hub: Record<string, string>;
-    spoke: Record<string, string>;
-    counts?: { hub?: number; spoke?: number };
-    identity?: { pg?: Partial<IdentityCfg['pg']>; orgId?: string };
-    osLayerCache?: Partial<OsLayerCfg>;
-    lan?: Partial<LanCfg>;
-    telemetry?: Partial<TelemetryCfg>;
-    ports?: Record<string, number>;
+    entries: Record<string, string | null>;
     slot?: number;
-  }): Promise<{ applied: string[]; rejected: string[] }> {
+  }): Promise<{ applied: string[]; rejected: RejectedEntry[] }> {
     const applied: string[] = [];
-    const rejected: string[] = [];
-    // a slot move rebases the mirror (fleet/port pins would outrank the new slot's derived defaults), so a
-    // ports object riding the same save is deliberately dropped — the operator was told pins reset.
+    const touched: string[] = [];
+    const rejected: RejectedEntry[] = [];
+    const reject = (path: string, reason: RejectedEntry['reason'], detail?: string): void => {
+      rejected.push(detail === undefined ? { path, reason } : { path, reason, detail });
+    };
+    // a slot move rebases the mirror (fleet/port pins would outrank the new slot's derived defaults), so
+    // co-submitted entries are dropped by name — the operator was told pins reset.
     let slotChanged = false;
     if (cfg.slot !== undefined && cfg.slot !== this.current().slot) {
       await this.setStackSlot(cfg.slot);
       applied.push('stack.slot');
       slotChanged = true;
     }
+    const paths = Object.keys(cfg.entries);
+    if (!slotChanged && !this.current().seeded && paths.length > 0 && paths.every((p) => cfg.entries[p] === null)) {
+      return this.dropOverlayLines(paths);
+    }
     const cur = this.writableMirror();
-    const clean = (svc: StackGroup) => {
-      const known = new Set(STACK_KNOBS[svc].map((k) => k.env));
-      const out: Record<string, string> = {};
-      for (const [k, v] of Object.entries(cfg[svc] ?? {})) {
-        if (!known.has(k)) rejected.push(`${svc}.${k}`);
-        else if (v?.trim()) {
-          out[k] = v.trim();
-          applied.push(`${svc}.${k}`);
-        }
+    const byPath = catalogByPath(cur.catalog);
+    const draft = draftFrom(cur);
+
+    for (const [path, raw] of Object.entries(cfg.entries)) {
+      if (slotChanged) {
+        reject(path, 'slot-move-drops-entries');
+        continue;
       }
-      return out;
-    };
-    // a blank identity/cache field keeps the effective value: unlike the ports below, these have no
-    // published pre-override map to reset to.
-    const pick = (v: string | undefined, d: string) => (v?.trim() ? v.trim() : d);
-    const identity: IdentityCfg = {
-      pg: {
-        user: pick(cfg.identity?.pg?.user, cur.identity.pg.user),
-        password: pick(cfg.identity?.pg?.password, cur.identity.pg.password),
-        db: pick(cfg.identity?.pg?.db, cur.identity.pg.db),
-      },
-      orgId: pick(cfg.identity?.orgId, cur.identity.orgId),
-    };
-    const osLayerCache: OsLayerCfg = {
-      originHost: pick(cfg.osLayerCache?.originHost, cur.osLayerCache.originHost),
-      resolvers: pick(cfg.osLayerCache?.resolvers, cur.osLayerCache.resolvers),
-    };
-    // a key the payload omits reverts to its Nix default — the editor drops a blank or out-of-range field,
-    // so blanking one is how an operator un-pins a port. An absent `ports` object edits no port at all.
-    const ports = slotChanged
-      ? cur.ports
-      : cfg.ports
-        ? editablePortsFrom(cfg.ports, cur.portKeys.editable, cur.portDefaults)
-        : cur.ports;
-    // unknown/read-only keys are absent from editablePortsFrom's output (ports[k] undefined) and out-of-range
-    // values revert to the Nix default — either way ports[k] !== v. An accepted default writes no override.
-    for (const [k, v] of Object.entries(slotChanged ? {} : (cfg.ports ?? {}))) {
-      if (ports[k] !== v) rejected.push(`ports.${k}`);
-      else if (isPortOverride(k, v, cur.portDefaults)) applied.push(`ports.${k}`);
+      const entry = byPath.get(path);
+      if (!entry) {
+        reject(path, 'not-catalogued');
+        continue;
+      }
+      // an env pin outranks every overlay line, so persisting a pinned path would answer ok and change nothing
+      if (cur.envPins[path] !== undefined) {
+        reject(path, 'pinned', cur.envPins[path]);
+        continue;
+      }
+      if (!writableFor(entry.path, entry.editable)) {
+        reject(path, 'no-writer');
+        continue;
+      }
+      const coerced = raw === null ? null : coerceOption(entry, raw);
+      if (coerced === undefined) {
+        reject(path, 'not-coercible', entry.kind);
+        continue;
+      }
+      if (!applyToDraft(draft, path, coerced, cur, entry)) {
+        reject(path, 'no-writer');
+        continue;
+      }
+      touched.push(path);
+      if (leavesOverride(draft, path, entry)) applied.push(path);
     }
-    const lan: LanCfg = { expose: cfg.lan?.expose ?? cur.lan.expose };
-    const telemetry: TelemetryCfg = { enable: cfg.telemetry?.enable ?? cur.telemetry.enable };
-    const telemetryChanged = telemetry.enable !== cur.telemetry.enable;
-    const hub = clean('hub');
-    const spoke = clean('spoke');
-    const counts = { hub: clampCount(cfg.counts?.hub, MAX_HUBS), spoke: clampCount(cfg.counts?.spoke, MAX_SPOKES) };
-    // The LAN toggle changes the same frozen listener binds as the ports, so it latches the daemon recreate too.
-    if (JSON.stringify(ports) !== JSON.stringify(cur.ports) || lan.expose !== cur.lan.expose) {
-      this.armRebindPending();
-    }
+
+    const telemetryChanged = draft.telemetry.enable !== cur.telemetry.enable;
+    // every path the write touched, not just the ones leaving an override: reverting a port back to
+    // its default moves the effective value too, and that still needs the daemons recreated
+    if (touched.some((path) => applyClassFor(path) === 'rebind-recreate')) this.armRebindPending();
+
     this.mirror = {
+      ...cur,
       seeded: true,
-      hub,
-      spoke,
-      counts,
-      slot: cur.slot,
-      slotOwned: cur.slotOwned,
-      identity,
-      osLayerCache,
-      lan,
-      telemetry,
-      stackDefaults: cur.stackDefaults,
-      portKeys: cur.portKeys,
-      ports,
-      portDefaults: cur.portDefaults,
-      observabilityPorts: cur.observabilityPorts,
-      bridges: cur.bridges,
-      fleet: cur.fleet,
-      fleetOwned: cur.fleetOwned,
-      mode: cur.mode,
-      baremetal: cur.baremetal,
-      baremetalOwned: cur.baremetalOwned,
-      zonesMeta: cur.zonesMeta,
+      hub: draft.hub,
+      spoke: draft.spoke,
+      identity: draft.identity,
+      osLayerCache: draft.osLayerCache,
+      lan: draft.lan,
+      telemetry: draft.telemetry,
+      ports: draft.ports,
+      options: draft.options,
     };
     this.writeOverlay();
-    const portOverrides = Object.entries(ports).filter(([k, v]) => isPortOverride(k, v, cur.portDefaults)).length;
+    const portOverrides = Object.entries(draft.ports).filter(([k, v]) => isPortOverride(k, v, cur.portDefaults)).length;
     this.log.log(
-      `wrote stack.local.nix (hubs=${counts.hub} spokes=${counts.spoke}; pg user=${identity.pg.user}; port overrides=${portOverrides}; lan.expose=${lan.expose}; telemetry.enable=${telemetry.enable})`,
+      `wrote stack.local.nix (${applied.length} applied, ${rejected.length} rejected; pg user=${draft.identity.pg.user}; port overrides=${portOverrides}; lan.expose=${draft.lan.expose}; telemetry.enable=${draft.telemetry.enable})`,
     );
     if (telemetryChanged) {
       if (this.telemetryHook) this.telemetryHook();
       else this.log.warn('telemetry changed but no apply hook is registered — skipping apply');
     }
-    return { applied: applied.sort(), rejected: rejected.sort() };
+    for (const path of touched) {
+      const cls = applyClassFor(path);
+      // an inert knob nothing reads, and an auto knob that applied itself on save, have no action to
+      // offer — recording them names a demand no button can satisfy. an unclassified path stays.
+      if (cls !== null && APPLY_ACTION[cls] === null) continue;
+      this.savedNotApplied.add(path);
+    }
+    return { applied: applied.sort(), rejected: rejected.sort((a, b) => a.path.localeCompare(b.path)) };
+  }
+
+  /** Drops only what the apply actually reached, per APPLY_SATISFIES rather than a rank ceiling: the two
+   *  reloads tie on rank, so a ceiling let a hub reload clear a spoke path it never restarted. */
+  clearSatisfiedBy(performed: ApplyClass): void {
+    for (const path of [...this.savedNotApplied]) {
+      const cls = applyClassFor(path);
+      if (cls !== null && applySatisfies(performed, cls)) this.savedNotApplied.delete(path);
+    }
+    if (applySatisfies(performed, 'zone-apply')) this.zoneSteps = [];
+  }
+
+  private overlayMtimeMs(): number | null {
+    try {
+      return statSync(this.overlayPath()).mtimeMs;
+    } catch {
+      return null;
+    }
+  }
+
+  /** stack.local.nix is only a projection of the mirror, so a file edited or deleted underneath leaves
+   *  reads serving overrides it no longer has, and the next save renders them back onto disk. */
+  private reseedIfOverlayMoved(): void {
+    if (this.overlayMtimeMs() === this.seededMtimeMs) return;
+    void this.reseed();
+  }
+
+  /** `savedNotApplied` lives in memory, so a write this process did not make leaves it empty while the
+   *  work is outstanding. Reporting that beats a clean-looking stack, which would be a guess. */
+  private foreignOverlayWrite(): string | null {
+    const mtime = this.overlayMtimeMs();
+    if (mtime === null || mtime <= this.startedAtMs) return null;
+    return mtime === this.ownWriteMtimeMs ? null : new Date(mtime).toISOString();
+  }
+
+  /** What is written and still waiting on an apply. `seeded: false` reports every count as null rather
+   *  than zero, so a failed seed cannot read as a clean stack. */
+  stackPending(restart: RestartState): StackPending {
+    const cur = this.current();
+    const paths = [...this.savedNotApplied].sort();
+    const classes = [...new Set(paths.map(applyClassFor).filter((c): c is ApplyClass => c !== null))];
+    return {
+      seeded: cur.seeded,
+      savedNotApplied: { paths, classes },
+      strongestClass: strongestApplyClass(classes),
+      rebindArmed: this.rebindPending,
+      restart,
+      resetRequired: paths.filter((path) => applyClassFor(path) === 'datastore-reset'),
+      unknownSince: this.foreignOverlayWrite(),
+      zoneSteps: this.zoneSteps,
+    };
   }
 
   /** Moves the stack to slot `n`: plain-priority fleet/port pins would outrank the new slot's derived
@@ -640,9 +1178,13 @@ export class OverlayStoreService implements OnModuleInit {
   setFleetConfig(input: {
     nodes: { name: string; spec: Record<string, unknown> }[];
     bmcDefaults?: { username: string; password: string };
+    defaults?: { cpus: number | null; memory_mb: number | null; disk_gb: number | null; arch: string | null };
+    network?: Record<string, string | boolean>;
+    prune?: string[];
     mode?: 'vm' | 'baremetal';
     baremetal?: { nics: string[]; arch: string; nodes: { name: string; spec: Record<string, unknown> }[] };
-  }): void {
+  }): RejectedEntry[] {
+    const rejected: RejectedEntry[] = [];
     const cur = this.writableMirror();
     const desired = new Set(input.nodes.map((n) => n.name));
     // modules/fleet-topology.nix has `zones`, no top-level `nodes` — every node must carry a zone for renderOverlay to emit it.
@@ -657,12 +1199,26 @@ export class OverlayStoreService implements OnModuleInit {
     input.nodes.forEach(({ name, spec }, i) => {
       nodes[name] = { ...spec, zone: zoneOf(name, spec), index: i };
     });
-    for (const name of Object.keys(cur.fleet?.nodes ?? {})) {
-      if (!desired.has(name)) nodes[name] = { enable: false, zone: zoneOf(name) };
+    const pruned = new Set(input.prune ?? []);
+    for (const [name, node] of Object.entries(cur.fleet?.nodes ?? {})) {
+      if (desired.has(name) || pruned.has(name)) continue;
+      nodes[name] = { enable: false, zone: zoneOf(name) };
+      // the roster the client sent dropped it, but the overlay holds it out instead of losing it —
+      // only a prune drops the line, so say so rather than answering a plain ok
+      if (node.enable !== false) rejected.push({ path: `fleet.nodes.${name}`, reason: 'tombstoned' });
     }
     const defaults: Record<string, unknown> = { ...(cur.fleet?.defaults ?? {}) };
     if (input.bmcDefaults?.username && input.bmcDefaults?.password) defaults.bmc = input.bmcDefaults;
-    const fleet: FleetMirror = { network: cur.fleet?.network ?? {}, defaults, nodes };
+    // null clears the default so the engine value applies; omitting the field leaves it untouched
+    if (input.defaults) {
+      for (const key of ['cpus', 'memory_mb', 'disk_gb', 'arch'] as const) {
+        const v = input.defaults[key];
+        if (v === null) delete defaults[key];
+        else defaults[key] = v;
+      }
+    }
+    const network = { ...(cur.fleet?.network ?? {}), ...(input.network ?? {}) };
+    const fleet: FleetMirror = { network, defaults, nodes };
     let baremetal = cur.baremetal;
     let baremetalOwned = cur.baremetalOwned;
     if (input.baremetal) {
@@ -673,7 +1229,15 @@ export class OverlayStoreService implements OnModuleInit {
       baremetal = { nics: input.baremetal.nics, arch: input.baremetal.arch, nodes: bmNodes };
       baremetalOwned = true;
     }
-    const mode = input.mode ?? cur.mode;
+    // an env pin outranks this overlay, so persisting a different mode would record a value the
+    // next eval discards. the stack writer refuses a pinned key the same way.
+    const modePin = cur.envPins?.['fleet.mode'];
+    const modePinned = modePin !== undefined;
+    if (modePinned && input.mode !== undefined && input.mode !== cur.mode) {
+      this.log.warn(`fleet.mode is pinned by ${modePin}; keeping ${cur.mode}`);
+      rejected.push({ path: 'fleet.mode', reason: 'pinned', detail: modePin });
+    }
+    const mode = modePinned ? cur.mode : (input.mode ?? cur.mode);
     this.mirror = { ...cur, fleet, fleetOwned: true, mode, baremetal, baremetalOwned };
     this.writeOverlay();
     const disabled = Object.values(nodes).filter((n) => n.enable === false).length;
@@ -682,6 +1246,7 @@ export class OverlayStoreService implements OnModuleInit {
         input.baremetal ? `, ${input.baremetal.nodes.length} bare-metal nodes` : ''
       })`,
     );
+    return rejected;
   }
 
   private writeOverlay(): void {
@@ -690,10 +1255,15 @@ export class OverlayStoreService implements OnModuleInit {
       const tmp = `${path}.tmp`;
       writeFileSync(tmp, this.renderOverlay(this.mirror));
       renameSync(tmp, path);
+      this.ownWriteMtimeMs = this.overlayMtimeMs();
+      this.seededMtimeMs = this.ownWriteMtimeMs;
       // overlay changed → invalidate so the next read re-evals and no in-flight build caches its
       // pre-overlay result; armRefreshEval below arms the one-shot --refresh-eval-cache.
       this.rendered.invalidateRenderedConfig();
       this.rendered.armRefreshEval();
+      // Re-seeding here would let a failed eval mark the mirror unseeded and block the next write,
+      // so flag it: until the tree refreshes, an overridden knob still names its declaring module.
+      this.provenanceStale = true;
     }
   }
 
@@ -718,21 +1288,27 @@ export class OverlayStoreService implements OnModuleInit {
         .join('\n');
     const lines = [
       '# GENERATED by the control center (apps/local-lab overlay-store.ts) — do not edit by hand.',
-      '# Imported by devenv.nix when present; sets stackOverrides/stackCounts/identity + fleet topology.',
+      '# Imported by devenv.nix when present; sets stackOverrides/identity + fleet topology.',
       '{ ... }:',
       '{',
       `  stackOverrides.hub = {\n${block(m.hub)}\n  };`,
       `  stackOverrides.spoke = {\n${block(m.spoke)}\n  };`,
-      `  stackCounts.hub = ${m.counts.hub};`,
-      `  stackCounts.spoke = ${m.counts.spoke};`,
-      `  identity.pg.user = ${nixStr(m.identity.pg.user)};`,
-      `  identity.pg.password = ${nixStr(m.identity.pg.password)};`,
-      `  identity.pg.db = ${nixStr(m.identity.pg.db)};`,
-      `  identity.orgId = ${nixStr(m.identity.orgId)};`,
-      `  osLayerCache.resolvers = ${nixStr(m.osLayerCache.resolvers)};`,
-      `  lan.expose = ${m.lan.expose};`,
-      `  telemetry.enable = ${m.telemetry.enable};`,
     ];
+    const defaults = catalogByPath(m.catalog);
+    const differs = (path: string, value: string): boolean => {
+      const entry = defaults.get(path);
+      return entry === undefined || value !== declaredDefault(entry);
+    };
+    const scalar = (path: string, value: string, render: string): void => {
+      if (differs(path, value)) lines.push(`  ${path} = ${render};`);
+    };
+    scalar('identity.pg.user', m.identity.pg.user, nixStr(m.identity.pg.user));
+    scalar('identity.pg.password', m.identity.pg.password, nixStr(m.identity.pg.password));
+    scalar('identity.pg.db', m.identity.pg.db, nixStr(m.identity.pg.db));
+    scalar('identity.orgId', m.identity.orgId, nixStr(m.identity.orgId));
+    scalar('osLayerCache.resolvers', m.osLayerCache.resolvers, nixStr(m.osLayerCache.resolvers));
+    scalar('lan.expose', String(m.lan.expose), String(m.lan.expose));
+    scalar('telemetry.enable', String(m.telemetry.enable), String(m.telemetry.enable));
     // a plain line would outrank the claim script's mkOptionDefault stack.slot.nix — only pin a slot the CC set
     if (m.slotOwned) lines.push(`  stack.slot = ${m.slot};`);
     if (m.osLayerCache.originHost) {
@@ -741,9 +1317,31 @@ export class OverlayStoreService implements OnModuleInit {
     for (const [k, v] of Object.entries(m.ports)) {
       if (isPortOverride(k, v, m.portDefaults)) lines.push(`  ports.${k} = ${v};`);
     }
+    for (const [path, v] of Object.entries(m.options)) {
+      lines.push(`  ${path} = ${typeof v === 'string' ? nixStr(v) : v};`);
+    }
     if (m.fleetOwned && m.fleet) {
       const bmc = (m.fleet.defaults as { bmc?: unknown }).bmc;
       if (bmc && typeof bmc === 'object') lines.push(`  fleet.defaults.bmc = ${toNix(bmc, '  ')};`);
+      for (const key of ['cpus', 'memory_mb', 'disk_gb'] as const) {
+        const v = m.fleet?.defaults?.[key];
+        if (typeof v === 'number' && Number.isFinite(v)) lines.push(`  fleet.defaults.${key} = ${v};`);
+      }
+      const arch = m.fleet.defaults?.arch;
+      if (typeof arch === 'string' && arch) lines.push(`  fleet.defaults.arch = ${nixStr(arch)};`);
+      for (const [key, v] of Object.entries(m.fleet.network)) {
+        if (typeof v === 'string') lines.push(`  fleet.network.${key} = ${nixStr(v)};`);
+        else if (typeof v === 'boolean') lines.push(`  fleet.network.${key} = ${v};`);
+      }
+      if (!isDefaultSingleZoneSet(m.zonesMeta)) {
+        for (const zone of [...m.zonesMeta].sort((a, b) => a.index - b.index)) {
+          lines.push(`  fleet.zones.${nixStr(zone.name)}.index = ${zone.index};`);
+          lines.push(`  fleet.zones.${nixStr(zone.name)}.bridges = ${zone.bridges};`);
+        }
+      }
+      for (const name of m.zoneTombstones) {
+        lines.push(`  fleet.zones.${nixStr(name)}.enable = false;`);
+      }
       const firstZone = [...m.zonesMeta].sort((a, b) => a.index - b.index)[0]?.name ?? 'sim-zone';
       const byZone = new Map<string, [string, Record<string, unknown>][]>();
       for (const [name, spec] of Object.entries(m.fleet.nodes)) {
@@ -790,11 +1388,11 @@ export class OverlayStoreService implements OnModuleInit {
   }
 
   stackSummary(): { counts: { hub: number; spoke: number }; lifecycleWorkerConcurrency: number } {
-    const positive = (v: string | undefined, fallback: number): number => {
+    const positive = (v: string | null | undefined, fallback: number): number => {
       const n = Number(v);
       return Number.isFinite(n) && n > 0 ? n : fallback;
     };
-    const knobDefault = resolvedKnobs('spoke', this.current().stackDefaults).find(
+    const knobDefault = knobsFromCatalog('spoke', this.current().catalog, {}).find(
       (k) => k.env === 'LIFECYCLE_WORKER_CONCURRENCY',
     )?.default;
     const override = this.overrides().spoke.LIFECYCLE_WORKER_CONCURRENCY;

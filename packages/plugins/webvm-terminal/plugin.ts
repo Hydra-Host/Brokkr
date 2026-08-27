@@ -9,6 +9,11 @@ export const webvmTerminalManifest = definePlugin({
   // No runtime settings; the empty schema keeps the registry entry uniform
   // (`settings: {}`) with every other plugin.
   configSchema: z.object({}).describe('webvm-terminal plugin settings (none — frontend-only).'),
+  csp: {
+    scriptSrc: ['https://cxrtnc.leaningtech.com', "'wasm-unsafe-eval'"],
+    workerSrc: ['blob:'],
+    connectSrc: ['data:', 'wss://disks.webvm.io', 'https://cxrtnc.leaningtech.com'],
+  },
 });
 
 export default webvmTerminalManifest;

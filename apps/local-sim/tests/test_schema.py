@@ -69,7 +69,7 @@ def test_duplicate_node_names_rejected():
         {"name": "gpu-1", "ipmi_mac": "52:54:00:bc:00:01", "data_mac": "52:54:00:da:00:01"},
         {"name": "gpu-1", "ipmi_mac": "52:54:00:bc:00:02", "data_mac": "52:54:00:da:00:02"},
     ]
-    with pytest.raises(ValidationError, match="duplicate.*name"):
+    with pytest.raises(ValidationError, match=r"duplicate.*name"):
         Fleet.model_validate(data)
 
 
@@ -79,7 +79,7 @@ def test_duplicate_data_macs_rejected():
         {"name": "gpu-1", "ipmi_mac": "52:54:00:bc:00:01", "data_mac": "52:54:00:da:00:01"},
         {"name": "gpu-2", "ipmi_mac": "52:54:00:bc:00:02", "data_mac": "52:54:00:da:00:01"},
     ]
-    with pytest.raises(ValidationError, match="duplicate.*mac"):
+    with pytest.raises(ValidationError, match=r"duplicate.*mac"):
         Fleet.model_validate(data)
 
 
@@ -89,7 +89,7 @@ def test_duplicate_ipmi_macs_rejected():
         {"name": "gpu-1", "ipmi_mac": "52:54:00:bc:00:01", "data_mac": "52:54:00:da:00:01"},
         {"name": "gpu-2", "ipmi_mac": "52:54:00:bc:00:01", "data_mac": "52:54:00:da:00:02"},
     ]
-    with pytest.raises(ValidationError, match="duplicate.*mac"):
+    with pytest.raises(ValidationError, match=r"duplicate.*mac"):
         Fleet.model_validate(data)
 
 
@@ -171,7 +171,7 @@ def _fleet_with_name(name: str) -> dict:
     ],
 )
 def test_malicious_node_name_rejected(bad_name: str):
-    with pytest.raises(ValidationError, match="node name|name too long"):
+    with pytest.raises(ValidationError, match=r"node name|name too long"):
         Fleet.model_validate(_fleet_with_name(bad_name))
 
 
@@ -360,7 +360,7 @@ def test_duplicate_zone_index_and_name_rejected():
 def test_zone_bridges_and_index_bounds():
     with pytest.raises(ValidationError, match="bridges must be >= 1"):
         Fleet.model_validate({**VALID_FLEET, "zones": [{"index": 0, "name": "a", "bridges": 0}]})
-    with pytest.raises(ValidationError, match="zone index must be 0..88"):
+    with pytest.raises(ValidationError, match=r"zone index must be 0\.\.88"):
         Fleet.model_validate({**VALID_FLEET, "zones": [{"index": 89, "name": "a", "bridges": 1}]})
 
 
@@ -401,7 +401,7 @@ def test_console_port_override_resolves_and_validates():
     assert fleet.nodes[0].console_port == 9400
     assert fleet.nodes[1].console_port is None
 
-    with pytest.raises(ValidationError, match="console_port must be 1024..65535"):
+    with pytest.raises(ValidationError, match=r"console_port must be 1024\.\.65535"):
         Fleet.model_validate({**VALID_FLEET, "nodes": [{**VALID_FLEET["nodes"][0], "console_port": 80}]})
 
     with pytest.raises(ValidationError, match="console_port 9400 collides"):
@@ -551,7 +551,7 @@ def test_baremetal_pxe_and_bmc_mac_pools_are_disjoint():
 def test_baremetal_duplicate_bmc_ip_rejected():
     nodes = [dict(BM_NODE), {**BM_NODE, "name": "bm-2", "pxe_mac": "00:00:5e:00:53:a2", "bmc_mac": "00:00:5e:00:53:c2"}]
     data = {**VALID_BM, "baremetal": {**VALID_BM["baremetal"], "nodes": nodes}}
-    with pytest.raises(ValidationError, match="bmc_ip.*collides"):
+    with pytest.raises(ValidationError, match=r"bmc_ip.*collides"):
         Fleet.model_validate(data)
 
 
@@ -578,7 +578,7 @@ def test_nodes_property_is_cached():
 
 def test_bmc_credentials_reject_lanconf_metacharacters():
     data = {**VALID_FLEET, "defaults": {**VALID_FLEET["defaults"], "bmc": {"username": 'ad"min', "password": "admin"}}}
-    with pytest.raises(ValidationError, match="lan.conf"):
+    with pytest.raises(ValidationError, match=r"lan\.conf"):
         Fleet.model_validate(data)
 
 

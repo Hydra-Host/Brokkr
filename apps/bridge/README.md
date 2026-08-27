@@ -52,7 +52,7 @@ The deployment assumption is that bridge interfaces sit on an **isolated provisi
 
 ## DHCP + config source
 
-The DHCP server (`src/dhcp/`) is **driven entirely by the hub — there are no `DHCP_*` env vars.** Per-prefix `prefix:{id}:config:dhcp` atoms (SCAN-discovered from Redis — see the hub's `apps/api/src/brokkr-bridge/CLAUDE.md`) are the sole source of DHCP service policy: the engine is built from atoms (`dhcp-atom-mapper.ts` → `DhcpEngine.fromSubnets`), hot-swaps on atom change, and tears down when no atoms are present. There is no env-derived bootstrap config and no single-subnet fallback — no atoms means no DHCP (and no DNS) on that subnet.
+The DHCP server (`src/dhcp/`) is **driven entirely by the hub — there are no `DHCP_*` env vars.** Per-prefix `prefix:{id}:config:dhcp` atoms (SCAN-discovered from Redis — derived hub-side in `apps/api/src/brokkr-bridge/`) are the sole source of DHCP service policy: the engine is built from atoms (`dhcp-atom-mapper.ts` → `DhcpEngine.fromSubnets`), hot-swaps on atom change, and tears down when no atoms are present. There is no env-derived bootstrap config and no single-subnet fallback — no atoms means no DHCP (and no DNS) on that subnet.
 
 - **Runtime tuning** (leader-poll, lease-prune, decline-backoff) comes from the zone-global `{zone}:config:dhcp` ops atom, derived from the hub's zone service-tuning settings; built-in defaults (2s/60s/600s) apply until it arrives. Lease persistence is always Redis (keyed `dhcp:lease:{ip}`) — there is no in-memory-only mode.
 - **Required**: `BROKKR_ZONE_ID` (the zone UUID) must be set and non-empty. The DHCP config-atom SCAN (`prefix:*:config:dhcp`) is scoped to this zone **only** by this Redis key prefix, so the bridge **refuses to start** (`bindDhcpHoldersForOrchestrator` throws) when it is unset — an empty prefix would scan every zone's atoms on a shared Redis (cross-zone config bleed).
@@ -284,7 +284,7 @@ BullMQ has no worker affinity, so stop the first bridge only after the delayed-s
 ```bash
 set -euo pipefail
 SECOND_BRIDGE="$(test "$FIRST_BRIDGE" = spoke && printf spoke-1 || printf spoke)"
-devenv processes stop "$FIRST_BRIDGE"
+process-compose -U -u "$PC_SOCKET_PATH" process stop "$FIRST_BRIDGE"
 
 SECOND_LOG="$LOG_DIR/$SECOND_BRIDGE.stdout.log"
 until rg -q "Starting saga .*${PLAN_ID}" "$SECOND_LOG"; do sleep 2; done
@@ -310,7 +310,7 @@ rg -e "$PLAN_ID" \
   -e 'rescheduled to delayed' \
   "$FIRST_LOG" "$SECOND_LOG" | tee /tmp/lock-loss-bridge-handoff.log
 
-devenv processes start "$FIRST_BRIDGE"
+process-compose -U -u "$PC_SOCKET_PATH" process start "$FIRST_BRIDGE"
 ```
 
 The saved plan snapshots, delayed-set dump, and two-bridge log excerpt are the review artifacts. The final plan must be `complete`, the hub lifecycle must be `PROVISIONED`, and the second bridge log must contain the resumed `Starting saga` line.

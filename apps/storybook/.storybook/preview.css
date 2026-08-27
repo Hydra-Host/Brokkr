@@ -1,0 +1,4 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@repo/ui/styles/brokkr.css';
+@source '../node_modules/@repo/ui';

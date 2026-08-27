@@ -24,6 +24,7 @@ import { StatusModule } from './status/status.module';
 import { StorageModule } from './storage/storage.module';
 import { SudoModule } from './sudo/sudo.module';
 import { TestModule } from './test/test.module';
+import { ZonesModule } from './zones/zones.module';
 
 const webDistRoot = { rootPath: join(__dirname, '../..', 'local-lab-web', 'dist'), exclude: ['/api/{*path}'] };
 
@@ -45,6 +46,7 @@ const staticImports = process.env.NODE_ENV === 'production' ? [ServeStaticModule
     DatastoreModule,
     QueuesModule,
     RuntimeModule,
+    ZonesModule,
     HubModule,
     StatusModule,
     StorageModule,

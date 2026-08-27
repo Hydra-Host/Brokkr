@@ -19,6 +19,8 @@ from local.zones import zone_uuid
 
 _VRF_NAME = "sim-vrf"
 _VRF_RD = "65000:1"
+# The role slugs ``46-prefixes`` keys its prefix UUIDs on.
+_PREFIX_SLUGS = ("primary", "management")
 
 
 def _vrf_uuid(org_id: str) -> str:
@@ -27,6 +29,10 @@ def _vrf_uuid(org_id: str) -> str:
 
 def _vlan_group_uuid(zone_id: str) -> str:
     return str(uuid.uuid5(LOCAL_NS, f"vlan-group:{zone_id}"))
+
+
+def _prefix_uuid(zone_id: str, slug: str) -> str:
+    return str(uuid.uuid5(LOCAL_NS, f"prefix:{zone_id}:{slug}"))
 
 
 def _vrf_sql(vrf_id: str, org_id: str) -> str:
@@ -66,13 +72,30 @@ ON CONFLICT (id) DO UPDATE SET
 """
 
 
-def _attach_prefixes_sql(vrf_id: str, org_id: str) -> str:
-    return f"""-- attach org prefixes to the sim VRF (counts show up in admin VRF list)
-UPDATE "Prefix"
+def _attach_prefixes_sql(vrf_id: str, org_id: str, prefix_ids: list[str]) -> str:
+    """Move the prefixes ``46-prefixes`` owns into the sim VRF, and only those.
+
+    A sweep over every null-VRF prefix in the org also caught the rows the hub's bridge-presence
+    reconciler derives from a spoke's live NICs. Every zone shares one subnet here, so a second zone
+    reports a CIDR zone 0 already holds, and the sweep drove both rows onto one
+    ``Prefix_active_unique`` slot. The NOT EXISTS guard covers the same clash left by an older run.
+    """
+    ids = ", ".join(q(pid) for pid in prefix_ids)
+    return f"""-- attach the seeded prefixes to the sim VRF (counts show up in admin VRF list)
+UPDATE "Prefix" p
 SET "vrfId" = {q(vrf_id)}, "updatedAt" = NOW()
-WHERE "organizationId" = {q(org_id)}
-  AND "deletedAt" IS NULL
-  AND ("vrfId" IS NULL OR "vrfId" = {q(vrf_id)});
+WHERE p.id IN ({ids})
+  AND p."organizationId" = {q(org_id)}
+  AND p."deletedAt" IS NULL
+  AND p."vrfId" IS DISTINCT FROM {q(vrf_id)}
+  AND NOT EXISTS (
+    SELECT 1 FROM "Prefix" o
+    WHERE o."organizationId" = p."organizationId"
+      AND o."deletedAt" IS NULL
+      AND o."vrfId" = {q(vrf_id)}
+      AND o.prefix = p.prefix
+      AND o.id <> p.id
+  );
 """
 
 
@@ -101,15 +124,19 @@ def generate() -> str:
     fleet = yaml.safe_load(Path(s.paths.fleet_path).read_text())
     zones_meta = fleet.get("zones") or [{"index": 0, "name": s.sim.zone_name}]
 
+    ordered = sorted(zones_meta, key=lambda zz: zz["index"])
     vrf_id = _vrf_uuid(org_id)
     out: list[str] = [header("47-vrfs-vlan-groups.py"), "BEGIN;\n\n"]
     out.append(_vrf_sql(vrf_id, org_id))
     out.append("\n")
-    for z in sorted(zones_meta, key=lambda zz: zz["index"]):
+    for z in ordered:
         zid = zone_uuid(z["index"])
         out.append(_vlan_group_sql(_vlan_group_uuid(zid), zid, z["name"]))
     out.append("\n")
-    out.append(_attach_prefixes_sql(vrf_id, org_id))
+    # Every zone's candidate ids, not just the IPAM owner's: an id with no row matches nothing, and
+    # the list stays right wherever ``46-prefixes`` emits a pair per zone.
+    prefix_ids = [_prefix_uuid(zone_uuid(z["index"]), slug) for z in ordered for slug in _PREFIX_SLUGS]
+    out.append(_attach_prefixes_sql(vrf_id, org_id, prefix_ids))
     out.append(_attach_gateways_sql(org_id))
     out.append("COMMIT;\n")
     return "".join(out)

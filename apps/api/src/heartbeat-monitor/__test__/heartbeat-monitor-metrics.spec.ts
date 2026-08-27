@@ -3,6 +3,7 @@ import { createLoggerMock } from 'src/common/logger-test-utils';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { REDIS_CLIENT } from '../../common/redis';
+import { BridgeAlertingService } from '../bridge-alerting.service';
 import { HeartbeatMonitorService } from '../heartbeat-monitor.service';
 import { ZoneAlertingService } from '../zone-alerting.service';
 import { ZoneFlapAlertingService } from '../zone-flap-alerting.service';
@@ -76,6 +77,7 @@ describe('HeartbeatMonitorService — zone metrics', () => {
         { provide: REDIS_CLIENT, useValue: { scan, hgetall: vi.fn().mockResolvedValue({}) } },
         { provide: ZoneAlertingService, useValue: { sendZoneOfflineAlert } },
         { provide: ZoneFlapAlertingService, useValue: { checkAndAlertIfFlapping } },
+        { provide: BridgeAlertingService, useValue: { reconcileBridgePresence: vi.fn().mockResolvedValue(undefined) } },
         { provide: 'LoggerServiceHeartbeatMonitorService', useValue: createLoggerMock() },
       ],
     }).compile();

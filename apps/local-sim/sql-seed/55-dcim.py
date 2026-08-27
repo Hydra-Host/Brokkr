@@ -14,7 +14,7 @@ import uuid
 from local.config import get_settings
 from local.derived import sim_device_uuid
 from local.schema import require_fleet
-from local.sqlemit import emit_upsert, header, logs_to_stderr, q, qe
+from local.sqlemit import emit_upsert, header, logs_to_stderr, q, qe, wrap_list
 from local.zones import zone_uuid
 
 # Fixed namespace so uuid5 ids are stable across re-runs (no randomness — see module docstring).
@@ -93,6 +93,10 @@ PEERS = [
     (CONSERVER, "Opengear", "IM7248"),
     (PATCH, "Generic", "LC-24 Patch Panel"),
 ]
+# Fixed, clear of the swp1..swpN node range: a node and a patch cable sharing one port collide on
+# CableTermination's (terminationType, terminationId) unique index.
+PATCH_FRONT_SWP = 47
+PATCH_REAR_SWP = 48
 
 # Per-role facility devices (own DeviceRole + MTI child row) → per-role DCIM pages; distinct from PEERS above.
 # (name, manufacturer, model, outletCount, ratedAmperage, voltageType, powerStatus)
@@ -291,7 +295,12 @@ def _front_port(pid: str, name: str, rear_pid: str, device_sql: str) -> str:
     )
 
 
-def _cable(out: list[str], label: str, ctype: str, a_type: str, a_id: str, b_type: str, b_id: str, clabel: str) -> None:
+def _cable(out: list[str], label: str, ctype: str, a_type: str, a_id: str, b_type: str, b_id: str, clabel: str) -> str:
+    """Emit one Cable + its two terminations into `out`; returns the cable id.
+
+    Callers need the id set to build the port-release DELETE (`_release_switch_ports`) that has
+    to run before these inserts.
+    """
     cid = did(f"cable:{label}")
     out.append(
         emit_upsert(
@@ -312,6 +321,32 @@ def _cable(out: list[str], label: str, ctype: str, a_type: str, a_id: str, b_typ
                 updated_at=False,
             )
         )
+    return cid
+
+
+def _release_switch_ports(switch_ref: str, cable_ids: list[str]) -> str:
+    """Retire every cable landing on sim-tor-1 that this run does not emit.
+
+    CableTermination is unique on BOTH (cableId, cableSide) and (terminationType, terminationId),
+    but an upsert can arbitrate only one. A switch port left claimed by a retired cable — what a
+    fleet resize used to produce — aborts the insert below instead of being absorbed.
+
+    Deleting the Cable rather than just its switch-side termination matters: a server uplink is
+    INTERFACE on *both* ends, so freeing only the switch end would strand the eth0 end and leave a
+    one-legged cable. Terminations cascade with the cable, so both ends go together.
+    """
+    keep = wrap_list([q(cid) for cid in cable_ids], "WHERE c.id NOT IN (", ")", indent="    ")
+    return (
+        'DELETE FROM "Cable" c\n'
+        f"{keep}\n"
+        "    AND EXISTS (\n"
+        '        SELECT 1 FROM "CableTermination" ct\n'
+        '        JOIN "Interface" i ON i.id = ct."terminationId"\n'
+        '        WHERE ct."cableId" = c.id\n'
+        '            AND ct."terminationType" = \'INTERFACE\'::"CableTerminationType"\n'
+        f'            AND i."deviceId" = {switch_ref}\n'
+        "    );"
+    )
 
 
 def _tag(name: str, color: str, org_id: str) -> str:
@@ -506,13 +541,19 @@ WHERE id IN ({server_ids});"""
         out.append(_console_port(did(f"cport:srv:{i}"), "Console", "RJ45", 115200, sid))
         out.append(_power_port(did(f"pport:srv:{i}"), "PSU1", "IEC_C14", 800, 400, sid))
 
-    # One swp uplink per server (swp1..swpN) + 2 dedicated ports for the patch-panel
-    # cross-connects, so server links never collide with patch links regardless of fleet size.
-    patch_front_swp = len(servers) + 1
-    patch_rear_swp = len(servers) + 2
-    out.append(f"\n-- Switch interfaces (mgmt0 + swp1..swp{patch_rear_swp})")
+    # One swp per fleet node, keyed by node index (not server position) so a node keeps its port
+    # when a sibling flips seed_as_server. The patch-panel uplinks sit on fixed ports above it.
+    node_swp_count = len(fleet.nodes)
+    if node_swp_count >= PATCH_FRONT_SWP:
+        # Overrunning the uplinks would put a node and a patch cable on one port, which the
+        # CableTermination unique index only rejects once the SQL is already half applied.
+        raise ValueError(
+            f"fleet has {node_swp_count} nodes but {SWITCH} ({PATCH_FRONT_SWP - 1} usable ports + "
+            f"swp{PATCH_FRONT_SWP}/swp{PATCH_REAR_SWP} uplinks) cannot host them all"
+        )
+    out.append(f"\n-- Switch interfaces (mgmt0 + swp1..swp{node_swp_count} + swp{PATCH_FRONT_SWP}/swp{PATCH_REAR_SWP})")
     out.append(_interface(did("if:tor:mgmt0"), "mgmt0", "ETHERNET_1G", peer_ref(SWITCH), mgmt_only=True, speed=1000))
-    for p in range(1, patch_rear_swp + 1):
+    for p in [*range(1, node_swp_count + 1), PATCH_FRONT_SWP, PATCH_REAR_SWP]:
         out.append(_interface(did(f"if:tor:swp{p}"), f"swp{p}", "ETHERNET_25G", peer_ref(SWITCH), speed=25000))
 
     out.append("\n-- PDU input port + outlets")
@@ -531,20 +572,24 @@ WHERE id IN ({server_ids});"""
         out.append(_front_port(did(f"fport:{n}"), f"FP-{n:02d}", did(f"rport:{n}"), peer_ref(PATCH)))
 
     # ── Cables: wire it together (exercises every CableTermination type) ────────
-    out.append("\n-- Cables")
-    for pos, (i, name) in enumerate(servers):
-        _cable(
-            out,
+    cables: list[str] = []
+    cable_ids: list[str] = []
+
+    def wire(label: str, ctype: str, a_type: str, a_id: str, b_type: str, b_id: str, clabel: str) -> None:
+        """Buffer one cable, remembering its id for the port-release DELETE that precedes them."""
+        cable_ids.append(_cable(cables, label, ctype, a_type, a_id, b_type, b_id, clabel))
+
+    for i, name in servers:
+        wire(
             f"net:{i}",
             "DAC",
             "INTERFACE",
             _eth0_ref(i),
             "INTERFACE",
-            q(did(f"if:tor:swp{pos + 1}")),
-            f"{name} eth0 → {SWITCH} swp{pos + 1}",
+            q(did(f"if:tor:swp{i + 1}")),
+            f"{name} eth0 → {SWITCH} swp{i + 1}",
         )
-        _cable(
-            out,
+        wire(
             f"pwr:{i}",
             "POWER",
             "POWER_PORT",
@@ -553,8 +598,7 @@ WHERE id IN ({server_ids});"""
             q(did(f"poutlet:{i}")),
             f"{name} PSU1 → {PDU} Outlet-{i + 1}",
         )
-        _cable(
-            out,
+        wire(
             f"con:{i}",
             "SERIAL",
             "CONSOLE_PORT",
@@ -563,26 +607,27 @@ WHERE id IN ({server_ids});"""
             q(did(f"csport:{i}")),
             f"{name} Console → {CONSERVER} port-{i + 1:02d}",
         )
-    _cable(
-        out,
+    wire(
         "patch-front",
         "SMF_OS2",
         "FRONT_PORT",
         q(did("fport:1")),
         "INTERFACE",
-        q(did(f"if:tor:swp{patch_front_swp}")),
-        f"{PATCH} FP-01 → {SWITCH} swp{patch_front_swp}",
+        q(did(f"if:tor:swp{PATCH_FRONT_SWP}")),
+        f"{PATCH} FP-01 → {SWITCH} swp{PATCH_FRONT_SWP}",
     )
-    _cable(
-        out,
+    wire(
         "patch-rear",
         "SMF_OS2",
         "REAR_PORT",
         q(did("rport:2")),
         "INTERFACE",
-        q(did(f"if:tor:swp{patch_rear_swp}")),
-        f"{PATCH} RP-02 → {SWITCH} swp{patch_rear_swp}",
+        q(did(f"if:tor:swp{PATCH_REAR_SWP}")),
+        f"{PATCH} RP-02 → {SWITCH} swp{PATCH_REAR_SWP}",
     )
+    out.append("\n-- Cables")
+    out.append(_release_switch_ports(peer_ref(SWITCH), cable_ids))
+    out.extend(cables)
 
     # ── Tags + assignments ──────────────────────────────────────────────────────
     out.append("\n-- Tags + assignments")

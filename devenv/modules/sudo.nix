@@ -98,13 +98,17 @@ in
 
   # single source of the drop-in removal logic; the Taskfile sudo:teardown verb invokes this
   # script directly so the sudo prompt lands on the terminal. install-sim-sudoers.sh derives the
-  # same hashed name from $LOCAL_SIM_PRIV_BIN — keep the two derivations in sync.
+  # same hashed name from $LOCAL_SIM_PRIV_BIN, and the same host-global marker path — keep both in sync.
   # Only THIS checkout's helper is deauthorised: a sibling revision's drop-in is left alone.
+  # Removing the marker is hygiene: the drop-in is gone, so the fast path's `[ -e "$dst" ]` term
+  # already fails. The $DEVENV_STATE paths clean up the pre-relocation layout.
   scripts.sudo-sim-teardown = {
     description = "Remove this checkout's brokkr-sim sudoers drop-in (revert to per-op sudo prompts).";
     exec = ''
+      markers="''${XDG_STATE_HOME:-$HOME/.local/state}/brokkr-local/sudoers"
       sudo rm -f "${dropin}" "${legacyDropin}" \
-        && rm -f "$DEVENV_STATE/sudoers/${dropinName}.rev" "$DEVENV_STATE/sudoers/brokkr-sim.rev" \
+        && rm -f "$markers/${dropinName}.rev" "$markers/brokkr-sim.rev" \
+          "$DEVENV_STATE/sudoers/${dropinName}.rev" "$DEVENV_STATE/sudoers/brokkr-sim.rev" \
         && echo "✓ removed ${dropin}; sim sudo will prompt again"
     '';
   };

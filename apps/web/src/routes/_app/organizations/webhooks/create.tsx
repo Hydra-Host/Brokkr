@@ -1,12 +1,12 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { Check, Copy, Loader2 } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
-import type { WebhookEventTypeEnum } from '@repo/api-client';
+import { WebhookEventTypeSchema } from '@repo/api-client';
 import { Button } from '@repo/ui/components/button';
 import {
   Dialog,
@@ -18,9 +18,11 @@ import {
 } from '@repo/ui/components/dialog';
 import { FormInput } from '@repo/ui/form/form-input';
 import { FormMultiSelect } from '@repo/ui/form/form-multi-select';
+import { FormSubmitButton } from '@repo/ui/form/form-submit-button';
 import { FormTextarea } from '@repo/ui/form/form-textarea';
 import { useCopyToClipboard } from '@repo/ui/hooks/use-copy-to-clipboard';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
+import { unwrapErrorMessage } from '@repo/utils';
 import { tsr } from '~/lib/api';
 
 export const Route = createFileRoute('/_app/organizations/webhooks/create')({
@@ -39,7 +41,7 @@ const WEBHOOK_EVENT_OPTIONS = [
 const createWebhookSchema = z.object({
   endpoint: z.string().url('Please enter a valid URL'),
   description: z.string().optional(),
-  events: z.array(z.string()).min(1, 'Select at least one event'),
+  events: z.array(WebhookEventTypeSchema).min(1, 'Select at least one event'),
 });
 
 type CreateWebhookFormData = z.infer<typeof createWebhookSchema>;
@@ -82,7 +84,7 @@ function CreateWebhookPage() {
         body: {
           endpoint: data.endpoint,
           description: data.description || undefined,
-          events: data.events as WebhookEventTypeEnum[],
+          events: data.events,
           isActive: true,
         },
       });
@@ -92,11 +94,10 @@ function CreateWebhookPage() {
         setCreatedEndpoint(res.body.endpoint);
         await queryClient.invalidateQueries({ queryKey: ['webhooks'] });
       } else {
-        const body = res.body as { message?: string; error?: { message?: string } };
-        setError(body?.message || body?.error?.message || 'Failed to create webhook');
+        setError(unwrapErrorMessage(res, 'Failed to create webhook'));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create webhook. Please try again.';
+      const message = unwrapErrorMessage(err, 'Failed to create webhook. Please try again.');
       setError(message);
     }
   };
@@ -193,10 +194,7 @@ function CreateWebhookPage() {
             <Button type="button" variant="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={isPending}>
-              {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Create Webhook
-            </Button>
+            <FormSubmitButton pending={isPending}>Create Webhook</FormSubmitButton>
           </DialogFooter>
         </form>
       </DialogContent>

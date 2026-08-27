@@ -210,3 +210,45 @@ describe('PgService table resolution', () => {
     await expect(new PgService().getColumns('pg_catalog', 'pg_authid')).rejects.toBeInstanceOf(BadInput);
   });
 });
+
+describe('PgService.devicesStatusByName', () => {
+  const deviceRow = { id: 'd1', name: 'gpu-1', gpu_model: 'NVIDIA H100', lifecycle: 'provisioned' };
+
+  it('reads the gpu model from the Gpu table, never a Device column', async () => {
+    installScriptedPool((text) => (text.includes('FROM "Device"') ? { rows: [deviceRow] } : { rows: [] }));
+
+    const read = await new PgService().devicesStatusByName(['gpu-1']);
+
+    const sql = queryTexts().find((t) => t.includes('FROM "Device"')) ?? '';
+    expect(sql).toContain('LEFT JOIN LATERAL');
+    expect(sql).toContain('FROM "Gpu" g');
+    expect(sql).not.toContain('d."gpuModel"');
+    expect(read).toEqual({
+      byName: new Map([['gpu-1', { id: 'd1', lifecycleStatus: 'provisioned', gpuModel: 'NVIDIA H100' }]]),
+      failed: false,
+    });
+  });
+
+  it('reports the read as failed rather than answering an empty map', async () => {
+    installScriptedPool();
+    hp.client.query.mockImplementation((arg: QueryArg) => {
+      const text = typeof arg === 'string' ? arg : arg.text;
+      if (text.includes('FROM "Device"')) return Promise.reject(new Error('column d.gpuModel does not exist'));
+      return Promise.resolve({ rows: [], fields: [] });
+    });
+
+    const read = await new PgService().devicesStatusByName(['gpu-1']);
+
+    expect(read.failed).toBe(true);
+    expect(read.byName.size).toBe(0);
+  });
+
+  it('answers a not-failed empty read for an empty name list without touching the pool', async () => {
+    installScriptedPool();
+
+    const read = await new PgService().devicesStatusByName([]);
+
+    expect(read).toEqual({ byName: new Map(), failed: false });
+    expect(hp.pool.connect).not.toHaveBeenCalled();
+  });
+});

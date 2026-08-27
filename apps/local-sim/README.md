@@ -9,7 +9,7 @@ The Python engine that simulates bare-metal servers (libvirt + qemu VMs, each wi
 
 Cross-arch (forcing a non-host `arch` in `fleet.yml`) falls back to TCG emulation — functional but ~10–30× slower.
 
-> This is the engine. The web cockpit that drives it lives in `../apps/` and comes up with the rest of the stack under **`task up`** (it runs as devenv processes — see [Control center](#control-center-the-web-cockpit) below). For engine internals beyond this overview, **`CLAUDE.md` (next to this file) is the authoritative doc**, and `ARCHITECTURE.md` has the boot/IPMI/data-plane diagrams.
+> This is the engine. The web cockpit that drives it lives in `../apps/` and comes up with the rest of the stack under **`task up`** (it runs as devenv processes — see [Control center](#control-center-the-web-cockpit) below). For engine internals beyond this overview, **`ARCHITECTURE.md` (next to this file) is the reference**: it has the boot/IPMI/data-plane diagrams.
 
 ## What it gives you
 
@@ -25,7 +25,7 @@ The spoke drives **provision**, **reprovision**, and **deprovision** end-to-end 
 
 ## Prerequisites
 
-- **libvirt/qemu** (macOS: Apple Silicon; Linux: a host that can run KVM). The bootstrap installs the OS-level virt stack for you. (Docker is used on both macOS and Linux, for the grub-build / iPXE-build containers — the bootstrap skips installing it when one is already present.)
+- **libvirt/qemu** (macOS: Apple Silicon; Linux: a host that can run KVM). The bootstrap installs the OS-level virt stack for you. (Docker is used on both macOS and Linux, for the grub-build / iPXE-build containers — the bootstrap skips installing it when one is already present. The iPXE build also needs the `docker buildx` plugin, which the Linux `docker.io` package does not install. The bootstrap installs the plugin, or links the Nix-pinned one when no distribution package exists.)
 - A checkout of this monorepo — it holds both the hub and the spoke. `HUB_REPO_PATH` points at it and defaults to the checkout the sim lives in, so a normal clone needs no configuration.
 
 Everything else — the Node/pnpm/Python/uv/go-task toolchain — comes from the **devenv** (a declarative reproducible env). You don't install it by hand.
@@ -44,7 +44,7 @@ No manual rc editing, no manual `direnv allow`. On a truly fresh machine the onl
 
 ## Quickstart
 
-The canonical bring-up is **one command** (repo root, inside the devenv shell) — it does datastores + Vault + hub + spoke + seed + fleet, supervised by process-compose (no tmux session):
+The canonical bring-up is **one command** (repo root, inside the devenv shell) — it does datastores + hub + spoke + seed + fleet, supervised by process-compose (no tmux session). It is hermetic — no secrets provider, every secret resolving from `secretspec.toml`'s `local` profile defaults.
 
 ```bash
 task up          # idempotent host bootstrap (once) + passwordless sim sudo, then `devenv up -d`.
@@ -53,13 +53,13 @@ task logs        # process-compose overview TUI (status/health + per-process log
 task down        # tear it all down (the fleet's shutdown hook runs its teardown)
 ```
 
-See **`CLAUDE.md` → "Stack orchestration"** for the full DAG and the devenv layout.
+The bring-up DAG and the devenv layout are declared in `devenv.nix` and `devenv/modules/`. See [`devenv/README.md`](../../devenv/README.md) for the operator reference.
 
 The **fleet** (the sim VMs) is a single supervised process named `fleet` — it builds artifacts + powers on the VMs, and tears them down on stop. A `fleet.autoStart = false` knob in `devenv.local.nix` gives a control-plane-only bring-up; start the fleet on demand from the control center UI or:
 
 ```bash
-devenv processes start fleet     # build artifacts + render XMLs + start daemons + auto-power-on the VMs
-devenv processes stop fleet      # tear the fleet down (ipmi_sim/sushy + undefine)
+process-compose -U -u "$PC_SOCKET_PATH" process start fleet   # build artifacts + render XMLs + start daemons + auto-power-on the VMs
+process-compose -U -u "$PC_SOCKET_PATH" process stop fleet    # tear the fleet down (ipmi_sim/sushy + undefine)
 curl -s localhost:3002/api/status | jq   # per-node libvirt + ipmi_sim + sushy state (or use the lab-web Status tab)
 ```
 
@@ -89,7 +89,7 @@ Dev host (macOS Apple Silicon, or Linux x86_64/arm64)
 │   ├── redis     :6379   ← Bridge Redis (zone-namespaced keys)
 │   └── nginx             ← OS-layer cache (services.nginx)
 ├── Hub      ($HUB_REPO_PATH)         ← api :3000, admin :3001, web :5173, web-admin :5174
-├── Spoke(s) (same checkout)     ← one per zone; zone 0 on :8000 (default SIM_ZONE_COUNT=1)
+├── Spoke(s) (same checkout)     ← one per bridge ordinal; zone 0 bridge 0 on :8000
 ├── libvirt + qemu               ← one <domain> per node — HVF on macOS, KVM on Linux
 ├── ipmi_sim (root)              ← one process per node, IPMI on 192.168.105.10+:623 (lo0/lo alias)
 ├── sushy-emulator (user)        ← one Redfish endpoint per node on 192.168.105.10+:8000
@@ -143,7 +143,7 @@ State (overlays, prefetched boot artifacts, rendered XMLs, NVRAM, pidfiles, logs
 
 ### Fleet topology
 
-The topology — nodes, defaults, and the two planes — is **declared in `modules/fleet-topology.nix`** (the committed base in its `config.fleet` block) and **rendered to a `fleet.yml`** the engine reads (`LOCAL_FLEET_PATH`); there's no hand-edited `fleet.yml` in the tree. Override per host in `devenv.local.nix` (deep-merged — `fleet.nodes.cpu-1.memory_mb = 16384;`) or from the control center's Fleet builder; see the repo-root `README.md` → "Configuration". `CLAUDE.md` → "how `fleet.yml` becomes a running fleet" has the full schema/render pipeline.
+The topology — nodes, defaults, and the two planes — is **declared in `modules/fleet-topology.nix`** (the committed base in its `config.fleet` block) and **rendered to a `fleet.yml`** the engine reads (`LOCAL_FLEET_PATH`); there's no hand-edited `fleet.yml` in the tree. Override per host in `devenv.local.nix` (deep-merged — `fleet.zones."sim-zone".nodes.cpu-1.memory_mb = 16384;`) or from the control center's Fleet builder; see [`devenv/README.md`](../../devenv/README.md) for the override layers. The schema and the render pipeline live in `modules/fleet-topology.nix` and `devenv/modules/fleet.nix`.
 
 Each node has **two MACs**: `ipmi_mac` (BMC NIC — stable identity; seeds Redfish UUID + SCSI serial/WWN) and `data_mac` (customer-facing NIC — virtio-net-pci, what bootpd matches). They must differ (mnemonic: `bc` octet = BMC, `da` octet = DAta). `arch` omitted ⇒ host arch. Default fleet is `cpu-1..cpu-4`. The rendered `fleet.yml` the engine validates looks like:
 
@@ -164,9 +164,9 @@ nodes:
 
 ### Spoke endpoint & zones
 
-The spoke runs locally; zone 0 is `http://127.0.0.1:8000`. `SIM_ZONE_COUNT` (default `1`) runs N spokes side by side — one per zone — each on its own HTTP/gRPC port (`8000+i` / `9082+i`) and Redis namespace; nodes round-robin onto zones by fleet position. `zone_count=1` is byte-identical to the historical single-zone setup. Override the endpoint only for non-default ports / container networks (`BRIDGE_ENDPOINT=...`).
+The spoke runs locally; zone 0 bridge 0 is `http://127.0.0.1:8000`. Zones are declared in `fleet.zones` (`devenv/modules/fleet-topology.nix`, overridable from the control center's Config → Zones page), each with its own `bridges` count. Every bridge takes the next ordinal in a shared band and gets its own HTTP/gRPC port (`8000+i` / `9082+i`) and Redis namespace; each node names its zone. One zone at index 0 with one bridge and the canonical name renders byte-identically to the historical single-zone setup. Override the endpoint only for non-default ports / container networks (`BRIDGE_ENDPOINT=...`).
 
-There is no remote-bridge mode — no `BRIDGE_LOCAL` toggle, no `certs/` plumbing, no Vault PKI minting.
+There is no remote-bridge mode — no `BRIDGE_LOCAL` toggle, no `certs/` plumbing, no PKI minting.
 
 ### Spoke environment
 
@@ -185,7 +185,7 @@ The seed writes **Hub only** — the spoke synthesizes its own Bridge Redis devi
 
 **The org/owner identity is created by the hub, not the seed** — there is no Azure AD in sim. `$HUB_REPO_PATH/apps/api/src/main.admin.ts:bootstrapAdminUsers` (gated on `LOCAL_SIMULATION_ENABLED=true`) runs on admin-app startup: it upserts the static sim org `00000000-0000-0000-0000-000000000000` + `FeatureFlags`, and signs up `brokkr@brokkr.local` / `brokkr` as **Owner** via better-auth. Wiping the Postgres volume is safe — the hub re-bootstraps on every start. The `30-ssh-keys` generator attaches your `~/.ssh/*.pub` to that owner (the provision validator requires ≥1 key).
 
-See **`CLAUDE.md` → "Seed preconditions"** for the full checklist of rows the saga reads and the exact error each missing one produces.
+The seed generators under `sql-seed/` are the checklist of rows the saga reads. Each one names the precondition it satisfies.
 
 ## SSH access
 
@@ -193,7 +193,7 @@ See **`CLAUDE.md` → "Seed preconditions"** for the full checklist of rows the 
 export BRIDGE_SSH_PRIVKEY_PATH=$HOME/.ssh/id_ed25519   # in the spoke's environment
 ```
 
-The spoke reads `$BRIDGE_SSH_PRIVKEY_PATH.pub` and packs it (UID 0) into the discovery initrd's `/root/.ssh/authorized_keys` — so the same key reaches brokkr-live from both the host and the spoke. Your `~/.ssh/*.pub` keys (attached to the owner by the seed) are what land on the **provisioned** OS (`/home/ubuntu/.ssh/authorized_keys`). Change the key ⇒ restart the `fleet` process (`devenv processes restart fleet`) to rebuild the discovery initrd.
+The spoke reads `$BRIDGE_SSH_PRIVKEY_PATH.pub` and packs it (UID 0) into the discovery initrd's `/root/.ssh/authorized_keys` — so the same key reaches brokkr-live from both the host and the spoke. Your `~/.ssh/*.pub` keys (attached to the owner by the seed) are what land on the **provisioned** OS (`/home/ubuntu/.ssh/authorized_keys`). Change the key ⇒ restart the `fleet` process (`process-compose -U -u "$PC_SOCKET_PATH" process restart fleet`) to rebuild the discovery initrd.
 
 ## Bridge lifecycle compatibility
 
@@ -209,7 +209,7 @@ The spoke reads `$BRIDGE_SSH_PRIVKEY_PATH.pub` and packs it (UID 0) into the dis
 | Redfish vendor BIOS / TEE config              | ❌     | sushy doesn't emulate vendor BIOS endpoints — bridge skips/501s; doesn't block provision                                    |
 | IPMI SOL activate                             | ✅     | ipmi_sim backs SOL onto the VM's qemu telnet console (`ipmitool sol activate`); `task sim:node:console` still tails the log |
 
-The chain-driven boot decision (ipmi_sim's chassis hook + the spoke's `/api/chain`) is documented in `ARCHITECTURE.md §4` and `CLAUDE.md`.
+The chain-driven boot decision (ipmi_sim's chassis hook + the spoke's `/api/chain`) is documented in `ARCHITECTURE.md §4`.
 
 ## Tasks reference
 
@@ -218,15 +218,15 @@ Orchestration is the **root** Taskfile's lifecycle verbs (run from the repo root
 ```bash
 # Root verbs (orchestration) — repo root, in the devenv shell
 task up                       # canonical bring-up: host bootstrap (once) + sudo + `devenv up -d`
-                              # (datastores + vault + hub + spoke + control center + seed + fleet)
+                              # (datastores + hub + spoke + control center + seed + fleet)
 task down                     # stop everything (the fleet's shutdown hook runs its teardown)
 task reset                    # DESTRUCTIVE: down + wipe datastore data + fleet overlays
 task status                   # process list + the fleet status table
 task logs                     # process-compose overview TUI (status/health + per-process logs)
 
 # Fleet + seed + restarts (devenv, or the control center UI)
-devenv processes start|stop|restart fleet   # power the VMs on / tear down / cycle
-devenv processes restart hub-api            # restart one component (hub-admin / hub-web / spoke / …)
+process-compose -U -u "$PC_SOCKET_PATH" process start|stop|restart fleet   # power the VMs on / tear down / cycle
+process-compose -U -u "$PC_SOCKET_PATH" process restart hub-api            # restart one component (hub-admin / hub-web / spoke / …)
 devenv tasks run sim:seed                   # generator-driven Hub Postgres seed (on demand)
 
 # Operator verbs (task sim:<verb>)

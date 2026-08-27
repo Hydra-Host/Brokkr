@@ -4,6 +4,7 @@ import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { BasicTracerProvider, BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
 
+import { getErrorMessage } from '@repo/utils';
 import { makeLogger } from '../logger';
 import { AGENT_VERSION } from '../version';
 import { RelaySpanExporter, type TraceSender } from './relay-exporter';
@@ -48,7 +49,7 @@ export function initAgentTelemetry(options: AgentTelemetryOptions): void {
   } catch (error) {
     provider = undefined;
     logger.warn('agent tracing init failed; continuing without traces', {
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 }
@@ -67,7 +68,7 @@ export async function shutdownAgentTelemetry(timeoutMs = 2_000): Promise<void> {
     ]);
   } catch (error) {
     logger.warn('agent tracing shutdown failed', {
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 }

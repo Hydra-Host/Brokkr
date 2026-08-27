@@ -70,9 +70,33 @@ The host binds injectable tokens that let a plugin act on the platform.
 
 <Warning>
   Every host service token is a cross-tenant surface that does not check the request identity. Authorize your own
-  callers first. `PLUGIN_REQUEST_CONTEXT` exposes the caller's identity plus `requirePermission`,
+  callers first. `PLUGIN_REQUEST_CONTEXT` exposes the caller's identity plus `requirePermission`, `requireOperator`,
   `requireInstanceOperator`, and `requireSessionAuth`.
 </Warning>
+
+For operator plugin HTTP handlers, use the SDK's `PluginOperatorGuard` instead of a plugin-local `CanActivate`.
+
+```typescript
+import { getPluginConfigToken } from '@hydrahost/plugin-sdk';
+import { PLUGIN_OPERATOR_ADMIN_ORG, PluginOperatorGuard } from '@hydrahost/plugin-sdk/nest';
+
+// Must be listed as a provider: an unresolvable controller-scoped guard is silently skipped (gate bypass).
+@Module({
+  controllers: [OperatorFooController],
+  providers: [
+    PluginOperatorGuard,
+    // Omit this token to accept instance operators only (operator-hub).
+    {
+      provide: PLUGIN_OPERATOR_ADMIN_ORG,
+      useFactory: (c) => c.adminOrganizationId,
+      inject: [getPluginConfigToken('foo')],
+    },
+  ],
+})
+export class FooModule {}
+```
+
+`requireOperator({ adminOrganizationId })` is host-backed. Instance operators always pass. A non-empty `adminOrganizationId` that matches the caller's organization also passes — that is how managed-edition admin-panel service identities reach operator plugins when `isInstanceOperator` is always false. Empty or missing admin org id does not grant access. Missing request identity fails closed.
 
 | Token                        | Surface                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -81,6 +105,7 @@ The host binds injectable tokens that let a plugin act on the platform.
 | `PLUGIN_DEVICE_OPS_REQUESTS` | Device operations outside the lifecycle state machine: force hardware discovery, run GPU burn-in + NCCL benchmarks, and activate or deactivate rescue mode.                                                                                                                                                                                                                                                                                                                                              |
 | `PLUGIN_IPAM_PROVISIONING`   | [IPAM](/network/ipam) writes: `createPrefix`, `createIpAddress`, `setPrefixGateway`, `createIpRange`. The host runs each write as the system actor scoped to the `organizationId` you pass. `rollbackProvisioned` soft-deletes the rows of a failed multi-step provision in a single transaction. Record the ids you create so you can compensate.                                                                                                                                                       |
 | `PLUGIN_EMAIL`               | `send({ to, subject, html, from? })` through the host's configured transport. Escape user-controlled text before embedding it in HTML.                                                                                                                                                                                                                                                                                                                                                                   |
+| `PLUGIN_RATE_LIMITER`        | Atomic fixed-window counters in plugin-scoped Redis. Backend controllers should normally use `PluginRateLimit` from `@hydrahost/plugin-sdk/nest`; limits hold across replicas and restarts.                                                                                                                                                                                                                                                                                                              |
 
 ## Worked example: Operator Hub approvals
 

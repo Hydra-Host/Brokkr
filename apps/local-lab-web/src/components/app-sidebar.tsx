@@ -2,9 +2,9 @@ import { Link, useLocation } from '@tanstack/react-router';
 import {
   AppWindow,
   ArrowRight,
-  BookOpen,
   Boxes,
   ClipboardList,
+  Cog,
   Database,
   ExternalLink,
   FileCode,
@@ -13,10 +13,14 @@ import {
   HardDrive,
   Hash,
   Layers,
+  Library,
   ListChecks,
+  Network,
+  Package,
   Rocket,
   ScrollText,
   Server,
+  ServerCog,
   SlidersHorizontal,
   Webhook,
   Wrench,
@@ -27,6 +31,7 @@ import { Fragment } from 'react';
 import { SidebarWordmark } from '@/components/logos/sidebar-wordmark';
 import { cn } from '@/components/ui/utils';
 import { tsr } from '@/lib/api';
+import { usePoll } from '@/lib/use-poll';
 
 export interface Leaf {
   to: string;
@@ -39,6 +44,9 @@ export interface Section {
   title: string;
   icon: LucideIcon;
   leaves: Leaf[];
+  /** The runtime APPS block renders above this section. A flag rather than a title match, so renaming
+   *  a section cannot silently move the block. */
+  appsBefore?: boolean;
 }
 
 export const SECTIONS: Section[] = [
@@ -52,6 +60,7 @@ export const SECTIONS: Section[] = [
       { to: '/hub', label: 'Hub', icon: Webhook },
       { to: '/storage', label: 'Storage', icon: HardDrive },
       { to: '/fleet', label: 'Fleet', icon: Server },
+      { to: '/layers', label: 'Layers', icon: Package },
     ],
   },
   {
@@ -63,18 +72,24 @@ export const SECTIONS: Section[] = [
     ],
   },
   {
-    title: 'Config',
-    icon: SlidersHorizontal,
+    title: 'Configuration',
+    icon: Cog,
     leaves: [
-      { to: '/settings', label: 'Stack', icon: Wrench },
-      { to: '/docs', label: 'API docs', icon: FileCode },
-      { to: '/audit', label: 'Audit log', icon: ScrollText },
+      // exact, or the Overview marker lights up on every /config/* page
+      { to: '/config', label: 'Summary', icon: ClipboardList, exact: true },
+      { to: '/config/stack', label: 'Stack knobs', icon: SlidersHorizontal },
+      { to: '/config/fleet', label: 'Fleet nodes', icon: ServerCog },
+      { to: '/config/zones', label: 'Zones & topology', icon: Network },
+      { to: '/config/advanced', label: 'Advanced', icon: Wrench },
     ],
   },
   {
-    title: 'Wiki',
-    icon: BookOpen,
+    title: 'Reference',
+    icon: Library,
+    appsBefore: true,
     leaves: [
+      { to: '/docs', label: 'API docs', icon: FileCode },
+      { to: '/audit', label: 'Audit log', icon: ScrollText },
       { to: '/getting-started', label: 'Getting started', icon: Rocket },
       { to: '/wiki/$slug', label: 'Bring up the stack', icon: Hash, params: { slug: 'bring-up' } },
       { to: '/wiki/$slug', label: 'Running the control center', icon: Hash, params: { slug: 'running-the-stack' } },
@@ -85,6 +100,12 @@ export const SECTIONS: Section[] = [
 
 export function leafPath(l: Leaf): string {
   return l.params ? `/wiki/${l.params.slug}` : l.to;
+}
+
+/** The leaf's tour anchor. Exported because a tour step names it as a selector, so the guard that
+ *  resolves those selectors has to derive them the same way this component renders them. */
+export function leafAnchor(l: Leaf): string {
+  return l.params ? `wiki-nav-${l.params.slug}` : `sidebar-${l.to.slice(1).replace(/\//g, '-')}`;
 }
 
 export function isLeafActive(pathname: string, l: Leaf): boolean {
@@ -186,14 +207,14 @@ export function AppSidebar({
                     <Link
                       to="/wiki/$slug"
                       params={{ slug: l.params.slug }}
-                      data-tour={`wiki-nav-${l.params.slug}`}
+                      data-tour={leafAnchor(l)}
                       title={l.label}
                       className={className}
                     >
                       {inner}
                     </Link>
                   ) : (
-                    <Link to={l.to} data-tour={`sidebar-${l.to.slice(1)}`} title={l.label} className={className}>
+                    <Link to={l.to} data-tour={leafAnchor(l)} title={l.label} className={className}>
                       {inner}
                     </Link>
                   );
@@ -209,7 +230,7 @@ export function AppSidebar({
 
           return (
             <Fragment key={section.title}>
-              {section.title === 'Wiki' && <AppsSection open={open} setOpen={setOpen} />}
+              {section.appsBefore && <AppsSection open={open} setOpen={setOpen} />}
               {body}
             </Fragment>
           );
@@ -222,7 +243,7 @@ export function AppSidebar({
 // Running web UIs, resolved from the process-catalog LAB_WEB_UI markers (listAppLinks); links use the
 // browser's own hostname so they work over the LAN.
 function useAppLinks(): { label: string; url: string; ready: boolean }[] {
-  const appLinks = tsr.listAppLinks.useQuery({ queryKey: ['app-links'], refetchInterval: 5000 });
+  const appLinks = tsr.listAppLinks.useQuery({ queryKey: ['app-links'], refetchInterval: usePoll(5000) });
   const links = appLinks.data?.status === 200 ? appLinks.data.body : [];
   // Browser's own hostname reaches the LAN-facing services; a loopback-only UI targets localhost,
   // since telemetry.nix binds it loopback even under lan.expose (the LAN host would be a dead link).

@@ -2,21 +2,9 @@ import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
+import { getIpamStatusBadgeVariant } from '@repo/utils';
 import { Link, Outlet, createFileRoute } from '@tanstack/react-router';
 import { tsr } from '~/lib/api';
-
-function statusVariant(status: string) {
-  switch (status) {
-    case 'ACTIVE':
-      return 'default';
-    case 'RESERVED':
-      return 'secondary';
-    case 'DEPRECATED':
-      return 'destructive';
-    default:
-      return 'outline';
-  }
-}
 
 export const Route = createFileRoute('/_app/ipam/vlans/$vlanId')({
   staticData: { breadcrumb: 'VLAN Detail' },
@@ -53,7 +41,7 @@ function VlanLayout() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="text-lg font-medium">{vlan.name}</span>
-          <Badge variant={statusVariant(vlan.status)}>{vlan.status}</Badge>
+          <Badge variant={getIpamStatusBadgeVariant(vlan.status)}>{vlan.status}</Badge>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" asChild>

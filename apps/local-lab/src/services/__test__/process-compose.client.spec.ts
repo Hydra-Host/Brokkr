@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PcProcess } from '../process-compose.client';
-import { ProcessComposeClient } from '../process-compose.client';
+import { CONTROL_TIMEOUT_MS, POLL_TIMEOUT_MS, ProcessComposeClient } from '../process-compose.client';
 
 const { spawnMock, requestMock } = vi.hoisted(() => ({ spawnMock: vi.fn(), requestMock: vi.fn() }));
 vi.mock('node:child_process', async (importOriginal) => ({
@@ -32,8 +32,10 @@ function fakeReq() {
     destroy: (err: Error) => EventEmitter;
     end: () => EventEmitter;
     fireTimeout: () => void;
+    timeoutMs?: number;
   };
-  req.setTimeout = (_ms, cb) => {
+  req.setTimeout = (ms, cb) => {
+    req.timeoutMs = ms;
     onTimeout = cb;
     return req;
   };
@@ -50,20 +52,27 @@ const jsonSpyTarget = (c: ProcessComposeClient) =>
   c as unknown as { getJson: (path: string, schema: unknown) => Promise<unknown> };
 
 describe('ProcessComposeClient.processInfo — W3 drift-guard read', () => {
-  it('GETs /process/info/<name> and returns the Go-field-named config', async () => {
+  it('GETs /process/info/<name> and reads the daemon camelCase field names', async () => {
     const client = new ProcessComposeClient();
     const getJson = vi.spyOn(jsonSpyTarget(client), 'getJson').mockResolvedValue({
-      Command: 'run-spoke',
-      Environment: ['A=1', 'B=2'],
-      DependsOn: { redis: { condition: 'process_healthy' } },
+      name: 'spoke',
+      command: 'run-spoke',
+      environment: ['A=1', 'B=2'],
+      dependsOn: { redis: { condition: 2 } },
+      restartPolicy: { restart: 2, maxRestarts: 5 },
+      shutDownParams: { signal: 15 },
+      readinessProbe: { httpGet: { port: '8000', numPort: 8000 }, failureThreshold: 60 },
+      namespace: 'spoke',
+      replicas: 1,
     });
 
     const info = await client.processInfo('spoke');
 
     expect(getJson).toHaveBeenCalledWith('/process/info/spoke', expect.anything());
-    expect(info.Command).toBe('run-spoke');
-    expect(info.Environment).toEqual(['A=1', 'B=2']);
-    expect(Object.keys(info.DependsOn ?? {})).toEqual(['redis']);
+    expect(info.command).toBe('run-spoke');
+    expect(info.environment).toEqual(['A=1', 'B=2']);
+    expect(Object.keys(info.dependsOn ?? {})).toEqual(['redis']);
+    expect(info.namespace).toBe('spoke');
   });
 
   it('is lenient (passthrough, all optional) — an unexpected/extra shape does not throw', async () => {
@@ -156,6 +165,47 @@ describe('ProcessComposeClient REST socket read timeout', () => {
     req.fireTimeout();
 
     await expect(p).rejects.toThrow(/timed out after 5s/);
+  });
+});
+
+describe('ProcessComposeClient budgets a control verb apart from a status poll', () => {
+  withStubSocket();
+  beforeEach(() => requestMock.mockReset());
+
+  it('leaves a status poll on the short leash', async () => {
+    const req = fakeReq();
+    requestMock.mockReturnValue(req);
+    const client = new ProcessComposeClient();
+
+    const p = client.processInfo('spoke');
+    expect(req.timeoutMs).toBe(POLL_TIMEOUT_MS);
+    req.fireTimeout();
+    await expect(p).rejects.toThrow(/timed out/);
+  });
+
+  it('gives a restart longer than a spoke takes to shut down', async () => {
+    const req = fakeReq();
+    requestMock.mockReturnValue(req);
+    const client = new ProcessComposeClient();
+
+    const p = client.restart('spoke');
+    expect(req.timeoutMs).toBe(CONTROL_TIMEOUT_MS);
+    expect(req.timeoutMs).toBeGreaterThan(45_000);
+    req.fireTimeout();
+    await expect(p).rejects.toThrow(/timed out after 60s/);
+  });
+
+  it('gives a stop and a start the same budget as a restart', async () => {
+    for (const verb of ['stop', 'start'] as const) {
+      const req = fakeReq();
+      requestMock.mockReturnValue(req);
+      const client = new ProcessComposeClient();
+
+      const p = client[verb]('spoke');
+      expect(req.timeoutMs, verb).toBe(CONTROL_TIMEOUT_MS);
+      req.fireTimeout();
+      await expect(p).rejects.toThrow(/timed out/);
+    }
   });
 });
 
@@ -354,5 +404,131 @@ describe('ProcessComposeClient.ensureRunning', () => {
     vi.spyOn(client, 'start').mockRejectedValue(new Error('pc 404'));
 
     await expect(client.ensureRunning('fleet')).resolves.toBeUndefined();
+  });
+});
+
+describe('ProcessComposeClient.waitUntilDepReady', () => {
+  const proc = (over: Partial<PcProcess>): PcProcess =>
+    ({ name: 'spoke', status: 'Running', is_ready: 'Ready', has_ready_probe: true, ...over }) as PcProcess;
+
+  it('returns true on the first poll when the probe already reports ready', async () => {
+    const client = new ProcessComposeClient();
+    const listAll = vi.spyOn(client, 'listAll').mockResolvedValue([proc({})]);
+
+    await expect(client.waitUntilDepReady('spoke', 30_000)).resolves.toBe(true);
+    expect(listAll).toHaveBeenCalledOnce();
+  });
+
+  it('keeps polling while a running process still reports its probe pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new ProcessComposeClient();
+      let ready = false;
+      const listAll = vi
+        .spyOn(client, 'listAll')
+        .mockImplementation(async () => [proc({ is_ready: ready ? 'Ready' : 'Not Ready' })]);
+
+      const pending = client.waitUntilDepReady('spoke', 30_000);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(listAll.mock.calls.length).toBeGreaterThan(1);
+      ready = true;
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expect(pending).resolves.toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up at the deadline when the process never becomes dep-ready', async () => {
+    const client = new ProcessComposeClient();
+    vi.spyOn(client, 'listAll').mockResolvedValue([proc({ is_ready: 'Not Ready' })]);
+
+    await expect(client.waitUntilDepReady('spoke', 0)).resolves.toBe(false);
+  });
+
+  it('gives up at the deadline when the daemon does not report the process at all', async () => {
+    const client = new ProcessComposeClient();
+    vi.spyOn(client, 'listAll').mockResolvedValue([]);
+
+    await expect(client.waitUntilDepReady('spoke', 0)).resolves.toBe(false);
+  });
+
+  it('keeps waiting after a poll that throws', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new ProcessComposeClient();
+      const listAll = vi
+        .spyOn(client, 'listAll')
+        .mockRejectedValueOnce(new Error('socket closed'))
+        .mockResolvedValue([proc({})]);
+
+      const pending = client.waitUntilDepReady('spoke', 30_000);
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      await expect(pending).resolves.toBe(true);
+      expect(listAll.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('ProcessComposeClient.waitUntilDepReady — dead dependency', () => {
+  const at = (status: string, over: Partial<PcProcess> = {}): PcProcess =>
+    ({ name: 'spoke', status, is_ready: '-', has_ready_probe: true, ...over }) as PcProcess;
+
+  it('gives up on a dependency that stays terminal rather than burning the timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new ProcessComposeClient();
+      const listAll = vi.spyOn(client, 'listAll').mockResolvedValue([at('Error')]);
+
+      const pending = client.waitUntilDepReady('spoke', 180_000);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      await expect(pending).resolves.toBe(false);
+      expect(listAll.mock.calls.length).toBeLessThan(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps waiting when a single terminal poll is the not-yet-landed start', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new ProcessComposeClient();
+      let poll = 0;
+      vi.spyOn(client, 'listAll').mockImplementation(async () => {
+        poll += 1;
+        return [poll === 1 ? at('Completed') : at('Running', { is_ready: 'Ready' })];
+      });
+
+      const pending = client.waitUntilDepReady('spoke', 180_000);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      await expect(pending).resolves.toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not give up on a Skipped dependency, which a transition can still clear', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new ProcessComposeClient();
+      let poll = 0;
+      vi.spyOn(client, 'listAll').mockImplementation(async () => {
+        poll += 1;
+        return [poll < 4 ? at('Skipped') : at('Running', { is_ready: 'Ready' })];
+      });
+
+      const pending = client.waitUntilDepReady('spoke', 180_000);
+      await vi.advanceTimersByTimeAsync(6_000);
+
+      await expect(pending).resolves.toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -491,7 +491,7 @@ def test_dcim_generator_bgp_acl_follows_relocated_cidr(tmp_path, monkeypatch):
     assert "192.168.105.0/24" not in sql
 
 
-def test_dcim_generator_scales_switch_ports_to_fleet_size(tmp_path, monkeypatch):
+def test_dcim_generator_scales_node_ports_but_pins_the_patch_uplinks(tmp_path, monkeypatch):
     nodes = "\n".join(
         f'  - {{name: cpu-{i}, ipmi_mac: "52:54:00:bc:00:{i:02x}", data_mac: "52:54:00:da:00:{i:02x}"}}'
         for i in range(1, 9)
@@ -509,13 +509,84 @@ def test_dcim_generator_scales_switch_ports_to_fleet_size(tmp_path, monkeypatch)
     sql = _load("55-dcim.py").generate()
     n = 8
 
-    assert sql.count('INSERT INTO "Interface"') >= n + 2
-    for p in range(1, n + 3):
+    assert sql.count('INSERT INTO "Interface"') >= n + 3
+    for p in range(1, n + 1):
         assert f"'swp{p}'" in sql
-    assert f"'swp{n + 3}'" not in sql
+    assert f"'swp{n + 1}'" not in sql
 
-    assert f"sim-patch-1 FP-01 → sim-tor-1 swp{n + 1}" in sql
-    assert f"sim-patch-1 RP-02 → sim-tor-1 swp{n + 2}" in sql
+    assert "'swp47'" in sql
+    assert "'swp48'" in sql
+    assert "sim-patch-1 FP-01 → sim-tor-1 swp47" in sql
+    assert "sim-patch-1 RP-02 → sim-tor-1 swp48" in sql
+
+
+def _dcim_sql(tmp_path, monkeypatch, node_names: list[str], non_server: str = "") -> str:
+    nodes = "\n".join(
+        f'  - {{name: {name}, ipmi_mac: "52:54:00:bc:00:{i:02x}", data_mac: "52:54:00:da:00:{i:02x}"'
+        + (", seed_as_server: false}" if name == non_server else "}")
+        for i, name in enumerate(node_names, start=1)
+    )
+    fleet = (
+        "network: {name: t, cidr: 192.168.200.0/24, domain: t.local, bmc_cidr: 192.168.105.0/24}\n"
+        "defaults: {cpus: 2, memory_mb: 2048, disk_gb: 40, bmc: {username: a, password: a}}\n"
+        f"nodes:\n{nodes}\n"
+    )
+    _pin_fleet(tmp_path, monkeypatch, fleet)
+    return _load("55-dcim.py").generate()
+
+
+def _switch_port_by_cable(sql: str) -> dict[str, str]:
+    return dict(re.findall(r"'([^']+) → sim-tor-1 (swp\d+)'", sql))
+
+
+def test_dcim_generator_pins_each_node_to_one_switch_port(tmp_path, monkeypatch):
+    big = _dcim_sql(tmp_path, monkeypatch, ["cpu-1", "cpu-2", "cpu-3", "cpu-4"])
+    small = _dcim_sql(tmp_path, monkeypatch, ["cpu-1"])
+    gapped = _dcim_sql(tmp_path, monkeypatch, ["cpu-1", "cpu-2", "cpu-3", "cpu-4"], non_server="cpu-2")
+
+    for sql in (big, small, gapped):
+        ports = _switch_port_by_cable(sql)
+        assert ports["cpu-1 eth0"] == "swp1"
+        assert ports["sim-patch-1 FP-01"] == "swp47"
+        assert ports["sim-patch-1 RP-02"] == "swp48"
+
+    assert _switch_port_by_cable(big)["cpu-4 eth0"] == "swp4"
+    assert _switch_port_by_cable(gapped)["cpu-4 eth0"] == "swp4"
+    assert "cpu-2 eth0" not in _switch_port_by_cable(gapped)
+
+
+def test_dcim_generator_refuses_a_fleet_that_overruns_the_patch_uplinks(tmp_path, monkeypatch):
+    names = [f"cpu-{i}" for i in range(1, 48)]
+    with pytest.raises(ValueError, match="cannot host them all"):
+        _dcim_sql(tmp_path, monkeypatch, names)
+
+    ok = _dcim_sql(tmp_path, monkeypatch, [f"cpu-{i}" for i in range(1, 47)])
+    assert "'swp46'" in ok
+    assert _switch_port_by_cable(ok)["sim-patch-1 FP-01"] == "swp47"
+
+
+def test_dcim_generator_never_claims_one_termination_twice(tmp_path, monkeypatch):
+    for names in (["cpu-1"], ["cpu-1", "cpu-2", "cpu-3", "cpu-4"]):
+        sql = _dcim_sql(tmp_path, monkeypatch, names)
+        rows = re.findall(
+            r"'(\w+)'::\"CableTerminationType\",\s*'([0-9a-f-]{36})', '([0-9a-f-]{36})'\)",
+            sql,
+        )
+        claims = [(ttype, tid) for ttype, tid, _cid in rows]
+        assert len(claims) == len(set(claims))
+
+
+def test_dcim_generator_retires_stale_switch_cables_before_wiring(tmp_path, monkeypatch):
+    sql = _dcim_sql(tmp_path, monkeypatch, ["cpu-1", "cpu-2"])
+
+    assert 'DELETE FROM "Cable" c' in sql
+    assert sql.index('DELETE FROM "Cable" c') < sql.index('INSERT INTO "CableTermination"')
+
+    cable_ids = re.findall(r"INSERT INTO \"Cable\" \(id.*?VALUES \('([0-9a-f-]{36})'", sql, re.S)
+    release = sql[sql.index('DELETE FROM "Cable" c') :].split(";")[0]
+    assert cable_ids
+    for cid in cable_ids:
+        assert cid in release
 
 
 def test_dcim_generator_rack_positions_never_collide(tmp_path, monkeypatch):
@@ -598,12 +669,22 @@ def test_prefixes_generator_idempotent_output(fixture_fleet):
     assert _load("46-prefixes.py").generate() == _load("46-prefixes.py").generate()
 
 
-def test_prefixes_generator_two_prefixes_per_zone(fixture_fleet_multi):
+def test_prefixes_generator_emits_each_subnet_once_not_once_per_zone(fixture_fleet_multi):
     sql = _load("46-prefixes.py").generate()
-    assert sql.count('INSERT INTO "Prefix"') == 4
+    assert sql.count('INSERT INTO "Prefix"') == 2
     assert sql.count('INSERT INTO "Gateway"') == 1
     assert "00000000-0000-0000-0000-111111111111" in sql
-    assert "00000000-0000-0000-0000-111111111112" in sql
+    assert "00000000-0000-0000-0000-111111111112" not in sql
+
+
+def test_prefixes_generator_never_repeats_a_cidr(fixture_fleet_multi):
+    cidrs = _cidrs(_load("46-prefixes.py").generate())
+    assert len(cidrs) == len(set(cidrs)), f"Prefix_active_unique would reject these: {cidrs}"
+
+
+def test_prefixes_generator_never_repeats_a_cidr_single_zone(fixture_fleet):
+    cidrs = _cidrs(_load("46-prefixes.py").generate())
+    assert len(cidrs) == len(set(cidrs))
 
 
 def test_vrfs_vlan_groups_generator_emits_vrf_and_zone_groups(fixture_fleet):
@@ -628,6 +709,36 @@ def test_vrfs_vlan_groups_generator_one_group_per_zone(fixture_fleet_multi):
     sql = _load("47-vrfs-vlan-groups.py").generate()
     assert sql.count('INSERT INTO "Vrf"') == 1
     assert sql.count('INSERT INTO "VlanGroup"') == 2
+
+
+def test_vrfs_vlan_groups_sweep_names_the_prefixes_46_emits(fixture_fleet):
+    seeded = _prefix_ids(_load("46-prefixes.py").generate())
+    sql = _load("47-vrfs-vlan-groups.py").generate()
+    assert seeded
+    assert "p.id IN (" in sql
+    for prefix_id in seeded:
+        assert q(prefix_id) in sql
+
+
+def test_vrfs_vlan_groups_sweep_names_the_prefixes_46_emits_multi_zone(fixture_fleet_multi):
+    seeded = _prefix_ids(_load("46-prefixes.py").generate())
+    sql = _load("47-vrfs-vlan-groups.py").generate()
+    assert seeded
+    for prefix_id in seeded:
+        assert q(prefix_id) in sql
+
+
+def test_vrfs_vlan_groups_sweep_drops_the_org_wide_predicate(fixture_fleet):
+    sweep = _sweep(_load("47-vrfs-vlan-groups.py").generate())
+    assert '("vrfId" IS NULL OR "vrfId" =' not in sweep
+
+
+def test_vrfs_vlan_groups_sweep_guards_the_target_vrf_slot(fixture_fleet):
+    sweep = _sweep(_load("47-vrfs-vlan-groups.py").generate())
+    assert "NOT EXISTS" in sweep
+    assert 'o."vrfId" = ' in sweep
+    assert "o.prefix = p.prefix" in sweep
+    assert "o.id <> p.id" in sweep
 
 
 def test_vlans_ip_ranges_generator_emits_vlans_and_admin_pools(fixture_fleet):
@@ -655,8 +766,23 @@ def test_vlans_ip_ranges_generator_idempotent_output(fixture_fleet):
 def test_vlans_ip_ranges_generator_scales_with_zones(fixture_fleet_multi):
     sql = _load("48-vlans-ip-ranges.py").generate()
     assert sql.count('INSERT INTO "Vlan"') == 6
-    assert sql.count("'sim-admin-pool'") == 2
-    assert sql.count("'sim-bmc-admin-pool'") == 2
+    assert sql.count("'sim-admin-pool'") == 1
+    assert sql.count("'sim-bmc-admin-pool'") == 1
+
+
+def test_vlans_generator_steps_the_vid_so_one_vrf_stays_unique(fixture_fleet_multi):
+    vids = _vids(_load("48-vlans-ip-ranges.py").generate())
+    assert sorted(vids) == [100, 101, 200, 201, 300, 301]
+
+
+def test_vlans_generator_never_repeats_a_vid(fixture_fleet_multi):
+    vids = _vids(_load("48-vlans-ip-ranges.py").generate())
+    assert len(vids) == len(set(vids)), f"Vlan_active_unique_vid would reject these: {vids}"
+
+
+def test_vlans_generator_never_repeats_a_vid_single_zone(fixture_fleet):
+    vids = _vids(_load("48-vlans-ip-ranges.py").generate())
+    assert len(vids) == len(set(vids))
 
 
 def test_listing_generator_is_set_based():
@@ -912,6 +1038,134 @@ def _pin_fleet(tmp_path, monkeypatch, text: str):
     monkeypatch.setenv("LOCAL_FLEET_PATH", str(fleet_path))
     cfg.get_settings.cache_clear()
     return fleet_path
+
+
+def test_prune_generator_bounds_the_range_at_the_live_node_count(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
+    sql = _load("49-device-prune.py").generate()
+
+    assert "right(id, 12)::bigint > 4" in sql
+
+
+def test_prune_generator_never_reaches_a_bridge_device(tmp_path, monkeypatch):
+    from local.zones import BRIDGE_ORDINAL_BASE
+
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
+    sql = _load("49-device-prune.py").generate()
+
+    assert f"right(id, 12)::bigint < {BRIDGE_ORDINAL_BASE}" in sql
+    assert BRIDGE_ORDINAL_BASE > 4
+
+
+def test_prune_generator_soft_deletes_rather_than_removing(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
+    sql = _load("49-device-prune.py").generate()
+
+    assert 'DELETE FROM "Device"' not in sql
+    assert '"deletedAt" = NOW()' in sql
+    assert '"deletedAt" IS NULL' in sql
+
+
+def test_prune_generator_scopes_to_the_sim_org(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
+    sql = _load("49-device-prune.py").generate()
+
+    assert '"organizationId" = ' in sql
+
+
+def test_devices_generator_frees_the_name_a_shifted_id_needs(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
+    sql = _load("50-devices.py").generate()
+
+    assert "'00000000-0000-0000-0000-000000000004', 'zone1-cpu-5'" in sql
+    assert (
+        "AND \"zoneId\" = '00000000-0000-0000-0000-111111111112' AND name = 'zone1-cpu-5'\n"
+        "  AND id <> '00000000-0000-0000-0000-000000000004'"
+    ) in sql
+
+
+def test_devices_generator_clears_one_name_per_seeded_node(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
+    sql = _load("50-devices.py").generate()
+
+    assert sql.count('UPDATE "Device" SET "deletedAt" = NOW()') == sql.count('INSERT INTO "Device"')
+
+
+def test_device_name_clear_excludes_its_own_id_so_a_reseed_is_a_noop(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
+    for gen in ("50-devices.py", "51-commissioning-devices.py"):
+        sql = _load(gen).generate()
+        clears = sql.count('UPDATE "Device" SET "deletedAt" = NOW()')
+        assert sql.count("AND id <> '") == clears, gen
+
+
+def test_devices_generator_frees_a_seal_bound_to_another_zone(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
+    sql = _load("50-devices.py").generate()
+
+    assert (
+        'DELETE FROM "DeviceSecret"\n'
+        "WHERE \"deviceId\" = '00000000-0000-0000-0000-000000000004' "
+        "AND \"zoneId\" <> '00000000-0000-0000-0000-111111111112';"
+    ) in sql
+
+
+def test_devices_generator_frees_one_seal_per_seeded_node(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
+    sql = _load("50-devices.py").generate()
+
+    assert sql.count('DELETE FROM "DeviceSecret"') == sql.count('INSERT INTO "Device"')
+
+
+def test_zone_move_prep_spares_the_target_zone_so_a_reseed_is_a_noop(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET_MIXED)
+    for gen in ("50-devices.py", "51-commissioning-devices.py"):
+        sql = _load(gen).generate()
+        deletes = sql.count('DELETE FROM "DeviceSecret"')
+        assert deletes > 0, gen
+        assert sql.count('AND "zoneId" <> \'') == deletes, gen
+
+
+def test_devices_generator_revives_a_tombstoned_row_it_owns(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
+    sql = _load("50-devices.py").generate()
+
+    assert sql.count('"deletedAt" = NULL, "updatedAt" = NOW();') == sql.count('INSERT INTO "Device"')
+
+
+def test_commissioning_generator_revives_a_tombstoned_row_it_owns(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET_MIXED)
+    sql = _load("51-commissioning-devices.py").generate()
+
+    assert sql.count('"deletedAt" = NULL, "updatedAt" = NOW();') == sql.count('INSERT INTO "Device"')
+
+
+def test_devices_generator_brackets_the_role_write_once_trigger(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
+    sql = _load("50-devices.py").generate()
+
+    off = sql.index('ALTER TABLE "Device" DISABLE TRIGGER device_role_write_once;')
+    on = sql.index('ALTER TABLE "Device" ENABLE TRIGGER device_role_write_once;')
+    assert sql.index("BEGIN;") < off < sql.index('INSERT INTO "Device"')
+    assert sql.rindex('INSERT INTO "Device"') < on < sql.index("COMMIT;")
+
+
+def test_commissioning_generator_brackets_the_role_write_once_trigger(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET_MIXED)
+    sql = _load("51-commissioning-devices.py").generate()
+
+    off = sql.index('ALTER TABLE "Device" DISABLE TRIGGER device_role_write_once;')
+    on = sql.index('ALTER TABLE "Device" ENABLE TRIGGER device_role_write_once;')
+    assert sql.index("BEGIN;") < off < sql.index('INSERT INTO "Device"')
+    assert sql.rindex('INSERT INTO "Device"') < on < sql.index("COMMIT;")
+
+
+def test_commissioning_generator_omits_the_bracket_with_no_commissioning_node(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
+    sql = _load("51-commissioning-devices.py").generate()
+
+    assert 'INSERT INTO "Device"' not in sql
+    assert "device_role_write_once" not in sql
 
 
 def test_baremetal_generator_noop_in_vm_mode(fixture_fleet):
@@ -1463,19 +1717,6 @@ def test_emit_upsert_continuation_lines_are_indented_not_reopened():
     assert sql.rstrip().endswith(";")
 
 
-def _statements(sql: str) -> list[str]:
-    collapsed = (re.sub(r"\s+", " ", stmt).strip() for stmt in sql.split(";"))
-    unpadded = (re.sub(r"\s+\)", ")", re.sub(r"\(\s+", "(", stmt)) for stmt in collapsed)
-    return [stmt for stmt in unpadded if stmt]
-
-
-def test_dcim_generator_matches_the_pre_emit_upsert_sql_modulo_whitespace(tmp_path, monkeypatch):
-    monkeypatch.setenv("SIM_HOST_ARCH", "amd64")
-    _pin_fleet(tmp_path, monkeypatch, _OVERRIDES_FLEET)
-    before = (_GOLDEN_DIR / "55-dcim.pre-emit-upsert.sql").read_text()
-    assert _statements(_load("55-dcim.py").generate()) == _statements(before)
-
-
 _GOLDEN_DIR = Path(__file__).resolve().parent / "fixtures" / "sql-seed"
 
 _OVERRIDES_FLEET = (
@@ -1488,6 +1729,52 @@ _OVERRIDES_FLEET = (
     '  - {name: commission-1, ipmi_mac: "52:54:00:bc:00:03", data_mac: "52:54:00:da:00:03",\n'
     "     seed_as_server: false, ip: 192.168.200.99}\n"
     '  - {name: cpu-4, ipmi_mac: "52:54:00:bc:00:04", data_mac: "52:54:00:da:00:04"}\n'
+)
+
+
+# The two DB unique indexes a per-zone IPAM row silently violates: Prefix_active_unique is
+# (org, vrfId, prefix) and Vlan_active_unique_vid is (org, vrfId, vid), both org-and-VRF-wide.
+def _cidrs(sql: str) -> list[str]:
+    return re.findall(r"'([0-9./]+)'::cidr", sql)
+
+
+def _prefix_ids(sql: str) -> list[str]:
+    return re.findall(r"'([0-9a-f-]{36})', '[0-9./]+'::cidr", sql)
+
+
+def _sweep(sql: str) -> str:
+    return sql.split("-- attach the seeded prefixes")[1].split(";")[0]
+
+
+def _vids(sql: str) -> list[int]:
+    return [int(v) for v in re.findall(r"^-- VLAN .* vid=(\d+) ", sql, re.M)]
+
+
+_SHRUNK_FLEET = (
+    "network: {name: t, cidr: 192.168.200.0/24, domain: t.local, bmc_cidr: 192.168.105.0/24}\n"
+    "defaults: {cpus: 2, memory_mb: 2048, disk_gb: 40, bmc: {username: a, password: a}}\n"
+    "zones:\n"
+    "  - {index: 0, name: sim-zone, bridges: 1}\n"
+    "  - {index: 1, name: den-1, bridges: 1}\n"
+    "nodes:\n"
+    '  - {name: cpu-1, ipmi_mac: "52:54:00:bc:00:01", data_mac: "52:54:00:da:00:01", zone: sim-zone}\n'
+    '  - {name: cpu-2, ipmi_mac: "52:54:00:bc:00:02", data_mac: "52:54:00:da:00:02", zone: sim-zone}\n'
+    '  - {name: cpu-3, ipmi_mac: "52:54:00:bc:00:03", data_mac: "52:54:00:da:00:03", zone: sim-zone}\n'
+    '  - {name: zone1-cpu-5, ipmi_mac: "52:54:00:bc:00:05", data_mac: "52:54:00:da:00:05", zone: den-1}\n'
+)
+
+
+_SHRUNK_FLEET_MIXED = (
+    "network: {name: t, cidr: 192.168.200.0/24, domain: t.local, bmc_cidr: 192.168.105.0/24}\n"
+    "defaults: {cpus: 2, memory_mb: 2048, disk_gb: 40, bmc: {username: a, password: a}}\n"
+    "zones:\n"
+    "  - {index: 0, name: sim-zone, bridges: 1}\n"
+    "  - {index: 1, name: den-1, bridges: 1}\n"
+    "nodes:\n"
+    '  - {name: cpu-1, ipmi_mac: "52:54:00:bc:00:01", data_mac: "52:54:00:da:00:01", zone: sim-zone}\n'
+    '  - {name: cpu-2, ipmi_mac: "52:54:00:bc:00:02", data_mac: "52:54:00:da:00:02", zone: sim-zone}\n'
+    '  - {name: onb-1, ipmi_mac: "52:54:00:bc:00:03", data_mac: "52:54:00:da:00:03", zone: den-1,\n'
+    "     seed_as_server: false}\n"
 )
 
 

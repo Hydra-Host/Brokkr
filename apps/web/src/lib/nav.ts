@@ -41,6 +41,38 @@ export function safeInternalPath(to: string): string | undefined {
   return to.startsWith('/') && !isProtocolRelative(to) ? to : undefined;
 }
 
+export function mergeNavSections(host: NavSection[], plugin: NavSection[]): NavSection[] {
+  const merged = host.map((section) => ({ ...section, items: [...section.items] }));
+  for (const extra of plugin) {
+    const existing = merged.find((section) => section.title.toLowerCase() === extra.title.toLowerCase());
+    if (existing) {
+      existing.items.push(...extra.items);
+      continue;
+    }
+    merged.push({ ...extra, items: [...extra.items] });
+  }
+  return merged;
+}
+
+export function followInternalNavClick(
+  event: {
+    metaKey: boolean;
+    ctrlKey: boolean;
+    shiftKey: boolean;
+    altKey: boolean;
+    button: number;
+    preventDefault: () => void;
+  },
+  href: string,
+  push: (href: string) => void,
+): void {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+    return;
+  }
+  event.preventDefault();
+  push(href);
+}
+
 // Keyed by URL: re-clicking a popup leaf must not re-navigate the running window —
 // a reload would destroy its state (e.g. a booted WebVM).
 const navPopups = new Map<string, Window>();
@@ -223,13 +255,12 @@ export function getSectionForPathname(sections: NavSection[], pathname: string):
   return exact?.section ?? prefix?.section ?? null;
 }
 
+export function getVisibleLeaves(sections: NavSection[]): FlatLeaf[] {
+  return sections.flatMap((section) => section.items.map((leaf) => ({ ...leaf, sectionTitle: section.title })));
+}
+
 export function findLeafByUrl(sections: NavSection[], url: string): FlatLeaf | null {
-  for (const section of sections) {
-    for (const leaf of section.items) {
-      if (leaf.url === url) return { ...leaf, sectionTitle: section.title };
-    }
-  }
-  return null;
+  return getVisibleLeaves(sections).find((leaf) => leaf.url === url) ?? null;
 }
 
 const PINNED_STORAGE_KEY = 'web:pinned-leaves';

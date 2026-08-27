@@ -1,7 +1,7 @@
 import { registerChrootOps } from './chroot';
 import { registerPowerCycleCleaner } from './cleanup';
 import { registerCloudInitWriter } from './cloudinit';
-import { registerDeployOS } from './deployOS';
+import { registerDeployOS } from './deploy-os';
 import { registerEfiFinalizer } from './efi';
 import { registerFstabWriters } from './fstab';
 import { registerGrubInstaller } from './grub';

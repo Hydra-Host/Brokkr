@@ -1,9 +1,10 @@
 import { tsr } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
+import { usePoll } from '@/lib/use-poll';
 import type { Svc } from '@/lib/use-stack-config-form';
 
 export function useServiceRoster() {
-  const services = tsr.listServices.useQuery({ queryKey: ['services'], refetchInterval: 4000 });
+  const services = tsr.listServices.useQuery({ queryKey: ['services'], refetchInterval: usePoll(4000) });
 
   const roster = services.data?.status === 200 ? services.data.body : [];
   const svcState = (group: Svc) => roster.find((s) => s.group === group);

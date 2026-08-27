@@ -1,7 +1,7 @@
 {
   description = "brokk-local Nix python runtime — sushy-tools + sim engine deps";
 
-  # Pinned to the proven nixpkgs-25.05 rev from feat/nix-dx: the entire closure
+  # Pinned to a nixpkgs-26.05 rev: the entire closure
   # (sushy-tools/cliff/flask/libvirt-python) is validated against it.
   # Issue .2 consumes the same overlay/env via devenv; this flake is the
   # standalone build + CI target until then.
@@ -12,7 +12,7 @@
   # fast on drift, and the toolchain image is content-addressed (tag = inputhash),
   # so the change rebuilds it automatically — no manual tag bump.
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/ac62194c3917d5f474c1a844b6fd6da2db95077d";
+    nixpkgs.url = "github:NixOS/nixpkgs/c69ae8fb8faeb3472fd11234ba55a70ac3601f9b";
     flake-utils.url = "github:numtide/flake-utils";
     # same treefmt config as devenv (devenv/treefmt-module.nix), evaluated here so the
     # config-baked wrapper can be baked into the lean CI image — dev + CI run an identical set.
@@ -39,7 +39,11 @@
           pkgs = import nixpkgs {
             inherit system;
             config.allowUnfree = true;
-            overlays = [ (import ./pkgs/python-overlay.nix) ];
+            # statix-overlay is needed here too: this pkgs builds the treefmt wrapper.
+            overlays = [
+              (import ./pkgs/python-overlay.nix)
+              (import ./pkgs/statix-overlay.nix)
+            ];
           };
           pythonEnv = import ./pkgs/python-env.nix {
             python3Packages = pkgs.python312Packages;
@@ -120,6 +124,9 @@
             # gawk, because bats-helpers.bash's fake ps/pgrep/lsof — the whole process surface the
             # reap matchers read — are awk programs. Nothing else in this list ships an awk.
             gawk
+            # jq, because devenv/tests/stack-reconcile.bats runs stack-reconcile.sh, which reads
+            # every process-compose status through it.
+            jq
             # flock alone, not util-linux: sim-priv.sh's bootptab lock needs it, and without it
             # test_sim_priv's lock case skips itself and the linux branch ships uncovered. The whole
             # package would put a third `kill` into the buildEnv beside coreutils' and procps'.
@@ -152,7 +159,7 @@
 
             # yq (mikefarah) for the build job's nixpkgs-pin drift guard — parses
             # devenv.yaml's inputs.nixpkgs.url structurally (not positional grep, which
-            # could pick up the nixpkgs-prek input). Pinned here for the same reason as skopeo.
+            # could pick up another input's url). Pinned here for the same reason as skopeo.
             inherit (pkgs) yq-go;
 
             ciImage = pkgs.dockerTools.buildLayeredImage {

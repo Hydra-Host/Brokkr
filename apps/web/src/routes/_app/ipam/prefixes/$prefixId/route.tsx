@@ -2,23 +2,9 @@ import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
+import { getIpamStatusBadgeVariant } from '@repo/utils';
 import { Link, Outlet, createFileRoute, useMatch } from '@tanstack/react-router';
 import { tsr } from '~/lib/api';
-
-function statusVariant(status: string) {
-  switch (status) {
-    case 'ACTIVE':
-      return 'default';
-    case 'RESERVED':
-      return 'secondary';
-    case 'DEPRECATED':
-      return 'destructive';
-    case 'CONTAINER':
-      return 'outline';
-    default:
-      return 'outline';
-  }
-}
 
 export const Route = createFileRoute('/_app/ipam/prefixes/$prefixId')({
   staticData: { breadcrumb: 'Prefix Detail' },
@@ -56,7 +42,7 @@ function PrefixLayout() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="font-mono text-lg font-medium">{prefix.prefix}</span>
-          <Badge variant={statusVariant(prefix.status)}>{prefix.status}</Badge>
+          <Badge variant={getIpamStatusBadgeVariant(prefix.status)}>{prefix.status}</Badge>
           {prefix.isPool && <Badge variant="outline">Pool</Badge>}
         </div>
         <div className="flex gap-2">

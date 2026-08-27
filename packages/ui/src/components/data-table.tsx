@@ -31,7 +31,6 @@ import * as React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import { isRecord } from '@repo/utils';
 import type { Column, Table as TableType } from '@tanstack/react-table';
 import { Button } from './button';
 import { Checkbox } from './checkbox';
@@ -88,6 +87,12 @@ interface DataTableProps<TData, TValue> {
 const LONG_ID_RE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z0-9]{24,})$/i;
 
 type IconNodeDef = [string, Record<string, string>][];
+
+// Local copy of the row-id check: @repo/ui is dependency-free by design (it is
+// mirrored into the Commerce repo), so it cannot import @repo/utils' isRecord.
+function extractRowId(row: unknown): string | undefined {
+  return row != null && typeof row === 'object' && 'id' in row && row.id != null ? String(row.id) : undefined;
+}
 
 const CLIPBOARD_ICON: IconNodeDef = [
   ['rect', { width: '8', height: '4', x: '8', y: '2', rx: '1', ry: '1' }],
@@ -562,7 +567,7 @@ export function DataTable<TData, TValue>({
   const table = useReactTable({
     data,
     columns,
-    getRowId: (row, index) => ((row as Record<string, unknown>)?.id as string) ?? String(index),
+    getRowId: (row, index) => extractRowId(row) ?? String(index),
     getCoreRowModel: getCoreRowModel(),
     manualSorting: isManualSorting,
     onSortingChange: setSorting,
@@ -630,10 +635,10 @@ export function DataTable<TData, TValue>({
             <DropdownMenu open={columnDropdownOpen} onOpenChange={setColumnDropdownOpen}>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="ml-auto hidden h-8 lg:flex">
-                  <SlidersHorizontal className="mr-2 h-4 w-4" />
+                  <SlidersHorizontal className="h-4 w-4" />
                   View
                   {table.getAllColumns().filter((col) => col.getCanHide() && col.getIsVisible()).length > 0 && (
-                    <span className="bg-primary text-primary-foreground ml-2 rounded-lg px-1.5 py-0.5 text-xs">
+                    <span className="bg-primary text-primary-foreground rounded-lg px-1.5 py-0.5 text-xs">
                       {table.getAllColumns().filter((col) => col.getCanHide() && col.getIsVisible()).length}
                     </span>
                   )}
@@ -846,7 +851,7 @@ export function DataTable<TData, TValue>({
       )}
 
       {table.getFilteredSelectedRowModel().rows.map((row) => {
-        const rowId = isRecord(row.original) && row.original.id != null ? String(row.original.id) : undefined;
+        const rowId = extractRowId(row.original);
         return <input key={rowId} type="hidden" name={name} value={rowId} />;
       })}
 
@@ -886,7 +891,7 @@ function FilterDropdowns<TData>({
                   <Filter className="h-4 w-4" />
                   <span>{filter.label}</span>
                   {selectedCount > 0 && (
-                    <span className="bg-primary text-primary-foreground ml-2 rounded-lg px-1.5 py-0.5 text-xs">
+                    <span className="bg-primary text-primary-foreground rounded-lg px-1.5 py-0.5 text-xs">
                       {selectedCount}
                     </span>
                   )}

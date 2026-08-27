@@ -11,6 +11,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
+import { VrfCombobox } from '~/components/fk-comboboxes';
 import { tsr } from '~/lib/api';
 
 const statusOptions = [
@@ -24,6 +25,7 @@ const editVlanSchema = z.object({
   vid: z.coerce.number().int().min(VLAN_VID_MIN, VLAN_VID_RANGE_MESSAGE).max(VLAN_VID_MAX, VLAN_VID_RANGE_MESSAGE),
   status: z.string(),
   description: z.string(),
+  vrfId: z.string(),
 });
 
 type EditVlanFormData = z.infer<typeof editVlanSchema>;
@@ -51,7 +53,7 @@ function EditVlanPage() {
 
   const { control, handleSubmit, reset } = useForm<EditVlanFormData>({
     resolver: zodResolver(editVlanSchema),
-    defaultValues: { name: '', vid: VLAN_VID_MIN, status: 'ACTIVE', description: '' },
+    defaultValues: { name: '', vid: VLAN_VID_MIN, status: 'ACTIVE', description: '', vrfId: '' },
   });
 
   useEffect(() => {
@@ -61,6 +63,7 @@ function EditVlanPage() {
         vid: vlan.vid,
         status: vlan.status,
         description: vlan.description ?? '',
+        vrfId: vlan.vrfId ?? '',
       });
     }
   }, [vlan, reset]);
@@ -76,6 +79,7 @@ function EditVlanPage() {
         vid: formData.vid,
         status: formData.status as 'ACTIVE' | 'RESERVED' | 'DEPRECATED',
         description: formData.description || null,
+        vrfId: formData.vrfId || null,
       },
     });
     await queryClient.invalidateQueries({ queryKey: ['vlans'] });
@@ -107,6 +111,14 @@ function EditVlanPage() {
             label="Status"
             options={statusOptions}
             placeholder="Select status"
+          />
+          <VrfCombobox
+            control={control}
+            name="vrfId"
+            noneLabel="None (global table)"
+            seedOption={
+              vlan.vrfId ? { value: vlan.vrfId, label: vlan.vrfId } : { value: '', label: 'None (global table)' }
+            }
           />
           <FormTextarea control={control} name="description" label="Description" />
           <div className="flex gap-2 pt-2">

@@ -6,8 +6,12 @@ import { PrismaClient } from 'src/prisma/prisma.client';
 export class WebhookRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
-  public async create(organizationId: string, createWebhook: Partial<Prisma.WebhookCreateInput>) {
-    return this.prisma.webhook.create({
+  public async create(
+    organizationId: string,
+    createWebhook: Partial<Prisma.WebhookCreateInput>,
+    tx?: Prisma.TransactionClient,
+  ) {
+    return (tx ?? this.prisma).webhook.create({
       data: {
         endpoint: createWebhook.endpoint,
         description: createWebhook.description,
@@ -23,8 +27,12 @@ export class WebhookRepository {
     });
   }
 
-  public async update(webhookId: string, updateWebhook: Partial<Prisma.WebhookUpdateInput>) {
-    return this.prisma.webhook.update({
+  public async update(
+    webhookId: string,
+    updateWebhook: Partial<Prisma.WebhookUpdateInput>,
+    tx?: Prisma.TransactionClient,
+  ) {
+    return (tx ?? this.prisma).webhook.update({
       where: { id: webhookId },
       data: updateWebhook,
     });
@@ -36,8 +44,8 @@ export class WebhookRepository {
     });
   }
 
-  public async findFirst(where: Prisma.WebhookWhereInput) {
-    return this.prisma.webhook.findFirst({
+  public async findFirst(where: Prisma.WebhookWhereInput, tx?: Prisma.TransactionClient) {
+    return (tx ?? this.prisma).webhook.findFirst({
       where,
       orderBy: { createdAt: 'desc' },
     });

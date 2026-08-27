@@ -3,13 +3,16 @@ import { ErrorBodySchema } from '../schemas/common';
 import {
   BranchCheckoutResultSchema,
   BranchNameSchema,
+  ConfigTreeSchema,
   InitTaskSchema,
   ProcessEnvSchema,
+  RejectedEntrySchema,
   RepoBranchSchema,
   RESTART_STALE_AFTER_LABEL,
   RestartStateSchema,
   StackConfigSchema,
   StackOpSchema,
+  StackPendingSchema,
   StackSlotSchema,
   StackStateSchema,
 } from '../schemas/stack';
@@ -118,34 +121,30 @@ export const stackRoutes = {
     description:
       'Backs the Settings Stack editor: returns the editable hub/spoke env knobs, the read-only port map, and whatever overrides are currently applied via the stack.local.nix overlay.',
   },
+  getConfigTree: {
+    method: 'GET',
+    path: '/api/stack/config/tree',
+    responses: { 200: ConfigTreeSchema },
+    summary: 'Get the resolved config tree',
+    description:
+      'Read-only: every knob the Nix module system declares, with its effective value, its pre-override default, the files that define it, and the environment variable pinning it. Backs the read-only Config page and answers the same model the CLI renders, served from the mirror the stack editor already reads so a page load spawns no devenv eval.',
+  },
+  getStackPending: {
+    method: 'GET',
+    path: '/api/stack/pending',
+    responses: { 200: StackPendingSchema },
+    summary: 'Get what is saved and not yet applied',
+    description:
+      'Read-only: the work already written to the overlay that the running stack has not read, the strongest apply class among it, the recreate latch a port change arms, the detached-restart marker, and any path needing a datastore reset. One call so the apply bar states the cost of applying without the client re-deriving it.',
+  },
   putStackConfig: {
     method: 'PUT',
     path: '/api/stack/config',
     body: z.object({
-      hub: z.record(z.string(), z.string()),
-      spoke: z.record(z.string(), z.string()),
-      counts: z.object({ hub: z.number().int().optional(), spoke: z.number().int().optional() }).optional(),
-      identity: z
-        .object({
-          pg: z.object({ user: z.string(), password: z.string(), db: z.string() }).partial(),
-          orgId: z.string(),
-        })
-        .partial()
-        .optional(),
-      osLayerCache: z.object({ originHost: z.string(), resolvers: z.string() }).partial().optional(),
-      ports: z
-        .record(z.string(), z.number().int().min(1).max(65535))
-        .optional()
-        .describe('Editable datastore/service port overrides (config.ports key → port)'),
-      lan: z
-        .object({ expose: z.boolean() })
-        .optional()
-        .describe('LAN exposure toggle (config.lan.expose) — bind sim services to 0.0.0.0 for LAN reach'),
-      telemetry: z
-        .object({ enable: z.boolean() })
-        .optional()
+      entries: z
+        .record(z.string(), z.string().nullable())
         .describe(
-          'Local OTEL sink toggle (config.telemetry.enable) — auto-applies on save (starts/stops the sink + reloads the hub-api/spoke OTLP consumers)',
+          'Canonical path → value. An absent path is untouched, a string sets an override, and null reverts to the declared default. The three meanings the old blank string carried are now distinct.',
         ),
       slot: StackSlotSchema.optional().describe(
         'Instance slot to move this stack to (stack.slot) — drops any fleet/port overrides back to the new slot’s derived defaults and recreates the stack on Redeploy; 409 when a live sibling checkout already owns the slot',
@@ -157,21 +156,24 @@ export const stackRoutes = {
         applied: z
           .array(z.string())
           .describe(
-            "Dotted keys actually written as overrides ('hub.LOG_LEVEL', 'ports.postgres'). Blank-valued known env keys and default-valued ports leave no override and appear in neither list.",
+            'Canonical paths the write left as an override — one rule for every family, where before a port counted and a fixed-shape field never did. A path that lands back on its declared default is a revert, so it leaves no line and appears in neither list.',
           ),
         rejected: z
-          .array(z.string())
+          .array(RejectedEntrySchema)
           .describe(
-            "Dotted keys silently dropped from the open-keyed sections: env keys not in the knob catalog and non-editable/unknown port keys (e.g. 'ports.grafana'). Fixed-shape fields (counts/identity/lan/telemetry) are schema-validated and never listed.",
+            'Paths the save did not write, each with its reason: not declared by the catalog, owned by no writer, not coercible to the declared kind, held by an environment pin, or dropped because the same save moved the slot.',
           ),
       }),
+      503: ErrorBodySchema.describe(
+        'The devenv eval seed failed, so the control center does not know the live overlay. Rebuilding stack.local.nix from its stale mirror would erase the fleet topology and every port override, so nothing was written. The read path retries the seed on its own, so a later save can succeed.',
+      ),
       409: ErrorBodySchema.describe(
         'The requested instance slot is already claimed by another live checkout — the body names the owning checkout; nothing was written',
       ),
     },
     summary: 'Persist stack config overrides',
     description:
-      'Writes the hub/spoke env overrides plus counts, service identity, and datastore/service ports to the gitignored stack.local.nix overlay only — changes are inert until a redeploy or reload regenerates the process-compose config. Toggling telemetry additionally auto-applies (starts/stops the observability sink and reloads the hub-api + spoke bridges that consume the OTLP env) — unless a port/LAN rebind is staged, in which case the sink still stops on a disable but the reload applies with the next Redeploy. A slot change drops any fleet/port overrides (they would outrank the new slot’s derived defaults) and takes effect on the next Redeploy, which recreates the whole stack. Returns which override keys were applied vs rejected (unknown knob/port keys are dropped, not errors). Loopback-only (it writes the devenv overlay): a valid LAB_API_TOKEN is not sufficient and a remote caller gets 403.',
+      'Writes the hub/spoke env overrides plus counts, service identity, and datastore/service ports to the gitignored stack.local.nix overlay only — changes are inert until a redeploy or reload regenerates the process-compose config. Toggling telemetry additionally auto-applies (starts/stops the observability sink and reloads the hub-api + spoke bridges that consume the OTLP env) — unless a port/LAN rebind is staged, in which case the sink still stops on a disable but the reload applies with the next Redeploy. A slot change drops any fleet/port overrides (they would outrank the new slot’s derived defaults) and takes effect on the next Redeploy, which recreates the whole stack. Returns which override keys were applied vs rejected (unknown knob/port keys, and keys held by an environment pin, are dropped rather than errors). Loopback-only (it writes the devenv overlay): a valid LAB_API_TOKEN is not sufficient and a remote caller gets 403.',
   },
   redeployStack: {
     method: 'POST',

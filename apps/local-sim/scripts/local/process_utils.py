@@ -107,6 +107,26 @@ def ensure_docker_running() -> None:
         )
 
 
+class DockerBuildxMissingError(DockerUnavailableError):
+    """The docker CLI is present but the buildx plugin is not."""
+
+
+def ensure_docker_buildx() -> None:
+    """Fail fast when the buildx plugin is absent. It ships as a separate package from the engine on
+    every distribution, so a working ``docker`` says nothing about it."""
+    try:
+        present = run("docker", "buildx", "version", check=False, capture=True, timeout=20).returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        present = False
+    if not present:
+        raise DockerBuildxMissingError(
+            "Docker is running but the buildx plugin isn't installed (the boot binaries build with "
+            "`docker buildx build -o type=local`, which the classic builder can't do). Install it: "
+            "`sudo apt-get install docker-buildx` (or docker-buildx-plugin), `sudo dnf install moby-buildx`, "
+            "`sudo pacman -S docker-buildx` — or re-run `bash apps/local-sim/provisioning/bootstrap.sh`."
+        )
+
+
 def virsh(*args, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess:
     """Run ``virsh --connect <libvirt_uri> <args>``."""
     return run("virsh", "--connect", get_settings().paths.libvirt_uri, *args, check=check, capture=capture)

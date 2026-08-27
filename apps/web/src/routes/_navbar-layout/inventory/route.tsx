@@ -1,13 +1,13 @@
-import type { InventoryCategory } from '@/components/category-card';
-import { tsr } from '@/lib/api';
-import { inventoryCategories, mergeCategoryPrices } from '@/lib/category-data';
-import { PluginSlot } from '@/plugin-host/plugin-slot';
 import { Badge } from '@repo/ui/components/badge';
 import { Label } from '@repo/ui/components/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@repo/ui/components/select';
-import { formatPrice } from '@repo/utils/format';
+import { formatPrice } from '@repo/utils';
 import { createFileRoute, Link, Outlet, useMatch, useNavigate } from '@tanstack/react-router';
 import { z } from 'zod';
+import type { InventoryCategory } from '~/components/category-card';
+import { tsr } from '~/lib/api';
+import { inventoryCategories, mergeCategoryPrices } from '~/lib/category-data';
+import { PluginSlot } from '~/plugin-host/plugin-slot';
 
 const inventorySearchSchema = z.object({
   chipset: z.string().optional().catch(undefined),

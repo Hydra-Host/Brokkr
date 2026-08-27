@@ -18,8 +18,18 @@ model Bridge {
   bridgeVersion    String?
   // BullMQ queue prefix this bridge listens on — the Zone UUID (`REDIS_PREFIX`).
   redisQueuePrefix String?
-  // Last successful heartbeat (`heartbeat` job from the bridge to the hub).
+  // Last time the bridge was observed present (heartbeat sweep bump + reconciler write-on-change).
   lastSeenAt       DateTime?
+
+  // brokkr-live OS build from the presence hash (`brokkr_live_version`), reconciler-materialized.
+  brokkrLiveVersion String?
+
+  // Presence per the last heartbeat-monitor sweep; default true so legacy rows self-correct next sweep.
+  isOnline           Boolean   @default(true)
+  // Set when a sweep first observes the bridge absent; cleared semantics: superseded by isOnline=true.
+  lastOfflineAt      DateTime?
+  // Stamped when the bridge-offline alert for the current episode was emitted (dedupe marker).
+  offlineAlertSentAt DateTime?
 
   // Observed power state. Null = unknown (never reported by the bridge/BMC).
   powerStatus BridgePowerStatus?

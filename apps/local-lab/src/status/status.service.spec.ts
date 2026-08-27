@@ -31,7 +31,10 @@ const makeService = (
     runs?: { list: (filter: unknown) => unknown[] };
     initTasks?: { summary: () => unknown };
     labBridges?: () => { proc: string; zone: string; replica: number; port: number; grpc: number }[];
-    devicesStatusByName?: () => Promise<Map<string, { lifecycleStatus: string; id: string; gpuModel: string | null }>>;
+    devicesStatusByName?: () => Promise<{
+      byName: Map<string, { lifecycleStatus: string; id: string; gpuModel: string | null }>;
+      failed: boolean;
+    }>;
     fleetStatus?: { status: (machines?: unknown) => Promise<unknown> };
   } = {},
 ) =>
@@ -45,7 +48,7 @@ const makeService = (
     { machines } as never,
     {
       probe: () => Promise.resolve(false),
-      devicesStatusByName: deps.devicesStatusByName ?? (() => Promise.resolve(new Map())),
+      devicesStatusByName: deps.devicesStatusByName ?? (() => Promise.resolve({ byName: new Map(), failed: false })),
     } as never,
     { probe: () => Promise.resolve(false) } as never,
     (deps.prober ?? { probe: () => Promise.reject(new Error('probe unavailable')) }) as never,
@@ -93,6 +96,8 @@ describe('StatusService.overview — fleet bring-up health', () => {
     elapsedSec: 72,
     machinesExpected: 4,
     machinesRunning: 0,
+    accel: null,
+    accelForced: null,
     detail: 'building per-VM iPXE binary for cpu-3',
   };
 
@@ -178,7 +183,10 @@ describe('StatusService.overview — dashboard snapshot fields', () => {
         ]),
       {
         devicesStatusByName: () =>
-          Promise.resolve(new Map([['n1', { lifecycleStatus: 'provisioning', id: 'd1', gpuModel: null }]])),
+          Promise.resolve({
+            byName: new Map([['n1', { lifecycleStatus: 'provisioning', id: 'd1', gpuModel: null }]]),
+            failed: false,
+          }),
       },
     );
 
@@ -318,5 +326,42 @@ describe('StatusService.overview — probe hysteresis', () => {
     const [first] = await overviewsOverTime([false]);
 
     expect(first.hubHealth).toMatchObject({ ok: false });
+  });
+});
+
+describe('StatusService.overview — the hub device read', () => {
+  it('marks the fleet degraded when the read failed, so blank fields do not read as measured', async () => {
+    const svc = makeService(() => Promise.resolve([{ name: 'n1', power: 'on' }]), {
+      devicesStatusByName: () => Promise.resolve({ byName: new Map(), failed: true }),
+    });
+
+    const status = await svc.overview();
+
+    expect(status.fleetDbReadFailed).toBe(true);
+    expect(status.fleet).toEqual([{ name: 'n1', power: 'on', lifecycleStatus: null, deviceId: null, gpuModel: null }]);
+  });
+
+  it('leaves the marker off when the read returned no rows for the fleet', async () => {
+    const svc = makeService(() => Promise.resolve([{ name: 'n1', power: 'on' }]), {
+      devicesStatusByName: () => Promise.resolve({ byName: new Map(), failed: false }),
+    });
+
+    const status = await svc.overview();
+
+    expect(status.fleetDbReadFailed).toBe(false);
+  });
+
+  it('carries the gpu model the read resolved onto the node', async () => {
+    const svc = makeService(() => Promise.resolve([{ name: 'n1', power: 'on' }]), {
+      devicesStatusByName: () =>
+        Promise.resolve({
+          byName: new Map([['n1', { lifecycleStatus: 'provisioned', id: 'd1', gpuModel: 'NVIDIA H100' }]]),
+          failed: false,
+        }),
+    });
+
+    const status = await svc.overview();
+
+    expect(status.fleet[0]).toMatchObject({ deviceId: 'd1', lifecycleStatus: 'provisioned', gpuModel: 'NVIDIA H100' });
   });
 });

@@ -13,12 +13,10 @@
 # Taskfile verbs (task up runs the gate; task doctor / task setup) or `devenv tasks run setup:<x>`:
 #   setup:preflight — hard gate `task up` runs first: the sibling checkouts must exist (exit 1 otherwise).
 #   setup:doctor    — read-only onboarding report: preflight checks + advisory warnings (ssh key,
-#                     Docker running on macOS, libvirt/kvm/docker group membership on Linux).
+#                     plus host-access-check.sh: group membership, libvirt, docker, buildx, KVM).
 #   setup:onboard   — opt-in, idempotent: clone any MISSING sibling + create the SSH key if absent.
 
 let
-  darwin = pkgs.stdenv.isDarwin;
-
   P = (import ./ports.nix).fromConfig config; # effective port/route map (honors config.ports overrides)
 
   # Nix-pinned lsof so the squatter check can't silently no-op on a host that lacks it
@@ -42,36 +40,6 @@ let
   ++ lib.optional (builtins.pathExists ../../apps/admin-api) "hub-admin:${toString P.ports.hubAdmin.base}"
   ++ lib.optional (builtins.pathExists ../../apps/admin-web) "hub-web-admin:${toString P.ports.hubWebAdmin}";
 
-  # macOS: the fleet iPXE build (fleet:init) shells out to `docker buildx`, so Docker Desktop
-  # must be running — installed-but-not-running is the common first-run trip-up.
-  dockerCheck = lib.optionalString darwin ''
-    if command -v docker >/dev/null 2>&1; then
-      if docker info >/dev/null 2>&1; then
-        echo "✓ docker daemon reachable"
-      else
-        echo "⚠ Docker is installed but not running — the fleet iPXE build (fleet:init) needs it."
-        echo "    start it:  open -a Docker"
-        warned=$((warned+1))
-      fi
-    else
-      echo "⚠ docker not found — bootstrap installs Docker Desktop, or install it yourself."
-      warned=$((warned+1))
-    fi
-  '';
-
-  # Linux: the bootstrap adds the user to libvirt/kvm/docker, but membership isn't live until a
-  # re-login — so the very next `task up` can fail without sudo. Detect the not-yet-active case.
-  groupCheck = lib.optionalString (!darwin) ''
-    for g in libvirt kvm docker; do
-      if id -nG 2>/dev/null | tr ' ' '\n' | grep -qx "$g"; then
-        echo "✓ in '$g' group"
-      else
-        echo "⚠ not in '$g' group in this shell — run 'newgrp $g' or log out + back in (bootstrap added you)."
-        warned=$((warned+1))
-      fi
-    done
-  '';
-
   # Shared by preflight (BROKK_PREFLIGHT_GATE=1 → hard checks only, exit 1 on failure) and doctor
   # (full report). `expand` resolves a leading ~ / $HOME the same way modules/lib.nix cdRepo does
   # (dotenv stores HUB_REPO_PATH verbatim). No `set -e`: the report runs every check.
@@ -79,7 +47,7 @@ let
     set -u
     expand() { local v="$1"; v="''${v/#\~/$HOME}"; v="''${v/#\$HOME/$HOME}"; printf '%s' "$v"; }
     gate="''${BROKK_PREFLIGHT_GATE:-}"
-    fail=0; warned=0
+    fail=0; warned=0; stale=0
 
     check_repo() {
       local label="$1" var="$2" raw="$3" p
@@ -239,13 +207,28 @@ let
       echo "    create one with: task setup"
       warned=$((warned+1))
     fi
-    ${dockerCheck}${groupCheck}
+    # the single host-readiness authority, shared with the bring-up (stack-up runs it without
+    # --report, where a blocker gates instead of scoring). 1 = blocking, 2 = advisory only.
+    # 78 = a re-login is owed. `|| hostrc=$?` because `devenv tasks run` execs this under errexit,
+    # where a blocking check aborted the script and took this whole verdict down with it.
+    hostrc=0
+    BROKK_FLEET_AUTOSTART=${lib.boolToString config.fleet.autoStart} \
+      bash "${config.devenv.root}/devenv/scripts/host-access-check.sh" --report || hostrc=$?
+    case $hostrc in
+    1) fail=$((fail+1)) ;;
+    2) warned=$((warned+1)) ;;
+    78) stale=1 ;;
+    esac
     echo ""
     if [ "$fail" != 0 ]; then
-      echo "✗ doctor: $fail blocking issue(s) above — 'task up' will not proceed until fixed."
+      echo "✗ doctor: blocking issue(s) above — 'task up' will not proceed until fixed."
       exit 1
+    elif [ "$stale" != 0 ]; then
+      # 78 is install.sh's RC_GROUPS_STALE, which reads it as a checkpoint and stops without failing
+      echo "· doctor: nothing is broken — log out and back in (or reboot), then re-run 'task up'."
+      exit 78
     elif [ "$warned" != 0 ]; then
-      echo "⚠ doctor: $warned advisory warning(s) above — 'task up' will still run."
+      echo "⚠ doctor: advisory warning(s) above — 'task up' will still run."
     else
       echo "✓ doctor: all checks passed."
     fi
@@ -269,8 +252,23 @@ in
 
   # the report body on PATH: `task doctor` invokes the script directly (the oneshot task
   # runner swallows stdout), while setup:doctor stays the devenv-task name and delegates to it.
+  # Read-only in the catalog: pointing the stack at another checkout needs that checkout to exist,
+  # and stackDefaults.hub.HUB_REPO_PATH is a second source of truth for the same thing.
+  config.knobMeta = {
+    "polyrepo.hub.path" = {
+      label = "Hub checkout path";
+      group = "Location";
+      editable = false;
+    };
+    "polyrepo.hub.url" = {
+      label = "Hub clone URL";
+      group = "Location";
+      editable = false;
+    };
+  };
+
   config.scripts.stack-doctor = {
-    description = "Read-only host-readiness report: monorepo checkout, port squatters, SSH key, Docker, group membership.";
+    description = "Read-only host-readiness report: monorepo checkout, port squatters, SSH key, group membership, libvirt, docker, buildx, KVM.";
     exec = checkScript;
   };
 
@@ -284,7 +282,7 @@ in
     };
 
     "setup:doctor" = {
-      description = "Read-only onboarding report: monorepo checkout (blocking) + SSH key / Docker / group-membership advisories. Run anytime: task doctor.";
+      description = "Read-only onboarding report: monorepo checkout (blocking) + SSH key, group-membership, libvirt, docker, buildx and KVM advisories. Run anytime: task doctor.";
       exec = "stack-doctor";
     };
 

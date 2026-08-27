@@ -31,13 +31,21 @@ export function failOnError<T extends { status: number; body: unknown }>(
   }
 }
 
+// a separate content block, never a prefix inside the existing one: that block is the JSON payload
+// callers parse, and a marker spliced into it would corrupt every one of them.
+export function withTargetNotice<T extends ToolResult>(ctx: LabContext, result: T): T {
+  const notice = ctx.targetNotice;
+  if (!notice) return result;
+  return { ...result, content: [{ type: 'text', text: notice }, ...result.content] };
+}
+
 export async function call(
   ctx: LabContext,
   fn: (client: LabClient) => Promise<unknown>,
 ): Promise<ToolResult | ToolError> {
   try {
-    return ok(await fn(ctx.client));
+    return withTargetNotice(ctx, ok(await fn(ctx.client)));
   } catch (error) {
-    return err(error);
+    return withTargetNotice(ctx, err(error));
   }
 }

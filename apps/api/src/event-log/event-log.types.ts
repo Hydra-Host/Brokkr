@@ -11,7 +11,8 @@ export type EventLogJsonValue =
 /** Allowlisted extras only — never a request body, and never anything that could carry a secret. */
 export type EventLogMetadata = Record<string, EventLogJsonValue>;
 
-/** The single write shape every capture path produces — tier 1 emits, the tier 2 interceptor, and the system finalizer. */
+/** The single write shape every capture path produces — tier 1 emits, the tier 2 interceptor,
+ *  and EventLogSystemFinalizer for headless runAsSystem scopes. */
 export interface EventLogWrite {
   organizationId: string;
 

@@ -111,7 +111,48 @@ function m002Ledger(db: Database.Database): void {
   `);
 }
 
-const MIGRATIONS: ReadonlyArray<(db: Database.Database) => void> = [m001Legacy, m002Ledger];
+// sqlite cannot widen a CHECK in place, so the table is rebuilt. The runs' own indexes follow the
+// rename onto the old table and have to be dropped before the new ones can take their names.
+function m003OrphanedStatus(db: Database.Database): void {
+  db.exec(`
+    ALTER TABLE runs RENAME TO runs_pre_orphaned;
+    DROP INDEX idx_runs_started;
+    DROP INDEX idx_runs_section_started;
+    DROP INDEX idx_runs_running;
+
+    CREATE TABLE runs (
+      run_id          TEXT PRIMARY KEY,
+      section         TEXT NOT NULL,
+      op_id           TEXT NOT NULL,
+      label           TEXT NOT NULL,
+      status          TEXT NOT NULL CHECK(status IN ('running','passed','failed','cancelled','orphaned')),
+      node_index      INTEGER,
+      started_at      INTEGER NOT NULL,
+      finished_at     INTEGER,
+      exit_code       INTEGER,
+      pid             INTEGER,
+      origin_ip       TEXT,
+      origin_loopback INTEGER,
+      origin_token    INTEGER,
+      log_bytes       INTEGER NOT NULL DEFAULT 0,
+      log_truncated   INTEGER NOT NULL DEFAULT 0
+    );
+
+    INSERT INTO runs
+      (run_id, section, op_id, label, status, node_index, started_at, finished_at, exit_code, pid,
+       origin_ip, origin_loopback, origin_token, log_bytes, log_truncated)
+      SELECT run_id, section, op_id, label, status, node_index, started_at, finished_at, exit_code, pid,
+             origin_ip, origin_loopback, origin_token, log_bytes, log_truncated
+      FROM runs_pre_orphaned;
+    DROP TABLE runs_pre_orphaned;
+
+    CREATE INDEX idx_runs_started         ON runs(started_at DESC);
+    CREATE INDEX idx_runs_section_started ON runs(section, started_at DESC);
+    CREATE INDEX idx_runs_running         ON runs(started_at) WHERE status = 'running';
+  `);
+}
+
+const MIGRATIONS: ReadonlyArray<(db: Database.Database) => void> = [m001Legacy, m002Ledger, m003OrphanedStatus];
 
 function userVersion(db: Database.Database): number {
   const raw = db.pragma('user_version', { simple: true });
@@ -353,9 +394,12 @@ export function listRunningRunRows(section?: RunSection): RunRowsRead {
   );
 }
 
+/** A run left behind by a previous API process: no exit code was ever observed, so it is not the
+ *  same outcome as a child that exited non-zero. */
 export function failRunningRunRows(finishedAt: number): number {
-  return getDb().prepare(`UPDATE runs SET status = 'failed', finished_at = ? WHERE status = 'running'`).run(finishedAt)
-    .changes;
+  return getDb()
+    .prepare(`UPDATE runs SET status = 'orphaned', finished_at = ? WHERE status = 'running'`)
+    .run(finishedAt).changes;
 }
 
 // the per-id sibling of failRunningRunRows, for the operator cancel of a row no live run backs. It

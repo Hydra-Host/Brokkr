@@ -6,6 +6,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { AgentConfig } from './config';
+import { sleepWithAbort } from './connection/sleep';
 import { getErrorMessage } from './errors';
 import type { AgentService } from './gen/brokkr/agent/v1/agent_pb';
 import { PhoneHomeRequestSchema } from './gen/brokkr/agent/v1/agent_pb';
@@ -73,25 +74,6 @@ async function writeGate(gatePath: string, bootIdPath: string): Promise<void> {
   }
 }
 
-function sleepUnref(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    timer.unref();
-    const onAbort = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
 async function runAttemptChain(
   getClient: PhoneHomeClientProvider,
   config: AgentConfig,
@@ -142,7 +124,7 @@ async function runAttemptChain(
       return;
     }
 
-    await sleepUnref(retryDelays[attempt]!, signal);
+    await sleepWithAbort(retryDelays[attempt]!, signal);
   }
 }
 

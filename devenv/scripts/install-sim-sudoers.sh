@@ -20,8 +20,8 @@ set -eu
 src="$DEVENV_ROOT/.sudoers/brokkr-sim"
 
 # The installed file is named for the helper it authorises, so a sibling checkout at another
-# revision installs its own file instead of deauthorising this one. Same derivation as
-# modules/sudo.nix — keep the two in sync.
+# revision installs its own file instead of deauthorising this one. Derivation duplicated in
+# modules/sudo.nix and apps/local-lab's sudoersDropInName; the marker path below, in sudo.nix too.
 store=$(basename "$(dirname "$(dirname "$LOCAL_SIM_PRIV_BIN")")")
 suffix=${store:0:12}
 if ! [[ $suffix =~ ^[0-9a-z]{12}$ ]]; then
@@ -29,11 +29,30 @@ if ! [[ $suffix =~ ^[0-9a-z]{12}$ ]]; then
   exit 1
 fi
 name="brokkr-sim-$suffix"
-dst="/etc/sudoers.d/$name"
-marker="$DEVENV_STATE/sudoers/$name.rev"
+# Seam so a spec can seed a drop-in it cannot create root-owned. Grants nothing (it only moves
+# where a still-prompting `sudo install` writes); the `noop` probes below stay unseamed.
+sudoers_d="${BROKKR_SUDOERS_D:-/etc/sudoers.d}"
+dst="$sudoers_d/$name"
+# Host-global like the file it mirrors: under $DEVENV_STATE every fresh worktree pinning an
+# already-authorised helper missed the fast path and re-prompted. $HOME-scoped, not /var — the
+# render substitutes __USER__, so a shared marker would `cmp`-mismatch forever on a multi-user host.
+marker_dir="${XDG_STATE_HOME:-$HOME/.local/state}/brokkr-local/sudoers"
+marker="$marker_dir/$name.rev"
 grp=$([ "$(uname)" = Darwin ] && echo wheel || echo root)
 
-rendered=$(mktemp)
+# Migration off the per-checkout marker, above the fast path on purpose: a checkout that takes
+# that path never reaches the tail, so a sweep there would strand the dead state permanently.
+rm -f "$DEVENV_STATE/sudoers/"*.rev
+rmdir "$DEVENV_STATE/sudoers" 2>/dev/null || true
+
+# The render must sit under the caller's home: dropin-current passes it through the helper's
+# _resolve_file, which refuses anything outside. A bare mktemp lands in /var/folders on macOS.
+case "$marker_dir" in
+"$HOME"/*) ;;
+*) echo '⚠ $XDG_STATE_HOME is outside $HOME — the helper cannot verify the drop-in, so this runs the slow path every time' >&2 ;;
+esac
+mkdir -p "$marker_dir"
+rendered=$(mktemp "$marker_dir/.render.XXXXXX")
 trap 'rm -f "$rendered"' EXIT
 sed "s/__USER__/$(id -un)/g" "$src" >"$rendered"
 
@@ -62,7 +81,7 @@ esac
 # before this rule existed. The post-install check below still catches a drop-in that shadows ours.
 gc_colliding_dropins() {
   local f pinned
-  for f in /etc/sudoers.d/brokkr-sim*; do
+  for f in "$sudoers_d"/brokkr-sim*; do
     [ -f "$f" ] || continue
     [ "$f" = "$dst" ] && continue
     if sudo grep -q '^[[:space:]]*Cmnd_Alias' "$f"; then
@@ -76,6 +95,18 @@ gc_colliding_dropins() {
   done
 }
 
+# Asks the helper, which as root can read a drop-in the caller cannot stat at 0750. Only exit 3 is
+# a trusted "no" — sudo returns 1 refusing -n too, so the fallback covers an older pinned helper.
+dropin_current() {
+  local rc=0
+  sudo -n "$LOCAL_SIM_PRIV_BIN" dropin-current "$name" "$rendered" 2>/dev/null || rc=$?
+  case $rc in
+  0) return 0 ;;
+  3) return 1 ;;
+  *) [ -e "$dst" ] && [ -f "$marker" ] && [ "$(<"$rendered")" = "$(<"$marker")" ] ;;
+  esac
+}
+
 # Prompt-free, so it can gate the fast path where the `noop` probe cannot: a live sudo ticket answers
 # that probe for a policy granting nothing, which is how a shadowed host stays shadowed across
 # `task up`. Not widened to any sibling — an alias-free one is legitimate, and blocking on it would
@@ -85,13 +116,13 @@ gc_colliding_dropins() {
 # Arch. There this is constant-false — harmlessly, because `[ -e "$dst" ]` below needs the same bit,
 # so the fast path is unreachable and every run reinstalls and verifies instead.
 has_legacy_dropin() {
-  [ -e /etc/sudoers.d/brokkr-sim ] && [ "$dst" != /etc/sudoers.d/brokkr-sim ]
+  [ -e "$sudoers_d/brokkr-sim" ] && [ "$dst" != "$sudoers_d/brokkr-sim" ]
 }
 
 # Already installed, unchanged, and unshadowed → silent no-op (no prompt). The `noop` probe asks
 # the only question that matters — does the live policy authorise THIS helper — which
 # `sudo -n /usr/bin/true` cannot, since a sibling checkout's drop-in allowlists that too.
-if [ -e "$dst" ] && [ -f "$marker" ] && cmp -s "$rendered" "$marker" && ! has_legacy_dropin &&
+if dropin_current && ! has_legacy_dropin &&
   sudo -n "$LOCAL_SIM_PRIV_BIN" noop 2>/dev/null; then
   echo "✓ passwordless sim sudo already current"
   exit 0
@@ -132,6 +163,5 @@ if ! sudo -k -n "$LOCAL_SIM_PRIV_BIN" noop 2>/dev/null; then
   exit 1
 fi
 
-mkdir -p "$(dirname "$marker")"
 cp "$rendered" "$marker"
 echo "✓ installed $dst — task up / fleet ops + the control center now run without sudo prompts"

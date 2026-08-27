@@ -1,6 +1,6 @@
 import { Component, type ReactNode } from 'react';
 
-import type { NavIcon } from '@/lib/nav';
+import type { NavIcon } from '~/lib/nav';
 
 interface Props {
   pluginId: string;

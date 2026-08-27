@@ -14,11 +14,11 @@ import {
 } from 'lucide-react';
 
 import type { Server } from '@repo/api-client';
+import { DeviceStatusBadge } from '@repo/domain-ui/components/device-status-badge';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { ButtonLink } from '@repo/ui/components/button-link';
 import { Card, CardHeader, CardTitle } from '@repo/ui/components/card';
-import { DeviceStatusBadge } from '@repo/ui/components/device-status-badge';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { TypewriterText } from '@repo/ui/components/typewriter-text';
 import { useDcimDeviceEvents } from '~/hooks/use-device-events';
@@ -70,7 +70,7 @@ function ServerLayoutSkeleton() {
 }
 
 function ServerLayout() {
-  const device = Route.useLoaderData() as Server;
+  const device = Route.useLoaderData();
   useDcimDeviceEvents(device.id);
 
   return (

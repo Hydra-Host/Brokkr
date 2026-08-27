@@ -8,6 +8,7 @@ import type { BackgroundService } from '../startup/orchestrator.js';
 
 import { DnsCache } from './cache.js';
 import { atomToDnsConfig, dnsConfigChanged, mergePrefixOverrides } from './dns-atom-merger.js';
+import type { DnsPrefixOverrideAtomValue } from './dns-atom-value.schema.js';
 import type { DnsConfigReaderService } from './dns-config-reader.service.js';
 import type { DnsRecordsLookup } from './dns-records-reader.js';
 import type { DnsConfig } from './dns.config.js';
@@ -95,6 +96,7 @@ export interface DnsServerDeps {
   logger?: DnsLogger;
   configReader?: DnsConfigReaderService;
   readRecords?: (jobId: string) => Promise<DnsRecordsReadResult | null>;
+  onPrefixOverrides?: (overrides: ReadonlyMap<string, DnsPrefixOverrideAtomValue>) => void;
   onStop?: () => void | Promise<void>;
 }
 
@@ -267,6 +269,7 @@ export class DnsServerService implements BackgroundService {
   private readonly logger: DnsLogger;
   private cache?: DnsCache;
   private readonly readRecords?: (jobId: string) => Promise<DnsRecordsReadResult | null>;
+  private readonly onPrefixOverrides?: (overrides: ReadonlyMap<string, DnsPrefixOverrideAtomValue>) => void;
   private readonly onStop?: () => void | Promise<void>;
   private currentRecordsLookup: DnsRecordsLookup | null = null;
   private currentRecordsDomains: ReadonlySet<string> = new Set();
@@ -308,6 +311,7 @@ export class DnsServerService implements BackgroundService {
     this.createSocket = deps.createSocket ?? ((): dgram.Socket => dgram.createSocket('udp4'));
     this.createTcpServer = deps.createTcpServer ?? ((): TcpServer => net.createServer());
     this.readRecords = deps.readRecords;
+    this.onPrefixOverrides = deps.onPrefixOverrides;
     this.onStop = deps.onStop;
     this.logger = deps.logger ?? defaultLogger();
     this.cache = this.buildCache(this.config);
@@ -414,6 +418,7 @@ export class DnsServerService implements BackgroundService {
       // config, like the zone-config error path above.
       const prefixResult = await this.configReader.readPrefixOverrides(jobId);
       if (!prefixResult.ok) return;
+      this.onPrefixOverrides?.(prefixResult.overrides);
       if (prefixResult.overrides.size > 0) {
         newConfig = mergePrefixOverrides(newConfig, prefixResult.overrides);
       }

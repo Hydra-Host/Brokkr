@@ -1,5 +1,3 @@
-import { GradientBorder } from '@/components/gradient-border';
-import { PluginSlot } from '@/plugin-host/plugin-slot';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { cn } from '@repo/ui/utils';
@@ -10,8 +8,10 @@ import {
   formatPriceFromCentsToDollars,
   formatSize,
   getInventoryStatusTextColor,
-} from '@repo/utils/format';
+} from '@repo/utils';
 import { Link } from '@tanstack/react-router';
+import { GradientBorder } from '~/components/gradient-border';
+import { PluginSlot } from '~/plugin-host/plugin-slot';
 
 export interface CategoryItemCardProps {
   id: string;

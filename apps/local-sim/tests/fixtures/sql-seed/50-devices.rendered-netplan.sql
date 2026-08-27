@@ -4,7 +4,13 @@
 
 BEGIN;
 
+ALTER TABLE "Device" DISABLE TRIGGER device_role_write_once;
 -- cpu-1 id=00000000-0000-0000-0000-000000000001 ipmi=192.168.105.10 primary=192.168.200.10 net=Public arch=amd64 zone=00000000-0000-0000-0000-111111111111
+UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()
+WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' AND name = 'cpu-1'
+  AND id <> '00000000-0000-0000-0000-000000000001' AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
+DELETE FROM "DeviceSecret"
+WHERE "deviceId" = '00000000-0000-0000-0000-000000000001' AND "zoneId" <> '00000000-0000-0000-0000-111111111111';
 INSERT INTO "Device" (
     id, name, status, role, "deviceType",
     "systemSerial", "chassisSerial",
@@ -26,7 +32,7 @@ ON CONFLICT (id) DO UPDATE SET
     "supplierId" = EXCLUDED."supplierId",
     "organizationId" = EXCLUDED."organizationId",
     architecture = EXCLUDED.architecture,
-    "updatedAt" = NOW();
+    "deletedAt" = NULL, "updatedAt" = NOW();
 INSERT INTO "Server" (id, "deviceId", "powerStatus", "createdAt", "updatedAt")
 VALUES (gen_random_uuid(), '00000000-0000-0000-0000-000000000001', 'On'::"ServerPowerStatus", NOW(), NOW())
 ON CONFLICT ("deviceId") DO NOTHING;
@@ -173,4 +179,5 @@ FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000000001' AND n
 DELETE FROM "IpAddress"
 WHERE address = '198.51.100.10/32'::inet AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
 
+ALTER TABLE "Device" ENABLE TRIGGER device_role_write_once;
 COMMIT;

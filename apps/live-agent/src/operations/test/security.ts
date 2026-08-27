@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@repo/utils';
 import { access, readFile } from 'node:fs/promises';
 import { registerOperation } from '../../dispatch/registry';
 import { run } from '../../exec';
@@ -43,7 +44,7 @@ async function testTdxCapability(): Promise<Record<string, unknown>> {
       tdx['cpu_support'] = true;
     }
   } catch (error) {
-    logger.debug('lscpu tdx probe failed', { error: String(error) });
+    logger.debug('lscpu tdx probe failed', { error: getErrorMessage(error) });
   }
 
   try {
@@ -56,7 +57,7 @@ async function testTdxCapability(): Promise<Record<string, unknown>> {
       }
     }
   } catch (error) {
-    logger.debug('dmesg tdx probe failed', { error: String(error) });
+    logger.debug('dmesg tdx probe failed', { error: getErrorMessage(error) });
   }
 
   const tdxSys = await fileExists('/sys/firmware/tdx');
@@ -161,7 +162,7 @@ async function testTpmFunctionality(): Promise<Record<string, unknown>> {
         tpm['capabilities'] = stdout;
       }
     } catch (error) {
-      logger.debug('tpm2_getcap probe failed', { error: String(error) });
+      logger.debug('tpm2_getcap probe failed', { error: getErrorMessage(error) });
     }
   }
 
@@ -182,7 +183,7 @@ async function testSecureBootStatus(): Promise<Record<string, unknown>> {
       sb['mokutil_output'] = stdout;
     }
   } catch (error) {
-    logger.debug('mokutil sb-state probe failed', { error: String(error) });
+    logger.debug('mokutil sb-state probe failed', { error: getErrorMessage(error) });
   }
 
   if (!sb['enabled']) {
@@ -196,7 +197,7 @@ async function testSecureBootStatus(): Promise<Record<string, unknown>> {
           sb['enabled'] = true;
         }
       } catch (error) {
-        logger.debug('secureboot efivar read failed', { error: String(error) });
+        logger.debug('secureboot efivar read failed', { error: getErrorMessage(error) });
       }
     }
   }

@@ -75,13 +75,24 @@ export {
 } from './schemas/dns-records';
 
 export {
+  EVENT_LOG_CSV_COLUMNS,
   EventActorTypeSchema,
   EventDurabilitySchema,
+  EventLogCursorExpiredSchema,
   EventLogEntrySchema,
+  EventLogExportFormatSchema,
+  EventLogExportKeySchema,
+  EventLogExportPageSchema,
+  EventLogExportQuerySchema,
+  EventLogFilterQuerySchema,
   EventLogQuerySchema,
   EventOutcomeSchema,
   EventTierSchema,
+  type EventLogCursorExpired,
   type EventLogEntry,
+  type EventLogExportPage,
+  type EventLogExportQuery,
+  type EventLogFilterQuery,
   type EventLogQuery,
 } from './schemas/event-log';
 
@@ -126,6 +137,17 @@ export {
   type DeviceTokenStatus,
   type IssueBrokkrLiveDeviceTokenResponse,
 } from './schemas/device-tokens';
+
+export {
+  DeviceSecretAuditActorTypeSchema,
+  DeviceSecretAuditEventSchema,
+  DeviceSecretAuditEventTypeSchema,
+  DeviceSecretAuditListResponseSchema,
+  DeviceSecretAuditQuerySchema,
+  type DeviceSecretAuditEvent,
+  type DeviceSecretAuditListResponse,
+  type DeviceSecretAuditQuery,
+} from './schemas/device-secrets';
 
 export {
   PaginationMetaSchema,

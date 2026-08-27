@@ -14,11 +14,27 @@ import {
   type RolePermissionSource,
 } from '@repo/auth/rbac';
 import { PaginatedResult, paginateQuery, PaginationQuery } from '@repo/database/pagination';
-import { ContextService } from 'src/common/context/context.service';
+import { ContextService, type PermissionIntentHandle } from 'src/common/context/context.service';
 import { Logger } from 'src/common/decorators/logger.decorator';
+import { getErrorMessage } from 'src/common/error-utils';
+import { EventLogService } from 'src/event-log/event-log.service';
+import type { EventLogMetadata, EventLogWrite } from 'src/event-log/event-log.types';
 import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { apiKeysPaginationConfig } from './organization-api-keys.pagination';
+
+const API_KEY_CREATED = { resource: 'api-key', action: 'created', actionKey: 'api-key.created' };
+const API_KEY_SCOPE_CHANGED = { resource: 'api-key', action: 'scope-changed', actionKey: 'api-key.scope-changed' };
+const API_KEY_REVOKED = { resource: 'api-key', action: 'revoked', actionKey: 'api-key.revoked' };
+
+interface ApiKeyEvent {
+  resource: string;
+  action: string;
+  actionKey: string;
+  targetId: string;
+  targetLabel: string | null;
+  metadata?: EventLogMetadata;
+}
 
 function displayRole(role: ({ name: string } & RolePermissionSource) | null | undefined): string {
   if (!role) return 'Member';
@@ -39,6 +55,7 @@ export class OrganizationApiKeysService {
     private readonly prisma: PrismaClient,
     @Inject('AUTH_CLIENT') private readonly authClient: AuthClient,
     private readonly rbacResolver: RbacResolverService,
+    private readonly eventLog: EventLogService,
     @Logger(OrganizationApiKeysService.name) private readonly logger: LoggerService,
   ) {}
 
@@ -170,7 +187,7 @@ export class OrganizationApiKeysService {
     headers: Record<string, string>,
     data: { name: string; expiresIn?: number; permissions?: string[] },
   ): Promise<CreatedApiKey> {
-    this.contextService.requirePermission('api-key', 'create');
+    const handle = this.contextService.requirePermission('api-key', 'create');
 
     const organizationId = this.contextService.organizationId;
     const role = this.contextService.role;
@@ -209,6 +226,14 @@ export class OrganizationApiKeysService {
       }
       throw error;
     }
+
+    // After the compensating path, so a rolled-back creation records nothing.
+    await this.recordPostCommit(handle, {
+      ...API_KEY_CREATED,
+      targetId: result.id,
+      targetLabel: result.name ?? null,
+      metadata: this.scopeMetadata(permissions),
+    });
 
     const user = this.contextService.user;
 
@@ -249,7 +274,7 @@ export class OrganizationApiKeysService {
       throw new NotFoundException('API key not found');
     }
 
-    this.assertCanManageKey(key.userId, 'update');
+    const handle = this.assertCanManageKey(key.userId, 'update');
     const requestedPermissions = permissions?.length ? permissions : null;
     if (requestedPermissions) {
       if (key.userId === this.contextService.userId) {
@@ -271,13 +296,62 @@ export class OrganizationApiKeysService {
       throw new HttpException('Failed to update API key', HttpStatus.BAD_REQUEST);
     }
 
+    await this.recordPostCommit(handle, {
+      ...API_KEY_SCOPE_CHANGED,
+      targetId: apiKeyId,
+      targetLabel: key.name,
+      metadata: this.scopeMetadata(requestedPermissions),
+    });
+
     // Skip getApiKey's gates: a disabled key's scope is still editable, and failing here would 403/404 a persisted change.
     return this.loadApiKeyWithCreator(apiKeyId, { enabledOnly: false });
   }
 
-  private assertCanManageKey(ownerUserId: string, action: 'update' | 'delete'): void {
-    if (ownerUserId === this.contextService.userId) return;
-    this.contextService.requirePermission('api-key', action);
+  /** Ownership manages a key without holding the permission, so that branch records its own intent —
+   *  otherwise a self-service revoke would leave tier 2 nothing to fall back on. */
+  private assertCanManageKey(ownerUserId: string, action: 'update' | 'delete'): PermissionIntentHandle | undefined {
+    if (ownerUserId === this.contextService.userId) {
+      return this.contextService.pushIntent('api-key', action, false);
+    }
+    return this.contextService.requirePermission('api-key', action);
+  }
+
+  private baseWrite(event: ApiKeyEvent): Omit<EventLogWrite, 'durability' | 'outcome'> {
+    return {
+      organizationId: this.contextService.organizationId,
+      tier: 'EVIDENCE',
+      resource: event.resource,
+      action: event.action,
+      actionKey: event.actionKey,
+      ...this.contextService.actorFields(),
+      ...this.contextService.requestFields(),
+      targetId: event.targetId,
+      targetLabel: event.targetLabel,
+      requestId: this.contextService.requestId ?? null,
+      ...(event.metadata ? { metadata: event.metadata } : {}),
+    };
+  }
+
+  /** The Better Auth write has already committed, so the handle is finalized only once the row lands: a crash
+   *  between the two loses it, and throwing would answer a live key with a 500 instead of letting tier 2 record. */
+  private async recordPostCommit(handle: PermissionIntentHandle | undefined, event: ApiKeyEvent): Promise<void> {
+    const write: EventLogWrite = { ...this.baseWrite(event), durability: 'POST_COMMIT', outcome: 'SUCCEEDED' };
+    try {
+      await this.eventLog.record(write);
+      this.supersede(handle);
+    } catch (error) {
+      this.logger.error(
+        `Failed to persist event ${write.actionKey} for organization ${write.organizationId}: ${getErrorMessage(error)}`,
+      );
+    }
+  }
+
+  private supersede(handle: PermissionIntentHandle | undefined): void {
+    if (handle) this.contextService.finalizeIntents([handle]);
+  }
+
+  private scopeMetadata(permissions: string[] | null): EventLogMetadata {
+    return permissions ? { scope: 'explicit', grantedKeys: [...permissions].sort() } : { scope: 'inherit' };
   }
 
   // A key's scope can never exceed the caller's own; reject up front rather than let the guard silently narrow at runtime.
@@ -336,9 +410,17 @@ export class OrganizationApiKeysService {
       throw new NotFoundException('API key not found');
     }
 
-    this.assertCanManageKey(key.userId, 'delete');
+    const handle = this.assertCanManageKey(key.userId, 'delete');
 
-    await this.prisma.apiKey.delete({ where: { id: apiKeyId } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.apiKey.delete({ where: { id: apiKeyId } });
+      await this.eventLog.recordInTransaction(tx, {
+        ...this.baseWrite({ ...API_KEY_REVOKED, targetId: apiKeyId, targetLabel: key.name }),
+        durability: 'ATOMIC',
+        outcome: 'SUCCEEDED',
+      });
+    });
+    this.supersede(handle);
 
     const audit = this.contextService.buildAuditPayload();
     this.logger.log(

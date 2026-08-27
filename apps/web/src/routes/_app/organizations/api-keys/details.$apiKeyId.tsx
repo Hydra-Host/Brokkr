@@ -9,15 +9,15 @@ import { z } from 'zod';
 
 import { isGrantableApiKeyPermission } from '@repo/auth/api-key-permissions';
 import { useSession } from '@repo/auth/client';
+import { FormPermissionSelector } from '@repo/domain-ui/form/form-permission-selector';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { Separator } from '@repo/ui/components/separator';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@repo/ui/components/sheet';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { FormCheckbox } from '@repo/ui/form/form-checkbox';
-import { FormPermissionSelector } from '@repo/ui/form/form-permission-selector';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import { formatShortDate } from '@repo/utils';
+import { formatShortDate, unwrapErrorMessage } from '@repo/utils';
 import { usePermissions } from '~/hooks/use-permissions';
 import { tsr } from '~/lib/api';
 
@@ -95,8 +95,7 @@ function ApiKeyDetailsSheet() {
       await queryClient.invalidateQueries({ queryKey: ['api-keys'] });
       await queryClient.invalidateQueries({ queryKey: ['api-key', apiKeyId] });
     } else {
-      const body = res.body as { message?: string };
-      toast.error(body?.message ?? 'Failed to update permissions');
+      toast.error(unwrapErrorMessage(res, 'Failed to update permissions'));
     }
   }
 

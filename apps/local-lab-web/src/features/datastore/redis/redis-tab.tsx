@@ -11,6 +11,7 @@ import {
 } from '@/features/datastore/shared';
 import { tsr } from '@/lib/api';
 import { bodyError, thrownBodyError } from '@/lib/errors';
+import { usePoll } from '@/lib/use-poll';
 
 import { RedisMetadata } from './redis-metadata';
 import { RedisValuePanel } from './redis-value';
@@ -19,7 +20,7 @@ import { TYPE_COLOR } from './type-color';
 const DEFAULT_MATCH = '*';
 
 export function RedisTab() {
-  const info = tsr.getRedisInfo.useQuery({ queryKey: ['redis-info'], refetchInterval: 5000 });
+  const info = tsr.getRedisInfo.useQuery({ queryKey: ['redis-info'], refetchInterval: usePoll(5000) });
   const { key: selected, match: matchParam } = useDatastoreSearch();
   const setSearch = useSetDatastoreSearch();
   const { draft: match, setDraft: setMatch, markSent } = useParamDraft(matchParam ?? DEFAULT_MATCH);

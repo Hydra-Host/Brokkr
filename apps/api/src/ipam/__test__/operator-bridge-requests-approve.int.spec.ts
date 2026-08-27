@@ -8,6 +8,8 @@ import path from 'node:path';
 import pg from 'pg';
 import { DesignationOperatorPolicy } from 'src/common/authz/operator-policy';
 import { ContextService } from 'src/common/context/context.service';
+import { EventLogRepository } from 'src/event-log/event-log.repository';
+import { EventLogService } from 'src/event-log/event-log.service';
 import { HostPluginIpamProvisioning } from 'src/ipam/host-plugin-ipam-provisioning';
 import { IpAddressRepository } from 'src/ipam/ip-address/ip-address.repository';
 import { IpAddressService } from 'src/ipam/ip-address/ip-address.service';
@@ -175,6 +177,7 @@ function buildBridgeRequestsService(prisma: DatabasePrismaClient): BridgeRequest
     ipAddressService,
     ipRangeService,
     new IpamRoleRepository(nestPrisma),
+    new EventLogService(new EventLogRepository(nestPrisma), logger as never, contextService),
   );
 
   return new backend!.BridgeRequestsService(

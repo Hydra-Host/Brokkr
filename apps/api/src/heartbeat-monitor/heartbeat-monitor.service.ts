@@ -7,6 +7,7 @@ import { REDIS_CLIENT, scanKeys } from 'src/common/redis';
 import { REDIS_KEYS } from 'src/common/redis/redis-keys';
 import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
+import { BridgeAlertingService } from './bridge-alerting.service';
 import { formatZone } from './heartbeat-monitor.constants';
 import { ZoneAlertingService } from './zone-alerting.service';
 import { ZoneFlapAlertingService } from './zone-flap-alerting.service';
@@ -37,6 +38,7 @@ export class HeartbeatMonitorService {
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     private readonly zoneAlertingService: ZoneAlertingService,
     private readonly zoneFlapAlertingService: ZoneFlapAlertingService,
+    private readonly bridgeAlertingService: BridgeAlertingService,
     @Logger(HeartbeatMonitorService.name) private readonly logger: LoggerService,
   ) {
     this.zonesOnline.addCallback((observable) => {
@@ -56,9 +58,16 @@ export class HeartbeatMonitorService {
       const allKeys = await scanKeys(this.redis, REDIS_KEYS.bridgeInstanceScanAll);
 
       const zoneSet = new Set<string>();
+      // Live per-zone instance view for the bridge-level presence reconcile below.
+      const presentByZone = new Map<string, Set<string>>();
       for (const key of allKeys) {
-        const prefix = key.split(':bridge:instance:')[0];
-        if (prefix) zoneSet.add(prefix);
+        const [prefix, instanceId] = key.split(':bridge:instance:');
+        if (!prefix) continue;
+        zoneSet.add(prefix);
+        if (!instanceId) continue;
+        const instances = presentByZone.get(prefix);
+        if (instances) instances.add(instanceId);
+        else presentByZone.set(prefix, new Set([instanceId]));
       }
 
       const results: ZonePresenceStatus[] = [];
@@ -176,6 +185,14 @@ export class HeartbeatMonitorService {
             flapSuppressed,
           });
         }
+      }
+
+      // Bridge-level granularity rides the same sweep; isolated so a failure
+      // here can't break zone status handling or the offline-event publishing.
+      try {
+        await this.bridgeAlertingService.reconcileBridgePresence(presentByZone);
+      } catch (error) {
+        this.logger.error(`Bridge-level presence reconcile failed: ${getErrorMessage(error)}`);
       }
 
       this.latestOnlineZoneCount = results.filter((z) => z.isOnline).length;

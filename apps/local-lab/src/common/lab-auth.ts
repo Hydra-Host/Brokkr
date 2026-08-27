@@ -45,7 +45,10 @@ function parseUrl(value: string): URL | undefined {
 }
 
 // trusted: the allowlist, a loopback origin on a lab port (dev / vite proxy), or an origin naming the address
-// this connection arrived on (LAN). The Host header is caller-supplied (dns rebinding) — never consulted.
+// this connection arrived on (LAN). The Host header is caller-supplied (dns rebinding) — never consulted,
+// and neither is os.hostname(): a LAN client reaches us by whatever name ITS resolver knows (a router- or
+// tailscale-assigned one this host never sees), so matching our own name would still deny the common case.
+// Token-authenticated callers skip this gate entirely — see requireJsonMutation.
 export function isMutationOriginAllowed(origin: string, localAddress: string | undefined): boolean {
   if (labCorsOrigins().includes(origin)) return true;
   const source = parseUrl(origin);

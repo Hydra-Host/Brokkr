@@ -14,7 +14,8 @@ export function PendingBanner({
   blockedReason,
 }: {
   pending: FleetPending;
-  onApply: () => void;
+  /** Omitted where a shared apply control already offers the run: the banner is then detail only. */
+  onApply?: () => void;
   busy: boolean;
   // Apply is gated (e.g. unsaved edits) — distinct from `busy` (which owns the "Applying…"
   // label); folding this into busy would mislabel a dirty-but-idle banner as Applying.
@@ -29,14 +30,16 @@ export function PendingBanner({
     return (
       <div className="border-status-warning/70 bg-status-warning/20 flex items-center gap-3 rounded-md border px-3 py-2">
         <span className="text-status-warning text-sm font-medium">⚠ Fleet mode changed — not yet applied</span>
-        <button
-          onClick={onApply}
-          disabled={applyDisabled(busy, blocked)}
-          title={blocked ? blockedReason : undefined}
-          className="bg-status-warning/35 text-status-warning hover:bg-status-warning/45 border-status-warning/70 ml-auto rounded-md border px-3 py-1 text-sm font-medium disabled:opacity-40"
-        >
-          {busy ? 'Applying…' : 'Apply mode'}
-        </button>
+        {onApply && (
+          <button
+            onClick={onApply}
+            disabled={applyDisabled(busy, blocked)}
+            title={blocked ? blockedReason : undefined}
+            className="bg-status-warning/35 text-status-warning hover:bg-status-warning/45 border-status-warning/70 ml-auto rounded-md border px-3 py-1 text-sm font-medium disabled:opacity-40"
+          >
+            {busy ? 'Applying…' : 'Apply mode'}
+          </button>
+        )}
       </div>
     );
   }
@@ -61,14 +64,16 @@ export function PendingBanner({
           ⚠ {count} pending {count === 1 ? 'change' : 'changes'}
           {parts.length ? ` (${parts.join(', ')})` : ''} — not yet applied
         </span>
-        <button
-          onClick={onApply}
-          disabled={applyDisabled(busy, blocked)}
-          title={blocked ? blockedReason : undefined}
-          className="bg-status-warning/35 text-status-warning hover:bg-status-warning/45 border-status-warning/70 ml-auto rounded-md border px-3 py-1 text-sm font-medium disabled:opacity-40"
-        >
-          {busy ? 'Applying…' : danger ? 'Apply (full rebuild)' : 'Apply'}
-        </button>
+        {onApply && (
+          <button
+            onClick={onApply}
+            disabled={applyDisabled(busy, blocked)}
+            title={blocked ? blockedReason : undefined}
+            className="bg-status-warning/35 text-status-warning hover:bg-status-warning/45 border-status-warning/70 ml-auto rounded-md border px-3 py-1 text-sm font-medium disabled:opacity-40"
+          >
+            {busy ? 'Applying…' : danger ? 'Apply (full rebuild)' : 'Apply'}
+          </button>
+        )}
       </div>
       {(pending.nodes.changed.length > 0 ||
         pending.nodes.added.length > 0 ||

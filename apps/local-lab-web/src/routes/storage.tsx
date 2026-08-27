@@ -9,6 +9,7 @@ import { copyText } from '@/lib/clipboard';
 import { fmtAgo, fmtBytes } from '@/lib/format';
 import { useToast } from '@/lib/toast';
 import { useLogStream, usePaintedHtml } from '@/lib/use-log-stream';
+import { usePoll } from '@/lib/use-poll';
 
 const WIPEABLE: readonly string[] = ['discovery-images', 'built-artifacts', 'boot-artifacts'];
 function isWipeable(id: string): id is WipeableCategoryId {
@@ -129,7 +130,7 @@ function StreamConsole({ runId, title, onClose }: { runId: string; title: string
 
 function StoragePage() {
   const toast = useToast();
-  const state = tsr.getStorageState.useQuery({ queryKey: ['storage-state'], refetchInterval: 3000 });
+  const state = tsr.getStorageState.useQuery({ queryKey: ['storage-state'], refetchInterval: usePoll(3000) });
   const wipe = tsr.wipeStorage.useMutation();
   const resync = tsr.resyncStorage.useMutation();
   const verify = tsr.verifyStorage.useMutation();

@@ -7,7 +7,7 @@ import { ButtonLink } from '@repo/ui/components/button-link';
 import { Card, CardHeader, CardTitle } from '@repo/ui/components/card';
 
 import { TypewriterText } from '@repo/ui/components/typewriter-text';
-import { capitalizeFirstLetter, getBridgeStatusBadgeVariant, getBridgeTypeBadgeVariant } from '@repo/utils/format';
+import { capitalizeFirstLetter, getBridgeStatusBadgeVariant, getBridgeTypeBadgeVariant } from '@repo/utils';
 import { tsr } from '~/lib/api';
 
 const bridgeQueryKey = (bridgeId: string) => ['bridge', bridgeId] as const;
@@ -35,7 +35,7 @@ export const Route = createFileRoute('/_app/dcim/bridges/$bridgeId')({
 });
 
 function BridgeLayout() {
-  const bridge = Route.useLoaderData() as BridgeResponse;
+  const bridge = Route.useLoaderData();
   const { bridgeId } = Route.useParams();
 
   return (

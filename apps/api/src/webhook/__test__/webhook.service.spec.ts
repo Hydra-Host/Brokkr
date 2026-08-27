@@ -1,6 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { WebhookEventType } from '@repo/database';
+import { Prisma, WebhookEventType } from '@repo/database';
 import { createLoggerProvidersForTest } from 'src/common/logger-test-utils';
 import { Mock, vi } from 'vitest';
 import { mockSupplyOrganization, mockWebhook, mockWebhookDelivery } from '../../prisma/fixtures';
@@ -80,10 +80,14 @@ describe('WebhookService', () => {
       const result = await service.create(mockSupplyOrganization.id, createDto);
 
       expect(result).toEqual(mockWebhook);
-      expect(mockWebhookRepo.create).toHaveBeenCalledWith(mockSupplyOrganization.id, {
-        ...createDto,
-        secret: expect.any(String),
-      });
+      expect(mockWebhookRepo.create).toHaveBeenCalledWith(
+        mockSupplyOrganization.id,
+        {
+          ...createDto,
+          secret: expect.any(String),
+        },
+        undefined,
+      );
     });
   });
 
@@ -120,7 +124,7 @@ describe('WebhookService', () => {
       const result = await service.update(mockWebhook.id, updateDto);
 
       expect(result).toEqual(mockWebhook);
-      expect(mockWebhookRepo.update).toHaveBeenCalledWith(mockWebhook.id, updateDto);
+      expect(mockWebhookRepo.update).toHaveBeenCalledWith(mockWebhook.id, updateDto, undefined);
     });
 
     it('should reset failure count when requested', async () => {
@@ -134,11 +138,25 @@ describe('WebhookService', () => {
       const result = await service.update(mockWebhook.id, updateDto, true);
 
       expect(result).toEqual(mockWebhook);
-      expect(mockWebhookRepo.update).toHaveBeenCalledWith(mockWebhook.id, {
-        ...updateDto,
-        failureCount: 0,
-        lastFailureAt: null,
-      });
+      expect(mockWebhookRepo.update).toHaveBeenCalledWith(
+        mockWebhook.id,
+        {
+          ...updateDto,
+          failureCount: 0,
+          lastFailureAt: null,
+        },
+        undefined,
+      );
+    });
+
+    it('reads the existence guard through the caller transaction', async () => {
+      const tx = {} as Prisma.TransactionClient;
+      mockWebhookRepo.findFirst.mockResolvedValue(mockWebhook);
+      mockWebhookRepo.update.mockResolvedValue(mockWebhook);
+
+      await service.update(mockWebhook.id, { isActive: true }, false, tx);
+
+      expect(mockWebhookRepo.findFirst).toHaveBeenCalledWith({ id: mockWebhook.id, deletedAt: null }, tx);
     });
   });
 
@@ -152,9 +170,23 @@ describe('WebhookService', () => {
 
       await service.remove(mockWebhook.id);
 
-      expect(mockWebhookRepo.update).toHaveBeenCalledWith(mockWebhook.id, {
-        deletedAt: expect.any(Date),
-      });
+      expect(mockWebhookRepo.update).toHaveBeenCalledWith(
+        mockWebhook.id,
+        {
+          deletedAt: expect.any(Date),
+        },
+        undefined,
+      );
+    });
+
+    it('reads the existence guard through the caller transaction', async () => {
+      const tx = {} as Prisma.TransactionClient;
+      mockWebhookRepo.findFirst.mockResolvedValue(mockWebhook);
+      mockWebhookRepo.update.mockResolvedValue({ ...mockWebhook, deletedAt: new Date() });
+
+      await service.remove(mockWebhook.id, tx);
+
+      expect(mockWebhookRepo.findFirst).toHaveBeenCalledWith({ id: mockWebhook.id, deletedAt: null }, tx);
     });
   });
 

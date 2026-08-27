@@ -55,8 +55,8 @@ the shipped change** rather than showing as merged.
 Brokkr is a pnpm + [Turborepo](https://turborepo.dev/) monorepo. Full local
 environment setup (devenv/Nix toolchain, datastores, and the simulator fleet)
 is documented in the [README](./README.md). For most code contributions you
-need Node.js `>=22.12 <25` (the `engines` range in `package.json`) and the
-repo's pinned pnpm version (`pnpm@8.15.9`, also declared there):
+need Node.js `>=22.13 <25` (the `engines` range in `package.json`) and the
+repo's pinned pnpm version (`pnpm@11.21.0`, also declared there):
 
 ```bash
 pnpm install

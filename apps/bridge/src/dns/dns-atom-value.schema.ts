@@ -40,6 +40,8 @@ export type DnsConfigAtomValue = z.infer<typeof DnsConfigAtomValueSchema>;
 export const DnsPrefixOverrideAtomValueSchema = z.object({
   serveDns: z.boolean().nullable(),
   upstreamOverride: z.array(z.string().ip({ version: 'v4' })).nullable(),
+  // Optional so atoms from an older hub (which omitted the prefix CIDR) still parse.
+  cidr: z.string().cidr({ version: 'v4' }).optional(),
 });
 
 export type DnsPrefixOverrideAtomValue = z.infer<typeof DnsPrefixOverrideAtomValueSchema>;

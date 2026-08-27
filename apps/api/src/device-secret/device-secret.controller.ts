@@ -17,6 +17,14 @@ export class DeviceSecretController {
     });
   }
 
+  @TsRestHandler(contract.listDeviceSecretAuditEvents)
+  async listDeviceSecretAuditEvents() {
+    return tsRestHandler(contract.listDeviceSecretAuditEvents, async ({ params, query }) => {
+      const result = await this.access.listAuditEvents(params.deviceId, query);
+      return { status: 200 as const, body: result };
+    });
+  }
+
   @TsRestHandler(contract.writeDeviceSecret)
   async writeDeviceSecret() {
     return tsRestHandler(contract.writeDeviceSecret, async ({ params, body }) => {

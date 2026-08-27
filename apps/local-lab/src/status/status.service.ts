@@ -14,6 +14,7 @@ import { FleetPowerService } from '../fleet/fleet-power.service';
 import { FleetStatusService } from '../fleet/fleet-status.service';
 import { HOSTS, URLS } from '../ports';
 import { RunsService } from '../runs/runs.service';
+import { readHostAccess } from '../services/host-access';
 import { OverlayStoreService } from '../services/overlay-store';
 import { RepoBranchService } from '../services/repo-branch.service';
 import { RosterService } from '../services/roster.service';
@@ -23,6 +24,8 @@ import { HttpProbeService } from './http-probe.service';
 const execFileP = promisify(execFile);
 
 type HubSpokeProbes = { hub: HttpProbeResult; spokes: HttpProbeResult[] };
+
+type FleetSnapshot = { nodes: Status['fleet']; dbReadFailed: boolean; health: FleetStatus | undefined };
 
 const PROBE_FAILURES_BEFORE_DOWN = 2;
 
@@ -92,7 +95,7 @@ export class StatusService {
       // masking it as an empty fleet; only transient machine-probe failures degrade to [].
       this.fleetSnapshot().catch((error) => {
         if (getErrorMessage(error).startsWith('fleet config invalid')) throw error;
-        return { nodes: [], health: undefined };
+        return { nodes: [], dbReadFailed: false, health: undefined };
       }),
       this.probeCache.get(),
       this.ledgerSnapshot(),
@@ -104,7 +107,9 @@ export class StatusService {
       services,
       datastores,
       stack: this.stackSummary(),
+      hostAccess: readHostAccess(),
       fleet: fleetSnap.nodes,
+      fleetDbReadFailed: fleetSnap.dbReadFailed,
       fleetSummary: summarizeFleet(fleetSnap.nodes),
       fleetHealth: fleetSnap.health,
       hubHealth: probes?.hub,
@@ -250,20 +255,20 @@ export class StatusService {
     return this.overlay.stackSummary();
   }
 
-  private async fleetSnapshot(): Promise<{ nodes: Status['fleet']; health: FleetStatus | undefined }> {
+  private async fleetSnapshot(): Promise<FleetSnapshot> {
     // the machine probe is a virsh spawn; hand the same snapshot to the health composer rather than paying twice
     const machines = await this.power.machines();
-    const [nodes, health] = await Promise.all([
+    const [fleet, health] = await Promise.all([
       this.fleetNodes(machines),
       this.fleetStatusSvc.status(machines).catch(() => undefined),
     ]);
-    return { nodes, health };
+    return { ...fleet, health };
   }
 
-  private async fleetNodes(machines: Machine[]): Promise<Status['fleet']> {
-    const dbStatus = await this.pg.devicesStatusByName(machines.map((m) => m.name));
-    return machines.map((m) => {
-      const row = dbStatus.get(m.name);
+  private async fleetNodes(machines: Machine[]): Promise<Omit<FleetSnapshot, 'health'>> {
+    const db = await this.pg.devicesStatusByName(machines.map((m) => m.name));
+    const nodes = machines.map((m) => {
+      const row = db.byName.get(m.name);
       return {
         name: m.name,
         power: m.power,
@@ -272,5 +277,6 @@ export class StatusService {
         gpuModel: row?.gpuModel ?? null,
       };
     });
+    return { nodes, dbReadFailed: db.failed };
   }
 }

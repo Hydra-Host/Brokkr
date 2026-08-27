@@ -63,43 +63,4 @@ VALUES ('ac094463-5e6a-5975-b582-ea3ad3413a6a', 100, NULL, 'fb2f4b4b-131a-52c5-b
 ON CONFLICT (id) DO UPDATE SET
     "gatewayIpId" = EXCLUDED."gatewayIpId", "prefixId" = EXCLUDED."prefixId",
     "routingPriority" = EXCLUDED."routingPriority", "updatedAt" = NOW();
--- primary prefix 192.168.200.0/24 → zone=00000000-0000-0000-0000-111111111112
-INSERT INTO "Prefix" (
-    id, prefix, status, "isPool", role,
-    "organizationId", "zoneId", "prefixRoleId",
-    "dhcpMode", "gatewayIpId",
-    "createdAt", "updatedAt"
-) VALUES (
-    '9da19c60-1d0d-588c-a9c9-4f627d4868b0', '192.168.200.0/24'::cidr, 'ACTIVE'::"PrefixStatus", false, 'PRIMARY'::"IpamRole",
-    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111112'), '00000000-0000-0000-0000-111111111112', (SELECT id FROM "IpamPrefixVlanRole" WHERE slug = 'primary'),
-    NULL, NULL,
-    NOW(), NOW()
-)
-ON CONFLICT (id) DO UPDATE SET
-    prefix = EXCLUDED.prefix, status = EXCLUDED.status, role = EXCLUDED.role,
-    "organizationId" = EXCLUDED."organizationId", "zoneId" = EXCLUDED."zoneId",
-    "prefixRoleId" = EXCLUDED."prefixRoleId",
-    "dhcpMode" = EXCLUDED."dhcpMode", "gatewayIpId" = EXCLUDED."gatewayIpId",
-    "updatedAt" = NOW();
--- rendered_netplan off: remove the primary-prefix gateway
-DELETE FROM "Gateway" WHERE id = 'fd9ca9c2-893b-546a-be5f-2ed0070e3365';
-DELETE FROM "IpAddress" WHERE id = '09296525-1896-5a4a-86f8-0fb4d6e07c18';
--- management prefix 192.168.105.0/24 → zone=00000000-0000-0000-0000-111111111112
-INSERT INTO "Prefix" (
-    id, prefix, status, "isPool", role,
-    "organizationId", "zoneId", "prefixRoleId",
-    "dhcpMode", "gatewayIpId",
-    "createdAt", "updatedAt"
-) VALUES (
-    '62a7f06a-ddb4-595e-a086-ffc69190251a', '192.168.105.0/24'::cidr, 'ACTIVE'::"PrefixStatus", false, 'MANAGEMENT'::"IpamRole",
-    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111112'), '00000000-0000-0000-0000-111111111112', (SELECT id FROM "IpamPrefixVlanRole" WHERE slug = 'management'),
-    NULL, NULL,
-    NOW(), NOW()
-)
-ON CONFLICT (id) DO UPDATE SET
-    prefix = EXCLUDED.prefix, status = EXCLUDED.status, role = EXCLUDED.role,
-    "organizationId" = EXCLUDED."organizationId", "zoneId" = EXCLUDED."zoneId",
-    "prefixRoleId" = EXCLUDED."prefixRoleId",
-    "dhcpMode" = EXCLUDED."dhcpMode", "gatewayIpId" = EXCLUDED."gatewayIpId",
-    "updatedAt" = NOW();
 COMMIT;

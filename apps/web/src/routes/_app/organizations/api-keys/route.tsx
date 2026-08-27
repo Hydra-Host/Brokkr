@@ -5,6 +5,9 @@ import { useMemo } from 'react';
 
 import type { ApiKeyWithCreator } from '@repo/api-client';
 import { useSession } from '@repo/auth/client';
+import { ServerDataTable } from '@repo/domain-ui/components/server-data-table';
+import type { ServerColumnDef } from '@repo/domain-ui/hooks/use-server-table';
+import { useServerTable } from '@repo/domain-ui/hooks/use-server-table';
 import { Alert, AlertDescription, AlertTitle } from '@repo/ui/components/alert';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
@@ -15,10 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@repo/ui/components/dropdown-menu';
-import { ServerDataTable } from '@repo/ui/components/server-data-table';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
-import { useServerTable } from '@repo/ui/hooks/use-server-table';
 import { formatShortDate } from '@repo/utils';
 import { BootScreen } from '~/components/boot-screen';
 import { usePermissions } from '~/hooks/use-permissions';

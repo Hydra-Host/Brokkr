@@ -2,10 +2,26 @@ import re
 from pathlib import Path
 from xml.etree import ElementTree
 
+import local.config as cfg
+import pytest
+from local import host_os
 from local.render import render_domain, scsi_suffix
 from local.schema import Fleet
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+
+
+@pytest.fixture(autouse=True)
+def _clear_accel_cache():
+    host_os.detect_accel.cache_clear()
+    yield
+    host_os.detect_accel.cache_clear()
+
+
+def _set_accel(monkeypatch, value):
+    monkeypatch.setenv("LOCAL_ACCEL", value)
+    cfg.get_settings.cache_clear()
+    host_os.detect_accel.cache_clear()
 
 
 def _fleet(arch: str = "aarch64", dhcp: bool = False):
@@ -44,6 +60,7 @@ def _render(
     console="/tmp/test.log",
     vmnet_socket="/tmp/socket_vmnet.sock",
     emulator="/opt/homebrew/bin/qemu-system-aarch64",
+    accel_override=None,
 ):
     return render_domain(
         fleet,
@@ -56,6 +73,7 @@ def _render(
         emulator_path=emulator,
         host_os_override="macos",
         host_arch_override="arm64",
+        accel_override=accel_override,
     )
 
 
@@ -87,7 +105,8 @@ def test_domain_xml_escapes_fleet_string_metacharacters():
     assert "<g>" not in xml
 
 
-def test_domain_uses_hvf_acceleration():
+def test_domain_uses_hvf_acceleration(monkeypatch):
+    _set_accel(monkeypatch, "hvf")
     xml = _render(_fleet())
     assert "<domain type='hvf'" in xml
     assert "<type arch='aarch64' machine='virt'>hvm</type>" in xml
@@ -170,6 +189,7 @@ def _render_linux(fleet, **kwargs):
         emulator_path="/usr/bin/qemu-system-x86_64",
         host_os_override="linux",
         host_arch_override="amd64",
+        accel_override=kwargs.get("accel_override"),
     )
 
 
@@ -179,6 +199,55 @@ def test_linux_domain_uses_kvm_q35():
     assert "<type arch='x86_64' machine='q35'>hvm</type>" in xml
     assert "/usr/bin/qemu-system-x86_64" in xml
     assert "<domain type='hvf'" not in xml
+
+
+def test_tcg_domain_type_is_qemu_not_tcg():
+    xml = _render_linux(_fleet(), accel_override="tcg")
+    assert "<domain type='qemu'" in xml
+    assert "<domain type='tcg'" not in xml
+    assert "<domain type='kvm'" not in xml
+
+
+def test_tcg_cpu_line_differs_from_the_kvm_one():
+    tcg = _render_linux(_fleet(), accel_override="tcg")
+    kvm = _render_linux(_fleet())
+    assert "<cpu mode='maximum'/>" in tcg
+    assert "<cpu mode='host-passthrough'/>" not in tcg
+    assert "<cpu mode='host-passthrough'/>" in kvm
+    assert "<cpu mode='maximum'/>" not in kvm
+
+
+def test_kvm_branch_keeps_host_passthrough_and_domain_type_kvm():
+    xml = _render_linux(_fleet(), accel_override="kvm")
+    assert "<domain type='kvm'" in xml
+    assert "<cpu mode='host-passthrough'/>" in xml
+
+
+def test_hvf_render_is_byte_identical_with_and_without_the_override(monkeypatch):
+    _set_accel(monkeypatch, "hvf")
+    assert _render(_fleet()) == _render(_fleet(), accel_override="hvf")
+
+
+def test_forced_tcg_is_honoured_on_macos(monkeypatch):
+    _set_accel(monkeypatch, "tcg")
+    xml = _render(_fleet())
+    assert "<domain type='qemu'" in xml
+    assert "<domain type='hvf'" not in xml
+    assert "<cpu mode='host-passthrough'/>" not in xml
+
+
+def test_tcg_domain_xml_parses():
+    ElementTree.fromstring(_render_linux(_fleet(), accel_override="tcg"))
+
+
+def test_render_does_not_probe_the_accelerator_when_overridden(monkeypatch):
+    import local.render as render_mod
+
+    def boom():
+        raise AssertionError("accel probe ran despite an override")
+
+    monkeypatch.setattr(render_mod, "_detect_accel", boom)
+    assert "<domain type='qemu'" in _render_linux(_fleet(), accel_override="tcg")
 
 
 def test_linux_uses_l2_bridge_not_socket_vmnet():

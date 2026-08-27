@@ -11,6 +11,7 @@ import {
   useSetDatastoreSearch,
 } from '@/features/datastore/shared';
 import { tsr } from '@/lib/api';
+import { usePoll } from '@/lib/use-poll';
 
 import { JobDetailPanel } from './job-detail';
 import { JobList } from './job-list';
@@ -30,7 +31,7 @@ function pausedSub(totals: QueueTotals): string {
 }
 
 export function QueuesTab() {
-  const queues = tsr.listQueues.useQuery({ queryKey: ['queues'], refetchInterval: REFRESH_MS });
+  const queues = tsr.listQueues.useQuery({ queryKey: ['queues'], refetchInterval: usePoll(REFRESH_MS) });
   const { queuePrefix, queueName, jobState, jobId, deviceId } = useDatastoreSearch();
   const setSearch = useSetDatastoreSearch();
   const { filter, setFilter } = useFilterParam('queueFilter');

@@ -20,11 +20,12 @@ import { LoggerModule } from './logger/logger.module';
 import { WebhookModule } from './webhook/webhook.module';
 
 import { PluginRuntimeModule } from '@hydrahost/plugin-runtime';
-import { PLUGIN_GATE_BUS, PLUGIN_REDIS_CLIENT } from '@hydrahost/plugin-sdk';
+import { PLUGIN_GATE_BUS, PLUGIN_RATE_LIMITER, PLUGIN_REDIS_CLIENT } from '@hydrahost/plugin-sdk';
 import pluginsConfig, { editionOverrides } from '@hydrahost/plugins-config';
 import { BullModule } from '@nestjs/bullmq';
 import { ActiveRecordModule } from '@repo/active-record';
 import { getBullMqTelemetry } from '@repo/telemetry';
+import type Redis from 'ioredis';
 import { join } from 'path';
 import { AppController } from './app.controller';
 import { BgpModule } from './bgp/bgp.module';
@@ -63,6 +64,7 @@ import {
   PLUGIN_GATE_BUS_SCOPED_FACTORY,
   type ScopedGateBusFactory,
 } from './plugin-host/host-plugin-gate-bus.module';
+import { createPluginRateLimiter } from './plugin-host/host-plugin-rate-limiter';
 import { createNamespacedRedisClient } from './plugin-host/host-plugin-redis-client';
 import { PluginHostModule } from './plugin-host/plugin-host.module';
 import { PluginsMetaController } from './plugin-host/plugins-meta.controller';
@@ -208,14 +210,16 @@ export class AppModule {
       providers: [
         {
           provide: PLUGIN_REDIS_CLIENT,
-          useFactory: (redis: {
-            get(key: string): Promise<string | null>;
-            set(key: string, value: string, expiryMode: 'EX', ttlSeconds: number): Promise<unknown>;
-          }) => createNamespacedRedisClient(redis, pluginId),
+          useFactory: (redis: Redis) => createNamespacedRedisClient(redis, pluginId),
+          inject: [REDIS_CLIENT],
+        },
+        {
+          provide: PLUGIN_RATE_LIMITER,
+          useFactory: (redis: Redis) => createPluginRateLimiter(redis, pluginId),
           inject: [REDIS_CLIENT],
         },
       ],
-      exports: [PLUGIN_REDIS_CLIENT],
+      exports: [PLUGIN_RATE_LIMITER, PLUGIN_REDIS_CLIENT],
     };
   }
 

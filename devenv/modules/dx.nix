@@ -1,7 +1,6 @@
 {
   pkgs,
   lib,
-  inputs,
   ...
 }:
 
@@ -15,11 +14,6 @@
 # gitleaks is the Nix-pinned pkgs.gitleaks (not an optional brew binary), so the scan always runs.
 let
   maxCommentLinesScript = ../../scripts/agent-hooks/max-comment-lines.mjs;
-
-  # prek (Rust pre-commit) from the newer nixpkgs input — see devenv.yaml.
-  inherit (inputs.nixpkgs-prek.legacyPackages.${pkgs.stdenv.hostPlatform.system})
-    prek
-    ;
 
   # ported from the former .husky/pre-push: link the workspace first (catches newly added
   # packages), full typecheck, then tests for packages affected since origin/master
@@ -81,10 +75,12 @@ let
     exec ${schemaDriftPython}/bin/python3 -m pytest tests/test_seed_schema_drift.py tests/test_reset_parity.py -q
   '';
 
-  # the devenv shell suite's darwin half. CI runs devenv/tests on linux in the toolchain image;
-  # this hook is the only thing that ever runs devenv/tests/nix, and the only thing that runs
-  # either tier against real BSD userland — which is the divergence most of these matchers exist
-  # to survive.
+  # One list, two consumers: prek's cheap `files` pre-filter, and batsGate re-applying it to the
+  # branch diff, which is the scope prek cannot compute.
+  batsGateFiles = "(install\\.sh|devenv\\.nix|Taskfile\\.yml|devenv/(lib/.*|modules/[^/]*\\.nix|scripts/[^/]*\\.sh|tests/([^/]*|nix/.*))|apps/local-sim/(scripts/tasks/(stack-reconcile|stack-libvirt-up)\\.sh|provisioning/linux-bootstrap\\.sh))$";
+
+  # the devenv shell suite's darwin half: the only run of either tier against real BSD userland,
+  # which is the divergence most of these matchers exist to survive.
   batsGate = pkgs.writeShellScript "brokkr-devenv-bats" ''
     set -euo pipefail
     cd "$(git rev-parse --show-toplevel)"
@@ -99,17 +95,40 @@ let
         pkgs.git
       ]
     }:$PATH"
-    # tests/ + nix/ but NOT checkout/ — those cases refuse to run in a linked worktree by design,
-    # and this host has dozens of worktrees, so `bats -r` here would fail every push.
-    # timeout by store path rather than on PATH: it is GNU-only, so a darwin push from outside a
-    # devenv shell would otherwise die on the wrapper instead of running the suite.
-    exec ${pkgs.coreutils}/bin/timeout 180 bats devenv/tests/ devenv/tests/nix/
+    # prek scopes a pre-push hook on what the remote lacks, so a rebase hands it every path
+    # master gained - measured 3 matches on a branch owning 0. The branch diff is the real input.
+    base=$(git merge-base origin/master HEAD 2>/dev/null) || base=""
+    changed=""
+    if [ -n "$base" ]; then
+      changed=$(git diff --name-only "$base" HEAD)
+      if ! printf '%s\n' "$changed" | grep -qE '${batsGateFiles}'; then
+        echo "devenv-shell-tests: nothing on this branch touches the tier - skipping"
+        exit 0
+      fi
+    fi
+
+    # checkout/ stays out: those cases refuse to run in a linked worktree, and this host has
+    # dozens, so a recursive run would fail every push.
+    tier=""
+    for f in devenv/tests/*.bats \
+             devenv/tests/nix/*.bats; do
+      case "$f" in */stack-reconcile.bats) continue ;; esac
+      tier="$tier $f"
+    done
+    # stack-reconcile is 219s of the suite's 336s for 23 of 289 cases, so it runs only when its
+    # own inputs move. Every other push gets the remaining 266 cases in 79s.
+    if printf '%s\n' "$changed" | grep -qE 'stack-reconcile\.(sh|bats)$'; then
+      tier="$tier devenv/tests/stack-reconcile.bats"
+    fi
+
+    # A hang guard, not a budget: the suite grew 287s to 336s in a day, so a tight number fails
+    # on the clock, not on a defect. Store path because timeout is GNU-only on a darwin push.
+    exec ${pkgs.coreutils}/bin/timeout 900 bats $tier
   '';
 in
 {
-  # devenv's git-hooks integration defaults its runner to pkgs.prek, which is absent from
-  # our pinned nixpkgs-25.05; supply prek from the newer nixpkgs-prek input instead.
-  git-hooks.package = prek;
+  # git-hooks.package is deliberately unset: devenv defaults it to pkgs.prek, which our pinned
+  # nixpkgs now carries. The former override pulled prek from a second nixpkgs input.
 
   git-hooks.hooks = {
     # the repo's format/lint authority (config: devenv/treefmt-module.nix). Runs on the staged
@@ -180,7 +199,7 @@ in
     devenv-shell-tests = {
       enable = true;
       entry = "${batsGate}";
-      files = "(install\\.sh|devenv/(lib/.*|modules/ports\\.nix|tests/([^/]*|nix/.*)))$";
+      files = "${batsGateFiles}";
       pass_filenames = false;
       always_run = false;
       stages = [ "pre-push" ];

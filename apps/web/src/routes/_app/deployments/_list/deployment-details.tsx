@@ -4,17 +4,17 @@ import { useEffect, useState } from 'react';
 import { z } from 'zod';
 
 import type { Deployment } from '@repo/api-client';
+import { DeviceStatusBadge } from '@repo/domain-ui/components/device-status-badge';
 import { Avatar, AvatarFallback } from '@repo/ui/components/avatar';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { ClickToCopyString } from '@repo/ui/components/click-to-copy-string';
-import { DeviceStatusBadge } from '@repo/ui/components/device-status-badge';
 import { Separator } from '@repo/ui/components/separator';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@repo/ui/components/sheet';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@repo/ui/components/tooltip';
-import { cn } from '@repo/ui/utils';
-import { formatSize } from '@repo/utils/format';
+import { cn, navigatePreservingSearch } from '@repo/ui/utils';
+import { formatSize } from '@repo/utils';
 import { tsr } from '~/lib/api';
 import { formatLegacyOsSlug } from '~/lib/format-os';
 
@@ -43,9 +43,9 @@ function DeploymentDetailsSheet() {
     setOpen(false);
     setTimeout(
       () =>
-        (navigate as (opts: Record<string, unknown>) => void)({
+        navigatePreservingSearch(navigate, {
           to: '/deployments',
-          search: (prev: Record<string, unknown>) => {
+          search: (prev) => {
             return Object.fromEntries(Object.entries(prev).filter(([k]) => k !== 'deploymentId'));
           },
         }),

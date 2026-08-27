@@ -109,6 +109,7 @@ model Zone {
   zoneRequests        ZoneRequest[]
   zoneStatuses        ZoneStatus[]
   bridgeHeartbeats    BridgeHeartbeat[]
+  bridgeFacts         BridgeFacts[]
   clusters            Cluster[]
   circuitTerminations CircuitTermination[]
   registrationTokens  ZoneRegistrationToken[] // S1 enrollment tokens minted for this zone

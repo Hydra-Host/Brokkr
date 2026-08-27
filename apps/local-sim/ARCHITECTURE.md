@@ -2,7 +2,7 @@
 
 How the simulated fleet boots, how IPMI gets routed to a libvirt domain, and how the data plane assigns IPs — with diagrams.
 
-`README.md` covers what the sim **gives you**. This doc covers what it **does**. `CLAUDE.md` (next to this file) is the authoritative reference for engine internals.
+`README.md` covers what the sim **gives you**. This doc covers what it **does**.
 
 The sim is **cross-platform**. Where macOS and Linux diverge (accelerator, data-plane plumbing, firmware paths), it's called out. Defaults below show the macOS shape with the Linux equivalent noted; `templates/domain.xml.j2` and `host_os.py` are the source of truth for the split.
 

@@ -96,6 +96,8 @@ const fleetHealth = (over: Partial<FleetStatus> = {}): FleetStatus => ({
   elapsedSec: null,
   machinesExpected: 4,
   machinesRunning: 4,
+  accel: 'kvm',
+  accelForced: false,
   detail: 'ready · 4/4 VMs running',
   ...over,
 });

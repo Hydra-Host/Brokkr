@@ -22,6 +22,14 @@ describe('Backoff', () => {
     expect(b.next()).toBe(1_000);
   });
 
+  it('holds the min_ms floor across successive attempts when random rolls 0', () => {
+    (Math.random as ReturnType<typeof vi.fn>).mockReturnValue(0);
+    const b = new Backoff({ initial_ms: 2_000, max_ms: 8_000, min_ms: 1_600 });
+    expect(b.next()).toBe(1_600);
+    expect(b.next()).toBe(1_600);
+    expect(b.next()).toBe(1_600);
+  });
+
   it('min_ms only raises the lower edge — values above the floor still jitter', () => {
     (Math.random as ReturnType<typeof vi.fn>).mockReturnValue(0.5);
     const b = new Backoff({ initial_ms: 1_000, max_ms: 60_000, min_ms: 250 });
@@ -55,4 +63,18 @@ describe('Backoff', () => {
     b.reset();
     expect(b.next()).toBe(500);
   });
+
+  it('factor:4 reproduces the original base-4 exponential growth (initial→max in one step)', () => {
+    // With initial_ms=2000, max_ms=8000, factor=4:
+    //   attempt 0: min(8000, 2000 * 4^0) = 2000  → random*2000
+    //   attempt 1: min(8000, 2000 * 4^1) = 8000  → random*8000
+    // Without factor (default 2):
+    //   attempt 1: min(8000, 2000 * 2^1) = 4000  → random*4000  (the bug)
+    (Math.random as ReturnType<typeof vi.fn>).mockReturnValue(0.999_999);
+    const b = new Backoff({ initial_ms: 2_000, max_ms: 8_000, min_ms: 1_600, factor: 4 });
+    b.next(); // attempt 0: base = 2_000
+    const secondRetry = b.next(); // attempt 1: base should be 8_000, not 4_000
+    expect(secondRetry).toBeGreaterThan(4_000);
+  });
+
 });

@@ -694,7 +694,10 @@ Tenant-facing record of actions taken within an organization. Deliberately has *
 foreign keys**: a row must outlive the user, device, or organization it describes, and
 must show what was true at the time, so actor and target labels are denormalized.
 `durability` records what was actually achieved for that row — only `ATOMIC` rows were
-written inside their mutation's transaction and are therefore compliance-grade.
+written inside their mutation's transaction and are therefore compliance-grade. A `MIRROR`
+row projects an event whose preferred record lives in a purpose-built audit table
+(`DeviceSecretAuditEvent`); neither row is guaranteed, so the absence of either is not
+evidence the event did not happen.
 
 `EventLogAccessBucket` exists solely to throttle "who viewed the log" entries: the
 unique constraint is the throttle, since a read-then-write check races.
@@ -705,7 +708,7 @@ erDiagram
         uuid id PK
         string organizationId "Not an FK — row outlives the org"
         enum tier "EVIDENCE (governance) | ACTIVITY (everything else)"
-        enum durability "ATOMIC | POST_COMMIT | BEST_EFFORT"
+        enum durability "ATOMIC | POST_COMMIT | MIRROR | BEST_EFFORT"
         string resource "device, member, api-key"
         string action "removed, role-changed, power-control"
         string actionKey "Denormalized resource.action for filter/group"

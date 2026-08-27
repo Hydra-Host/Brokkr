@@ -3,7 +3,8 @@ import { SshKeyTypeSchema, type CreateSshKeyRequest } from '@repo/api-client';
 import { Prisma } from '@repo/database';
 import { paginateArray, type PaginationQuery } from '@repo/database/pagination';
 import { normalizeSshKey } from '@repo/utils';
-import { ContextService } from 'src/common/context/context.service';
+import { ContextService, type PermissionIntentHandle } from 'src/common/context/context.service';
+import { EventLogService } from 'src/event-log/event-log.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 
 @Injectable()
@@ -11,6 +12,7 @@ export class SshKeysService {
   constructor(
     private readonly prismaService: PrismaClient,
     private readonly contextService: ContextService,
+    private readonly eventLog: EventLogService,
   ) {}
 
   async getSshKeysByUserId(query: PaginationQuery) {
@@ -94,7 +96,7 @@ export class SshKeysService {
   }
 
   async createSshKey(dto: CreateSshKeyRequest) {
-    this.contextService.requirePermission('ssh-key', 'create');
+    const handle = this.contextService.requirePermission('ssh-key', 'create');
     const userId = this.contextService.userId;
     const normalizedKey = normalizeSshKey(dto.key);
     const fingerprint = await this.getFingerprint(normalizedKey);
@@ -110,19 +112,31 @@ export class SshKeysService {
       throw new BadRequestException('SSH key already exists');
     }
 
-    return this.prismaService.sshKeys.create({
-      data: {
-        user: { connect: { id: userId } },
-        name: dto.name,
-        key: normalizedKey,
-        fingerprint,
-        dateDeleted: null,
-      },
+    const created = await this.prismaService.$transaction(async (tx) => {
+      const key = await tx.sshKeys.create({
+        data: {
+          user: { connect: { id: userId } },
+          name: dto.name,
+          key: normalizedKey,
+          fingerprint,
+          dateDeleted: null,
+        },
+      });
+      await this.emitKeyEvent(tx, {
+        action: 'created',
+        actionKey: 'ssh-key.created',
+        targetId: key.id,
+        targetLabel: key.name,
+      });
+      return key;
     });
+
+    this.supersede(handle);
+    return created;
   }
 
   async deleteSshKey(id: string) {
-    this.contextService.requirePermission('ssh-key', 'delete');
+    const handle = this.contextService.requirePermission('ssh-key', 'delete');
     const userId = this.contextService.userId;
     const existing = await this.prismaService.sshKeys.findUnique({
       where: { id, userId, dateDeleted: null },
@@ -130,12 +144,52 @@ export class SshKeysService {
     if (!existing) {
       throw new NotFoundException('SSH key not found');
     }
-    return this.prismaService.sshKeys.update({
-      where: { id, userId },
-      data: {
-        dateDeleted: new Date(),
-      },
+    const deleted = await this.prismaService.$transaction(async (tx) => {
+      const key = await tx.sshKeys.update({
+        where: { id, userId },
+        data: {
+          dateDeleted: new Date(),
+        },
+      });
+      await this.emitKeyEvent(tx, {
+        action: 'deleted',
+        actionKey: 'ssh-key.deleted',
+        targetId: key.id,
+        targetLabel: existing.name,
+      });
+      return key;
     });
+
+    this.supersede(handle);
+    return deleted;
+  }
+
+  /** Never carries key material: the body is a credential and the fingerprint identifies it just as well. */
+  private emitKeyEvent(
+    tx: Prisma.TransactionClient,
+    event: { action: string; actionKey: string; targetId: string; targetLabel: string },
+  ): Promise<void> {
+    return this.eventLog.recordInTransaction(tx, {
+      organizationId: this.contextService.organizationId,
+      tier: 'EVIDENCE',
+      durability: 'ATOMIC',
+      resource: 'ssh-key',
+      action: event.action,
+      actionKey: event.actionKey,
+      ...this.contextService.actorFields(),
+      ...this.contextService.requestFields(),
+      targetId: event.targetId,
+      targetLabel: event.targetLabel,
+      outcome: 'SUCCEEDED',
+      requestId: this.contextService.requestId ?? null,
+    });
+  }
+
+  /** Called after the transaction resolves: a rollback leaves the handle pending so tier 2 records the failure. */
+  private supersede(handle: PermissionIntentHandle | undefined): void {
+    if (handle) {
+      this.contextService.finalizeIntents([handle]);
+    }
   }
 
   async getFingerprint(publicKey: string) {

@@ -1,4 +1,5 @@
 import { isRecord } from '@repo/utils';
+import { createHash } from 'node:crypto';
 
 // `pass$` stays anchored so the fleet schema's `passthrough`/`passthroughSupported` keep their diagnostic value
 export const SECRET_KEY_RE =
@@ -35,7 +36,7 @@ export function maskEmbeddedDsns(value: string): string {
   return value.replace(EMBEDDED_DSN_USERINFO_RE, '$1***@');
 }
 
-const REDACTED = '***';
+export const REDACTED = '***';
 const redactSecretValue = (value: unknown): string =>
   Array.isArray(value) ? `<redacted: ${value.length} items>` : REDACTED;
 
@@ -45,6 +46,12 @@ const TRUNCATION_SUFFIX = '…[truncated]';
 export function redactPayload(value: unknown): unknown {
   return redact(value, new WeakSet());
 }
+
+// The config write body is `entries: { <nix path>: value }`. A path key cannot be judged by name --
+// zoneCrypto.bridgeAtRestKey is declared secret and reads as ordinary -- so every value is masked.
+const PATH_KEYED_BODY = 'entries';
+const maskPathKeyedValues = (entries: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(entries).map(([k, v]) => [k, v === null ? null : redactSecretValue(v)]));
 
 // `seen` is path-scoped (deleted on the way out) so a shared non-cyclic reference still expands
 function redact(value: unknown, seen: WeakSet<object>): unknown {
@@ -62,7 +69,11 @@ function redact(value: unknown, seen: WeakSet<object>): unknown {
     seen.add(value);
     const out: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
-      out[key] = isSecretKey(key) ? redactSecretValue(child) : redact(child, seen);
+      out[key] = isSecretKey(key)
+        ? redactSecretValue(child)
+        : key === PATH_KEYED_BODY && isRecord(child)
+          ? maskPathKeyedValues(child)
+          : redact(child, seen);
     }
     seen.delete(value);
     return out;
@@ -120,7 +131,11 @@ function walkCapped(value: unknown, budget: Budget, seen: WeakSet<object>): unkn
         budget.truncated = true;
         break;
       }
-      out[key] = isSecretKey(key) ? redactSecretValue(item) : walkCapped(item, budget, seen);
+      out[key] = isSecretKey(key)
+        ? redactSecretValue(item)
+        : key === PATH_KEYED_BODY && isRecord(item)
+          ? maskPathKeyedValues(item)
+          : walkCapped(item, budget, seen);
     }
     seen.delete(value);
     return out;
@@ -176,3 +191,13 @@ function truncateToCap(json: string): string {
   }
   return out;
 }
+
+/** A secret's value never leaves the host, so an overridden secret is only detectable by comparing two
+ *  fingerprints of it. Same input, same digest — that is the whole contract. */
+export const secretDigest = (value: string): string =>
+  value ? createHash('sha256').update(value).digest('hex').slice(0, 8) : '';
+
+// Even with `reveal`, a secret-keyed value is NEVER returned raw — the fingerprint confirms identity
+// without the credential leaving the box. The length is carried because two blanks are worth telling apart.
+export const fingerprintSecret = (value: string): string =>
+  value ? `***sha256:${secretDigest(value)} (len ${value.length})` : '***';

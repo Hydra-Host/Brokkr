@@ -22,6 +22,9 @@ paths = [
   '''packages/crypto/test-vectors''',
   # synthetic-credential files
   '''apps/api/src/webhook/__test__/webhook-delivery\.service\.spec\.ts''',
+  '''apps/admin-api/src/ssh-keys/__test__/ssh-keys\.service\.spec\.ts''',
+  '''apps/api/src/sshkeys/__test__/sshkeys\.service\.spec\.ts''',
+  '''apps/bridge/test/live/provision/__test__/live-verify-tee-blast-radius\.spec\.ts''',
   # local-dev secrets (gitignored); NOT apps/api/env.sh — its history secret is tracked separately
   '''apps/api/\.env''',
 ]
@@ -31,4 +34,8 @@ regexes = [
   '''(?i)^(example|placeholder|your[-_]?api[-_]?key|x{3,})$''',
   # documented decoy in the .env.example files, values.yaml, secretspec.toml and the self-host docs (base64 decodes to placeholder-not-for-real-use)
   '''^whsec_cGxhY2Vob2xkZXItbm90LWZvci1yZWFsLXVzZQ==$''',
+  # deploy/nomad/hub sample HCL placeholder (quoted literal "password")
+  '''^"password"$''',
+  # scripts/ci/helm-lint.sh dummy (base64 decodes to not-a-real-key-just-for-linting=)
+  '''^bm90LWEtcmVhbC1rZXktanVzdC1mb3ItbGludGluZz0=$''',
 ]

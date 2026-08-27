@@ -3,6 +3,9 @@ import { Edit, MoreHorizontal, Plus, Trash2, Webhook } from 'lucide-react';
 import { useMemo } from 'react';
 
 import type { Webhook as WebhookType } from '@repo/api-client';
+import { ServerDataTable } from '@repo/domain-ui/components/server-data-table';
+import type { ServerColumnDef } from '@repo/domain-ui/hooks/use-server-table';
+import { useServerTable } from '@repo/domain-ui/hooks/use-server-table';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import {
@@ -11,9 +14,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@repo/ui/components/dropdown-menu';
-import { ServerDataTable } from '@repo/ui/components/server-data-table';
-import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
-import { useServerTable } from '@repo/ui/hooks/use-server-table';
 import { formatShortDate } from '@repo/utils';
 import { keepPreviousData } from '@tanstack/react-query';
 import { tsr } from '~/lib/api';

@@ -31,8 +31,8 @@ export class OrganizationsRepository {
     });
   }
 
-  updateOrganization(id: string, data: Prisma.OrganizationUpdateInput) {
-    return this.prisma.organization.update({
+  updateOrganization(id: string, data: Prisma.OrganizationUpdateInput, tx?: Prisma.TransactionClient) {
+    return (tx ?? this.prisma).organization.update({
       where: { id },
       data,
     });
@@ -67,8 +67,8 @@ export class OrganizationsRepository {
     });
   }
 
-  findOrganizationById(organizationId: string) {
-    return this.prisma.organization.findUnique({
+  findOrganizationById(organizationId: string, tx?: Prisma.TransactionClient) {
+    return (tx ?? this.prisma).organization.findUnique({
       where: { id: organizationId },
     });
   }

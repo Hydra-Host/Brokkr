@@ -56,78 +56,88 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    # attrsOf str → merges onto the static spoke env in modules/spoke.nix. VRRP_SIM_SHIM_DIR is
-    # prepended to PATH by the spoke exec (guarded, no-op when unset). The VIP set comes
-    # exclusively from hub-published atoms (operator-configured via the UI) — these vars only
-    # wire the ip/arping shim, not VRRP behavior.
-    stackOverrides.spoke = {
-      VRRP_SIM_STATE_DIR = cfg.stateDir;
-      VRRP_SIM_SHIM_DIR = "${shim}/bin";
-    };
+  # Outside the mkIf on purpose: the catalog must carry the knob while the fork is off, which is
+  # exactly when an operator wants to turn it on.
+  config = lib.mkMerge [
+    {
+      knobMeta."vrrpSim.enable" = {
+        label = "VRRP shims";
+        group = "Networking";
+      };
+    }
+    (lib.mkIf cfg.enable {
+      # attrsOf str → merges onto the static spoke env in modules/spoke.nix. VRRP_SIM_SHIM_DIR is
+      # prepended to PATH by the spoke exec (guarded, no-op when unset). The VIP set comes
+      # exclusively from hub-published atoms (operator-configured via the UI) — these vars only
+      # wire the ip/arping shim, not VRRP behavior.
+      stackOverrides.spoke = {
+        VRRP_SIM_STATE_DIR = cfg.stateDir;
+        VRRP_SIM_SHIM_DIR = "${shim}/bin";
+      };
 
-    tasks."vrrp:verify" = {
-      description = "VRRP e2e check: assert exactly one bridge (the leader) holds each brokkr-vrrp-labeled VIP in its shim state. Requires a VIP to be configured first (hub UI, after vrrp:seed pre-creates the IPAM rows).";
-      exec = ''
-        set -euo pipefail
-        dir=${lib.escapeShellArg cfg.stateDir}
-        shopt -s nullglob
-        # Collect every distinct brokkr-vrrp-labeled VIP across all bridge state files, then
-        # assert each is held by exactly one bridge. No hardcoded VIP value — works against
-        # whatever the operator configured.
-        vips=$(${pkgs.jq}/bin/jq -r '[.[] | select(.label == "brokkr-vrrp") | "\(.local)/\(.prefixlen)"] | .[]' "$dir"/*.json 2>/dev/null | sort -u)
-        if [ -z "$vips" ]; then
-          echo "✗ no brokkr-vrrp-labeled VIP found in any bridge state under $dir — configure one via the hub UI first" >&2
-          exit 1
-        fi
-        status=0
-        while IFS= read -r vip; do
-          holders=0
-          for f in "$dir"/*.json; do
-            if ${pkgs.jq}/bin/jq -e --arg vip "$vip" \
-              '[.[] | select(.label == "brokkr-vrrp") | "\(.local)/\(.prefixlen)"] | index($vip)' "$f" >/dev/null; then
-              echo "  $vip held by $(basename "$f" .json)"
-              holders=$((holders + 1))
-            fi
-          done
-          if [ "$holders" -eq 1 ]; then
-            echo "✓ $vip: exactly one holder (leader)"
-          else
-            echo "✗ $vip: expected exactly 1 holder, found $holders" >&2
-            status=1
+      tasks."vrrp:verify" = {
+        description = "VRRP e2e check: assert exactly one bridge (the leader) holds each brokkr-vrrp-labeled VIP in its shim state. Requires a VIP to be configured first (hub UI, after vrrp:seed pre-creates the IPAM rows).";
+        exec = ''
+          set -euo pipefail
+          dir=${lib.escapeShellArg cfg.stateDir}
+          shopt -s nullglob
+          # Collect every distinct brokkr-vrrp-labeled VIP across all bridge state files, then
+          # assert each is held by exactly one bridge. No hardcoded VIP value — works against
+          # whatever the operator configured.
+          vips=$(${pkgs.jq}/bin/jq -r '[.[] | select(.label == "brokkr-vrrp") | "\(.local)/\(.prefixlen)"] | .[]' "$dir"/*.json 2>/dev/null | sort -u)
+          if [ -z "$vips" ]; then
+            echo "✗ no brokkr-vrrp-labeled VIP found in any bridge state under $dir — configure one via the hub UI first" >&2
+            exit 1
           fi
-        done <<< "$vips"
-        exit "$status"
-      '';
-    };
+          status=0
+          while IFS= read -r vip; do
+            holders=0
+            for f in "$dir"/*.json; do
+              if ${pkgs.jq}/bin/jq -e --arg vip "$vip" \
+                '[.[] | select(.label == "brokkr-vrrp") | "\(.local)/\(.prefixlen)"] | index($vip)' "$f" >/dev/null; then
+                echo "  $vip held by $(basename "$f" .json)"
+                holders=$((holders + 1))
+              fi
+            done
+            if [ "$holders" -eq 1 ]; then
+              echo "✓ $vip: exactly one holder (leader)"
+            else
+              echo "✗ $vip: expected exactly 1 holder, found $holders" >&2
+              status=1
+            fi
+          done <<< "$vips"
+          exit "$status"
+        '';
+      };
 
-    # On-demand IPAM scaffold (never in the boot DAG): pre-creates the REAL prefix/IP rows an
-    # operator would otherwise click together, so VIP testing starts at the "attach it in the UI"
-    # step. It does NOT bind anything. Sim-gated in the script itself; the env below points it at
-    # the running local DB.
-    tasks."vrrp:seed" = {
-      description = "Pre-create real IPAM rows for VIP testing (data-plane prefix + one IP per spoke). Creates inventory only — attach the VIP via the hub UI. On-demand; not run by task up.";
-      exec = ''
-        set -euo pipefail
-        ${cdRepo "HUB_REPO_PATH"}
-        export DATABASE_URL=${lib.escapeShellArg pgUrl}
-        export REDIS_URL=${lib.escapeShellArg P.urls.redis}
-        export LOCAL_SIMULATION_ENABLED=true
-        export HH_ENV=dev
-        exec pnpm --filter api seed:vrrp-vip
-      '';
-    };
-    tasks."vrrp:seed:clear" = {
-      description = "Remove the IPAM rows vrrp:seed created (the seeded per-spoke IpAddress rows).";
-      exec = ''
-        set -euo pipefail
-        ${cdRepo "HUB_REPO_PATH"}
-        export DATABASE_URL=${lib.escapeShellArg pgUrl}
-        export REDIS_URL=${lib.escapeShellArg P.urls.redis}
-        export LOCAL_SIMULATION_ENABLED=true
-        export HH_ENV=dev
-        exec pnpm --filter api seed:vrrp-vip -- --clear
-      '';
-    };
-  };
+      # On-demand IPAM scaffold (never in the boot DAG): pre-creates the REAL prefix/IP rows an
+      # operator would otherwise click together, so VIP testing starts at the "attach it in the UI"
+      # step. It does NOT bind anything. Sim-gated in the script itself; the env below points it at
+      # the running local DB.
+      tasks."vrrp:seed" = {
+        description = "Pre-create real IPAM rows for VIP testing (data-plane prefix + one IP per spoke). Creates inventory only — attach the VIP via the hub UI. On-demand; not run by task up.";
+        exec = ''
+          set -euo pipefail
+          ${cdRepo "HUB_REPO_PATH"}
+          export DATABASE_URL=${lib.escapeShellArg pgUrl}
+          export REDIS_URL=${lib.escapeShellArg P.urls.redis}
+          export LOCAL_SIMULATION_ENABLED=true
+          export HH_ENV=dev
+          exec pnpm --filter api seed:vrrp-vip
+        '';
+      };
+      tasks."vrrp:seed:clear" = {
+        description = "Remove the IPAM rows vrrp:seed created (the seeded per-spoke IpAddress rows).";
+        exec = ''
+          set -euo pipefail
+          ${cdRepo "HUB_REPO_PATH"}
+          export DATABASE_URL=${lib.escapeShellArg pgUrl}
+          export REDIS_URL=${lib.escapeShellArg P.urls.redis}
+          export LOCAL_SIMULATION_ENABLED=true
+          export HH_ENV=dev
+          exec pnpm --filter api seed:vrrp-vip -- --clear
+        '';
+      };
+    })
+  ];
 }

@@ -20,16 +20,23 @@ export class ZoneRegistryService {
 
   constructor(private readonly pgService: PgService) {}
 
-  async listZones(): Promise<ZoneRow[]> {
+  /** Reports the failure rather than folding it into an empty list: a caller reconciling the hub
+   *  against the fleet must tell "the hub has no zones" from "the hub could not be read". */
+  async readZones(): Promise<{ zones: ZoneRow[]; readError: string | null }> {
     try {
       const res = await this.pgService.runQuery('SELECT id, name, "deletedAt" FROM "Zone"');
       const { rows, skipped } = readRows(ZoneRowSchema, res.rows);
       if (skipped > 0) this.log.warn(`zone registry: skipped ${skipped} unusable zone row(s)`);
-      return rows;
+      return { zones: rows, readError: null };
     } catch (e) {
-      this.log.warn(`zone registry: could not read zones — ${e instanceof Error ? e.message : String(e)}`);
-      return [];
+      const readError = e instanceof Error ? e.message : String(e);
+      this.log.warn(`zone registry: could not read zones — ${readError}`);
+      return { zones: [], readError };
     }
+  }
+
+  async listZones(): Promise<ZoneRow[]> {
+    return (await this.readZones()).zones;
   }
 
   /** Unfiltered on purpose: the saga in-flight guard counts these, and an under-count strands

@@ -44,6 +44,7 @@ def _completed(returncode: int, stdout: str = "", stderr: str = "") -> subproces
 @pytest.fixture(autouse=True)
 def _skip_docker_precheck(monkeypatch):
     monkeypatch.setattr(pxe.process_utils, "ensure_docker_running", lambda: None)
+    monkeypatch.setattr(pxe.process_utils, "ensure_docker_buildx", lambda: None)
 
 
 def test_build_routes_docker_through_process_utils_run_streamed(monkeypatch, tmp_path):

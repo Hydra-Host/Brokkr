@@ -36,10 +36,8 @@ import { LoggerService } from 'src/logger/logger.service';
 import { PrefixEntity } from './prefix.entity';
 import { type GatewaySyncResult, PrefixRepository } from './prefix.repository';
 
-// Maintainer ruling: assigning role PRIMARY or MANAGEMENT is the explicit "bridge serves this
-// subnet" signal, so an unset dhcpMode auto-enables AUTHORITATIVE. A blanket default is hazardous
-// (the presence reconciler auto-creates LAN uplink prefixes); the deliberate role assignment is
-// the trigger instead — a MANAGEMENT prefix left unconfigured PXE-boots into the void.
+// Maintainer ruling: an unset dhcpMode auto-enables AUTHORITATIVE only on a deliberate PRIMARY or
+// MANAGEMENT role assignment — a blanket default is hazardous (the reconciler auto-creates LAN uplinks).
 const DHCP_AUTO_ENABLE_ROLES: ReadonlySet<IpamPrefix['role']> = new Set(['PRIMARY', 'MANAGEMENT']);
 
 @Injectable()
@@ -420,6 +418,11 @@ export class PrefixService {
       }
       zoneId = prefix.zoneId;
       await this.prefixRepository.requireLiveZone(prefix.zoneId);
+      if (body.serveDns === true && !isIPv4(prefix.prefix.split('/')[0] ?? '')) {
+        throw new BadRequestException(
+          'DNS serving can only be enabled on an IPv4 prefix (IPv6 prefixes are not served).',
+        );
+      }
     }
 
     const result =
@@ -481,9 +484,8 @@ export class PrefixService {
     return result;
   }
 
-  // Only an UNSET (null) dhcpMode auto-enables: an operator-set mode (incl. OFF) is never
-  // overridden, and a role change away never auto-reverts. Never throws — the prefix write
-  // already committed, so a failed auto-enable degrades to the pre-ruling behavior (logged).
+  // Only an UNSET (null) dhcpMode auto-enables — an operator-set mode (incl. OFF) is never overridden.
+  // Never throws: the prefix write already committed, so a failed auto-enable degrades to logged.
   private async autoEnableDhcpForRole(prefix: IpamPrefix, trigger: string): Promise<void> {
     if (!prefix.zoneId) {
       // DHCP eligibility requires a zone (atoms are published per zone) — defer, don't fail.

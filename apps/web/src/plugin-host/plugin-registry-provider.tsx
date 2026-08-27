@@ -1,7 +1,7 @@
 import { useSession } from '@repo/auth/client';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
-import { loadPluginRegistry, type PluginRegistry } from './registry';
+import { EMPTY_PLUGIN_REGISTRY, loadPluginRegistry, type PluginRegistry } from './registry';
 
 const PluginRegistryContext = createContext<PluginRegistry | null>(null);
 
@@ -10,7 +10,7 @@ interface Props {
   fallback?: ReactNode;
 }
 
-const EMPTY_REGISTRY: PluginRegistry = { slots: new Map(), routes: new Map() };
+const EMPTY_REGISTRY = EMPTY_PLUGIN_REGISTRY;
 
 export function PluginRegistryProvider({ children, fallback }: Props) {
   const [loaded, setLoaded] = useState<{ identityKey: string; registry: PluginRegistry } | null>(null);
@@ -27,7 +27,7 @@ export function PluginRegistryProvider({ children, fallback }: Props) {
       })
       .catch((err: unknown) => {
         console.error('[plugin-host] registry load failed:', err);
-        if (!cancelled) setLoaded({ identityKey, registry: { slots: new Map(), routes: new Map() } });
+        if (!cancelled) setLoaded({ identityKey, registry: EMPTY_PLUGIN_REGISTRY });
       });
     return () => {
       cancelled = true;

@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateWebhookDTO, UpdateWebhookDTO, WebhookConfig, WebhookStats } from './webhook.types';
 
-import { Webhook } from '@repo/database';
+import { Prisma, Webhook } from '@repo/database';
 import * as crypto from 'crypto';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { LoggerService } from 'src/logger/logger.service';
@@ -16,17 +16,32 @@ export class WebhookService {
     @Logger(WebhookService.name) private readonly logger: LoggerService,
   ) {}
 
-  async create(organizationId: string, createWebhookDto: CreateWebhookDTO): Promise<Webhook> {
+  async create(
+    organizationId: string,
+    createWebhookDto: CreateWebhookDTO,
+    tx?: Prisma.TransactionClient,
+  ): Promise<Webhook> {
     const secret = this.generateSecret();
 
-    return this.repo.create(organizationId, {
-      ...createWebhookDto,
-      secret,
-    });
+    return this.repo.create(
+      organizationId,
+      {
+        ...createWebhookDto,
+        secret,
+      },
+      tx,
+    );
   }
 
-  async update(id: string, updateWebhookDto: UpdateWebhookDTO, resetFailureCount = false): Promise<Webhook> {
-    const existing = await this.repo.findFirst({ id, deletedAt: null });
+  async update(
+    id: string,
+    updateWebhookDto: UpdateWebhookDTO,
+    resetFailureCount = false,
+    tx?: Prisma.TransactionClient,
+  ): Promise<Webhook> {
+    // Same client as the write below: on the `tx` path a split read could miss a committed
+    // soft-delete and let the mutation emit an audit event for a dead row.
+    const existing = await this.repo.findFirst({ id, deletedAt: null }, tx);
     if (!existing) {
       throw new NotFoundException('Webhook not found');
     }
@@ -38,15 +53,16 @@ export class WebhookService {
       updateData.lastFailureAt = null;
     }
 
-    return this.repo.update(id, updateData);
+    return this.repo.update(id, updateData, tx);
   }
 
-  async remove(id: string): Promise<void> {
-    const existing = await this.repo.findFirst({ id, deletedAt: null });
+  /** Soft delete, so the write goes through `update` — that is the path a caller's `tx` has to reach. */
+  async remove(id: string, tx?: Prisma.TransactionClient): Promise<void> {
+    const existing = await this.repo.findFirst({ id, deletedAt: null }, tx);
     if (!existing) {
       throw new NotFoundException('Webhook not found');
     }
-    await this.repo.update(id, { deletedAt: new Date() });
+    await this.repo.update(id, { deletedAt: new Date() }, tx);
   }
 
   async findAllByOrganization(organizationId: string): Promise<Webhook[]> {

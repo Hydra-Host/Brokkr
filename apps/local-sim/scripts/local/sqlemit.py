@@ -49,7 +49,7 @@ def ident(name: str) -> str:
     return name if _BARE_IDENT.match(name) else f'"{name}"'
 
 
-def _wrap(parts: Sequence[str], opener: str, closer: str, indent: str = "    ") -> str:
+def wrap_list(parts: Sequence[str], opener: str, closer: str, indent: str = "    ") -> str:
     """Greedy-wrap a comma-separated list at :data:`_WIDTH`; continuation lines get ``indent``."""
     if not parts:
         return opener + closer
@@ -93,8 +93,8 @@ def emit_upsert(
         names.append("updatedAt")
         rendered.append("NOW()")
 
-    insert = _wrap([ident(n) for n in names], f'INSERT INTO "{table}" (', ")")
-    values_sql = _wrap(rendered, "VALUES (", ")")
+    insert = wrap_list([ident(n) for n in names], f'INSERT INTO "{table}" (', ")")
+    values_sql = wrap_list(rendered, "VALUES (", ")")
 
     target = ", ".join(ident(n) for n in conflict.split())
     on_conflict = f"ON CONFLICT ({target})" + (f" WHERE {where}" if where else "")
@@ -118,7 +118,7 @@ def emit_upsert(
         assigns.append('"updatedAt" = NOW()')
     if not assigns:
         raise ValueError(f"{table}: nothing to refresh on conflict — pass do_nothing=True instead")
-    return f"{insert}\n{values_sql}\n{on_conflict} DO UPDATE SET\n{_wrap(assigns, '    ', ';')}"
+    return f"{insert}\n{values_sql}\n{on_conflict} DO UPDATE SET\n{wrap_list(assigns, '    ', ';')}"
 
 
 def header(name: str) -> str:

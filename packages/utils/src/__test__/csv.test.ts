@@ -1,4 +1,14 @@
-import { buildCsv } from '../csv';
+import { buildCsv, csvRow } from '../csv';
+
+describe('csvRow', () => {
+  it('quotes every cell and doubles embedded quotes', () => {
+    expect(csvRow(['a,b', 'say "hi"', ''])).toBe('"a,b","say ""hi""",""');
+  });
+
+  it('applies the same formula neutralization buildCsv does', () => {
+    expect(csvRow(['=cmd'])).toBe(buildCsv(['=cmd'], []));
+  });
+});
 
 describe('buildCsv formula-injection neutralization', () => {
   it('prefixes a single quote to cells starting with =', () => {

@@ -30,6 +30,11 @@ type Internals = {
     baremetal: { nics: string[]; arch: string; nodes: Record<string, Record<string, unknown>> } | null;
     baremetalOwned: boolean;
     zonesMeta: { name: string; index: number; bridges: number }[];
+    catalog: unknown[];
+    zoneCapacity: number;
+    zoneFiles: Record<string, string[]>;
+    zoneTombstones: string[];
+    options: Record<string, string | number | boolean>;
   } | null;
   overlayPath(): string;
 };
@@ -61,6 +66,11 @@ function makeService(): { svc: OverlayStoreService; overlay: () => string } {
     baremetal: null,
     baremetalOwned: false,
     zonesMeta: [{ name: 'sim-zone', index: 0, bridges: 1 }],
+    catalog: [],
+    zoneCapacity: 25,
+    zoneFiles: {},
+    zoneTombstones: [],
+    options: {},
   };
   return { svc, overlay: () => readFileSync(t.overlayPath(), 'utf8') };
 }

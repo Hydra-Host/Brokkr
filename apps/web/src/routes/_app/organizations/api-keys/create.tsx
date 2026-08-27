@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
+import { FormPermissionSelector } from '@repo/domain-ui/form/form-permission-selector';
 import { Button } from '@repo/ui/components/button';
 import {
   Dialog,
@@ -17,10 +18,10 @@ import {
 } from '@repo/ui/components/dialog';
 import { FormCheckbox } from '@repo/ui/form/form-checkbox';
 import { FormInput } from '@repo/ui/form/form-input';
-import { FormPermissionSelector } from '@repo/ui/form/form-permission-selector';
 import { FormSubmitButton } from '@repo/ui/form/form-submit-button';
 import { useCopyToClipboard } from '@repo/ui/hooks/use-copy-to-clipboard';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
+import { unwrapErrorMessage } from '@repo/utils';
 import { usePermissions } from '~/hooks/use-permissions';
 import { tsr } from '~/lib/api';
 
@@ -110,11 +111,10 @@ function CreateApiKeyPage() {
         setCreatedKey(res.body.key);
         await queryClient.invalidateQueries({ queryKey: ['api-keys'] });
       } else {
-        const body = res.body as { message?: string; error?: { message?: string } };
-        setError(body?.message || body?.error?.message || 'Failed to create API key');
+        setError(unwrapErrorMessage(res, 'Failed to create API key'));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create API key. Please try again.';
+      const message = unwrapErrorMessage(err, 'Failed to create API key. Please try again.');
       setError(message);
     }
   };

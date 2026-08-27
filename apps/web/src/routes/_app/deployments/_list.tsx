@@ -1,6 +1,6 @@
+import type { ServerColumnDef } from '@repo/domain-ui/hooks/use-server-table';
+import { useServerTable } from '@repo/domain-ui/hooks/use-server-table';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
-import { useServerTable } from '@repo/ui/hooks/use-server-table';
 import { createFileRoute, Link, Outlet, useNavigate } from '@tanstack/react-router';
 import { ColumnDef } from '@tanstack/react-table';
 import { formatDistance } from 'date-fns';
@@ -9,12 +9,13 @@ import { useMemo, useState } from 'react';
 import { z } from 'zod';
 
 import type { Deployment, InterruptibleClaim, ReservationInviteForUser } from '@repo/api-client';
+import { DeviceStatusBadge } from '@repo/domain-ui/components/device-status-badge';
+import { ServerDataTable } from '@repo/domain-ui/components/server-data-table';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { CountdownCell } from '@repo/ui/components/countdown-cell';
 import { DataTable, DataTableSortHeader } from '@repo/ui/components/data-table';
-import { DeviceStatusBadge } from '@repo/ui/components/device-status-badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,7 +25,6 @@ import {
 } from '@repo/ui/components/dropdown-menu';
 import { Input } from '@repo/ui/components/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@repo/ui/components/select';
-import { ServerDataTable } from '@repo/ui/components/server-data-table';
 import { cn, navigatePreservingSearch } from '@repo/ui/utils';
 import { keepPreviousData } from '@tanstack/react-query';
 import { useDeploymentListEvents } from '~/hooks/use-device-events';

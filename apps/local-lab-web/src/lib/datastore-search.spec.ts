@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { TABS } from '@/routes/datastore';
+import { TABS } from '@/features/datastore/datastore-page';
 
 import type { DatastoreSearch } from './datastore-search';
 import { deviceQueuesSearch, isDatastoreTab, toDatastoreTab, validateDatastoreSearch } from './datastore-search';

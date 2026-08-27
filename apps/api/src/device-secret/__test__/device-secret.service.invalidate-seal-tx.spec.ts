@@ -74,6 +74,7 @@ function makeHarness(opts?: { enrollmentGen?: number | null; privateKey?: Buffer
     txDeviceSecret,
     prismaDevice,
     txDevice,
+    logger,
   };
 }
 
@@ -181,7 +182,31 @@ describe('DeviceSecretService.sealEphemeral', () => {
     });
   });
 
-  it('records a device-less DISPATCH disclosure against the zone', async () => {
+  it('skips the audit row and stays log-only when the actor is SYSTEM', async () => {
+    const { service, auditRecord, prisma, logger } = makeHarness({ enrollmentGen: 7 });
+
+    const envelope = await service.sealEphemeral(
+      'zone-eph',
+      'synthetic-dev',
+      DeviceSecretPurpose.BMC,
+      DeviceSecretKind.USER,
+      SECRET,
+      { type: DeviceSecretActorType.SYSTEM, id: null },
+    );
+
+    expect(envelope.keyGen).toBe(7);
+    expect(auditRecord).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(logger.log).toHaveBeenCalledOnce();
+    const line = logger.log.mock.calls[0][0];
+    expect(line).toContain('zone zone-eph');
+    expect(line).toContain('gen 7');
+    expect(line).toContain('plan synthetic-dev');
+    expect(line).toContain(DeviceSecretKind.USER);
+    expect(line).toContain(DeviceSecretPurpose.BMC);
+  });
+
+  it('records a device-less DISPATCH disclosure against the zone for non-system actors', async () => {
     const { service, auditRecord } = makeHarness({ enrollmentGen: 7 });
 
     await service.sealEphemeral(

@@ -16,6 +16,9 @@ function build(opts: {
   const repo = {
     createOrganization: vi.fn().mockResolvedValue({ id: 'org-1', name: 'Org', tenantType: TenantType.DemandCustomer }),
     updateOrganization: vi.fn().mockResolvedValue({ id: 'org-1' }),
+    findOrganizationById: vi
+      .fn()
+      .mockResolvedValue({ id: 'org-1', name: 'Org', logo: null, email: null, country: null, metadata: null }),
     findMembership: vi.fn().mockResolvedValue(opts.membership ?? null),
     findActiveSessions: vi.fn().mockResolvedValue([]),
     setActiveOrganizationForAllSessions: vi.fn().mockResolvedValue(undefined),
@@ -28,11 +31,23 @@ function build(opts: {
       if ((opts.callerRole ?? Owner) === Member) throw new ForbiddenException('missing permission');
     }),
     buildAuditPayload: vi.fn(() => ({ triggeredBy: 'u1', triggeredByEmail: 'a@example.com', organizationId: 'org-1' })),
+    actorFields: vi.fn(() => ({
+      actorType: 'UI',
+      actorId: 'u1',
+      actorLabel: 'a@example.com',
+      apiKeyId: null,
+      apiKeyLabel: null,
+    })),
+    requestFields: vi.fn(() => ({ method: 'PATCH', path: '/api/v1/organizations', ipAddress: null, userAgent: null })),
+    requestId: 'req-1',
+    finalizeIntents: vi.fn(),
   } as unknown as ContextService;
   const allowedOrgTypes = { getAllowedOrgTypes: () => opts.allowedTypes ?? [TenantType.DemandCustomer] };
   const logger = { warn: vi.fn(), log: vi.fn() };
   const rbacResolver = { resolveEffectivePermissions: vi.fn().mockResolvedValue(new Set<string>()) };
   const membershipsRepo = { create: vi.fn().mockResolvedValue({}) };
+  const prisma = { $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({})) };
+  const eventLog = { recordInTransaction: vi.fn().mockResolvedValue(undefined) };
   const service = new OrganizationsService(
     repo as never,
     membershipsRepo as never,
@@ -41,9 +56,11 @@ function build(opts: {
     (opts.sessionCache ?? null) as never,
     allowedOrgTypes as never,
     rbacResolver as never,
+    prisma as never,
+    eventLog as never,
     logger as never,
   );
-  return { service, repo, logger, ctx };
+  return { service, repo, logger, ctx, eventLog };
 }
 
 describe('OrganizationsService.create — server-side tenant-type enforcement', () => {
@@ -66,13 +83,17 @@ describe('OrganizationsService.update — requirePermission gate', () => {
   it('allows a privileged (Owner) caller and writes an audit line', async () => {
     const { service, repo, ctx, logger } = build({ callerRole: Owner });
     await expect(service.update({ name: 'New name' })).resolves.toBeDefined();
-    expect(repo.updateOrganization).toHaveBeenCalledWith('org-1', {
-      name: 'New name',
-      logo: undefined,
-      email: undefined,
-      country: undefined,
-      metadata: undefined,
-    });
+    expect(repo.updateOrganization).toHaveBeenCalledWith(
+      'org-1',
+      {
+        name: 'New name',
+        logo: undefined,
+        email: undefined,
+        country: undefined,
+        metadata: undefined,
+      },
+      expect.anything(),
+    );
     expect(ctx.buildAuditPayload).toHaveBeenCalled();
     expect(logger.log).toHaveBeenCalledWith(expect.stringContaining('actor=a@example.com'));
   });

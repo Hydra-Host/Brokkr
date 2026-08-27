@@ -1,7 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { load as loadYaml } from 'js-yaml';
+import { dump as dumpYaml, load as loadYaml } from 'js-yaml';
 import { execFile } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -9,9 +10,11 @@ import { getErrorMessage } from '../common/errors';
 import { parseBoundary, RenderedConfigSchema } from '../common/pc-schemas';
 import { SingleFlightCache } from '../common/single-flight-cache';
 import { isPlainObject } from '../common/type-guards';
+import { APPLY_SCOPE_ALL, describeApplyScope, inApplyScope, type ApplyScope } from './apply-scope';
 import { parseEnvEntries, stripQuoted } from './env-entries';
+import { specMatchesRunning, swapDiffSet } from './mode-drift';
 import { devenvRoot } from './paths';
-import { ProcessComposeClient } from './process-compose.client';
+import { ProcessComposeClient, type PcProcessConfig } from './process-compose.client';
 
 const execFileP = promisify(execFile);
 
@@ -82,6 +85,19 @@ export function extractFleetPaths(cfgPath: string): { source: string; path: stri
   return { source, path };
 }
 
+/** One reused path, never a per-apply mkdtemp: the submitted config carries every process's fully
+ *  resolved environment (datastore DSNs included) and must not accumulate in the system temp dir. */
+function overlayConfigPath(): string {
+  const state = process.env.DEVENV_STATE;
+  return join(state ? join(state, 'lab') : tmpdir(), 'overlay-process-compose.yaml');
+}
+
+function submittedProcessNames(cfgPath: string): Set<string> {
+  const doc = loadYaml(readFileSync(cfgPath, 'utf8'));
+  if (!isPlainObject(doc) || !isPlainObject(doc.processes)) return new Set();
+  return new Set(Object.keys(doc.processes));
+}
+
 @Injectable()
 export class RenderedConfigService implements OnModuleInit {
   private readonly log = new Logger(RenderedConfigService.name);
@@ -97,6 +113,10 @@ export class RenderedConfigService implements OnModuleInit {
   // {id → CatalogEntry} grouping source of truth; THROWS on a read failure (render paths degrade via
   // catalogOrEmpty, mutating ops must fail loudly); applyOverlay invalidates it.
   private readonly catalogCache: SingleFlightCache<Map<string, CatalogEntry>>;
+
+  // One apply at a time: the submitted config is a single reused path, so two concurrent applies
+  // would let one validate its own file and then hand projectUpdate the other's.
+  private applyLock: Promise<void> = Promise.resolve();
 
   // armed by a mode-flip overlay write; the next rendered-config build inserts --refresh-eval-cache
   // (stack.local.nix is a conditional import the devenv eval cache doesn't track).
@@ -232,15 +252,213 @@ export class RenderedConfigService implements OnModuleInit {
     }
   }
 
-  async applyOverlay(cfgPath?: string): Promise<string | null> {
-    cfgPath = cfgPath ?? (await this.renderedConfigPath());
-    await this.pc.projectUpdate(cfgPath);
+  /** `scope` names what this apply may recreate: `project update` recreates every process whose
+   *  spec moved, and the global --task-file hash moves all of them at once. */
+  async applyOverlay(cfgPath?: string, scope: ApplyScope = APPLY_SCOPE_ALL): Promise<string | null> {
+    const prior = this.applyLock;
+    let release!: () => void;
+    this.applyLock = new Promise<void>((resolve) => (release = resolve));
+    await prior;
+    try {
+      return await this.applyOverlayLocked(cfgPath, scope);
+    } finally {
+      release();
+    }
+  }
+
+  private async applyOverlayLocked(cfgPath: string | undefined, scope: ApplyScope): Promise<string | null> {
+    const rendered = cfgPath ?? (await this.renderedConfigPath());
+    const { path, namespaces } = await this.pinOutOfScope(rendered, scope);
+    await this.refuseSwapBeyondScope(path, scope, namespaces);
+    await this.refusePinGap(path, scope);
+    await this.pc.projectUpdate(path);
     this.renderedConfigCache.invalidate();
-    // the config (depends_on graph + namespaces/labels, incl. a newly-added process) may have changed
+    // the config (depends_on graph + namespaces/labels, incl. a process this apply adds — which the
+    // supervisor supervises but cannot start, its task list being fixed at bring-up) may have changed
     this.dependsGraphCache.invalidate();
     this.catalogCache.invalidate();
-    this.log.log(`applied stack overlay (${cfgPath})`);
-    return this.stageFleetYaml(cfgPath, { logSuccess: true, failMessage: 'fleet yaml refresh failed' });
+    this.log.log(`applied stack overlay (${path}) scoped to ${describeApplyScope(scope)}`);
+    // the rendered config, never the pinned one: LOCAL_FLEET_SOURCE lives on the out-of-scope fleet
+    // process, so staging from the pin would copy the running topology back over a newer one
+    return this.stageFleetYaml(rendered, { logSuccess: true, failMessage: 'fleet yaml refresh failed' });
+  }
+
+  /** Returns the config to submit and the namespace of every process it may recreate OR delete —
+   *  a render that drops a supervised process is judged too, not passed over unseen. */
+  private async pinOutOfScope(
+    cfgPath: string,
+    scope: ApplyScope,
+  ): Promise<{ path: string; namespaces: Map<string, string> }> {
+    const doc = loadYaml(readFileSync(cfgPath, 'utf8'));
+    const namespaces = new Map<string, string>();
+    if (!isPlainObject(doc) || !isPlainObject(doc.processes))
+      throw new Error(`overlay apply refused: ${cfgPath} declares no processes map`);
+    const processes = doc.processes;
+    const supervised = new Set((await this.pc.listAll()).map((p) => p.name));
+    // Nothing supervised while the render declares processes is a failed read, not an empty stack.
+    // Pinning would then cover nothing and the raw render would recreate every process that moved.
+    if (supervised.size === 0 && Object.keys(processes).length > 0)
+      throw new Error(
+        'overlay apply refused: process-compose reported no supervised processes — retry once it answers',
+      );
+    const pinned: string[] = [];
+    const revived: string[] = [];
+    for (const name of new Set([...Object.keys(processes), ...supervised])) {
+      const spec = processes[name];
+      if (isPlainObject(spec)) {
+        const namespace = typeof spec.namespace === 'string' ? spec.namespace : '';
+        namespaces.set(name, namespace);
+        // a process the daemon does not run yet has no spec to preserve, and recreating it kills nothing
+        if (!supervised.has(name) || inApplyScope(scope, name, namespace)) continue;
+        const { info, command } = await this.runningSpec(name, scope);
+        // only the fields the daemon reports in their rendered form: its depends_on carries the
+        // condition as an enum int, and its probes/availability come back normalized
+        spec.command = command;
+        spec.environment = info.environment ?? [];
+        if (info.disabled === true) spec.disabled = true;
+        else delete spec.disabled;
+        pinned.push(name);
+        continue;
+      }
+      if (!supervised.has(name)) continue;
+      const { info, command } = await this.runningSpec(name, scope);
+      const namespace = typeof info.namespace === 'string' ? info.namespace : '';
+      namespaces.set(name, namespace);
+      // dropping an in-scope process is the legitimate removal this apply is allowed to make
+      if (inApplyScope(scope, name, namespace)) continue;
+      processes[name] = this.reviveDropped(name, info, command, scope);
+      revived.push(name);
+    }
+    const covered = new Set([...pinned, ...revived]);
+    const missed = [...supervised].filter((n) => !inApplyScope(scope, n, namespaces.get(n) ?? '') && !covered.has(n));
+    if (missed.length > 0) throw new Error(`overlay apply refused: the pin did not cover ${missed.join(', ')}`);
+    if (pinned.length === 0 && revived.length === 0) {
+      this.log.log(`overlay scoped to ${describeApplyScope(scope)}: nothing out of scope to pin`);
+      return { path: cfgPath, namespaces };
+    }
+    const path = overlayConfigPath();
+    mkdirSync(dirname(path), { recursive: true });
+    // tmp+rename like stageFleetYaml: a partial write here is what lastAppliedSpec reads to revive a
+    // dropped process, so a crash mid-write would block the next apply until the file is deleted.
+    const tmp = `${path}.tmp`;
+    rmSync(tmp, { force: true });
+    writeFileSync(tmp, dumpYaml(doc, { lineWidth: -1, noRefs: true }), { mode: 0o600 });
+    renameSync(tmp, path);
+    this.log.log(
+      `overlay scoped to ${describeApplyScope(scope)}: pinned ${pinned.length} process(es) to their running spec` +
+        (revived.length > 0 ? `, kept ${revived.join(', ')} the render no longer declares` : ''),
+    );
+    return { path, namespaces };
+  }
+
+  /** Both failures are refusals: the alternative is submitting a config that recreates or deletes it. */
+  private async runningSpec(name: string, scope: ApplyScope): Promise<{ info: PcProcessConfig; command: string }> {
+    let info: PcProcessConfig;
+    try {
+      info = await this.pc.processInfo(name);
+    } catch (e) {
+      throw new Error(
+        `cannot read the running spec of ${name} (${getErrorMessage(e)}) — refusing an apply that would recreate it outside the ${describeApplyScope(scope)} scope`,
+      );
+    }
+    const command = info.command;
+    if (!command)
+      throw new Error(
+        `${name} reports no running command — refusing an apply that would recreate it outside the ${describeApplyScope(scope)} scope`,
+      );
+    return { info, command };
+  }
+
+  /** Re-declares a dropped process from the config the last apply submitted: the daemon reports
+   *  readiness_probe/availability/shutdown normalized, so its own report cannot restore them. */
+  private reviveDropped(
+    name: string,
+    info: PcProcessConfig,
+    command: string,
+    scope: ApplyScope,
+  ): Record<string, unknown> {
+    if (Object.keys(info.dependsOn ?? {}).length > 0)
+      throw new Error(
+        `${name} is running with depends_on the rendered config no longer declares — refusing an apply that would delete it outside the ${describeApplyScope(scope)} scope`,
+      );
+    const previous = this.lastAppliedSpec(name, info);
+    if (!previous)
+      throw new Error(
+        `${name} is running but the rendered config no longer declares it, and ${overlayConfigPath()} holds no spec that still matches it — refusing an apply that would either delete it or revive it without its health gate, outside the ${describeApplyScope(scope)} scope`,
+      );
+    const spec: Record<string, unknown> = { ...previous, command, environment: info.environment ?? [] };
+    if (info.disabled === true) spec.disabled = true;
+    else delete spec.disabled;
+    return spec;
+  }
+
+  /** The spec the last overlay apply submitted for `name`, in rendered-yaml form. Null when that
+   *  config is absent, silent about the process, or no longer describes what the daemon runs. */
+  private lastAppliedSpec(name: string, info: PcProcessConfig): Record<string, unknown> | null {
+    const path = overlayConfigPath();
+    let doc: unknown;
+    try {
+      doc = loadYaml(readFileSync(path, 'utf8'));
+    } catch (e) {
+      this.log.debug(`no previously applied config for ${name} (${path}): ${getErrorMessage(e)}`);
+      return null;
+    }
+    if (!isPlainObject(doc) || !isPlainObject(doc.processes)) return null;
+    const spec = doc.processes[name];
+    if (!isPlainObject(spec)) return null;
+    const strList = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((e): e is string => typeof e === 'string') : [];
+    const matches = specMatchesRunning(
+      {
+        command: typeof spec.command === 'string' ? spec.command : '',
+        environment: [...strList(doc.environment), ...strList(spec.environment)],
+        dependsOn: isPlainObject(spec.depends_on) ? Object.keys(spec.depends_on) : [],
+      },
+      info,
+    );
+    if (!matches) this.log.warn(`${path} no longer describes the running ${name} — it cannot source a revive`);
+    return matches ? spec : null;
+  }
+
+  /** Checks the config actually submitted, not the inputs it was built from: any cause that leaves the
+   *  pin uncovered ends here. Command and environment only — the two fields the pin writes verbatim. */
+  private async refusePinGap(cfgPath: string, scope: ApplyScope): Promise<void> {
+    const doc = loadYaml(readFileSync(cfgPath, 'utf8'));
+    if (!isPlainObject(doc) || !isPlainObject(doc.processes)) return;
+    const processes = doc.processes;
+    const sameEnv = (a: unknown, b: string[]): boolean =>
+      Array.isArray(a) && a.length === b.length && a.every((v, i) => v === b[i]);
+    const gaps: string[] = [];
+    for (const proc of await this.pc.listAll()) {
+      const spec = processes[proc.name];
+      // a supervised process the render dropped is refuseSwapBeyondScope's case, not this one
+      if (!isPlainObject(spec)) continue;
+      const namespace = typeof spec.namespace === 'string' ? spec.namespace : '';
+      if (inApplyScope(scope, proc.name, namespace)) continue;
+      const info = await this.pc.processInfo(proc.name);
+      if (spec.command !== info.command || !sameEnv(spec.environment, info.environment ?? [])) gaps.push(proc.name);
+    }
+    if (gaps.length === 0) return;
+    throw new Error(
+      `overlay apply refused: ${gaps.join(', ')} still carry the render's spec outside the ${describeApplyScope(scope)} scope — the pin did not take`,
+    );
+  }
+
+  /** Deliberately redundant with the pinning above: a regression there must be loud, not destructive.
+   *  A supervised process missing from the submitted config offends exactly as a swapped one does. */
+  private async refuseSwapBeyondScope(
+    cfgPath: string,
+    scope: ApplyScope,
+    namespaces: Map<string, string>,
+  ): Promise<void> {
+    const submitted = submittedProcessNames(cfgPath);
+    const dropped = (await this.pc.listAll()).map((p) => p.name).filter((name) => !submitted.has(name));
+    const suspects = new Set([...(await swapDiffSet(this.pc, cfgPath)), ...dropped]);
+    const offenders = [...suspects].filter((name) => !inApplyScope(scope, name, namespaces.get(name) ?? ''));
+    if (offenders.length === 0) return;
+    throw new Error(
+      `overlay apply refused: it would recreate or delete ${offenders.join(', ')} outside the ${describeApplyScope(scope)} scope — run Redeploy instead`,
+    );
   }
 
   async refreshFleetYaml(cfgPath?: string): Promise<string | null> {

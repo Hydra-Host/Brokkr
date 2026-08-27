@@ -1,5 +1,6 @@
 import { operations } from '@repo/bridge-agent-protocol';
 
+import { getErrorMessage } from '@repo/utils';
 import type { AgentConfig } from '../config';
 import { getHandler } from '../dispatch/registry';
 import { registerCoreOperations } from '../operations/index';
@@ -46,7 +47,7 @@ export async function runCollectCli(config: AgentConfig, collectorFilter: string
     }
     return summary.failures > 0 ? 1 : 0;
   } catch (err) {
-    process.stderr.write(`collection failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`collection failed: ${getErrorMessage(err)}\n`);
     return 1;
   }
 }

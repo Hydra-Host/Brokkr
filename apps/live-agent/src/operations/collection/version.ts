@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@repo/utils';
 import { registerOperation } from '../../dispatch/registry';
 import { run } from '../../exec';
 import { makeLogger } from '../../logger';
@@ -19,7 +20,7 @@ export function registerVersionCollector(agentVersion: string): void {
         versions.iso_version = trimmed;
       }
     } catch (error) {
-      logger.debug('iso-version read failed', { path: '/opt/brokkr/iso-version', error: String(error) });
+      logger.debug('iso-version read failed', { path: '/opt/brokkr/iso-version', error: getErrorMessage(error) });
     }
 
     return { version: versions };

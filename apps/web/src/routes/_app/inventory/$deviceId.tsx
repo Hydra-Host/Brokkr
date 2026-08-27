@@ -1,5 +1,3 @@
-import { AddSshKeyInlineForm } from '@/components/add-ssh-key-inline-form';
-import { DetailListItem } from '@/components/detail-list-item';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Link, redirect, useNavigate, useRouter } from '@tanstack/react-router';
@@ -8,6 +6,8 @@ import { ChevronLeft, MapPin, PlusCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
+import { AddSshKeyInlineForm } from '~/components/add-ssh-key-inline-form';
+import { DetailListItem } from '~/components/detail-list-item';
 
 import {
   CloudInitSchema,
@@ -17,6 +17,9 @@ import {
   type ProvisionRequest,
   type SshKeyWithUser,
 } from '@repo/api-client';
+import { CustomizationLayers, type CustomizationLayersData } from '@repo/domain-ui/provision/customization-layers';
+import { applyDirectModeToSubmission, getDefaultDiskLayouts } from '@repo/domain-ui/provision/disk-layout-selector';
+import { ProvisionAdvancedSettings } from '@repo/domain-ui/provision/provision-advanced-settings';
 import { Alert, AlertDescription } from '@repo/ui/components/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { FormCheckbox } from '@repo/ui/form/form-checkbox';
@@ -25,9 +28,6 @@ import { FormMultiSelect } from '@repo/ui/form/form-multi-select';
 import { FormSelect } from '@repo/ui/form/form-select';
 import { FormSubmitButton } from '@repo/ui/form/form-submit-button';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import { CustomizationLayers, type CustomizationLayersData } from '@repo/ui/provision/customization-layers';
-import { applyDirectModeToSubmission, getDefaultDiskLayouts } from '@repo/ui/provision/disk-layout-selector';
-import { ProvisionAdvancedSettings } from '@repo/ui/provision/provision-advanced-settings';
 import {
   formatBillingFrequency,
   formatMillisecondsToDuration,
@@ -35,7 +35,8 @@ import {
   formatSize,
   getHourlyOrInvitePrice,
   getWeeklyOrInvitePrice,
-} from '@repo/utils/format';
+  unwrapErrorMessage,
+} from '@repo/utils';
 import { tsr } from '~/lib/api';
 import {
   baseLayersToOsOptions,
@@ -135,7 +136,7 @@ const provisionFormSchema = ProvisionRequestSchema.omit({ customizations: true }
         ctx.addIssue({
           code: 'custom',
           path: ['cloudInit'],
-          message: `Invalid cloud-init YAML: ${error instanceof Error ? error.message.split('\n')[0] : 'Parse error'}`,
+          message: `Invalid cloud-init YAML: ${unwrapErrorMessage(error, 'Parse error').split('\n')[0]}`,
         });
       }
     }
@@ -246,7 +247,7 @@ function InventoryDevicePage() {
       queryClient.invalidateQueries({ queryKey: ['interruptible-claims'] });
       await navigate({ to: '/deployments' });
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : 'Failed to provision device.');
+      setSubmitError(unwrapErrorMessage(error, 'Failed to provision device.'));
     }
   };
 

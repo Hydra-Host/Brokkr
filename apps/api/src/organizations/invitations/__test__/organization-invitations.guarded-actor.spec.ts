@@ -140,6 +140,10 @@ function harness(opts: { sessionOnly?: boolean; apiKey?: boolean; nullNames?: bo
   };
   const eventBus = { emit: vi.fn() };
   const emailService = { send: { organizationInvite: vi.fn().mockResolvedValue(undefined) } };
+  const eventLog = {
+    recordInTransaction: vi.fn().mockResolvedValue(undefined),
+    record: vi.fn().mockResolvedValue(undefined),
+  };
 
   const service = new OrganizationInvitationsService(
     contextService,
@@ -148,6 +152,7 @@ function harness(opts: { sessionOnly?: boolean; apiKey?: boolean; nullNames?: bo
     eventBus as never,
     repository as never,
     membershipsRepository as never,
+    eventLog as never,
     logger as unknown as LoggerService,
   );
 

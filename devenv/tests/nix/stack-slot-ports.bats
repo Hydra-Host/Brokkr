@@ -67,3 +67,43 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$output" = '192.168.203.1' ]
 }
+
+@test "the knob catalog is non-empty and every knob carries a description" {
+  command -v devenv >/dev/null || skip "devenv is not on PATH"
+  export SECRETSPEC_REASON="devenv bats: read back the published knob catalog"
+  run devenv --quiet eval knobCatalog
+  [ "$status" -eq 0 ]
+  run python3 -c '
+import json, sys
+catalog = json.loads(sys.stdin.read())["knobCatalog"]
+assert catalog, "knobCatalog is empty"
+undescribed = [e["path"] for e in catalog if not e["description"].strip()]
+assert not undescribed, undescribed
+unrenderable = [e["path"] for e in catalog if not e["label"].strip() or not e["kind"].strip()]
+assert not unrenderable, unrenderable
+print(len(catalog))
+' <<<"$output"
+  [ "$status" -eq 0 ]
+  [ "$output" -gt 0 ]
+}
+
+@test "knob provenance attributes a knob to the file that set it" {
+  command -v devenv >/dev/null || skip "devenv is not on PATH"
+  export SECRETSPEC_REASON="devenv bats: read back knob provenance"
+  run devenv --quiet eval knobProvenance
+  [ "$status" -eq 0 ]
+  run python3 -c '
+import json, sys
+prov = {e["path"]: e for e in json.loads(sys.stdin.read())["knobProvenance"]}
+def owns(path, module):
+    assert module in prov[path]["files"], (path, prov[path]["files"])
+owns("ports.postgres", "devenv/modules/overrides.nix")
+owns("fleet.mode", "devenv/modules/fleet-topology.nix")
+owns("stackDefaults.spoke.LOG_LEVEL", "devenv/modules/spoke.nix")
+owns("stackDefaults.hub.AUTH_BYPASS_ENABLED", "devenv/modules/hub.nix")
+assert "devenv/modules/hub.nix" in prov["stackDefaults.hub"]["perKey"]["LOG_LEVEL"]
+print("ok")
+' <<<"$output"
+  [ "$status" -eq 0 ]
+  [ "$output" = ok ]
+}

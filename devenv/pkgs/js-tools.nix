@@ -4,12 +4,14 @@
 # drift. node is the declared runtime (no mise.toml); pnpm is pinned to match
 # package.json's packageManager (pnpm@8.x). Mirrors the python-env.nix pattern.
 #
-# Note: pnpm_8 itself runs under its own bundled node (the pin's default `nodejs`,
-# currently v22) — so pnpm-driven work (install scripts, node-gyp, `pnpm run`) uses
-# v22 while direct `node` invocations use `nodejs` below. This holds identically in
-# dev and CI because both consume this file.
+# Note: pnpm runs under its own bundled node (the pin's default `nodejs-slim`), so pnpm-driven
+# work (install scripts, node-gyp, `pnpm run`) uses that while direct `node` invocations use
+# `nodejs` below. This holds identically in dev and CI because both consume this file.
+#
+# Keep pnpm equal to package.json's `packageManager`: managePackageManagerVersions is off, so a
+# mismatch is a silent skew rather than a re-exec of the pinned version.
 { pkgs }:
 {
   nodejs = pkgs.nodejs_24;
-  pnpm = pkgs.pnpm_8;
+  pnpm = pkgs.pnpm_11;
 }

@@ -28,35 +28,56 @@ function canonicalJson(v: unknown): string {
   return JSON.stringify(canon(v));
 }
 
+// tasks.json is one content-addressed file holding every devenv task, so any task's content moving
+// re-hashes it and rewrites the --task-file argument of every process command at once.
+const TASK_FILE_STORE_PATH = /\/nix\/store\/[a-z0-9]+-([^\s"']*tasks\.json)/g;
+
+export const normalizeCommand = (command: string): string =>
+  command.replace(TASK_FILE_STORE_PATH, '/nix/store/<hash>-$1');
+
 function normalizeProc(
   command: string,
   environment: string[],
   dependsOn: string[],
 ): { command: string; env: string; deps: string } {
   return {
-    command,
-    env: [...environment].sort().join('\n'),
+    command: normalizeCommand(command),
+    // A set: a pinned spec repeats the project-level block the overlay still carries, and to
+    // process-compose a repeated identical entry says nothing (KEY=a vs KEY=b stay distinct).
+    env: [...new Set(environment)].sort().join('\n'),
     deps: [...dependsOn].sort().join(','),
   };
 }
 
+// Spec fields beyond command/environment/depends_on, as {rendered yaml key → live pc key}. The
+// daemon rewrites readiness_probe, shutdown, availability and replicas, so those never compare.
+export const EXTENDED_SPEC_FIELDS: ReadonlyArray<[string, keyof PcProcessConfig]> = [
+  ['liveness_probe', 'livenessProbe'],
+  ['namespace', 'namespace'],
+  ['description', 'description'],
+  ['working_dir', 'workingDir'],
+  ['log_location', 'logLocation'],
+  ['disabled', 'disabled'],
+  ['is_elevated', 'isElevated'],
+  ['entrypoint', 'entrypoint'],
+  ['extensions', 'extensions'],
+];
+
+/** True when a rendered spec still describes the process the daemon runs — the task-file hash is
+ *  normalized away, exactly as swapDiffSet's own comparison does. */
+export function specMatchesRunning(
+  spec: { command: string; environment: string[]; dependsOn: string[] },
+  info: PcProcessConfig,
+): boolean {
+  const desired = normalizeProc(spec.command, spec.environment, spec.dependsOn);
+  const live = normalizeProc(info.command ?? '', info.environment ?? [], Object.keys(info.dependsOn ?? {}));
+  return desired.command === live.command && desired.env === live.env && desired.deps === live.deps;
+}
+
 function extendedProcDrift(spec: Record<string, unknown>, info: PcProcessConfig): boolean {
-  const fields: [string, keyof PcProcessConfig][] = [
-    ['readiness_probe', 'ReadinessProbe'],
-    ['liveness_probe', 'LivenessProbe'],
-    ['shutdown', 'ShutDownParams'],
-    ['availability', 'Availability'],
-    ['namespace', 'Namespace'],
-    ['description', 'Description'],
-    ['working_dir', 'WorkingDir'],
-    ['log_location', 'LogLocation'],
-    ['replicas', 'Replicas'],
-    ['disabled', 'Disabled'],
-    ['is_elevated', 'IsElevated'],
-    ['entrypoint', 'Entrypoint'],
-    ['extensions', 'Extensions'],
-  ];
-  return fields.some(([yamlKey, liveKey]) => canonicalJson(spec[yamlKey]) !== canonicalJson(info[liveKey]));
+  return EXTENDED_SPEC_FIELDS.some(
+    ([yamlKey, liveKey]) => canonicalJson(spec[yamlKey]) !== canonicalJson(info[liveKey]),
+  );
 }
 
 export async function swapDiffSet(pc: Pick<ProcessComposeClient, 'processInfo'>, cfgPath: string): Promise<string[]> {
@@ -81,7 +102,7 @@ export async function swapDiffSet(pc: Pick<ProcessComposeClient, 'processInfo'>,
     } catch {
       continue;
     }
-    const live = normalizeProc(info.Command ?? '', info.Environment ?? [], Object.keys(info.DependsOn ?? {}));
+    const live = normalizeProc(info.command ?? '', info.environment ?? [], Object.keys(info.dependsOn ?? {}));
     if (desired.command !== live.command || desired.env !== live.env || desired.deps !== live.deps) {
       changed.push(name);
     }

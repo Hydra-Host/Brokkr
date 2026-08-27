@@ -10,32 +10,50 @@ import { z } from 'zod';
 
 import { getErrorMessage } from '../common/errors';
 import { parseBoundary, ProcessesResponseSchema } from '../common/pc-schemas';
-import { classifyProc, depsReady, procIsUp, type PcProcess, type ProcDiag, type ProcHealth } from './proc-health';
+import {
+  classifyProc,
+  depsReady,
+  procIsDepReady,
+  procIsUp,
+  type PcProcess,
+  type ProcDiag,
+  type ProcHealth,
+} from './proc-health';
 
-export { classifyProc, depsReady, procIsUp };
+export { classifyProc, depsReady, procIsDepReady, procIsUp };
 export type { PcProcess, ProcDiag, ProcHealth };
 
+// /process/info serializes the daemon's own struct tags, which are camelCase and do not all match
+// the rendered yaml key (`shutdown` → shutDownParams, `availability` → restartPolicy).
 export const PcProcessConfigSchema = z
   .object({
-    Command: z.string().optional(),
-    Environment: z.array(z.string()).optional(),
-    DependsOn: z.record(z.unknown()).optional(),
-    ReadinessProbe: z.unknown().optional(),
-    LivenessProbe: z.unknown().optional(),
-    ShutDownParams: z.unknown().optional(),
-    Availability: z.unknown().optional(),
-    Namespace: z.unknown().optional(),
-    Description: z.unknown().optional(),
-    WorkingDir: z.unknown().optional(),
-    LogLocation: z.unknown().optional(),
-    Replicas: z.unknown().optional(),
-    Disabled: z.unknown().optional(),
-    IsElevated: z.unknown().optional(),
-    Entrypoint: z.unknown().optional(),
-    Extensions: z.unknown().optional(),
+    name: z.string().optional(),
+    command: z.string().optional(),
+    environment: z.array(z.string()).optional(),
+    dependsOn: z.record(z.unknown()).optional(),
+    readinessProbe: z.unknown().optional(),
+    livenessProbe: z.unknown().optional(),
+    shutDownParams: z.unknown().optional(),
+    restartPolicy: z.unknown().optional(),
+    namespace: z.unknown().optional(),
+    description: z.unknown().optional(),
+    workingDir: z.unknown().optional(),
+    logLocation: z.unknown().optional(),
+    replicas: z.unknown().optional(),
+    disabled: z.unknown().optional(),
+    isElevated: z.unknown().optional(),
+    entrypoint: z.unknown().optional(),
+    extensions: z.unknown().optional(),
   })
   .passthrough();
 export type PcProcessConfig = z.infer<typeof PcProcessConfigSchema>;
+
+// A control verb runs the stop and the start synchronously, and modules/spoke.nix budgets the spoke
+// 45s to shut down — a poll's short leash would report every slow-but-healthy restart as a failure.
+export const POLL_TIMEOUT_MS = 5_000;
+export const CONTROL_TIMEOUT_MS = 60_000;
+// Covers hub-web's cold Vite compile, the slowest readiness probe in the stack.
+export const DEP_READY_TIMEOUT_MS = 180_000;
 
 const LOG_BACKLOG_LINES = 2000;
 const FOLLOW_READ_CHUNK = 256 * 1024;
@@ -63,7 +81,12 @@ export class ProcessComposeClient {
     return join(runtime, 'processes', 'logs');
   }
 
-  private send(method: string, path: string, socketPath?: string): Promise<{ status: number; body: string }> {
+  private send(
+    method: string,
+    path: string,
+    socketPath?: string,
+    timeoutMs: number = POLL_TIMEOUT_MS,
+  ): Promise<{ status: number; body: string }> {
     const token = process.env.PC_API_TOKEN;
     const headers: Record<string, string> = token ? { 'X-PC-Token-Key': token } : {};
     return new Promise((resolve, reject) => {
@@ -72,8 +95,10 @@ export class ProcessComposeClient {
         res.on('data', (c: Buffer) => (body += c.toString()));
         res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
       });
-      // a stuck UDS read must not hang the status poll forever — destroy (fires 'error' → reject).
-      req.setTimeout(5_000, () => req.destroy(new Error(`process-compose ${method} ${path} timed out after 5s`)));
+      // a stuck UDS read must not hang the caller forever — destroy (fires 'error' → reject).
+      req.setTimeout(timeoutMs, () =>
+        req.destroy(new Error(`process-compose ${method} ${path} timed out after ${timeoutMs / 1000}s`)),
+      );
       req.on('error', reject);
       req.end();
     });
@@ -95,7 +120,7 @@ export class ProcessComposeClient {
   }
 
   private async control(method: string, path: string, label: string): Promise<void> {
-    const { status, body } = await this.send(method, path);
+    const { status, body } = await this.send(method, path, undefined, CONTROL_TIMEOUT_MS);
     if (status < 200 || status >= 300)
       throw new Error(`process-compose ${label} failed (HTTP ${status}): ${body.trim().slice(0, 200)}`);
     this.log.log(label);
@@ -111,7 +136,7 @@ export class ProcessComposeClient {
     return res.data ?? [];
   }
 
-  /** /processes against another stack's socket (the /stacks dashboard probe) — same 5s guard as send(). */
+  /** /processes against another stack's socket (the /stacks dashboard probe) — same poll guard as send(). */
   async listOnSocket(socketPath: string): Promise<PcProcess[]> {
     const res = await this.getJson('/processes', ProcessesResponseSchema, socketPath);
     return res.data ?? [];
@@ -159,6 +184,28 @@ export class ProcessComposeClient {
 
   async ensureStopped(name: string): Promise<void> {
     await this.stop(name).catch(() => {});
+  }
+
+  // Whoever starts a dependent of `name` must wait for this, not for stopAndWait's terminal set or
+  // for procIsUp — see procIsDepReady.
+  async waitUntilDepReady(name: string, timeoutMs = DEP_READY_TIMEOUT_MS): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    // Skipped is absent deliberately: it clears when a dependency transitions, which is exactly what
+    // the caller may still be driving. Twice in a row, because a just-issued start has not landed yet.
+    const dead = new Set(['stopped', 'completed', 'error', 'terminated']);
+    let deadPolls = 0;
+    for (;;) {
+      try {
+        const proc = (await this.listAll()).find((p) => p.name === name);
+        if (procIsDepReady(proc)) return true;
+        deadPolls = dead.has((proc?.status ?? '').toLowerCase()) ? deadPolls + 1 : 0;
+        if (deadPolls >= 2) return false;
+      } catch (error) {
+        this.log.debug(`waitUntilDepReady poll failed for ${name}: ${getErrorMessage(error)}`);
+      }
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
   }
 
   async stopAndWait(name: string, timeoutMs = 130_000): Promise<boolean> {

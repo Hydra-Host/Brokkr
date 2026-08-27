@@ -12,10 +12,10 @@ type FormControl = Control<FieldValues>;
 
 import type { ResolvedAddress } from '@hydrahost/plugin-sdk';
 import { CreateZoneRequestSchema, ZoneAddressInputSchema, type ZoneRedisCredential } from '@repo/api-client';
+import { ZoneRedisCredentialDialog } from '@repo/domain-ui/components/zone-redis-credential-dialog';
 import { Button } from '@repo/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Separator } from '@repo/ui/components/separator';
-import { ZoneRedisCredentialDialog } from '@repo/ui/components/zone-redis-credential-dialog';
 import { FormCheckbox } from '@repo/ui/form/form-checkbox';
 import { FormCountrySelect } from '@repo/ui/form/form-country-select';
 import { FormInput } from '@repo/ui/form/form-input';

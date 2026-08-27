@@ -102,7 +102,7 @@ describe('RunLedgerService.reconcileOnBoot — killable sections', () => {
 
     expect(signalledPids()).toEqual([-4242]);
     const row = getRunRow('fleet-1');
-    expect(row?.status).toBe('failed');
+    expect(row?.status).toBe('orphaned');
     expect(row?.exit_code).toBeNull();
     expect(row?.finished_at).toBeGreaterThan(0);
   });
@@ -114,7 +114,7 @@ describe('RunLedgerService.reconcileOnBoot — killable sections', () => {
     ledger.reconcileOnBoot();
 
     expect(signalledPids()).toEqual([-1234]);
-    expect(getRunRow('test-1')?.status).toBe('failed');
+    expect(getRunRow('test-1')?.status).toBe('orphaned');
   });
 
   it('never signals the bare pid of a live process that leads no group', () => {
@@ -129,7 +129,7 @@ describe('RunLedgerService.reconcileOnBoot — killable sections', () => {
     expect(ledger.reconcileOnBoot()).toBe(1);
 
     expect(signalledPids()).toEqual([-4242]);
-    expect(getRunRow('fleet-1')?.status).toBe('failed');
+    expect(getRunRow('fleet-1')?.status).toBe('orphaned');
   });
 });
 
@@ -142,7 +142,7 @@ describe('RunLedgerService.reconcileOnBoot — sections that are never signalled
 
     expect(kill).not.toHaveBeenCalled();
     expect(signalledPids()).toEqual([]);
-    expect(getRunRow('stack-1')?.status).toBe('failed');
+    expect(getRunRow('stack-1')?.status).toBe('orphaned');
   });
 
   it('never signals the detached redeploy that restarts the whole stack', () => {
@@ -152,7 +152,7 @@ describe('RunLedgerService.reconcileOnBoot — sections that are never signalled
     ledger.reconcileOnBoot();
 
     expect(kill).not.toHaveBeenCalled();
-    expect(getRunRow('redeploy-1')?.status).toBe('failed');
+    expect(getRunRow('redeploy-1')?.status).toBe('orphaned');
   });
 
   it('never signals a build orphan', () => {
@@ -162,7 +162,7 @@ describe('RunLedgerService.reconcileOnBoot — sections that are never signalled
     ledger.reconcileOnBoot();
 
     expect(kill).not.toHaveBeenCalled();
-    expect(getRunRow('build-1')?.status).toBe('failed');
+    expect(getRunRow('build-1')?.status).toBe('orphaned');
   });
 
   it('never signals a storage orphan', () => {
@@ -172,7 +172,7 @@ describe('RunLedgerService.reconcileOnBoot — sections that are never signalled
     ledger.reconcileOnBoot();
 
     expect(kill).not.toHaveBeenCalled();
-    expect(getRunRow('storage-1')?.status).toBe('failed');
+    expect(getRunRow('storage-1')?.status).toBe('orphaned');
   });
 
   it('signals only the killable sections when every section is orphaned at once', () => {
@@ -186,7 +186,7 @@ describe('RunLedgerService.reconcileOnBoot — sections that are never signalled
     expect(ledger.reconcileOnBoot()).toBe(5);
 
     expect(signalledPids().sort((x, y) => x - y)).toEqual([-55, -22]);
-    for (const runId of ['a', 'b', 'c', 'd', 'e']) expect(getRunRow(runId)?.status).toBe('failed');
+    for (const runId of ['a', 'b', 'c', 'd', 'e']) expect(getRunRow(runId)?.status).toBe('orphaned');
   });
 });
 
@@ -198,7 +198,7 @@ describe('RunLedgerService.reconcileOnBoot — pid rails', () => {
 
     expect(kill).toHaveBeenCalledWith(777, 0);
     expect(signalledPids()).toEqual([]);
-    expect(getRunRow('fleet-dead')?.status).toBe('failed');
+    expect(getRunRow('fleet-dead')?.status).toBe('orphaned');
   });
 
   it('does not signal a pid older than the 24h recycle window', () => {
@@ -208,16 +208,16 @@ describe('RunLedgerService.reconcileOnBoot — pid rails', () => {
     ledger.reconcileOnBoot();
 
     expect(kill).not.toHaveBeenCalled();
-    expect(getRunRow('stale')?.status).toBe('failed');
+    expect(getRunRow('stale')?.status).toBe('orphaned');
   });
 
-  it('marks a run with no persisted pid failed without signalling anything', () => {
+  it('marks a run with no persisted pid orphaned without signalling anything', () => {
     seedRun({ run_id: 'no-pid', section: 'fleet', pid: null });
 
     expect(ledger.reconcileOnBoot()).toBe(1);
 
     expect(kill).not.toHaveBeenCalled();
-    expect(getRunRow('no-pid')?.status).toBe('failed');
+    expect(getRunRow('no-pid')?.status).toBe('orphaned');
   });
 
   it('refuses to signal a non-positive pid', () => {
@@ -227,8 +227,8 @@ describe('RunLedgerService.reconcileOnBoot — pid rails', () => {
     ledger.reconcileOnBoot();
 
     expect(kill).not.toHaveBeenCalled();
-    expect(getRunRow('bad-pid')?.status).toBe('failed');
-    expect(getRunRow('worse-pid')?.status).toBe('failed');
+    expect(getRunRow('bad-pid')?.status).toBe('orphaned');
+    expect(getRunRow('worse-pid')?.status).toBe('orphaned');
   });
 });
 
@@ -242,8 +242,8 @@ describe('RunLedgerService.reconcileOnBoot — a row this build cannot read', ()
     expect(ledger.reconcileOnBoot()).toBe(2);
 
     expect(signalledPids()).toEqual([-4242]);
-    expect(getRunRow('fleet-1')?.status).toBe('failed');
-    expect(rawStatus('wormhole-1')).toBe('failed');
+    expect(getRunRow('fleet-1')?.status).toBe('orphaned');
+    expect(rawStatus('wormhole-1')).toBe('orphaned');
   });
 
   it('reconciles every readable orphan when several rows are unreadable', () => {
@@ -256,7 +256,7 @@ describe('RunLedgerService.reconcileOnBoot — a row this build cannot read', ()
     expect(ledger.reconcileOnBoot()).toBe(4);
 
     expect(signalledPids().sort((x, y) => x - y)).toEqual([-22, -11]);
-    for (const runId of ['wormhole-1', 'wormhole-2', 'fleet-1', 'test-1']) expect(rawStatus(runId)).toBe('failed');
+    for (const runId of ['wormhole-1', 'wormhole-2', 'fleet-1', 'test-1']) expect(rawStatus(runId)).toBe('orphaned');
   });
 });
 
@@ -328,7 +328,7 @@ describe('RunLedgerService.reconcileOnBoot — repeat boots and backfilled rows'
 
     const row = getRunRow('legacy-running');
     expect(row?.section).toBe('test');
-    expect(row?.status).toBe('failed');
+    expect(row?.status).toBe('orphaned');
     expect(row?.exit_code).toBeNull();
     expect(row?.pid).toBeNull();
     expect(kill).not.toHaveBeenCalled();
@@ -359,8 +359,45 @@ describe('RunLedgerService.reconcileOnBoot — never from a lifecycle hook', () 
 
     bootRunLedger(moduleRef.get(StateDirLock), moduleRef.get(RunLedgerService), moduleRef.get(RunRetentionService));
 
-    expect(getRunRow('boot-2')?.status).toBe('failed');
+    expect(getRunRow('boot-2')?.status).toBe('orphaned');
 
     await moduleRef.close();
+  });
+});
+
+describe('RunLedgerService.reconcileOnBoot — orphaned is not failed', () => {
+  it('leaves a run that exited non-zero alone and orphans only the running one', () => {
+    seedRun({ run_id: 'orphan', section: 'fleet', pid: null });
+    seedRun({
+      run_id: 'exited',
+      section: 'fleet',
+      pid: null,
+      status: 'failed',
+      finished_at: Date.now(),
+      exit_code: 2,
+    });
+
+    expect(ledger.reconcileOnBoot()).toBe(1);
+
+    expect(getRunRow('orphan')?.status).toBe('orphaned');
+    expect(getRunRow('orphan')?.exit_code).toBeNull();
+    expect(getRunRow('exited')?.status).toBe('failed');
+    expect(getRunRow('exited')?.exit_code).toBe(2);
+  });
+
+  it('carries the runs indexes and rows through the schema rebuild that admits it', () => {
+    seedRun({ run_id: 'kept' });
+    const db = getDb();
+
+    expect(db.pragma('user_version', { simple: true })).toBe(3);
+    const indexes = db
+      .prepare<[], { name: string }>(
+        `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'runs' AND name LIKE 'idx_%'`,
+      )
+      .all()
+      .map((row) => row.name)
+      .sort();
+    expect(indexes).toEqual(['idx_runs_running', 'idx_runs_section_started', 'idx_runs_started']);
+    expect(getRunRow('kept')?.status).toBe('running');
   });
 });

@@ -1,4 +1,4 @@
-import { FormPermissionSelector } from '@repo/ui/form/form-permission-selector';
+import { FormPermissionSelector } from '@repo/domain-ui/form/form-permission-selector';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useForm } from 'react-hook-form';
 import { describe, expect, it, vi } from 'vitest';

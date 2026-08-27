@@ -29,8 +29,9 @@ function makeZoneRow(overrides: Record<string, unknown> = {}) {
 
 function makePrefixRow(overrides: Record<string, unknown> = {}) {
   return {
-    id: PREFIX_ID,
+    prefixId: PREFIX_ID,
     zoneId: ZONE_ID,
+    cidr: '10.0.1.0/24',
     dnsServeDns: true,
     dnsUpstreamOverride: ['1.1.1.1'],
     ...overrides,
@@ -42,10 +43,10 @@ function buildService(opts: { zones?: unknown[]; prefixes?: unknown[] } = {}) {
   const prefixes = opts.prefixes ?? [];
 
   const zoneFindMany = vi.fn().mockResolvedValue(zones);
-  const prefixFindMany = vi.fn().mockResolvedValue(prefixes);
+  const queryRaw = vi.fn().mockResolvedValue(prefixes);
   const prisma = {
     zone: { findMany: zoneFindMany },
-    prefix: { findMany: prefixFindMany },
+    $queryRaw: queryRaw,
   };
   const logger = {
     log: vi.fn(),
@@ -55,7 +56,7 @@ function buildService(opts: { zones?: unknown[]; prefixes?: unknown[] } = {}) {
   };
 
   const service = new DnsDerivationService(prisma as never, logger as never);
-  return { service, prisma, zoneFindMany, prefixFindMany, logger };
+  return { service, prisma, zoneFindMany, queryRaw, logger };
 }
 
 describe('DnsDerivationService', () => {
@@ -284,11 +285,12 @@ describe('DnsDerivationService', () => {
       expect(result.atoms).toHaveLength(1);
       expect(result.atoms[0].prefixId).toBe(PREFIX_ID);
       expect(result.atoms[0].atom.serveDns).toBe(true);
+      expect(result.atoms[0].atom.cidr).toBe('10.0.1.0/24');
     });
 
     it('returns empty with queryFailed on query failure', async () => {
-      const { service, prefixFindMany } = buildService();
-      prefixFindMany.mockRejectedValue(new Error('db down'));
+      const { service, queryRaw } = buildService();
+      queryRaw.mockRejectedValue(new Error('db down'));
       const result = await service.deriveAllPrefixes();
       expect(result.atoms).toHaveLength(0);
       expect(result.queryFailed).toBe(true);
@@ -324,12 +326,26 @@ describe('DnsDerivationService', () => {
       const row = {
         prefixId: PREFIX_ID,
         zoneId: ZONE_ID,
+        cidr: '10.0.1.0/24',
         dnsServeDns: null,
         dnsUpstreamOverride: ['1.1.1.1', 'bad-ip'],
       };
       const atom = service.buildPrefixAtom(row);
       expect(atom.upstreamOverride).toEqual(['1.1.1.1']);
       expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('not IPv4'));
+    });
+
+    it('carries the prefix cidr into the atom', () => {
+      const { service } = buildService();
+      const row = {
+        prefixId: PREFIX_ID,
+        zoneId: ZONE_ID,
+        cidr: '172.16.8.0/22',
+        dnsServeDns: true,
+        dnsUpstreamOverride: [],
+      };
+      const atom = service.buildPrefixAtom(row);
+      expect(atom.cidr).toBe('172.16.8.0/22');
     });
   });
 });

@@ -12,14 +12,24 @@ interface AdminDb {
   activeMaintenanceCount: (deviceId: string) => Promise<number>;
 }
 
+interface SeededSite {
+  facility: { id: string; name: string };
+  colocation: { id: string; name: string };
+  /** Second colocation under the same facility, for the confirm-move prompt. */
+  otherColocation: { id: string; name: string };
+}
+
 interface AdminWorkerFixtures {
   adminDb: AdminDb;
   adminSeed: { device: SeededDevice; zoneId: string };
+  adminSiteSeed: SeededSite;
   adminContext: BrowserContext;
 }
 
 interface AdminTestFixtures {
   adminPage: Page;
+  /** A blank admin page; adminPage lands on the server detail route instead. */
+  sitePage: Page;
   memberRequest: APIRequestContext;
 }
 
@@ -82,6 +92,9 @@ export const maintenanceHistoryRows = (page: Page) => maintenanceCard(page).loca
 
 export const errorToast = (page: Page, message: string) =>
   page.locator('[data-sonner-toast]').filter({ hasText: message });
+
+export const relatedContactsCard = (page: Page) =>
+  page.locator('[data-slot="card"]').filter({ hasText: 'Related contacts' });
 
 export const test = base.extend<AdminTestFixtures, AdminWorkerFixtures>({
   adminDb: [
@@ -146,6 +159,52 @@ export const test = base.extend<AdminTestFixtures, AdminWorkerFixtures>({
     { scope: 'worker', timeout: 120_000 },
   ],
 
+  adminSiteSeed: [
+    async ({ adminDb }, use, workerInfo) => {
+      const { prisma } = adminDb;
+      const tag = `${process.env.E2E_RUN_ID ?? 'local'}-w${workerInfo.workerIndex}`;
+      const facilityName = `Acme ${tag}`;
+      const colocationName = `Acme DC1 ${tag}`;
+      const otherColocationName = `Acme DC2 ${tag}`;
+
+      // Match on the worker tag rather than the exact seeded names: specs create
+      // further facilities and colocations of their own (e.g. "<facility> extra"),
+      // and every name embeds the tag. Matching exactly would leave those behind
+      // and the next run would collide with the case-insensitive name indexes.
+      const owned = { name: { contains: tag } };
+      const purge = async () => {
+        await prisma.contact.deleteMany({
+          where: { OR: [{ facility: owned }, { colocation: owned }] },
+        });
+        await prisma.zone.updateMany({ where: { colocation: owned }, data: { colocationId: null } });
+        await prisma.colocation.deleteMany({ where: owned });
+        await prisma.facility.deleteMany({ where: owned });
+      };
+
+      await purge();
+
+      const facility = await prisma.facility.create({
+        data: { name: facilityName, operator: `Acme Operations ${tag}` },
+        select: { id: true, name: true },
+      });
+      const [colocation, otherColocation] = await Promise.all([
+        prisma.colocation.create({
+          data: { name: colocationName, facilityId: facility.id },
+          select: { id: true, name: true },
+        }),
+        prisma.colocation.create({
+          data: { name: otherColocationName, facilityId: facility.id },
+          select: { id: true, name: true },
+        }),
+      ]);
+
+      await use({ facility, colocation, otherColocation });
+
+      await purge();
+    },
+    { scope: 'worker', timeout: 120_000 },
+  ],
+
   adminContext: [
     async ({ browser }, use) => {
       const context = await browser.newContext({ baseURL: ADMIN_BASE_URL });
@@ -169,6 +228,12 @@ export const test = base.extend<AdminTestFixtures, AdminWorkerFixtures>({
     const page = await adminContext.newPage();
     await page.goto(`/servers/${adminSeed.device.id}`);
     await expect(maintenanceCard(page)).toBeVisible();
+    await use(page);
+    await page.close();
+  },
+
+  sitePage: async ({ adminContext }, use) => {
+    const page = await adminContext.newPage();
     await use(page);
     await page.close();
   },

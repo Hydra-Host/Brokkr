@@ -1,5 +1,5 @@
 import { type CustomizationLayer } from '@repo/api-client';
-import { CustomizationLayers, type CustomizationLayersData } from '@repo/ui/provision/customization-layers';
+import { CustomizationLayers, type CustomizationLayersData } from '@repo/domain-ui/provision/customization-layers';
 import { render, screen } from '@testing-library/react';
 import { useForm } from 'react-hook-form';
 import { describe, expect, it } from 'vitest';

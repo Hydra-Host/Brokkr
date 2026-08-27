@@ -1,7 +1,6 @@
 import { createFileRoute, getRouteApi, Outlet } from '@tanstack/react-router';
 import { Power, PowerOff, RefreshCcwDot } from 'lucide-react';
 
-import type { Deployment } from '@repo/api-client';
 import { ButtonLink } from '@repo/ui/components/button-link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@repo/ui/components/tooltip';
@@ -16,7 +15,7 @@ export const Route = createFileRoute('/_app/deployments/$deploymentId/power-cont
 });
 
 function PowerControlLayout() {
-  const deployment = parentRoute.useLoaderData() as Deployment;
+  const deployment = parentRoute.useLoaderData();
   useDocumentTitle(`${deployment.customer?.deviceName ?? 'Deployment'} - Power Control`);
 
   const isDisabledPowerCycle = isPowerActionDisabled(deployment, 'power-cycle');

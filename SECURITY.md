@@ -73,14 +73,15 @@ pnpm audit --audit-level=high          # full workspace, including dev chains (i
 Triage policy:
 
 - **Runtime-reachable critical/high advisories** are remediated before release —
-  preferably by pinning a fixed transitive version via the root `package.json`
-  `pnpm.overrides` block (the established mechanism), or by upgrading the direct
+  preferably by pinning a fixed transitive version via the `overrides` block in
+  `pnpm-workspace.yaml` (the established mechanism), or by upgrading the direct
   dependency.
 - **Dev/build-time-only advisories** (test runners, bundlers, lint tooling) that are not
   on the server runtime attack surface are kept out of the gate by **production scope**
-  (`--prod`), not by a suppression list. There is no tool-enforced ignore list: the pinned
-  `pnpm@8.15.9` does not honor `pnpm.auditConfig`, so that block was removed and the
-  `--prod` scope is the entire allowlisting mechanism. We do not chase the full-workspace
+  (`--prod`), not by a suppression list. There is no tool-enforced ignore list, and the
+  `--prod` scope is the entire allowlisting mechanism. pnpm 11 does support `audit.ignore`,
+  but we deliberately do not use it: an ignore list drifts silently, while production scope
+  is a property of the dependency graph. We do not chase the full-workspace
   advisory count to zero.
 - Because `pnpm audit` queries the **live** advisory database, the tree is re-audited on
   every dependency change, and swept again daily by Hydra Host's internal release

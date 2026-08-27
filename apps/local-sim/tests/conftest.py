@@ -7,10 +7,11 @@ import pytest
 
 _VALID_ZONE_ID = "00000000-0000-0000-0000-aaaaaaaa0001"
 
-_HOST_PATH_STUBS = {
+_HOST_STUBS = {
     "LOCAL_QEMU_EMULATOR": "/nonexistent/ci/qemu-system",
     "LOCAL_EDK2_CODE_PATH": "/nonexistent/ci/edk2-code.fd",
     "LOCAL_EDK2_VARS_TEMPLATE_PATH": "/nonexistent/ci/edk2-vars.fd",
+    "LOCAL_ACCEL": "kvm",
 }
 
 _LEAKABLE_PREFIXES = ("BRIDGE_", "SIM_", "LOCAL_", "LOCA_", "HUB_")
@@ -40,7 +41,7 @@ def isolate_config(monkeypatch):
             monkeypatch.delenv(key, raising=False)
 
     monkeypatch.setenv("BRIDGE_ZONE_ID", _VALID_ZONE_ID)
-    for key, val in _HOST_PATH_STUBS.items():
+    for key, val in _HOST_STUBS.items():
         monkeypatch.setenv(key, val)
 
     cfg.get_settings.cache_clear()

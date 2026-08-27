@@ -13,6 +13,7 @@ from typing import Literal
 
 HostOS = Literal["macos", "linux"]
 HostArch = Literal["arm64", "amd64"]
+Accel = Literal["hvf", "kvm", "tcg"]
 
 
 @lru_cache(maxsize=1)
@@ -174,3 +175,73 @@ def libvirt_uri() -> str:
     if host_os() == "macos":
         return f"qemu+unix:///session?socket={libvirt_socket_path()}"
     return "qemu:///system"
+
+
+def _domcaps_ok(virttype: str) -> bool:
+    """Whether libvirt can report domain capabilities for ``virttype`` on this host."""
+    from local.config import get_settings
+    from local.process_utils import cmd_succeeds
+
+    s = get_settings()
+    # an absent virsh raises FileNotFoundError out of subprocess.run; check=False only suppresses a
+    # non-zero exit. Without this the documented kvm fallback never runs and `task status` crashes.
+    try:
+        return cmd_succeeds(
+            "virsh",
+            "--connect",
+            s.paths.libvirt_uri,
+            "domcapabilities",
+            "--virttype",
+            virttype,
+            "--emulatorbin",
+            str(s.paths.qemu_emulator),
+            "--arch",
+            domain_arch(),
+            "--machine",
+            "virt" if host_arch() == "arm64" else "q35",
+        )
+    except OSError:
+        return False
+
+
+@lru_cache(maxsize=1)
+def detect_accel() -> Accel:
+    """The accelerator libvirt will actually grant, probed once per process.
+
+    Probes ``virsh domcapabilities`` exit status, which consults the same capability record
+    ``virsh define`` consults, so probe and failure agree by construction. Never the stderr text —
+    its wording is version- and locale-dependent. A forced setting (``LOCAL_ACCEL``) skips the
+    probe. Both probes failing means libvirt is unreachable, not that KVM is refused — return kvm
+    and let ``fleet.preflight`` raise the real error.
+
+    The subprocess wrapper is imported function-locally: ``config._detect`` reaches into this
+    module from a ``default_factory``, so a module-level ``process_utils`` import is a real cycle.
+    """
+    from local.config import get_settings
+
+    forced = get_settings().paths.accel
+    if forced != "auto":
+        return forced
+    if host_os() == "macos":
+        return "hvf"
+    for virttype, accel in (("kvm", "kvm"), ("qemu", "tcg")):
+        if _domcaps_ok(virttype):
+            return accel
+    return "kvm"
+
+
+def accel_forced() -> bool:
+    """Whether the accelerator came from an explicit setting rather than the probe.
+
+    Under TCG this is the difference between "somebody chose emulation" and "the host refused KVM",
+    which are opposite problems. Never cached: unlike the probe there is nothing expensive to memo,
+    and a cache would outlive a test's monkeypatched setting.
+    """
+    from local.config import get_settings
+
+    return get_settings().paths.accel != "auto"
+
+
+def domain_type(accel: Accel) -> str:
+    """libvirt has no ``<domain type='tcg'>`` — software emulation is ``type='qemu'``."""
+    return "qemu" if accel == "tcg" else accel

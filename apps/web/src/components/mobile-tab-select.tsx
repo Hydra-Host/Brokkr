@@ -1,3 +1,4 @@
+import { cn } from '@repo/ui/utils';
 import { ChevronDown } from 'lucide-react';
 
 interface MobileTabSelectProps {
@@ -9,7 +10,7 @@ interface MobileTabSelectProps {
 
 export function MobileTabSelect({ tabs, value, onValueChange, className }: MobileTabSelectProps) {
   return (
-    <div className={`relative sm:hidden ${className ?? ''}`}>
+    <div className={cn('relative sm:hidden', className)}>
       <select
         value={value}
         onChange={(e) => onValueChange(e.target.value)}

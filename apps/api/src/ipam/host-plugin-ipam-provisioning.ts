@@ -12,6 +12,7 @@ import type {
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ActiveRecordRegistry } from '@repo/active-record';
 import { ContextService } from 'src/common/context/context.service';
+import { EventLogService } from 'src/event-log/event-log.service';
 import { IpAddressService } from './ip-address/ip-address.service';
 import { IpRangeService } from './ip-range/ip-range.service';
 import { IpamRoleRepository } from './ipam-role/ipam-role.repository';
@@ -26,6 +27,7 @@ export class HostPluginIpamProvisioning implements PluginIpamProvisioning {
     private readonly ipAddressService: IpAddressService,
     private readonly ipRangeService: IpRangeService,
     private readonly ipamRoleRepository: IpamRoleRepository,
+    private readonly eventLog: EventLogService,
   ) {}
 
   async createPrefix(input: PluginCreatePrefixInput): Promise<PluginCreatedPrefix> {
@@ -73,39 +75,66 @@ export class HostPluginIpamProvisioning implements PluginIpamProvisioning {
 
   async rollbackProvisioned(input: PluginIpamRollbackInput): Promise<void> {
     await this.asOrg(input.organizationId, async () => {
-      const prisma = ActiveRecordRegistry.client;
       const now = new Date();
-      await prisma.$transaction(async (tx) => {
-        if (input.ipRangeIds.length > 0) {
-          await tx.ipRange.updateMany({
-            where: {
-              id: { in: input.ipRangeIds },
-              organizationId: input.organizationId,
-              deletedAt: null,
-            },
-            data: { deletedAt: now },
-          });
-        }
-        if (input.prefixIds.length > 0) {
-          await tx.prefix.updateMany({
-            where: {
-              id: { in: input.prefixIds },
-              organizationId: input.organizationId,
-              deletedAt: null,
-            },
-            data: { gatewayIpId: null, deletedAt: now },
-          });
-        }
-        if (input.ipAddressIds.length > 0) {
-          await tx.ipAddress.updateMany({
-            where: {
-              id: { in: input.ipAddressIds },
-              organizationId: input.organizationId,
-              deletedAt: null,
-            },
-            data: { deletedAt: now },
-          });
-        }
+      // One transaction across three models plus the event row: a rollback that removed records but
+      // left no trace is the case an auditor cannot recover from, so the row shares their fate.
+      await ActiveRecordRegistry.transaction(async (tx) => {
+        const ipRanges =
+          input.ipRangeIds.length > 0
+            ? await tx.ipRange.updateMany({
+                where: {
+                  id: { in: input.ipRangeIds },
+                  organizationId: input.organizationId,
+                  deletedAt: null,
+                },
+                data: { deletedAt: now },
+              })
+            : { count: 0 };
+        const prefixes =
+          input.prefixIds.length > 0
+            ? await tx.prefix.updateMany({
+                where: {
+                  id: { in: input.prefixIds },
+                  organizationId: input.organizationId,
+                  deletedAt: null,
+                },
+                data: { gatewayIpId: null, deletedAt: now },
+              })
+            : { count: 0 };
+        const ipAddresses =
+          input.ipAddressIds.length > 0
+            ? await tx.ipAddress.updateMany({
+                where: {
+                  id: { in: input.ipAddressIds },
+                  organizationId: input.organizationId,
+                  deletedAt: null,
+                },
+                data: { deletedAt: now },
+              })
+            : { count: 0 };
+
+        await this.eventLog.recordInTransaction(tx, {
+          organizationId: input.organizationId,
+          tier: 'EVIDENCE',
+          durability: 'ATOMIC',
+          resource: 'ipam',
+          action: 'rollback',
+          actionKey: 'ipam.rollback',
+          // Pinned rather than resolved: `asOrg` enters runAsSystem, so the plugin host is the only
+          // possible actor here, and the audit criterion is specifically about SYSTEM attribution.
+          actorType: 'SYSTEM',
+          actorId: null,
+          actorLabel: null,
+          ...this.contextService.requestFields(),
+          outcome: 'SUCCEEDED',
+          requestId: this.contextService.requestId ?? null,
+          // Affected counts, not requested counts: the gap is the drift an auditor needs to see.
+          metadata: {
+            prefixes: prefixes.count,
+            ipAddresses: ipAddresses.count,
+            ipRanges: ipRanges.count,
+          },
+        });
       });
     });
   }

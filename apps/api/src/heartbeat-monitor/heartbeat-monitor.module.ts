@@ -5,6 +5,7 @@ import { Queue } from 'bullmq';
 import { BrokkrBridgeModule } from 'src/brokkr-bridge/brokkr-bridge.module';
 import { EmailModule } from 'src/email/email.module';
 import { PrismaModule } from 'src/prisma/prisma.module';
+import { BridgeAlertingService } from './bridge-alerting.service';
 import { DeviceHealthCheckCron } from './device-health-check.cron';
 import {
   DEVICE_HEALTH_CHECK_JOB,
@@ -41,6 +42,7 @@ const repeatableOpts = {
     ZoneAlertingService,
     ZoneFlapDetectionService,
     ZoneFlapAlertingService,
+    BridgeAlertingService,
   ],
   exports: [ZoneAlertingService],
 })

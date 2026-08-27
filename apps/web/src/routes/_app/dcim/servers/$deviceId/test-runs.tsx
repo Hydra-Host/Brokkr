@@ -1,4 +1,3 @@
-import type { Server } from '@repo/api-client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@repo/ui/components/select';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
@@ -41,7 +40,7 @@ const STATUS_ITEMS = [
 ];
 
 function ServerTestRuns() {
-  const device = parentRoute.useLoaderData() as Server;
+  const device = parentRoute.useLoaderData();
   const displayName = device.dcim?.nickname || device.name;
 
   const { type: filterType, status: filterStatus } = useSearch({

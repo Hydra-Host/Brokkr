@@ -10,7 +10,7 @@ import { Injectable } from '@nestjs/common';
 import { isRecord } from '@repo/utils';
 
 import { getLogger } from '../logger/logger.service';
-import { ipv4ToInt, isRoutableUnicastIpv4 } from './ip-utils';
+import { ipv4ToInt, isRoutableUnicastIpv4, isValidIpv4Cidr } from './ip-utils';
 
 const DEFAULT_BRIDGE_URL = 'https://brokkr.lan';
 const INTERFACES_CACHE_KEY = 'bridge:interfaces';
@@ -543,13 +543,10 @@ function prefixFromNetmask(netmask: string): number | null {
 }
 
 export function ipInCidr(cidr: string, addr: string): boolean {
+  if (!isValidIpv4Cidr(cidr) || !isIPv4(addr)) return false;
   const slash = cidr.indexOf('/');
-  if (slash === -1) return false;
-  const network = cidr.slice(0, slash);
   const prefix = Number.parseInt(cidr.slice(slash + 1), 10);
-  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
-  if (!isIPv4(network) || !isIPv4(addr)) return false;
-  const netInt = ipv4ToInt(network);
+  const netInt = ipv4ToInt(cidr.slice(0, slash));
   const addrInt = ipv4ToInt(addr);
   if (netInt === null || addrInt === null) return false;
   if (prefix === 0) return true;

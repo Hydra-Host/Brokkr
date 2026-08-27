@@ -12,6 +12,7 @@ import type {
 } from '../dns-config-reader.service.js';
 import { DnsRecordsLookup } from '../dns-records-reader.js';
 import type { DnsRecordsAtomValue } from '../dns-records-reader.schema.js';
+import { dnsServeInterfaceIps } from '../dns-serve-interfaces.js';
 import {
   buildOwnedNames,
   DnsServerService,
@@ -2481,6 +2482,134 @@ describe('DnsServerService hub-config enabled toggle', () => {
 
     expect(captured.length).toBeGreaterThanOrEqual(1);
     expect(captured[captured.length - 1]).toEqual(['10.0.99.1']);
+
+    service.stop('job-1');
+    await expect(start).resolves.toBeUndefined();
+  });
+
+  it('invokes onPrefixOverrides with each successful override read and skips transient failures', async () => {
+    vi.useFakeTimers();
+    let readCount = 0;
+    const prefixOverrides = new Map<string, DnsPrefixOverrideAtomValue>([
+      ['prefix-1', { serveDns: true, upstreamOverride: null, cidr: '172.16.8.0/22' }],
+    ]);
+    const configReader: Pick<DnsConfigReaderService, 'readZoneConfig' | 'readPrefixOverrides'> = {
+      readZoneConfig: async (): Promise<DnsZoneConfigReadResult> => ({ ok: true, config: makeAtom() }),
+      readPrefixOverrides: async (): Promise<DnsPrefixOverrideReadResult> => {
+        readCount++;
+        if (readCount === 2) return { ok: false };
+        return { ok: true, overrides: prefixOverrides };
+      },
+    };
+
+    const seen: Array<ReadonlyMap<string, DnsPrefixOverrideAtomValue>> = [];
+    const service = new DnsServerService({
+      config: makeConfig(),
+      listInterfaces: () => INTERFACES,
+      createSocket: () => makeFakeSocket() as unknown as dgram.Socket,
+      createTcpServer: () => makeFakeTcpServer(),
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      configReader: configReader as DnsConfigReaderService,
+      onPrefixOverrides: (overrides) => seen.push(overrides),
+    });
+
+    const start = service.start('job-1');
+    await flush();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBe(prefixOverrides);
+
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await flush();
+    expect(seen).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await flush();
+    expect(seen).toHaveLength(2);
+
+    service.stop('job-1');
+    await expect(start).resolves.toBeUndefined();
+  });
+
+  it('does not invoke onPrefixOverrides when the zone atom is withdrawn', async () => {
+    vi.useFakeTimers();
+    const configReader: Pick<DnsConfigReaderService, 'readZoneConfig' | 'readPrefixOverrides'> = {
+      readZoneConfig: async (): Promise<DnsZoneConfigReadResult> => ({ ok: false, reason: 'missing' }),
+      readPrefixOverrides: async (): Promise<DnsPrefixOverrideReadResult> => ({ ok: true, overrides: new Map() }),
+    };
+
+    const onPrefixOverrides = vi.fn();
+    const service = new DnsServerService({
+      config: makeConfig(),
+      listInterfaces: () => INTERFACES,
+      createSocket: () => makeFakeSocket() as unknown as dgram.Socket,
+      createTcpServer: () => makeFakeTcpServer(),
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      configReader: configReader as DnsConfigReaderService,
+      onPrefixOverrides,
+    });
+
+    const start = service.start('job-1');
+    await flush();
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await flush();
+    expect(onPrefixOverrides).not.toHaveBeenCalled();
+
+    service.stop('job-1');
+    await expect(start).resolves.toBeUndefined();
+  });
+
+  it('binds and unbinds dns-serve prefix NIC IPs as overrides come and go', async () => {
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    let readCount = 0;
+    const prefixOverrides = new Map<string, DnsPrefixOverrideAtomValue>([
+      ['prefix-1', { serveDns: true, upstreamOverride: null, cidr: '172.16.8.0/22' }],
+    ]);
+    const configReader: Pick<DnsConfigReaderService, 'readZoneConfig' | 'readPrefixOverrides'> = {
+      readZoneConfig: async (): Promise<DnsZoneConfigReadResult> => ({ ok: true, config: makeAtom() }),
+      readPrefixOverrides: async (): Promise<DnsPrefixOverrideReadResult> => {
+        readCount++;
+        if (readCount === 1) return { ok: true, overrides: new Map() };
+        if (readCount === 2) return { ok: true, overrides: prefixOverrides };
+        return { ok: true, overrides: new Map() };
+      },
+    };
+
+    const localNics = [
+      { name: 'enp1s0f1np1', ip: '172.16.8.101' },
+      { name: 'enp1s0f1np1', ip: '172.16.11.234' },
+    ];
+    let extra: { interface: string; ip: string }[] = [];
+    const service = new DnsServerService({
+      config: makeConfig(),
+      listInterfaces: () => [{ interface: 'eth0', ip: '10.0.0.1' }, ...extra],
+      createSocket: () => {
+        const s = makeFakeSocket();
+        sockets.push(s);
+        return s as unknown as dgram.Socket;
+      },
+      createTcpServer: () => makeFakeTcpServer(),
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      configReader: configReader as DnsConfigReaderService,
+      onPrefixOverrides: (overrides) => {
+        extra = dnsServeInterfaceIps(overrides, () => localNics);
+      },
+    });
+
+    const start = service.start('job-1');
+    await flush();
+    expect(boundIps(sockets)).toEqual(['10.0.0.1']);
+
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await flush();
+    expect(boundIps(sockets)).toEqual(['10.0.0.1', '172.16.8.101', '172.16.11.234']);
+
+    const servedSocket = sockets.find((s) => s.bind.mock.calls[0]?.[1] === '172.16.8.101');
+    const secondServedSocket = sockets.find((s) => s.bind.mock.calls[0]?.[1] === '172.16.11.234');
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await flush();
+    expect(servedSocket?.close).toHaveBeenCalled();
+    expect(secondServedSocket?.close).toHaveBeenCalled();
 
     service.stop('job-1');
     await expect(start).resolves.toBeUndefined();

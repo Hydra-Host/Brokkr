@@ -10,7 +10,7 @@ import { FleetTopologyService } from '../fleet-topology.service';
 type WithHost = { hostFacts: () => { os: string } };
 
 function makeService() {
-  const setFleetConfig = vi.fn();
+  const setFleetConfig = vi.fn().mockReturnValue([]);
   const overlay = {
     setFleetConfig,
     fleetMode: () => 'baremetal',
@@ -103,6 +103,8 @@ describe('FleetTopologyService.putConfig — vm-mode skips bare-metal validation
     passthrough: [],
     nics: [],
     data_mtu: null,
+    arch: null,
+    network_type: null,
     ip: null,
     bmc_ip: null,
     bmc: null,

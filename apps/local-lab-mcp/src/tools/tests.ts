@@ -4,10 +4,11 @@ import type { LabContext } from '../client.js';
 import labContractPkg from '../lab-contract.js';
 import { collectRunLogs, waitForRun, waitShape } from '../runs.js';
 import { call, failOnError } from '../shared.js';
+import type { ToolOptions } from './index.js';
 
 const { CustomizationsSchema, DiskLayoutSelectionSchema } = labContractPkg;
 
-export function registerTestTools(server: McpServer, ctx: LabContext): void {
+export function registerTestTools(server: McpServer, ctx: LabContext, options: ToolOptions): void {
   server.tool(
     'lab_list_test_scenarios',
     'Catalog of runnable test scenarios (vitest-backed e2e: smoke, lifecycle-quick/full, rescue-boot, cloud-init, layer-test, disk-layout, spoke-failover, vrrp-failover, …) with their picker declarations.',
@@ -22,7 +23,7 @@ export function registerTestTools(server: McpServer, ctx: LabContext): void {
 
   server.tool(
     'lab_run_test',
-    'Launch a test scenario against the stack and (with wait=true) return the final run state, the parsed result (summary counts + per-case breakdown + captured service log slices), the structured event timeline, and the run log tail. 409 if the target node already has a running test. Use lab_get_disk_layouts / lab_get_layer_catalog / lab_get_plan_catalog to build valid picker values first.',
+    'Launch a test scenario against the stack and (with wait=true) return the final run state, the parsed result (summary counts + per-case breakdown + captured service log slices), the structured event timeline, and the run log tail. 409 if the target node already has a running test. Destructive scenario ids (the ones that drive provision/deprovision sagas) require this server to run with LAB_MCP_ALLOW_DESTRUCTIVE=1 — check lab_list_test_scenarios destructive flags before choosing a scenarioId. Use lab_get_disk_layouts / lab_get_layer_catalog / lab_get_plan_catalog to build valid picker values first.',
     {
       scenarioId: z.string().min(1).describe('Scenario id from lab_list_test_scenarios'),
       nodeIndex: z.number().int().min(0).nullable().optional().describe('Fleet node index to pin the run to'),
@@ -39,6 +40,15 @@ export function registerTestTools(server: McpServer, ctx: LabContext): void {
     },
     (args) =>
       call(ctx, async (client) => {
+        // registration gating cannot cover a multiplexed by-id launcher — check the scenario itself
+        const scenarios = await client.listTests({});
+        failOnError(scenarios, 'listTests');
+        const scenario = scenarios.body.find((candidate) => candidate.id === args.scenarioId);
+        if (scenario?.destructive && !options.allowDestructive) {
+          throw new Error(
+            `test scenario '${args.scenarioId}' is destructive — restart the MCP server with LAB_MCP_ALLOW_DESTRUCTIVE=1 to run it`,
+          );
+        }
         const res = await client.startTest({
           body: {
             scenarioId: args.scenarioId,

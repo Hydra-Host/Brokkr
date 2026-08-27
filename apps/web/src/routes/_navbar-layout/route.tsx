@@ -8,19 +8,18 @@ import { Menu, X } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 import { COMPANY_URL } from '~/lib/branding';
 import { getDocsUrl } from '~/lib/runtime-config';
+import { PluginSlot } from '~/plugin-host';
 
-const navItems = [
+type HostNavItem =
+  | { label: string; to: string; external: true }
+  | { label: string; to: '/inventory'; external?: false };
+
+const leadingNavItems: HostNavItem[] = [
   { label: 'Docs', to: getDocsUrl(), external: true },
-  {
-    label: 'Inventory',
-    to: '/inventory',
-  },
-  {
-    label: 'Learn More',
-    to: COMPANY_URL,
-    external: true,
-  },
+  { label: 'Inventory', to: '/inventory' },
 ];
+
+const trailingNavItems: HostNavItem[] = [{ label: 'Learn More', to: COMPANY_URL, external: true }];
 
 export const Route = createFileRoute('/_navbar-layout')({
   component: NavbarLayout,
@@ -58,37 +57,13 @@ function NavbarLayout() {
           </Link>
 
           <div className="hidden items-center gap-4 md:flex">
-            {navItems.map((item) => {
-              const isCurrent = location.pathname.includes(item.to);
-
-              if (item.external) {
-                return (
-                  <a
-                    key={item.to}
-                    href={item.to}
-                    className={cn('bg-transparent', 'rounded-md px-3 py-2 text-sm font-semibold')}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {item.label}
-                  </a>
-                );
-              }
-
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  className={cn(
-                    isCurrent ? 'bg-primary/10 text-primary' : 'bg-transparent',
-                    'rounded-md px-3 py-2 text-sm font-semibold',
-                  )}
-                  preload="intent"
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
+            {leadingNavItems.map((item) => (
+              <HostNavLink key={item.to} item={item} variant="desktop" pathname={location.pathname} />
+            ))}
+            <PluginSlot name="public-navbar" variant="desktop" />
+            {trailingNavItems.map((item) => (
+              <HostNavLink key={item.to} item={item} variant="desktop" pathname={location.pathname} />
+            ))}
           </div>
         </div>
 
@@ -157,44 +132,25 @@ function NavbarLayout() {
               </div>
 
               <nav className="space-y-2 p-4">
-                {navItems.map((item) => {
-                  const isCurrent = location.pathname.includes(item.to);
-
-                  if (item.external) {
-                    return (
-                      <a
-                        key={item.to}
-                        href={item.to}
-                        onClick={() => setMobileMenuOpen(false)}
-                        className={cn(
-                          'block rounded-md px-3 py-2 text-base font-semibold transition-colors',
-                          'text-muted-foreground hover:bg-muted hover:text-white',
-                        )}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {item.label}
-                      </a>
-                    );
-                  }
-
-                  return (
-                    <Link
-                      key={item.to}
-                      to={item.to}
-                      onClick={() => setMobileMenuOpen(false)}
-                      className={cn(
-                        'block rounded-md px-3 py-2 text-base font-semibold transition-colors',
-                        isCurrent
-                          ? 'bg-primary/10 text-primary'
-                          : 'text-muted-foreground hover:bg-muted hover:text-white',
-                      )}
-                      preload="intent"
-                    >
-                      {item.label}
-                    </Link>
-                  );
-                })}
+                {leadingNavItems.map((item) => (
+                  <HostNavLink
+                    key={item.to}
+                    item={item}
+                    variant="mobile"
+                    pathname={location.pathname}
+                    onNavigate={() => setMobileMenuOpen(false)}
+                  />
+                ))}
+                <PluginSlot name="public-navbar" variant="mobile" onNavigate={() => setMobileMenuOpen(false)} />
+                {trailingNavItems.map((item) => (
+                  <HostNavLink
+                    key={item.to}
+                    item={item}
+                    variant="mobile"
+                    pathname={location.pathname}
+                    onNavigate={() => setMobileMenuOpen(false)}
+                  />
+                ))}
 
                 <div className="border-border space-y-2 border-t pt-6">
                   {user ? (
@@ -226,5 +182,61 @@ function NavbarLayout() {
         <Outlet />
       </div>
     </>
+  );
+}
+
+function HostNavLink({
+  item,
+  variant,
+  pathname,
+  onNavigate,
+}: {
+  item: HostNavItem;
+  variant: 'desktop' | 'mobile';
+  pathname: string;
+  onNavigate?: () => void;
+}) {
+  if (item.external) {
+    return (
+      <a
+        href={item.to}
+        onClick={onNavigate}
+        className={
+          variant === 'desktop'
+            ? 'rounded-md bg-transparent px-3 py-2 text-sm font-semibold'
+            : cn(
+                'block rounded-md px-3 py-2 text-base font-semibold transition-colors',
+                'text-muted-foreground hover:bg-muted hover:text-white',
+              )
+        }
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {item.label}
+      </a>
+    );
+  }
+
+  const isCurrent = pathname === item.to || pathname.startsWith(`${item.to}/`);
+
+  return (
+    <Link
+      to={item.to}
+      onClick={onNavigate}
+      className={
+        variant === 'desktop'
+          ? cn(
+              isCurrent ? 'bg-primary/10 text-primary' : 'bg-transparent',
+              'rounded-md px-3 py-2 text-sm font-semibold',
+            )
+          : cn(
+              'block rounded-md px-3 py-2 text-base font-semibold transition-colors',
+              isCurrent ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-white',
+            )
+      }
+      preload="intent"
+    >
+      {item.label}
+    </Link>
   );
 }

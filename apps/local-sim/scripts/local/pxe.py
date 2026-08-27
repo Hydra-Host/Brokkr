@@ -154,6 +154,7 @@ def _compile_ipxe(script: str, out: Path, arch: str, label: str) -> Path:
         log.skip(f"{out.name} up-to-date (embed script unchanged)")
         return out
     process_utils.ensure_docker_running()
+    process_utils.ensure_docker_buildx()
     target = _ipxe_make_target(arch)
     log.info(f"build {out.name} via docker buildx (target={target})")
     with tempfile.TemporaryDirectory(prefix="local-ipxe-build-") as tmp:

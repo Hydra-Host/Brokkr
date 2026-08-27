@@ -1,11 +1,10 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { load as loadYaml } from 'js-yaml';
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { getErrorMessage } from '../common/errors';
 import { parseBoundary, RenderedConfigSchema, type RenderedConfig } from '../common/pc-schemas';
-import { isSecretKey, looksLikeDsn, maskDsn } from '../common/redact';
+import { fingerprintSecret, isSecretKey, looksLikeDsn, maskDsn } from '../common/redact';
 import type { ProcessEnv } from '../contract';
 import { parseEnvEntries } from './env-entries';
 import { ProcessComposeClient } from './process-compose.client';
@@ -15,13 +14,6 @@ function maskEnvValue(key: string, value: string): string {
   if (isSecretKey(key)) return '***';
   if (looksLikeDsn(value)) return maskDsn(value);
   return value;
-}
-
-// Even with `reveal`, a secret-keyed value is NEVER returned raw — the fingerprint confirms identity without the credential leaving the box.
-function fingerprintSecret(value: string): string {
-  if (!value) return '***';
-  const sha = createHash('sha256').update(value).digest('hex').slice(0, 8);
-  return `***sha256:${sha} (len ${value.length})`;
 }
 
 export function displayEnvValue(key: string, value: string, reveal: boolean): string {

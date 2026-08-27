@@ -1,6 +1,6 @@
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
-import { formatPrice } from '@repo/utils/format';
+import { formatPrice } from '@repo/utils';
 import { Link } from '@tanstack/react-router';
 
 export interface InventoryCategory {

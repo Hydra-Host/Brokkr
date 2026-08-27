@@ -9,11 +9,12 @@ enum EventTier {
   ACTIVITY
 }
 
-/// Durability actually achieved for the row, not the durability intended. ATOMIC is the only
-/// compliance-grade class: POST_COMMIT loses the row if the process dies after the external mutation.
+/// Durability actually achieved, not intended: only ATOMIC is compliance-grade, POST_COMMIT can be lost
+/// after the external mutation, and a MIRROR row's preferred record elsewhere is not guaranteed either.
 enum EventDurability {
   ATOMIC
   POST_COMMIT
+  MIRROR
   BEST_EFFORT
 }
 
@@ -60,6 +61,12 @@ model EventLog {
   @@index([organizationId, actorId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([organizationId, actionKey, createdAt(sort: Desc), id(sort: Desc)])
   @@index([organizationId, resource, targetId, createdAt(sort: Desc), id(sort: Desc)])
+  // The retention sweep filters `createdAt` across every tenant, which no organization-leading
+  // index can serve; without this the nightly prune sequentially scans the table once per batch.
+  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "EventLog_createdAt_id_desc_idx")
+  // Cross-organization operator review (admin panel) matches no organizationId-leading
+  // prefix. Its newest-first feed rides EventLog_createdAt_id_desc_idx, owned by REN-946.
+  @@index([actionKey, createdAt(sort: Desc), id(sort: Desc)], map: "EventLog_actionKey_createdAt_id_desc_idx")
 }
 
 /// The unique constraint IS the access throttle — a read-then-write check races under
@@ -73,4 +80,6 @@ model EventLogAccessBucket {
   createdAt      DateTime @default(now())
 
   @@unique([organizationId, actorKey, hourBucket])
+  // Serves the same cross-tenant retention sweep as EventLog_createdAt_id_desc_idx.
+  @@index([createdAt])
 }

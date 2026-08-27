@@ -14,10 +14,12 @@ import { FleetStatusService } from '../fleet/fleet-status.service';
 import { FleetTopologyService } from '../fleet/fleet-topology.service';
 import { PORTS, resolvePgUrl } from '../ports';
 import { RunnerService, type RunState } from '../runner/runner.service';
+import { applyScopeNamespaces, applyScopeProcesses } from '../services/apply-scope';
 import { parseEnvEntries } from '../services/env-entries';
 import type { FleetStatus } from '../services/fleet-health';
 import { swapDiffSet } from '../services/mode-drift';
 import { OverlayStoreService } from '../services/overlay-store';
+import { devenvRoot } from '../services/paths';
 import {
   classifyProc,
   depsReady,
@@ -27,7 +29,7 @@ import {
   type ProcDiag,
 } from '../services/process-compose.client';
 import { RedeployService } from '../services/redeploy.service';
-import { datastoreIds, RenderedConfigService } from '../services/rendered-config.service';
+import { datastoreIds, RenderedConfigService, resolveCatalog } from '../services/rendered-config.service';
 import { RepoBranchService } from '../services/repo-branch.service';
 import type { RestartWipe } from '../services/restart-marker';
 import { StackRestartService } from '../services/stack-restart.service';
@@ -56,7 +58,17 @@ const HUB_PROC = 'hub-api';
 
 const BM_CAP_ENSURE_SCRIPT = 'scripts/tasks/bm-cap-ensure.sh';
 
+// Order is safety-critical: the acl password derives from the zone NAME (spoke.nix), so a bridge
+// restart ahead of the seed dials a password the acl user does not hold and dies on WRONGPASS.
+const ZONE_SEED_TASKS = ['sim:seed', 'redis-acl:seed', 'zone-crypto:mint-tokens'] as const;
+
+const ZONE_SEED_REQUIRED_PROCS = [HUB_PROC, 'redis', 'postgres'];
+
 const SWAP_ALLOWED_PROCS = new Set([SPOKE_PROC, HUB_PROC, FLEET_PROC]);
+const FLIP_SCOPE = applyScopeProcesses(SWAP_ALLOWED_PROCS);
+
+// zone-seed re-credentials the bridges and restarts them; nothing else may be recreated under it.
+const ZONE_SEED_SCOPE = applyScopeNamespaces('spoke');
 
 // `local.fleet apply` exit code for "bare-metal drift, converge it from the lab" (fleet.py cmd_apply).
 const BM_DRIFT_EXIT = 3;
@@ -111,6 +123,17 @@ export const STACK_OPS: StackOpDef[] = [
     task: 'seed (sql-seed generators)',
     description:
       'Re-run the generator-driven sim seed against the running hub (devices, OS catalog, SSH keys, listing). Idempotent; needs the hub up.',
+    section: 'stack',
+    group: 'bringup',
+    destructive: false,
+    needsSudo: false,
+  },
+  {
+    id: 'zone-seed',
+    label: 'Seed zones',
+    task: `devenv tasks run ${ZONE_SEED_TASKS.join(' → ')}`,
+    description:
+      'Make a saved zone set live on the hub: seed the Zone rows, provision each zone’s Redis ACL user, then mint its registration token — in that order — then restart the bridges so they dial the new credentials. Idempotent; re-running against an unchanged zone set is a no-op. Each task runs alone (--mode single), so the running stack is used as-is and nothing re-runs hub:init. Needs the datastores and the hub already up.',
     section: 'stack',
     group: 'bringup',
     destructive: false,
@@ -943,7 +966,7 @@ export class StackService implements OnApplicationBootstrap {
     try {
       const info = await this.pc.processInfo(HUB_PROC);
       return (
-        parseEnvEntries(info.Environment ?? [])
+        parseEnvEntries(info.environment ?? [])
           .get('BROKKR_HUB_PRIVATE_KEY')
           ?.trim() || null
       );
@@ -1079,7 +1102,7 @@ export class StackService implements OnApplicationBootstrap {
 
     this.journalPhase(run, 'swap');
     this.runner.emit(run, '[mode] applying the overlay — the single restart event (spoke, hub-api, fleet)\n');
-    const applied = await this.rendered.applyOverlay(cfgPath);
+    const applied = await this.rendered.applyOverlay(cfgPath, FLIP_SCOPE);
     if (!applied) {
       this.runner.emit(run, '[mode] overlay apply failed — see logs; stack may be mid-swap, run Reconcile\n');
       return 1;
@@ -1262,6 +1285,76 @@ export class StackService implements OnApplicationBootstrap {
     return 0;
   }
 
+  /** `--mode single` runs each task against the stack as it stands, so a down process must fail here
+   *  under its own name, not 240s later inside sql-seed-run.sh as a missing-org timeout. */
+  private async zoneSeedBlocker(): Promise<string | null> {
+    let byName: Map<string, PcProcess>;
+    try {
+      byName = new Map((await this.pc.listAll()).map((p) => [p.name, p]));
+    } catch (e) {
+      return `the process list could not be read (${getErrorMessage(e)})`;
+    }
+    const down = ZONE_SEED_REQUIRED_PROCS.filter((name) => !procIsUp(byName.get(name)));
+    if (down.length > 0)
+      return `${down.join(', ')} ${down.length > 1 ? 'are' : 'is'} not up — run Stack up, then re-run Seed zones`;
+    // devenv bakes the whole task list into DEVENV_TASKS at bring-up, and devenv-tasks prefers it over
+    // --task-file, so a bridge the supervisor never booted with dies on TaskNotFound however it starts.
+    const absent = this.overlay
+      .labBridges()
+      .map((b) => b.proc)
+      .filter((proc) => !byName.has(proc));
+    if (absent.length === 0) return null;
+    return (
+      `${absent.join(', ')} ${absent.length > 1 ? 'are' : 'is'} not supervised, and the process list is ` +
+      `fixed at bring-up — recreate the stack with 'task down' then 'task up', which seeds the zone on the way up`
+    );
+  }
+
+  /** Stops at the first non-zero exit: a later task run against a zone the earlier one did not create
+   *  fails in a way that reads like a bug rather than a skipped step. */
+  private async zoneSeed(run: RunState): Promise<number | null> {
+    const blocker = await this.zoneSeedBlocker();
+    if (blocker !== null) {
+      this.runner.emit(run, `\n[zone-seed] refusing: ${blocker}\n`);
+      return 1;
+    }
+    for (const task of ZONE_SEED_TASKS) {
+      this.runner.emit(run, `\n[zone-seed] ${task}\n\n`);
+      // devenv resolves its env from the devenv root, not the runner's engine root. --mode single:
+      // each task deps on devenv:processes:*, whose default closure starts a second redis/postgres.
+      const rc = await this.runner.spawn(
+        run,
+        'devenv',
+        ['tasks', 'run', task, '--mode', 'single'],
+        {},
+        { cwd: devenvRoot() },
+      );
+      if (run.cancelled) return null;
+      if (rc !== 0) {
+        this.runner.emit(run, `\n[zone-seed] ${task} exited ${rc} — stopping before the tasks that depend on it\n`);
+        return rc;
+      }
+    }
+    this.runner.emit(run, '\n[zone-seed] restarting the bridges so they dial the new credentials\n\n');
+    try {
+      await this.rendered.applyOverlay(undefined, ZONE_SEED_SCOPE);
+    } catch (e) {
+      this.runner.emit(run, `[zone-seed] the overlay could not be applied: ${getErrorMessage(e)}\n`);
+      return 1;
+    }
+    const catalog = await this.rendered.catalogOrEmpty();
+    const spokes = (await this.pc.list())
+      .filter((proc) => resolveCatalog(proc.name, catalog)?.entry.namespace === 'spoke')
+      .map((proc) => proc.name);
+    for (const name of spokes) {
+      const res = await this.redeploy.control(name, 'restart');
+      this.runner.emit(run, `  ${name} ${res.ok ? 'restarted' : `did not restart — ${res.detail ?? 'no detail'}`}\n`);
+      if (!res.ok) return 1;
+    }
+    this.overlay.clearSatisfiedBy('zone-apply');
+    return 0;
+  }
+
   private orchestrate(id: string, run: RunState, allowDataLoss = false, force = false): Promise<void> {
     const done = (c: number | null) => this.runner.finalize(run, c);
     if (id === 'up') return this.controlPlaneUp(run).then(done);
@@ -1284,6 +1377,7 @@ export class StackService implements OnApplicationBootstrap {
       return this.detachedRestart(run, 'reset (wipe data + fleet overlays)', 'stack-reset').then(done);
     if (id === 'purge') return this.detachedRestart(run, 'purge (pristine devenv state)', 'stack-purge').then(done);
     if (id === 'seed') return this.runner.spawn(run, 'bash', [SEED_SCRIPT]).then(done);
+    if (id === 'zone-seed') return this.zoneSeed(run).then(done);
     if (id === 'db-drift') return this.dbDrift(run).then(done);
     if (id === 'db-migrate-deploy') return this.dbMigrateDeploy(run).then(done);
     if (id === 'fleet-status') return this.runner.spawn(run, 'python', ['-m', 'local.status']).then(done);

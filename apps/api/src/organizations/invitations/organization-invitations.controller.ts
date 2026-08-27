@@ -1,12 +1,14 @@
 import { Controller } from '@nestjs/common';
 import { contract } from '@repo/api-client';
 import { TsRestHandler, tsRestHandler } from '@ts-rest/nest';
+import { AuditAction } from 'src/event-log/audit-action.decorator';
 import { OrganizationInvitationsService } from './organization-invitations.service';
 
 @Controller()
 export class OrganizationInvitationsController {
   constructor(private readonly organizationInvitationsService: OrganizationInvitationsService) {}
 
+  @AuditAction({ actionKey: 'member.invited', resource: 'invitation', action: 'create' })
   @TsRestHandler(contract.createInvitation)
   async createInvitation() {
     return tsRestHandler(contract.createInvitation, async ({ body }) => {
@@ -69,6 +71,7 @@ export class OrganizationInvitationsController {
     });
   }
 
+  @AuditAction({ actionKey: 'invitation.cancelled', resource: 'invitation', action: 'delete' })
   @TsRestHandler(contract.cancelInvitation)
   async cancelInvitation() {
     return tsRestHandler(contract.cancelInvitation, async ({ params }) => {

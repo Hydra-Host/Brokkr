@@ -1,3 +1,4 @@
+import { isRecord } from '@repo/utils';
 import yaml from 'js-yaml';
 
 import { assertNoControlChars, renderEnv, shellQuote, stripTrailingNewline } from './env';
@@ -121,10 +122,6 @@ function sanitizePubkeys(pubkeys: string[]): string[] {
   return pubkeys.flatMap(sanitizePubkey);
 }
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
 const LOCKED_BASE_KEYS = ['hostname', 'preserve_hostname', 'manage_etc_hosts', 'ssh_pwauth'] as const;
 
 // `users` must merge into the seed, not a cloud.cfg.d fragment — cloud-init doesn't merge list keys across sources, so customer accounts would silently never get created.
@@ -134,9 +131,9 @@ function mergeCloudConfig(base: Record<string, unknown>, customer: Record<string
     const bv = out[key];
     if (Array.isArray(bv) && Array.isArray(cv)) {
       out[key] = [...bv, ...cv];
-    } else if (isPlainObject(bv) && isPlainObject(cv)) {
+    } else if (isRecord(bv) && isRecord(cv)) {
       out[key] = mergeCloudConfig(bv, cv);
-    } else if (!Array.isArray(bv) && !isPlainObject(bv)) {
+    } else if (!Array.isArray(bv) && !isRecord(bv)) {
       out[key] = cv;
     }
   }
@@ -194,7 +191,7 @@ export function renderUserData(input: {
     if (Array.isArray(doc['users'])) {
       const seen = new Set<string>();
       doc['users'] = doc['users'].filter((u) => {
-        const name = isPlainObject(u) ? u['name'] : undefined;
+        const name = isRecord(u) ? u['name'] : undefined;
         if (typeof name !== 'string') return true;
         if (seen.has(name)) return false;
         seen.add(name);
@@ -225,7 +222,7 @@ export function parseCustomUserDataMapping(customUserDataYaml: string | undefine
   } catch {
     return null;
   }
-  return isPlainObject(parsed) ? parsed : null;
+  return isRecord(parsed) ? parsed : null;
 }
 
 export function renderCustomUserDataCfg(customUserDataYaml: string | undefined): string | null {

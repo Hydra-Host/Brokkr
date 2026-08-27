@@ -1,12 +1,12 @@
 import type { Deployment } from '@repo/api-client';
-import { Badge } from '@repo/ui/components/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import {
   DiagnosticDataView,
   DiagnosticStatusIcon,
   deriveDiagnosticStatus,
   extractDiagnosticErrors,
-} from '@repo/ui/components/diagnostic-data-view';
+} from '@repo/domain-ui/components/diagnostic-data-view';
+import { Badge } from '@repo/ui/components/badge';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@repo/ui/components/tabs';
 import { AlertTriangle, CheckCircle } from 'lucide-react';
 

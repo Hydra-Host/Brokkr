@@ -19,6 +19,7 @@ import { Button } from '@repo/ui/components/button';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { FormInput } from '@repo/ui/form/form-input';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
+import { unwrapErrorMessage } from '@repo/utils';
 import { tsr } from '~/lib/api';
 
 export const Route = createFileRoute('/_app/organizations/webhooks/delete/$webhookId')({
@@ -76,7 +77,7 @@ function DeleteWebhookPage() {
         setError('Failed to delete webhook');
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete webhook. Please try again.';
+      const message = unwrapErrorMessage(err, 'Failed to delete webhook. Please try again.');
       setError(message);
     }
   };

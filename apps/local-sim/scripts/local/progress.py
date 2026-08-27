@@ -7,14 +7,14 @@ import json
 import os
 import tempfile
 import time
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from local.config import get_settings
 
 
-class Phase(str, Enum):
+class Phase(StrEnum):
     IDLE = "idle"
     INIT = "init"
     UP = "up"
@@ -22,7 +22,7 @@ class Phase(str, Enum):
     DOWN = "down"
 
 
-class Step(str, Enum):
+class Step(StrEnum):
     BUILD_LIVE_IMG = "build-live-img"
     BUILD_AGENT_IMG = "build-agent-img"
     BUILD_GRUB = "build-grub"
@@ -105,9 +105,16 @@ def set(  # deliberate module-API verb (shadows the builtin)
     total: int = 0,
     error: str | None = None,
     started: bool = False,
+    accel: str | None = None,
+    accel_forced: bool | None = None,
 ) -> None:
     """Write the current bring-up step (phase/label/ordinal derive from the ``Step`` enum). ``started=True``
-    stamps ``startedAt``. Best-effort: writes are swallowed so progress reporting never breaks a bring-up."""
+    stamps ``startedAt``. Best-effort: writes are swallowed so progress reporting never breaks a bring-up.
+
+    ``accel`` (the qemu accelerator in use) and ``accel_forced`` (whether a setting chose it rather
+    than the probe) are carried forward from the previous record when not passed — this rebuilds the
+    record from scratch, so an omitted key would be erased.
+    """
     prev = read() or {}
     now = time.time()
     rec = {
@@ -122,6 +129,8 @@ def set(  # deliberate module-API verb (shadows the builtin)
         "startedAt": now if started or "startedAt" not in prev else prev["startedAt"],
         "updatedAt": now,
         "error": error,
+        "accel": accel if accel is not None else prev.get("accel"),
+        "accelForced": accel_forced if accel_forced is not None else prev.get("accelForced"),
     }
     _write(rec)
 

@@ -4,6 +4,7 @@ GET at power-on hits the cache instead of stalling on the on-demand build."""
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from subprocess import CalledProcessError
 from typing import Protocol
@@ -134,12 +135,42 @@ def _fetch_inventory(url: str) -> dict:
     return json.loads(res.stdout)
 
 
+def _spoke_answers(url: str) -> bool:
+    """Liveness only, and deliberately NOT curl_cmd(): its --retry 2 --retry-delay 5 makes each failed
+    poll cost ~10s, which would make this loop run ~17 minutes while reporting tries * delay."""
+    res = run("curl", "-fsS", "--max-time", "3", "--http1.1", "-o", "/dev/null", url, check=False, capture=True)
+    return res.returncode == 0
+
+
+def wait_for_spoke(fleet: Fleet, tries: int = 80, delay: int = 3) -> bool:
+    """Block until every zone's spoke answers its discovery inventory, the way sql-seed-run.sh waits on
+    the Hub. fleet:init's `after` on the spoke process is inert (devenv launches every process with
+    --ignore-process-deps), so without this the images check races a spoke that is still starting."""
+    ordinals = sorted({fleet.zone_port_ordinal(n.zone) for n in fleet.nodes})
+    pending = [f"{zone_endpoint(o)}/api/discovery/inventory" for o in ordinals]
+    started = time.monotonic()
+    for attempt in range(tries):
+        pending = [u for u in pending if not _spoke_answers(u)]
+        if not pending:
+            return True
+        if attempt == 0:
+            log.info(f"waiting for the spoke at {', '.join(pending)}…")
+        elif attempt % 10 == 0:
+            log.info(f"still waiting for the spoke ({int(time.monotonic() - started)}s)…")
+        time.sleep(delay)
+    waited = int(time.monotonic() - started)
+    for url in pending:
+        log.error(f"spoke did not answer {url} after {waited}s — is the spoke process running?")
+    return False
+
+
 def assert_discovery_images_served(fleet: Fleet) -> None:
     """Warn (loudly) if the spoke isn't serving the host-arch discovery images, but do NOT abort — an
     offline network shouldn't block ``task up``, and SystemExit would escape @_records_failure. Dedup
     keyed on (zone ordinal, arch) so every arch in a mixed-arch zone is checked."""
     checked: set[tuple[int, str]] = set()
     missing_reports: list[str] = []
+    unreachable_reports: list[str] = []
     for node in fleet.nodes:
         ordinal = fleet.zone_port_ordinal(node.zone)
         try:
@@ -164,11 +195,20 @@ def assert_discovery_images_served(fleet: Fleet) -> None:
             by_name = {f.get("name"): f for f in arch_entry.get("files", []) if isinstance(f, dict)}
             missing = [n for n in REQUIRED_DISCOVERY_FILES if not by_name.get(n, {}).get("present")]
         except Exception as e:  # malformed/unreachable inventory means "not serving": report it
-            missing_reports.append(f"zone ordinal {ordinal}: could not read {url} ({e})")
+            unreachable_reports.append(f"zone ordinal {ordinal}: could not read {url} ({e})")
             continue
         if missing:
             missing_reports.append(f"zone ordinal {ordinal} ({want_arch}): missing {', '.join(missing)}")
 
+    if unreachable_reports:
+        for r in unreachable_reports:
+            log.error(r)
+        log.error(
+            "the spoke is not answering — nothing can be said about the discovery images yet. This is "
+            "the spoke process being down or still starting, not an asset-origin problem: check the "
+            "spoke in the control center (Stack → spoke) or `task logs`. Continuing bring-up anyway — "
+            "the fleet won't PXE-boot until the spoke is up."
+        )
     if missing_reports:
         for r in missing_reports:
             log.error(r)

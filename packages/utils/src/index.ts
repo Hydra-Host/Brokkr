@@ -7,6 +7,7 @@ export * from './customization-layers';
 export * from './display';
 export * from './enums';
 export * from './error';
+export * from './filter-leaves';
 export * from './format';
 export * from './gpu-family';
 export * from './html';

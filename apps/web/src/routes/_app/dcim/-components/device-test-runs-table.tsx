@@ -1,11 +1,11 @@
 import type { DcimDeviceTestRunWithDevice } from '@repo/api-client';
+import { ServerDataTable } from '@repo/domain-ui/components/server-data-table';
+import type { ServerColumnDef } from '@repo/domain-ui/hooks/use-server-table';
+import { useServerTable } from '@repo/domain-ui/hooks/use-server-table';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { ClickToCopyString } from '@repo/ui/components/click-to-copy-string';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@repo/ui/components/dialog';
-import { ServerDataTable } from '@repo/ui/components/server-data-table';
-import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
-import { useServerTable } from '@repo/ui/hooks/use-server-table';
 import { formatDuration } from '@repo/utils';
 import { keepPreviousData } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';

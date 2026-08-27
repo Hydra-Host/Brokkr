@@ -89,6 +89,15 @@ def _baked_url_drift(iface_ip: str | None) -> str:
     return "in-sync" if stamped == expected else f"stale ({stamped})"
 
 
+def _accel_footer() -> str | None:
+    """The TCG degradation footer, or None under hardware acceleration.
+    Imports deferred: ``local.fleet`` loops back via ``local.verify``; ``--ready`` skips the probe."""
+    from local.fleet import TCG_DEGRADATION_BRIEF
+    from local.host_os import detect_accel
+
+    return TCG_DEGRADATION_BRIEF if detect_accel() == "tcg" else None
+
+
 def _print_bm_table(fleet: Fleet) -> None:
     bm = fleet.baremetal_raw
     iface_ip = process_utils.iface_ipv4(bm.iface) if bm else None
@@ -137,6 +146,8 @@ def main(fleet: str | None, ready_check: bool) -> None:
         if ready_check:
             raise SystemExit(0 if bm_ready(f, applied.read()) else 1)
         _print_bm_table(f)
+        if (accel_footer := _accel_footer()) is not None:
+            Console().print(f"[yellow]{accel_footer}[/yellow]")
         drift = applied.diff(f, applied.read(), host_os())
         if not drift.in_sync:
             Console().print(f"[yellow]{applied.drift_summary_line(drift)}[/yellow]")
@@ -171,6 +182,8 @@ def main(fleet: str | None, ready_check: bool) -> None:
         )
 
     Console().print(table)
+    if (accel_footer := _accel_footer()) is not None:
+        Console().print(f"[yellow]{accel_footer}[/yellow]")
 
     from local import applied
 

@@ -1,4 +1,9 @@
-import type { OrganizationMembershipRole, PluginAuthType, PluginRequestContext } from '@hydrahost/plugin-sdk';
+import type {
+  OrganizationMembershipRole,
+  PluginAuthType,
+  PluginOperatorPolicy,
+  PluginRequestContext,
+} from '@hydrahost/plugin-sdk';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 
 import { AuthType } from '../auth/identity-context';
@@ -46,6 +51,17 @@ export class HostPluginRequestContext implements PluginRequestContext {
 
   requireInstanceOperator(): void {
     this.contextService.requireInstanceOperator();
+  }
+
+  requireOperator(policy?: PluginOperatorPolicy): void {
+    if (this.isInstanceOperator) {
+      return;
+    }
+    const adminOrganizationId = policy?.adminOrganizationId ?? '';
+    if (adminOrganizationId !== '' && this.organizationId === adminOrganizationId) {
+      return;
+    }
+    throw new ForbiddenException('This action is restricted to the instance operator');
   }
 
   requireSessionAuth(): void {

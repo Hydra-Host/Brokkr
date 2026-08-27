@@ -2,23 +2,9 @@ import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
+import { getIpamStatusBadgeVariant } from '@repo/utils';
 import { Link, Outlet, createFileRoute } from '@tanstack/react-router';
 import { tsr } from '~/lib/api';
-
-function statusVariant(status: string) {
-  switch (status) {
-    case 'ACTIVE':
-      return 'default';
-    case 'RESERVED':
-      return 'secondary';
-    case 'DEPRECATED':
-      return 'destructive';
-    case 'DHCP':
-      return 'outline';
-    default:
-      return 'outline';
-  }
-}
 
 export const Route = createFileRoute('/_app/ipam/ip-addresses/$ipAddressId')({
   staticData: { breadcrumb: 'IP Address Detail' },
@@ -55,7 +41,7 @@ function IpAddressLayout() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="font-mono text-lg font-medium">{ipAddress.address}</span>
-          <Badge variant={statusVariant(ipAddress.status)}>{ipAddress.status}</Badge>
+          <Badge variant={getIpamStatusBadgeVariant(ipAddress.status)}>{ipAddress.status}</Badge>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" asChild>

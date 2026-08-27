@@ -5,6 +5,10 @@
     "signature": true
   },
   "globalDependencies": ["**/.env.*local"],
+  // pnpm 11 fires an implicit install from `pnpm exec`/`pnpm run` when node_modules looks stale.
+  // The image builds disable it with pnpm_config_verify_deps_before_run, but turbo's strict env
+  // mode filters that out before spawning a task, so the install fires again inside every task.
+  "globalPassThroughEnv": ["pnpm_config_verify_deps_before_run"],
   "globalEnv": [
     "NODE_ENV",
     "LOG_LEVEL",

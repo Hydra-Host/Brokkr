@@ -48,17 +48,30 @@ function build(
         throw new ForbiddenException(`missing ${resource}:${action}`);
     }),
     buildAuditPayload: vi.fn(() => ({ triggeredBy: 'u1', triggeredByEmail: 'a@example.com', organizationId: 'org-1' })),
+    pushIntent: vi.fn(() => 'intent-1'),
+    finalizeIntents: vi.fn(),
+    requestId: 'req-1',
+    actorFields: vi.fn(() => ({
+      actorType: 'UI',
+      actorId: 'u1',
+      actorLabel: 'a@example.com',
+      apiKeyId: null,
+      apiKeyLabel: null,
+    })),
+    requestFields: vi.fn(() => ({ method: 'POST', path: '/api/v1/api-keys', ipAddress: null, userAgent: null })),
   } as unknown as ContextService;
 
+  const apiKey = {
+    update: vi.fn().mockResolvedValue({}),
+    delete: vi.fn().mockResolvedValue({}),
+    findUnique: vi.fn().mockResolvedValue({ id: 'key-1', organizationId: 'org-1' }),
+  };
   const prisma = {
-    apiKey: {
-      update: vi.fn().mockResolvedValue({}),
-      delete: vi.fn().mockResolvedValue({}),
-      findUnique: vi.fn().mockResolvedValue({ id: 'key-1', organizationId: 'org-1' }),
-    },
+    apiKey,
     member: {
       findFirst: vi.fn().mockResolvedValue({ assignedRoleId: 'owner-role' }),
     },
+    $transaction: vi.fn((fn: (tx: { apiKey: typeof apiKey }) => unknown) => fn({ apiKey })),
   };
   const authClient = { api: { createApiKey, deleteApiKey, updateApiKey } };
   const rbacResolver = {
@@ -66,12 +79,14 @@ function build(
   };
 
   const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  const eventLog = { record: vi.fn().mockResolvedValue(undefined), recordInTransaction: vi.fn().mockResolvedValue(undefined) };
 
   const service = new OrganizationApiKeysService(
     ctx,
     prisma as never,
     authClient as never,
     rbacResolver as never,
+    eventLog as never,
     logger as never,
   );
   return {

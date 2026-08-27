@@ -3,9 +3,10 @@
 
 ``47-vrfs-vlan-groups`` seeds VRF + VLAN groups but no VLANs; ``46-prefixes`` only
 emits an ``IpRange`` when DHCP is on (dynamic pool). Admin IPAM list/create/edit
-needs always-on VLAN + range inventory. Per zone: data/mgmt/reserved VLANs (tied
-to the zone VLAN group + sim VRF), small admin pools on primary + management
-prefixes, and prefix→VLAN links so VLAN ``prefixCount`` is non-zero.
+needs always-on VLAN + range inventory. Per zone: data/mgmt/reserved VLANs, tied
+to that zone's VLAN group, with the vid stepped by the zone index so the one sim
+VRF stays unique. The admin pools and the prefix→VLAN links describe the shared
+subnet, so they belong to the zone that owns its prefixes (``IPAM_OWNER_INDEX``).
 Numbering: 48 > 47."""
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import yaml
 from local.config import get_settings
 from local.derived import LOCAL_NS
 from local.sqlemit import header, logs_to_stderr, q
-from local.zones import zone_uuid
+from local.zones import IPAM_OWNER_INDEX, zone_uuid
 
 # (slug, display name, VID, IpamRole|None, VlanStatus, attach_to_prefix_slug|None)
 _VLANS = [
@@ -165,11 +166,17 @@ def generate() -> str:
         for slug, display, vid, role, status, prefix_slug in _VLANS:
             vlan_id = _vlan_uuid(zid, slug)
             name = f"{zname}-{display}"
-            out.append(_vlan_sql(vlan_id, name, vid, status, role, org_id, vrf_id, zid, group_id))
-            if prefix_slug:
+            # Vlan_active_unique_vid is (org, vrfId, vid) and every zone shares the one sim VRF, so
+            # the vid steps with the zone index. Base vids are 100 apart and indices stop at 88.
+            out.append(_vlan_sql(vlan_id, name, vid + z["index"], status, role, org_id, vrf_id, zid, group_id))
+            if prefix_slug and z["index"] == IPAM_OWNER_INDEX:
                 out.append(_attach_prefix_vlan_sql(_prefix_uuid(zid, prefix_slug), vlan_id))
 
         out.append("\n")
+        # The admin pools carve up the shared subnet, so they belong to the zone that owns its
+        # prefixes. A pool per zone would be the same address range against a missing prefix.
+        if z["index"] != IPAM_OWNER_INDEX:
+            continue
         for slug, purpose, net_key, prefix_slug, start_off, end_off in _RANGES:
             net = ipaddress.ip_network(network[net_key], strict=False)
             if start_off >= net.num_addresses - 1 or end_off >= net.num_addresses - 1:

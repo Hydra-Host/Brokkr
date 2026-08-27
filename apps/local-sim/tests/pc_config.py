@@ -20,6 +20,9 @@ _MACOS_RUNTIME_DIR_RE = re.compile(r"/tmp/devenv-[0-9a-f]+")
 _ARCH_RE = re.compile(r"^(DISCOVERY_ARCHITECTURES=)(amd64|arm64)$", re.M)
 _AT_REST_KEY_RE = re.compile(r"^(BRIDGE_AT_REST_KEY=).*$")
 _FLEET_SOURCE_RE = re.compile(r"^(LOCAL_FLEET_SOURCE=)(/nix/store/[a-z0-9]{32}-\S*fleet\.yml)$")
+# The devenv CLI is the operator's install, not a repo pin, so a frozen version makes this suite
+# pass or fail by whoever runs it. Toolchain the nixpkgs pin DOES own (bash) stays pinned.
+_DEVENV_TASKS_RE = re.compile(r"(rust_devenv-tasks-)[0-9][0-9.]*")
 
 
 def render_pc_config() -> dict:
@@ -109,6 +112,7 @@ def normalize_str(s: str) -> str:
     s = s.replace(str(Path.home()), "$HOME")
     s = _FLEET_SOURCE_RE.sub(_fleet_source_digest, s)
     s = _STORE_HASH_RE.sub("/nix/store/$HASH-", s)
+    s = _DEVENV_TASKS_RE.sub(r"\1$DEVENV_TASKS", s)
     s = _RUNTIME_DIR_RE.sub("/run/user/$UID/devenv-$ID", s)
     s = _MACOS_RUNTIME_DIR_RE.sub("/run/user/$UID/devenv-$ID", s)
     s = _ARCH_RE.sub(r"\1$ARCH", s)

@@ -7,8 +7,10 @@ export const RunSectionSchema = z
 export type RunSection = z.infer<typeof RunSectionSchema>;
 
 export const RunStatusSchema = z
-  .enum(['running', 'passed', 'failed', 'cancelled'])
-  .describe("running until the child exits; 'cancelled' only when the API sent the SIGTERM itself");
+  .enum(['running', 'passed', 'failed', 'cancelled', 'orphaned'])
+  .describe(
+    "running until the child exits; 'cancelled' only when the API sent the SIGTERM itself; 'orphaned' when the run outlived the API process that owned it",
+  );
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 
 export const RunSchema = z.object({

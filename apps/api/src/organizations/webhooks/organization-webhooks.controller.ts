@@ -1,12 +1,14 @@
 import { Controller } from '@nestjs/common';
 import { contract } from '@repo/api-client';
 import { TsRestHandler, tsRestHandler } from '@ts-rest/nest';
+import { AuditAction } from 'src/event-log/audit-action.decorator';
 import { OrganizationWebhooksService } from './organization-webhooks.service';
 
 @Controller()
 export class OrganizationWebhooksController {
   constructor(private readonly organizationWebhooksService: OrganizationWebhooksService) {}
 
+  @AuditAction({ actionKey: 'webhook.created', resource: 'webhook', action: 'create' })
   @TsRestHandler(contract.createWebhook)
   async createWebhook() {
     return tsRestHandler(contract.createWebhook, async ({ body }) => {
@@ -67,6 +69,7 @@ export class OrganizationWebhooksController {
     });
   }
 
+  @AuditAction({ actionKey: 'webhook.updated', resource: 'webhook', action: 'update' })
   @TsRestHandler(contract.updateWebhook)
   async updateWebhook() {
     return tsRestHandler(contract.updateWebhook, async ({ params, body }) => {
@@ -79,6 +82,7 @@ export class OrganizationWebhooksController {
     });
   }
 
+  @AuditAction({ actionKey: 'webhook.deleted', resource: 'webhook', action: 'delete' })
   @TsRestHandler(contract.deleteWebhook)
   async deleteWebhook() {
     return tsRestHandler(contract.deleteWebhook, async ({ params }) => {

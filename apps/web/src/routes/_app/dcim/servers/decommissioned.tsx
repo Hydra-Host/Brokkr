@@ -2,11 +2,11 @@ import { keepPreviousData } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 
 import type { Server } from '@repo/api-client';
-import { DeviceStatusBadge } from '@repo/ui/components/device-status-badge';
-import { ServerDataTable } from '@repo/ui/components/server-data-table';
+import { DeviceStatusBadge } from '@repo/domain-ui/components/device-status-badge';
+import { ServerDataTable } from '@repo/domain-ui/components/server-data-table';
+import type { ServerColumnDef } from '@repo/domain-ui/hooks/use-server-table';
+import { useServerTable } from '@repo/domain-ui/hooks/use-server-table';
 import type { FilterFieldConfig } from '@repo/ui/hooks/use-filters';
-import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
-import { useServerTable } from '@repo/ui/hooks/use-server-table';
 import { useDcimDeviceListEvents } from '~/hooks/use-device-events';
 import { tsr } from '~/lib/api';
 

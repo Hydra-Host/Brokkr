@@ -123,6 +123,7 @@ export function PrefixDnsConfigCard({ prefixId }: { prefixId: string }) {
         </CardTitle>
         <CardDescription>
           Override zone-level DNS settings for this prefix. &quot;Inherit&quot; uses the zone default.
+          &quot;Enabled&quot; serves DNS on this prefix even when DHCP is not served here.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -132,7 +133,7 @@ export function PrefixDnsConfigCard({ prefixId }: { prefixId: string }) {
             name="serveDns"
             label="Serve DNS"
             options={serveDnsOptions}
-            description="Whether the bridge serves DNS on this prefix. Inherit defers to the zone setting."
+            description="Whether the bridge serves DNS on this prefix (IPv4 prefixes only). Enabled binds the bridge's local IPs in this prefix even without DHCP; Inherit defers to the zone setting."
           />
 
           <FormInput

@@ -30,7 +30,7 @@ Results flow hub-ward through a shared `results:inbox` queue. See [`docs/archite
 │   ├── live-agent/      # Device-side agent (@repo name: bridge-agent)
 │   ├── cli/             # Brokkr CLI (interactive TUI + one-shot --json commands)
 │   ├── web/             # Main React SPA (Vite, TanStack Router/Query, shadcn/ui)
-│   ├── local-sim/       # Local-dev simulator engine (Python): libvirt/qemu fleet + vbmc/sushy BMC sim
+│   ├── local-sim/       # Local-dev simulator engine (Python): libvirt/qemu fleet + ipmi_sim/sushy BMC sim
 │   ├── local-lab/       # Local-dev control-center API (NestJS, :3002)
 │   └── local-lab-web/   # Local-dev control-center web (Vite, :5175)
 ├── packages/
@@ -68,7 +68,9 @@ The flow: **run the bootstrap once → your shell auto-loads the toolchain → `
 - **OS**: macOS on **Apple Silicon** (Intel Macs are unsupported — the sim VMs are arm64 and need HVF), or **Linux** (x86_64 or arm64, with KVM).
 - **git** — for the `git clone` below (HTTPS works anonymously; add an SSH key to GitHub if you prefer the SSH URL). The one-line installer installs it for you on Linux.
 - **macOS**: Xcode Command Line Tools (`xcode-select --install`) and Homebrew (the bootstrap uses it to install Docker Desktop); **Docker Desktop must be _running_** — the fleet's iPXE/grub image builds run in containers. The one-line installer handles all three, and waits for the Docker daemon.
-- **Linux**: `sudo` access (the bootstrap installs the system virt stack via apt/dnf/pacman — Debian/Ubuntu, Fedora/RHEL, Arch).
+- **Linux**: `sudo` access (the bootstrap installs the system virt stack via apt/dnf/pacman — Debian/Ubuntu, Fedora/RHEL, Arch). You also need **docker with the `docker buildx` plugin** — the fleet's iPXE/grub image builds run in containers, and the `docker.io` package alone does not install buildx. The bootstrap installs it.
+- **Linux group membership**: the bootstrap adds you to the `libvirt`, `kvm` and `docker` groups. **Log out and back in, or reboot, before you run `task up`.** A new group is not active in the session that ran the bootstrap. `newgrp libvirt` activates one group in one shell, so it does not fix the stack supervisor.
+- **Linux under a hypervisor**: the fleet needs `/dev/kvm` in the guest. Turn nested virtualization on, or the fleet falls back to slow TCG software emulation. See [`devenv/README.md`](./devenv/README.md#prerequisites).
 - Roughly **16 GB RAM** and a few GB of free disk for the toolchain + fleet overlays.
 - Everything else — Nix, direnv, devenv, and the Node/pnpm/Python/qemu toolchain — is installed by the bootstrap or provided by devenv. **You don't install it by hand.**
 
@@ -120,8 +122,9 @@ bash apps/local-sim/provisioning/bootstrap.sh
 
 # 3. Open a fresh shell so the direnv hook loads.
 exec $SHELL
-#    Linux only: if the bootstrap just added you to the libvirt/kvm/docker groups, log out and
-#    back in (or run `newgrp libvirt`) so the membership takes effect.
+#    Linux only: the bootstrap adds you to the libvirt, kvm and docker groups. A new group is not
+#    active in this session. Log out and back in, or reboot, then continue. `newgrp libvirt`
+#    activates one group in one shell, so it does not fix the stack supervisor.
 
 # 4. Enter the repo — direnv auto-loads the devenv and builds the toolchain (first run is slow,
 #    a few minutes; later entries are instant). If direnv says the .envrc is untrusted, run
@@ -198,20 +201,17 @@ task local:status   # the host stacks table — every claimed slot and its check
 task down:others    # stop the sibling stacks, leave this one up
 task down:all       # stop every registered stack
 task purge:all      # DESTRUCTIVE: wipe every slot's host-global state
+task stack:release  # DESTRUCTIVE: tear this checkout's stack down and return its slot
 task stack:reslot   # DESTRUCTIVE: move this checkout to another slot
 ```
 
-`task up` does not stop siblings. It reports them. For the full slot model see [`devenv/README.md`](./devenv/README.md).
+`task up` does not stop siblings. It reports them. Mind the reach: `down:others`, `down:all` and `purge:all` act on every registered stack, so they stop other checkouts' work; the two `stack:*` verbs act on this checkout only. For the full slot model see [`devenv/README.md`](./devenv/README.md).
 
 ### Driving the control center
 
-The cockpit on :5175 has fourteen routes. **Overview** is the landing page. **Stack**, **Datastore**, **Hub**, **Storage** and **Fleet** manage the environment. **Scenarios** and **Results** run and review tests. **Stack settings**, **API docs** and **Audit log** sit under Config. The in-app **wiki** (`/wiki`) is the glossary, and two guided tours start from it — an orientation tour and an operations walkthrough.
+The cockpit on :5175 groups its pages into five areas. **Environment** holds the landing **Overview** plus **Stack**, **Datastore**, **Hub**, **Storage**, **Fleet** and **Layers**. **Testing** holds **Scenarios** and **Results**. **Configuration** holds a change **Summary**, **Stack knobs**, **Fleet nodes**, **Zones & topology** and **Advanced** — a save there writes your overlay, and a shared panel names the apply that makes the stack read it. **Apps** links to the running web UIs. **Reference** holds the **API docs**, the **Audit log**, the self-hosting guide and the in-app **wiki** (`/wiki`). Three guided decks start from the header: an orientation tour, a **Guided Deploy** that drives the real controls, and an operations walkthrough.
 
-The same control surface is available to an AI agent over MCP:
-
-```bash
-claude mcp add brokkr-lab -- pnpm --filter local-lab-mcp dev
-```
+The same control surface is available to an AI agent over MCP. Registration is automatic — every checkout gets the `brokkr-lab` entry from tracked devenv, with no manual add step.
 
 Destructive tools are not registered unless you set `LAB_MCP_ALLOW_DESTRUCTIVE=1`, and every mutation lands in the audit log. See [`apps/local-lab-mcp/README.md`](./apps/local-lab-mcp/README.md).
 
@@ -265,7 +265,7 @@ The schema is **multi-file** under `packages/database/prisma/models/`. Run `pnpm
 | **Taskfile**             | The lifecycle verbs (`task up`, `task down`, `task sim:*`) in `Taskfile.yml`.      |
 | **hub / spoke / agent**  | The product: customer backend / zone gateway / device agent.                       |
 | **fleet**                | The simulated libvirt/qemu device VMs (`apps/local-sim`).                          |
-| **vbmc / sushy**         | Simulated BMCs — IPMI (`virtualbmc`) / Redfish (`sushy`).                          |
+| **ipmi_sim / sushy**     | Simulated BMCs — IPMI (OpenIPMI `ipmi_sim`) / Redfish (`sushy`).                   |
 | **control center**       | The local-dev web cockpit (`apps/local-lab` + `apps/local-lab-web`).               |
 | **secretspec / profile** | The secrets contract (`secretspec.toml`); `local` (hermetic) vs `dev` / `stg`.     |
 | **polyrepo seam**        | `config.polyrepo.hub.path` — where the hub checkout lives (defaults to this repo). |

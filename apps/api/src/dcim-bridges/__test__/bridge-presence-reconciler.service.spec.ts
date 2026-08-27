@@ -75,7 +75,11 @@ describe('BridgePresenceReconcilerService', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('creates a Device(role=Bridge) + Bridge from a Redis presence hash', async () => {
-    const { service, upsert } = buildService({ instance_id: 'spoke-1', brokkr_worker_version: '1.2.3' });
+    const { service, upsert } = buildService({
+      instance_id: 'spoke-1',
+      brokkr_worker_version: '1.2.3',
+      brokkr_live_version: '0.9.1',
+    });
 
     await service.handleCron();
 
@@ -89,7 +93,11 @@ describe('BridgePresenceReconcilerService', () => {
       organizationId: ORG,
       zoneId: ZONE,
     });
-    expect(arg.create.bridge.create).toMatchObject({ redisQueuePrefix: ZONE, bridgeVersion: '1.2.3' });
+    expect(arg.create.bridge.create).toMatchObject({
+      redisQueuePrefix: ZONE,
+      bridgeVersion: '1.2.3',
+      brokkrLiveVersion: '0.9.1',
+    });
   });
 
   it('is write-on-change: an unchanged bridge is not re-upserted on the next tick', async () => {
@@ -109,6 +117,25 @@ describe('BridgePresenceReconcilerService', () => {
     await service.handleCron();
 
     expect(upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-upserts when only the brokkr-live version changes', async () => {
+    const { service, upsert, hgetall } = buildService({
+      instance_id: 'spoke-1',
+      brokkr_worker_version: '1.2.3',
+      brokkr_live_version: '0.9.1',
+    });
+
+    await service.handleCron();
+    hgetall.mockResolvedValueOnce({
+      instance_id: 'spoke-1',
+      brokkr_worker_version: '1.2.3',
+      brokkr_live_version: '0.9.2',
+    });
+    await service.handleCron();
+
+    expect(upsert).toHaveBeenCalledTimes(2);
+    expect(upsert.mock.calls[1][0].update.bridge.upsert.update).toMatchObject({ brokkrLiveVersion: '0.9.2' });
   });
 
   it('skips bridges whose zone row is missing/deleted', async () => {
@@ -558,6 +585,42 @@ describe('BridgePresenceReconcilerService', () => {
       const texts = getSqlTexts(tx.$executeRaw.mock.calls);
       expect(texts.filter((t: string) => t.includes('pg_advisory_xact_lock'))).toHaveLength(0);
       expect(texts.filter((t: string) => t.includes('INSERT INTO "Prefix"'))).toHaveLength(0);
+    });
+  });
+
+  describe('prefix reconcile', () => {
+    const oneNic = () =>
+      buildService({
+        instance_id: 'spoke-1',
+        interfaces_json: ifaceJson([
+          { iface: 'bond0', mac: 'aa:bb:cc:dd:ee:01', subnet: '10.0.0.0/24', ip: '10.0.0.5' },
+        ]),
+      });
+
+    const prefixInsert = (tx: { $executeRaw: { mock: { calls: unknown[][] } } }): string => {
+      const inserts = getSqlTexts(tx.$executeRaw.mock.calls).filter((t) => t.includes('INSERT INTO "Prefix"'));
+      expect(inserts).toHaveLength(1);
+      return inserts[0];
+    };
+
+    it('guards the exact CIDR org-wide and not only in the null-VRF slot', async () => {
+      const { service, tx } = oneNic();
+
+      await service.handleCron();
+
+      const insert = prefixInsert(tx);
+      expect(insert).toContain('AND prefix = ');
+      expect(insert).not.toContain('"vrfId" IS NULL');
+    });
+
+    it('still skips a subnet a prefix in its own zone already contains', async () => {
+      const { service, tx } = oneNic();
+
+      await service.handleCron();
+
+      const insert = prefixInsert(tx);
+      expect(insert).toContain('prefix >>= ');
+      expect(insert).toContain('"zoneId" = ');
     });
   });
 

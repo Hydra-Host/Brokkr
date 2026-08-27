@@ -15,7 +15,7 @@ import { JobTypeBadge } from '@repo/ui/components/job-type-badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@repo/ui/components/tooltip';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { cn } from '@repo/ui/utils';
-import { formatSize } from '@repo/utils/format';
+import { formatSize } from '@repo/utils';
 import { DeviceDiagnosticsCard } from '~/components/device-diagnostics-card';
 import { tsr } from '~/lib/api';
 import { COMPANY_NAME } from '~/lib/branding';
@@ -58,7 +58,7 @@ const lifecycleColumns: ColumnDef<Deployment['lifecycleActions'][number]>[] = [
 ];
 
 function DeploymentOverview() {
-  const deployment = parentRoute.useLoaderData() as Deployment;
+  const deployment = parentRoute.useLoaderData();
   useDocumentTitle(deployment.customer?.deviceName ?? 'Deployment');
 
   const stats = [

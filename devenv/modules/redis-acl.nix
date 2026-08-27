@@ -28,4 +28,11 @@
       '';
     };
   };
+
+  # Presentation metadata only; modules/overrides.nix derives the widget and the tooltip from the
+  # option above.
+  config.knobMeta."redisAcl.enable" = {
+    label = "Per-zone Redis ACLs";
+    group = "Security";
+  };
 }

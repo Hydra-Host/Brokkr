@@ -1,4 +1,124 @@
+# pnpm workspace + project settings. From pnpm 11 this file is the ONLY home for project
+# settings: `.npmrc` is restricted to auth/registry, and the `pnpm` field in package.json is no
+# longer read at all.
 packages:
   - 'apps/*'
   - 'packages/*'
   - 'packages/plugins/*'
+
+# Deliberately not pnpm's isolated default: the workspace and the deploy stages are built on it.
+# (engine-strict stays unset — pnpm's check reads its own bundled Node, not the Node 24 on PATH.)
+nodeLinker: hoisted
+
+# pnpm >=10 defaults this to true: pnpm reads packageManager and re-execs that version, fetching
+# it if absent. Left on, a Nix-provided pnpm 11 seeing a stale pin would download and run the
+# CVE-flagged pnpm 8 — verified, it printed 8.15.9 — and it would put a network fetch inside the
+# deliberately offline Docker deploy stages. The Nix pin and .pin-pnpm are the authority instead.
+managePackageManagerVersions: false
+
+# pnpm >=10 blocks dependency lifecycle scripts by default. Fail the install when an unlisted
+# dependency wants to run one, rather than skipping it silently and failing later at runtime.
+strictDepBuilds: true
+
+# pnpm >=10 defaults this to `install`, so every `pnpm run`/`pnpm exec` may spawn its own
+# install — one that does NOT hold brokkr-pnpm-install's lock, and races it into a broken tree.
+verifyDepsBeforeRun: false
+
+# pnpm >=10 requires this for `pnpm deploy`; without it deploy falls back to a legacy path that
+# refuses to read the lockfile and re-resolves every range from the registry at image-build time.
+injectWorkspacePackages: true
+
+# The dependencies allowed to run build scripts, derived from what pnpm actually reported rather
+# than guessed. Everything here ran its scripts under pnpm 8 too, so `true` is the no-behaviour-
+# change choice; the two `false` entries are the ones worth refusing. Anything absent fails the
+# install via strictDepBuilds above, so a new script-bearing dependency is a conscious decision.
+allowBuilds:
+  '@bufbuild/buf': true # fetches/links the buf binary; apps/bridge runs `pnpm exec buf generate`
+  '@prisma/engines': true # downloads the query/schema engines — without it every prisma call fails
+  prisma: true # CLI postinstall / engine placement
+  '@swc/core': true # native binding for the vitest transform path
+  esbuild: true # resolves the platform binary (three majors in the tree)
+  bcrypt: true # node-gyp / prebuild-install native module
+  better-sqlite3: true # native build
+  node-pty: true # native; also the spawn-helper bit brokkr-pnpm-install chmods
+  ssh2: true # native crypto bindings
+  protobufjs: true # postinstall for its CLI deps
+  cpu-features: false # optional ssh2 accelerator (ssh2 works without it); its node-gyp build broke fresh linux installs
+  msgpackr-extract: true # optional msgpackr accelerator
+  '@scarf/scarf': false # analytics ping, nothing depends on it working
+  core-js: false # donation banner
+
+# Security floors plus a few compatibility upper bounds, marked as such. These are tree-wide
+# on purpose: nodeLinker is hoisted, so one copy of a package wins for everyone and a
+# per-package range is silently defeated by any transitive that wants a newer one.
+overrides:
+  # Compatibility pin, not security. 5.77.0 drops zrangebyscore from the client interface (which
+  # apps/bridge's delayed-job sweep uses) and 5.76.x retypes ConnectionOptions, breaking
+  # admin-api's queue monitor — hence the previous resolution, not the newest that builds.
+  bullmq: '>=5.67.3 <5.68.0'
+  react: 19.2.3
+  react-dom: 19.2.3
+  '@types/react': 19.2.14
+  multer: '>=2.2.0'
+  fast-xml-parser: '>=5.10.1'
+  axios: '>=1.16.0'
+  linkify-it: '>=5.0.2 <6.0.0'
+  kysely: '>=0.28.17'
+  hono: '>=4.12.26 <5.0.0'
+  '@hono/node-server': '>=1.19.10 <2.0.0'
+  shell-quote: '>=1.8.4'
+  # Upper bound is a compatibility pin on top of the security floor. 1.6.30 pulls better-call
+  # 1.4.0, whose EndpointOptions/MiddlewareHandler retyping breaks packages/auth (verifyApiKey
+  # disappears from the inferred API). Held at the last version this tree typechecked against.
+  better-auth: '>=1.6.13 <1.6.24'
+  # Pinned alongside better-auth: pinning that alone still left 1.4.0 in the tree via another
+  # dependant, so packages/auth compiled against the retyped version anyway.
+  better-call: '>=1.3.7 <1.4.0'
+  # Separate packages the better-auth pin cannot reach, so api-key floated against a 1.6.23
+  # core and stopped satisfying BetterAuthPlugin. No wildcard in overrides, hence each named.
+  '@better-auth/api-key': '>=1.6.13 <1.6.24'
+  '@better-auth/core': '>=1.6.13 <1.6.24'
+  # 7.9.1 takes @prisma/studio-core to 0.33.0, adding elkjs (EPL-2.0, unallowlisted) and an
+  # alpha to the PRODUCTION closure. Held so the upgrade adds nothing to what ships.
+  prisma: '>=7.3.0 <7.4.0'
+  '@prisma/client': '>=7.3.0 <7.4.0'
+  # treefmt execs the PROJECT prettier, so its version is the tree's formatting authority:
+  # 3.9.6 reformats 40 untouched files. Held at the version the tree was formatted with.
+  prettier: '>=3.2.5 <3.7.0'
+  # prettier-plugin-tailwindcss sorts with tailwind's resolver, so this is part of the same
+  # formatting contract: 4.3.3 reordered classes in untouched files.
+  tailwindcss: '>=4.1.18 <4.2.0'
+  rollup: '>=4.59.0 <5.0.0'
+  effect: '>=3.20.0 <4.0.0'
+  picomatch@2: '>=2.3.2 <3.0.0'
+  picomatch@4: '>=4.0.4 <5.0.0'
+  path-to-regexp@8: '>=8.4.0 <9.0.0'
+  lodash: '>=4.18.0'
+  defu: '>=6.1.5 <7.0.0'
+  vite@7: '>=7.3.5 <8.0.0'
+  '@nestjs/microservices': '>=11.1.19 <12.0.0'
+  fast-uri@3: '>=3.1.5 <4.0.0'
+  vitest@4: '>=4.1.0 <5.0.0'
+  '@vitest/coverage-v8@4': '>=4.1.0 <5.0.0'
+  ws: '>=8.21.0'
+  form-data: '>=4.0.6'
+  find-my-way: '>=9.7.0 <10.0.0'
+  minimatch@3: '>=3.1.4 <4.0.0'
+  minimatch@9: '>=9.0.7 <10.0.0'
+  minimatch@10: '>=10.2.3 <11.0.0'
+  flatted: '>=3.4.2 <4.0.0'
+  serialize-javascript: '>=7.0.3 <8.0.0'
+  piscina: '>=4.9.3 <5.0.0'
+  '@isaacs/brace-expansion': '>=5.0.1 <6.0.0'
+  brace-expansion@2: '>=2.1.4 <3.0.0'
+  brace-expansion@5: '>=5.0.9 <6.0.0'
+  js-yaml@4: '>=4.3.1 <5.0.0'
+  postcss@8: '>=8.5.18 <9.0.0'
+  seroval@1: '>=1.5.3 <2.0.0'
+  seroval-plugins@1: '>=1.5.3 <2.0.0'
+  d3-color: '>=3.1.0 <4.0.0'
+  undici: '>=8.9.0 <9.0.0'
+  ip-address@10: '>=10.3.1 <11.0.0'
+  geoip-lite: '>=2.0.3 <3.0.0'
+  nanoid@3: '>=3.3.17 <4.0.0'
+  deepmerge-ts: '>=8.0.0 <9.0.0'

@@ -141,10 +141,16 @@ COPY --from=ipxe-iso   /export/ipxe.iso /export/ipxe.iso
 # (agent-build bakes it via tsup; the release stage reads it at runtime).
 FROM node:24-slim@sha256:03eae3ef7e88a9de535496fb488d67e02b9d96a063a8967bae657744ecd513f2 AS node-base
 ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
+# pnpm 11 installs global bins into $PNPM_HOME/bin and refuses `add -g` unless that exact
+# directory is on PATH; pnpm 8 used $PNPM_HOME itself. Both are listed so either resolves.
+ENV PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"
 # Pin pnpm to the workspace's packageManager version so image builds don't drift with
 # corepack's latest resolution (keep in sync with apps/api/Dockerfile).
-RUN corepack enable && corepack install -g pnpm@8.15.9
+RUN corepack enable && corepack install -g pnpm@11.21.0
+# pnpm 11 defaults verifyDepsBeforeRun to `install`, so `pnpm exec` / `pnpm run` fire an implicit
+# install mid-build that reaches the registry and prunes the layer below it. That layer is the
+# authority here; a build must never re-resolve dependencies.
+ENV pnpm_config_verify_deps_before_run=false
 # node-gyp toolchain for native workspace deps (no linux prebuilts); python 3.12 dropped
 # distutils, so setuptools provides the shim. Build stages only — release is a separate slim image.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -164,7 +170,7 @@ WORKDIR /src
 FROM node-base AS manifests
 COPY . /all
 RUN mkdir /out && cd /all && \
-    cp --parents pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc /out/ && \
+    cp --parents pnpm-lock.yaml pnpm-workspace.yaml package.json /out/ && \
     find apps packages -maxdepth 3 -name package.json -not -path '*/node_modules/*' \
       -exec cp --parents {} /out/ \;
 
@@ -193,21 +199,7 @@ RUN pnpm exec turbo run build --filter=bridge && \
 
 # `pnpm deploy --prod` writes the self-contained runtime tree to /bridge-deploy; dist/
 # and assets/ are grafted next to it for a one-shot COPY in the release stage.
-# Deploy is broken under node-linker=hoisted (relink EEXISTs / incomplete trees,
-# pnpm#6682 family), so it links isolated — in a fresh stage rather than on top of
-# bridge-build: wiping the inherited hoisted node_modules writes an overlayfs
-# whiteout per file (~10 min on the arm64 runners). The store copy keeps the
-# isolated install offline.
-FROM node-base AS bridge-deploy
-COPY --from=bridge-build /pnpm/store /pnpm/store
-# Workspace tree staged via tar rather than COPY --exclude (hadolint v2.12 in
-# CI/treefmt cannot parse that flag yet).
-RUN --mount=type=bind,from=bridge-build,source=/src,target=/mnt/src \
-    tar -C /mnt/src --exclude=node_modules -cf /tmp/tree.tar . && \
-    tar -xf /tmp/tree.tar -C /src && \
-    rm /tmp/tree.tar && \
-    pnpm install --frozen-lockfile --config.node-linker=isolated && \
-    pnpm --config.node-linker=isolated --filter bridge deploy --prod /bridge-deploy && \
+RUN pnpm --config.trustLockfile=true --filter bridge deploy --prod /bridge-deploy && \
     test -d /bridge-deploy/node_modules/reflect-metadata && \
     cp -R apps/bridge/dist   /bridge-deploy/dist && \
     cp -R apps/bridge/assets /bridge-deploy/assets
@@ -363,9 +355,9 @@ ENV BRIDGE_API_VERSION=${VERSION}
 WORKDIR /app
 
 # Bridge TS app: bundled dist + production node_modules + runtime assets.
-COPY --from=bridge-deploy /bridge-deploy/node_modules ./node_modules
-COPY --from=bridge-deploy /bridge-deploy/dist         ./dist
-COPY --from=bridge-deploy /bridge-deploy/assets       ./assets
+COPY --from=bridge-build /bridge-deploy/node_modules ./node_modules
+COPY --from=bridge-build /bridge-deploy/dist         ./dist
+COPY --from=bridge-build /bridge-deploy/assets       ./assets
 
 # AF_PACKET addon at exactly the path packet-socket.ts require()s: from dist/dhcp/l2 the relative
 # `../../../native/afpacket/build/Release/afpacket.node` resolves to /app/native/... (dist sits at

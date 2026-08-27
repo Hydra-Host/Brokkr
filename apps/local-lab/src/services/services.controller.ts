@@ -82,6 +82,17 @@ export class ServicesController {
     }));
   }
 
+  // definedIn carries host filesystem paths, so this read is gated like listStacks rather than like
+  // the other config reads.
+  @TsRestHandler(contract.getConfigTree)
+  @LabRoute({ exposure: 'loopback-only' })
+  configTree() {
+    return tsRestHandler(contract.getConfigTree, async () => ({
+      status: 200 as const,
+      body: this.overlay.configTree(),
+    }));
+  }
+
   @TsRestHandler(contract.putStackConfig)
   @LabRoute({ exposure: 'loopback-only' })
   putStackConfig() {

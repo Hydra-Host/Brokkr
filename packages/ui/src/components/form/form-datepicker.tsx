@@ -100,7 +100,7 @@ function FormDatePicker<T extends FieldValues>({
                     fieldState.invalid && 'border-status-offline',
                   )}
                 >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  <CalendarIcon className="h-4 w-4" />
                   {displayLabel ?? <span>{placeholder}</span>}
                 </Button>
               </PopoverTrigger>

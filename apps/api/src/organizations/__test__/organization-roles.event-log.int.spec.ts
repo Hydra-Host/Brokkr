@@ -27,7 +27,6 @@ describe.skipIf(!connectionString)('role event capture (integration, live DB)', 
   let contextService: ContextService;
   let organizationId: string;
   let devicePermissionId: string;
-  let createdDevicePermission = false;
   const createdRoleIds: string[] = [];
 
   const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(), verbose: vi.fn() };
@@ -174,13 +173,11 @@ describe.skipIf(!connectionString)('role event capture (integration, live DB)', 
     });
     organizationId = org.id;
 
-    const existing = await prisma.permission.findUnique({
+    const permission = await prisma.permission.upsert({
       where: { resource_action: { resource: 'device', action: 'read' } },
+      update: {},
+      create: { resource: 'device', action: 'read', description: 'View devices' },
     });
-    createdDevicePermission = existing === null;
-    const permission =
-      existing ??
-      (await prisma.permission.create({ data: { resource: 'device', action: 'read', description: 'View devices' } }));
     devicePermissionId = permission.id;
   }, 60_000);
 
@@ -189,9 +186,6 @@ describe.skipIf(!connectionString)('role event capture (integration, live DB)', 
     await prisma.rolePermission.deleteMany({ where: { roleId: { in: createdRoleIds } } });
     await prisma.organizationMemberRole.deleteMany({ where: { id: { in: createdRoleIds } } });
     await prisma.organization.deleteMany({ where: { id: organizationId } });
-    if (createdDevicePermission) {
-      await prisma.permission.deleteMany({ where: { id: devicePermissionId } });
-    }
     await prisma.$disconnect();
   });
 

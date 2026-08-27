@@ -145,7 +145,18 @@ function build(opts: {
     requirePermission: vi.fn((resource: string, action: string) => {
       if (role === Member) throw new ForbiddenException(`missing permission ${resource}:${action}`);
     }),
+    finalizeIntents: vi.fn(),
+    requestId: 'req-1',
+    actorFields: vi.fn().mockReturnValue({
+      actorType: 'UI',
+      actorId: 'u1',
+      actorLabel: 'inviter@example.com',
+      apiKeyId: null,
+      apiKeyLabel: null,
+    }),
+    requestFields: vi.fn().mockReturnValue({ method: null, path: null, ipAddress: null, userAgent: null }),
   } as unknown as ContextService;
+  const eventLog = { recordInTransaction: vi.fn().mockResolvedValue(undefined), record: vi.fn().mockResolvedValue(undefined) };
   const emailService = {
     send: { organizationInvite: vi.fn().mockResolvedValue(undefined) },
   } as unknown as EmailService;
@@ -157,9 +168,10 @@ function build(opts: {
     eventBus as never,
     repository as never,
     membershipsRepository as never,
+    eventLog as never,
     logger,
   );
-  return { service, repository, membershipsRepository, rbacService, eventBus, emailService, tx };
+  return { service, repository, membershipsRepository, rbacService, eventBus, emailService, eventLog, tx };
 }
 
 function invite(service: OrganizationInvitationsService, roleId: string) {

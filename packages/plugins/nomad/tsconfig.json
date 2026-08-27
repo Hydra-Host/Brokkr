@@ -1,0 +1,16 @@
+{
+  // Backend+contract only; CJS emit for apps/api (same pattern as email-mailgun).
+  "extends": "@repo/typescript-config/nestjs.json",
+  "compilerOptions": {
+    "outDir": "./dist/cjs",
+    "rootDir": ".",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    // nestjs.json disables this; re-enable so Zod inference stays accurate.
+    "strictNullChecks": true
+  },
+  "include": ["plugin.ts", "contract.ts", "schemas.ts", "backend/**/*.ts"],
+  "exclude": ["node_modules", "dist", "**/__test__/**"]
+}

@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState } from 'react';
 
 import { SectionHeading } from '@/components/console';
 import { FleetBringupProgress } from '@/components/fleet-status';
+import { AccelChip } from '@/components/status/accel-chip';
 import { FLEET_HEALTH_UI, healthUi } from '@/components/status/health-ui';
 import { InitDagStrip } from '@/components/status/init-dag';
 import { StatusDot } from '@/components/status/status-card';
@@ -12,6 +13,7 @@ import { initFocusTask, type FleetStatus, type InitTask, type Run, type Status }
 import { ErrorBanner, errText } from '@/features/datastore/shared/error-banner';
 import { tsr } from '@/lib/api';
 import { fmtAgo } from '@/lib/format';
+import { usePoll } from '@/lib/use-poll';
 
 import {
   CONNECTOR_CLASS,
@@ -106,6 +108,7 @@ function FleetHealthLine({ fleetHealth }: { fleetHealth: FleetStatus }) {
         <span className="text-text-dim shrink-0">
           {fleetHealth.machinesRunning}/{fleetHealth.machinesExpected} VMs on
         </span>
+        <AccelChip fleet={fleetHealth} />
       </div>
       {!FLEET_HEALTH_DETAIL_REDUNDANT.has(fleetHealth.health) && (
         <div
@@ -138,6 +141,11 @@ function FleetPanel({ status }: { status: Status }) {
         ))}
         {status.fleet.length === 0 && <span className="text-text-dim text-[11px]">no fleet nodes</span>}
       </div>
+      {status.fleetDbReadFailed && (
+        <div className="text-status-warning mt-2 text-[11px]">
+          the hub device read failed — lifecycle, device id and GPU are blank rather than measured
+        </div>
+      )}
       {status.fleetSummary && status.fleet.length > 0 && (
         <div className="text-text-dim mt-2 text-[11px]">{fleetSummaryLine(status.fleetSummary)}</div>
       )}
@@ -183,7 +191,7 @@ function RecentPanel({ runs }: { runs: Run[] | undefined }) {
 
 export function DashboardPage() {
   const navigate = useNavigate();
-  const status = tsr.getStatus.useQuery({ queryKey: ['status'], refetchInterval: STATUS_POLL_MS });
+  const status = tsr.getStatus.useQuery({ queryKey: ['status'], refetchInterval: usePoll(STATUS_POLL_MS) });
   const body = status.data?.status === 200 ? status.data.body : undefined;
   const failure = errText(status.data, status.error);
   const initStatus = body?.initStatus;
@@ -191,9 +199,9 @@ export function DashboardPage() {
   const init = tsr.getInitTasks.useQuery({
     queryKey: ['stack-init'],
     enabled: (initStatus?.total ?? 0) > 0,
-    refetchInterval: initBusy ? INIT_POLL_MS : INIT_IDLE_POLL_MS,
+    refetchInterval: usePoll(initBusy ? INIT_POLL_MS : INIT_IDLE_POLL_MS),
   });
-  const stacks = tsr.listStacks.useQuery({ queryKey: ['stacks'], refetchInterval: STATUS_POLL_MS });
+  const stacks = tsr.listStacks.useQuery({ queryKey: ['stacks'], refetchInterval: usePoll(STATUS_POLL_MS) });
   const initTasks = init.data?.status === 200 ? init.data.body : [];
   const [initOpen, setInitOpen] = useState(false);
   const initAlert = initFocusTask(initTasks) !== undefined;

@@ -11,9 +11,11 @@ import {
   isIpxeCustomOs,
   ProvisionServerRequestSchema,
   validateDiskLayoutEncryption,
-  type Server,
   type SshKeyWithUser,
 } from '@repo/api-client';
+import { CustomizationLayers, type CustomizationLayersData } from '@repo/domain-ui/provision/customization-layers';
+import { applyDirectModeToSubmission, getDefaultDiskLayouts } from '@repo/domain-ui/provision/disk-layout-selector';
+import { ProvisionAdvancedSettings } from '@repo/domain-ui/provision/provision-advanced-settings';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -31,10 +33,7 @@ import { FormMultiSelect } from '@repo/ui/form/form-multi-select';
 import { FormSelect } from '@repo/ui/form/form-select';
 import { FormSubmitButton } from '@repo/ui/form/form-submit-button';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import { CustomizationLayers, type CustomizationLayersData } from '@repo/ui/provision/customization-layers';
-import { applyDirectModeToSubmission, getDefaultDiskLayouts } from '@repo/ui/provision/disk-layout-selector';
-import { ProvisionAdvancedSettings } from '@repo/ui/provision/provision-advanced-settings';
-import { formatPriceFromCentsToDollars } from '@repo/utils/format';
+import { formatPriceFromCentsToDollars, unwrapErrorMessage } from '@repo/utils';
 import { AddSshKeyInlineForm } from '~/components/add-ssh-key-inline-form';
 import { DecommissionedServerOverlay } from '~/components/decommissioned-server-overlay';
 import { tsr } from '~/lib/api';
@@ -118,7 +117,7 @@ const provisionFormSchema = ProvisionServerRequestSchema.omit({ customizations: 
       } catch (e) {
         ctx.addIssue({
           code: 'custom',
-          message: `Invalid YAML: ${e instanceof Error ? e.message.split('\n')[0] : 'Parse error'}`,
+          message: `Invalid YAML: ${unwrapErrorMessage(e, 'Parse error').split('\n')[0]}`,
           path: ['cloudInit'],
         });
       }
@@ -135,7 +134,7 @@ function ProvisionDevicePage() {
 }
 
 function ProvisionDeviceForm() {
-  const device = parentRoute.useLoaderData() as Server;
+  const device = parentRoute.useLoaderData();
   const { sshKeys } = Route.useLoaderData();
   const params = Route.useParams();
   const navigate = useNavigate();

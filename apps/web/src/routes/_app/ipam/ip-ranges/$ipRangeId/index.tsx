@@ -1,21 +1,9 @@
 import { Badge } from '@repo/ui/components/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Skeleton } from '@repo/ui/components/skeleton';
+import { getIpamStatusBadgeVariant } from '@repo/utils';
 import { createFileRoute } from '@tanstack/react-router';
 import { tsr } from '~/lib/api';
-
-function statusVariant(status: string) {
-  switch (status) {
-    case 'ACTIVE':
-      return 'default';
-    case 'RESERVED':
-      return 'secondary';
-    case 'DEPRECATED':
-      return 'destructive';
-    default:
-      return 'outline';
-  }
-}
 
 export const Route = createFileRoute('/_app/ipam/ip-ranges/$ipRangeId/')({
   component: IpRangeOverview,
@@ -69,7 +57,10 @@ function IpRangeOverview() {
         <CardContent>
           <InfoRow label="Start" value={<span className="font-mono">{ipRange.start}</span>} />
           <InfoRow label="End" value={<span className="font-mono">{ipRange.end}</span>} />
-          <InfoRow label="Status" value={<Badge variant={statusVariant(ipRange.status)}>{ipRange.status}</Badge>} />
+          <InfoRow
+            label="Status"
+            value={<Badge variant={getIpamStatusBadgeVariant(ipRange.status)}>{ipRange.status}</Badge>}
+          />
           <InfoRow label="Purpose" value={ipRange.purpose} />
         </CardContent>
       </Card>

@@ -1,5 +1,6 @@
 // Intentionally over-cautious: the lspci filter flags disks behind even plain AHCI as maybe-RAID (skipping ATA secure erase there avoids indefinite hangs); NVMe is always force-false (own protocol, no HBA).
 
+import { getErrorMessage } from '@repo/utils';
 import { readdir, readlink } from 'node:fs/promises';
 import { registerOperation } from '../../dispatch/registry';
 import { run } from '../../exec';
@@ -90,7 +91,7 @@ async function readByPath(): Promise<ByPathEntry[]> {
         const target = await readlink(`/dev/disk/by-path/${name}`);
         resolved.push({ name, target });
       } catch (error) {
-        logger.trace('by-path readlink failed', { name, error: String(error) });
+        logger.trace('by-path readlink failed', { name, error: getErrorMessage(error) });
       }
     }
     return resolved;

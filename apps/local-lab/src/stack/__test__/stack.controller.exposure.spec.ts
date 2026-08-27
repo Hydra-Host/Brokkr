@@ -27,7 +27,9 @@ describe('StackController exposure annotations', () => {
   });
 
   it('leaves restartState token-ok — a read-only GET that mutates nothing', () => {
-    expect(reflector.get<LabRouteOptions | undefined>(LAB_ROUTE, StackController.prototype.restartState)).toBeUndefined();
+    expect(
+      reflector.get<LabRouteOptions | undefined>(LAB_ROUTE, StackController.prototype.restartState),
+    ).toBeUndefined();
   });
 
   it('leaves the init-task reads token-ok — both are read-only GETs', () => {
@@ -48,7 +50,7 @@ describe('StackController init-task log allowlist', () => {
       streamTaskLog: vi.fn(() => of('line\n')),
     };
     const initTasks = new InitTasksService(pc as unknown as ProcessComposeClient);
-    return { controller: new StackController({} as never, {} as never, initTasks), pc };
+    return { controller: new StackController({} as never, {} as never, initTasks, {} as never), pc };
   };
 
   it('rejects a traversal name instead of joining it onto the log dir', () => {

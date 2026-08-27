@@ -1,6 +1,7 @@
 import { Controller } from '@nestjs/common';
 import { contract } from '@repo/api-client';
 import { TsRestHandler, tsRestHandler } from '@ts-rest/nest';
+import { AuditAction } from 'src/event-log/audit-action.decorator';
 import { SshKeysService } from './sshkeys.service';
 
 @Controller()
@@ -31,6 +32,7 @@ export class SshkeysController {
     });
   }
 
+  @AuditAction({ actionKey: 'ssh-key.created', resource: 'ssh-key', action: 'create' })
   @TsRestHandler(contract.createSshKey)
   async createSshKey() {
     return tsRestHandler(contract.createSshKey, async ({ body }) => {
@@ -39,6 +41,7 @@ export class SshkeysController {
     });
   }
 
+  @AuditAction({ actionKey: 'ssh-key.deleted', resource: 'ssh-key', action: 'delete' })
   @TsRestHandler(contract.deleteSshKey)
   async deleteSshKey() {
     return tsRestHandler(contract.deleteSshKey, async ({ params }) => {

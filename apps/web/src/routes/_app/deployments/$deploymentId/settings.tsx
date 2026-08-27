@@ -6,7 +6,6 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
-import type { Deployment } from '@repo/api-client';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -38,7 +37,7 @@ const renameSchema = z.object({
 type RenameFormData = z.infer<typeof renameSchema>;
 
 function DeploymentSettings() {
-  const deployment = parentRoute.useLoaderData() as Deployment;
+  const deployment = parentRoute.useLoaderData();
   useDocumentTitle(`${deployment.customer?.deviceName ?? 'Deployment'} - Settings`);
   const navigate = useNavigate();
   const router = useRouter();

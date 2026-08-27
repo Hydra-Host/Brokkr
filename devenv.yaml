@@ -1,22 +1,16 @@
-# Pinned to the same nixpkgs-25.05 rev as flake.nix: the whole closure
+# Pinned to the same nixpkgs-26.05 rev as flake.nix: the whole closure
 # (virtualbmc/sushy-tools/pyghmi/libvirt) is validated against this pinned rev.
 # allowUnfree matches flake.nix (config.allowUnfree) for the validated closure.
 inputs:
   nixpkgs:
-    url: github:NixOS/nixpkgs/ac62194c3917d5f474c1a844b6fd6da2db95077d
+    url: github:NixOS/nixpkgs/c69ae8fb8faeb3472fd11234ba55a70ac3601f9b
   # backs the git-hooks integration (devenv/modules/dx.nix). Its hook modules + tools
-  # resolve against our pinned nixpkgs; the runner itself is prek (below).
+  # resolve against our pinned nixpkgs, as does the prek runner devenv defaults to.
   git-hooks:
     url: github:cachix/git-hooks.nix
     inputs:
       nixpkgs:
         follows: nixpkgs
-  # prek (the Rust pre-commit reimplementation devenv's git-hooks integration defaults to)
-  # is absent from nixpkgs-25.05; pull just that one binary from a newer nixpkgs so the hook
-  # runner resolves without dragging git-hooks.nix's darwin-broken pre-commit build into the
-  # closure. Kept as its own input so the 25.05 closure stays the source of truth elsewhere.
-  nixpkgs-prek:
-    url: github:NixOS/nixpkgs/9eac87a12312b8f60dd52e1c6e1a265f6fc7f5fc
   # backs the declarative treefmt config (devenv/treefmt-module.nix). Its formatter modules
   # resolve against our pinned nixpkgs; devenv/flake.nix evaluates the same module via
   # treefmt-nix.lib.evalModule so dev + CI run the identical formatter set.
@@ -25,6 +19,10 @@ inputs:
     inputs:
       nixpkgs:
         follows: nixpkgs
+  # devenv injects this input implicitly when undeclared, and the implicit form tracks main.
+  # Pin the release tag; devenv.nix pairs devenv.latestVersion to it.
+  devenv:
+    url: github:cachix/devenv/v2.2.2?dir=src/modules
 allowUnfree: true
 strict_ports: true
 

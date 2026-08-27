@@ -1,21 +1,9 @@
 import { Badge } from '@repo/ui/components/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Skeleton } from '@repo/ui/components/skeleton';
+import { getIpamStatusBadgeVariant } from '@repo/utils';
 import { createFileRoute } from '@tanstack/react-router';
 import { tsr } from '~/lib/api';
-
-function statusVariant(status: string) {
-  switch (status) {
-    case 'ACTIVE':
-      return 'default';
-    case 'RESERVED':
-      return 'secondary';
-    case 'DEPRECATED':
-      return 'destructive';
-    default:
-      return 'outline';
-  }
-}
 
 export const Route = createFileRoute('/_app/ipam/vlans/$vlanId/')({
   component: VlanOverview,
@@ -69,7 +57,10 @@ function VlanOverview() {
         <CardContent>
           <InfoRow label="VID" value={<span className="font-mono">{vlan.vid}</span>} />
           <InfoRow label="Name" value={vlan.name} />
-          <InfoRow label="Status" value={<Badge variant={statusVariant(vlan.status)}>{vlan.status}</Badge>} />
+          <InfoRow
+            label="Status"
+            value={<Badge variant={getIpamStatusBadgeVariant(vlan.status)}>{vlan.status}</Badge>}
+          />
           <InfoRow label="Description" value={vlan.description} />
         </CardContent>
       </Card>

@@ -28,7 +28,7 @@ export function fmtDeadline(atMs: number, nowMs: number = Date.now()): string {
   return seconds >= 0 ? `in ${fmtSpan(seconds)}` : `${fmtSpan(-seconds)} overdue`;
 }
 
-function fmtSpan(seconds: number): string {
+export function fmtSpan(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
   if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;

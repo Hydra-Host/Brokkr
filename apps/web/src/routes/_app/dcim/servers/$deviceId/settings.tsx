@@ -6,13 +6,13 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
 import { IpxeBuildTargetSchema, type Server } from '@repo/api-client';
+import { ServerPriceForm, type ServerPriceFormSubmitData } from '@repo/domain-ui/form/server-price-form';
 import { Label } from '@repo/ui/components/label';
 import { Switch } from '@repo/ui/components/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@repo/ui/components/tabs';
 import { FormInput } from '@repo/ui/form/form-input';
 import { FormSelect } from '@repo/ui/form/form-select';
 import { FormSubmitButton } from '@repo/ui/form/form-submit-button';
-import { ServerPriceForm, type ServerPriceFormSubmitData } from '@repo/ui/form/server-price-form';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { DecommissionedServerOverlay } from '~/components/decommissioned-server-overlay';
 import { MobileTabSelect } from '~/components/mobile-tab-select';
@@ -37,7 +37,7 @@ type ServerInfoFormData = z.infer<typeof serverInfoSchema>;
 const IPXE_TARGET_OPTIONS = ipxeTargetOptions('Inherit from prefix (default)');
 
 function ServerSettingsPage() {
-  const device = parentRoute.useLoaderData() as Server;
+  const device = parentRoute.useLoaderData();
   const params = Route.useParams();
   const router = useRouter();
   const queryClient = useQueryClient();

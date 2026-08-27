@@ -11,7 +11,7 @@ import {
   renderPhoneHomeScript,
   type PhoneHomeCredsInput,
 } from '../../render/cloudinit';
-import { assertTargetPathSafe } from './targetPath';
+import { assertTargetPathSafe } from './target-path';
 
 const EXTRA_FILE_MODE_ALLOWLIST: readonly number[] = [0o644, 0o755, 0o600];
 const MAX_EXTRA_FILES = 32;

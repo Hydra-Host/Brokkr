@@ -4,7 +4,13 @@
 
 BEGIN;
 
+ALTER TABLE "Device" DISABLE TRIGGER device_role_write_once;
 -- commission-1 id=00000000-0000-0000-0000-000000000003 (role=null commissioning, dhcp) ipmi=192.168.105.12
+UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()
+WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' AND name = 'commission-1'
+  AND id <> '00000000-0000-0000-0000-000000000003' AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
+DELETE FROM "DeviceSecret"
+WHERE "deviceId" = '00000000-0000-0000-0000-000000000003' AND "zoneId" <> '00000000-0000-0000-0000-111111111111';
 INSERT INTO "Device" (
     id, name, status, role, "deviceType",
     "zoneId", "networkType",
@@ -22,7 +28,7 @@ ON CONFLICT (id) DO UPDATE SET
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId", "organizationId" = EXCLUDED."organizationId",
     architecture = EXCLUDED.architecture, "netplanOverride" = NULL,
-    "updatedAt" = NOW();
+    "deletedAt" = NULL, "updatedAt" = NOW();
 DO $$ BEGIN
     IF to_regclass('"ServerOperatingSystem"') IS NOT NULL THEN
         DELETE FROM "ServerOperatingSystem" WHERE "serverId" IN
@@ -64,4 +70,5 @@ SELECT gen_random_uuid(), '192.168.105.12'::inet, 'ACTIVE'::"IpStatus", (SELECT 
     id, 'Interface'::"AssignedObjectType", id, NOW()
 FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000000003' AND name = 'IPMI' AND "deletedAt" IS NULL;
 
+ALTER TABLE "Device" ENABLE TRIGGER device_role_write_once;
 COMMIT;

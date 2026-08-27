@@ -58,6 +58,7 @@ export type ComboboxProps = {
   commandClassName?: string;
   commandItemClassName?: string;
   hideIcon?: boolean;
+  searchPlaceholder?: string;
   filter?: (value: string, search: string, keywords?: string[]) => number;
   disabled?: boolean;
   error?: string;
@@ -79,6 +80,7 @@ function Combobox({
   commandItemClassName,
   filter,
   hideIcon,
+  searchPlaceholder,
   disabled,
   error,
   id,
@@ -118,14 +120,16 @@ function Combobox({
             'disabled:cursor-not-allowed disabled:opacity-50',
             '[&>span]:line-clamp-1',
             'relative cursor-pointer',
-            !value && 'text-text-dim',
+            value == null && 'text-text-dim',
             error ? 'border-status-offline focus:border-status-offline' : '',
             triggerClassName,
           )}
           disabled={disabled}
         >
           <span>
-            {value ? options.find((option) => option.value.toLowerCase() === value?.toLowerCase())?.label : placeholder}
+            {value != null
+              ? (options.find((option) => option.value.toLowerCase() === value.toLowerCase())?.label ?? placeholder)
+              : placeholder}
           </span>
           {!hideIcon && <ChevronDown className="text-text-muted h-4 w-4" />}
           <span className="border-text-muted group-focus:border-accent group-aria-invalid:border-status-offline pointer-events-none absolute -top-px -left-px h-2 w-2 border-t border-l group-disabled:opacity-50" />
@@ -143,40 +147,51 @@ function Combobox({
           filter={filter}
           shouldFilter={shouldFilter ?? (onSearchChange ? false : undefined)}
         >
-          <CommandInput placeholder={placeholder} value={searchValue} onValueChange={handleSearchChange} />
+          <CommandInput
+            placeholder={searchPlaceholder ?? placeholder}
+            value={searchValue}
+            onValueChange={handleSearchChange}
+          />
           <CommandList ref={listRef}>
             <CommandEmpty>{emptyMessage ?? 'Nothing found.'}</CommandEmpty>
             <CommandGroup>
-              {options.map((option) => (
-                <CommandItem
-                  key={option.value}
-                  value={option.value}
-                  keywords={[option.label, ...(option.description ? [option.description] : [])]}
-                  onSelect={(currentValue) => {
-                    const selectedOption = options.find(
-                      (opt) => opt.value.toLowerCase() === currentValue.toLowerCase(),
-                    );
-                    const originalValue = selectedOption?.value ?? currentValue;
-                    setValue(originalValue.toLowerCase() === value?.toLowerCase() ? '' : originalValue);
-                    setOpen(false);
-                  }}
-                  className={commandItemClassName}
-                >
-                  <Check
-                    className={cn(
-                      'text-accent mr-2 h-4 w-4',
-                      value?.toLowerCase() === option.value.toLowerCase() ? 'opacity-100' : 'opacity-0',
-                    )}
-                  />
-                  <div className="flex flex-col">
-                    <div className="flex items-center justify-between">
-                      <span>{option.label}</span>
-                      {option.icon && <span className={cn('ml-2', option.iconClassName)}>{option.icon}</span>}
+              {options.map((option, index) => {
+                const itemValue = option.value || option.label;
+                return (
+                  <CommandItem
+                    key={option.value || `__empty__-${index}`}
+                    value={itemValue}
+                    keywords={[option.label, ...(option.description ? [option.description] : [])]}
+                    onSelect={(currentValue) => {
+                      const selectedOption = options.find(
+                        (opt) => (opt.value || opt.label).toLowerCase() === currentValue.toLowerCase(),
+                      );
+                      const originalValue = selectedOption ? selectedOption.value : currentValue;
+                      setValue(
+                        value !== undefined && originalValue.toLowerCase() === value.toLowerCase() ? '' : originalValue,
+                      );
+                      setOpen(false);
+                    }}
+                    className={commandItemClassName}
+                  >
+                    <Check
+                      className={cn(
+                        'text-accent mr-2 h-4 w-4',
+                        value !== undefined && value.toLowerCase() === option.value.toLowerCase()
+                          ? 'opacity-100'
+                          : 'opacity-0',
+                      )}
+                    />
+                    <div className="flex flex-col">
+                      <div className="flex items-center justify-between">
+                        <span>{option.label}</span>
+                        {option.icon && <span className={cn('ml-2', option.iconClassName)}>{option.icon}</span>}
+                      </div>
+                      {option.description && <span className="text-text-dim text-sm">{option.description}</span>}
                     </div>
-                    {option.description && <span className="text-text-dim text-sm">{option.description}</span>}
-                  </div>
-                </CommandItem>
-              ))}
+                  </CommandItem>
+                );
+              })}
             </CommandGroup>
           </CommandList>
         </Command>

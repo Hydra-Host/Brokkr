@@ -1,0 +1,72 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Utilities/Overview" />
+
+# Utilities
+
+Non-component exports of `@repo/ui`: class helpers, CSV download, formatters, document
+title, and brand configuration.
+
+## `@repo/ui/utils`
+
+### `cn(...inputs: ClassValue[]): string`
+
+`clsx` + `tailwind-merge`: builds a class string from any mix of strings, arrays, and
+conditional objects, then resolves conflicting Tailwind classes (last one wins).
+
+```tsx
+import { cn } from '@repo/ui/utils';
+
+<div className={cn('p-4 text-sm', isActive && 'text-accent', className)} />;
+```
+
+### `navigatePreservingSearch(navigate, { to, search, replace? }): void`
+
+Thin wrapper over a TanStack Router `navigate` function for changing routes while merging
+search params through an updater, keeping callsites uniform across apps.
+
+```ts
+import { navigatePreservingSearch } from '@repo/ui/utils';
+
+navigatePreservingSearch(navigate, {
+  to: '/devices',
+  search: (prev) => ({ ...prev, page: undefined }),
+});
+```
+
+## `@repo/ui/hooks/use-document-title`
+
+### `setDocumentTitleSuffix(suffix: string): void`
+
+Sets the app-wide default suffix once at startup (this Storybook uses `'Hydra UI'`).
+
+### `useDocumentTitle(title: string, suffix?: string): void`
+
+Sets `document.title` to `` `${title} | ${suffix}` `` (or just the suffix when `title` is
+empty) and restores the previous title on unmount.
+
+```tsx
+import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
+
+useDocumentTitle('Devices'); // "Devices | Hydra UI"
+```
+
+## `@repo/ui/lib/brand`
+
+Module-level brand registry so shared components can render app-specific names without a
+context provider. Configure once at app startup:
+
+```ts
+import { configureUiBrand } from '@repo/ui/lib/brand';
+
+configureUiBrand({ name: 'Hydra Commerce', helpdeskUrl: 'https://help.example.com' });
+```
+
+### `configureUiBrand(opts: { name?: string; helpdeskUrl?: string }): void`
+
+Sets the brand name (default `'Platform'`) and/or the helpdesk URL (default `''`).
+
+### `getUiBrandName(): string` / `getHelpdeskUrl(): string`
+
+Read the configured values; `getHelpdeskUrl` is what `useNavigationShortcuts` opens for the
+external helpdesk shortcut.

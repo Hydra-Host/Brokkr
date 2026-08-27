@@ -1,6 +1,5 @@
 import { createFileRoute, getRouteApi } from '@tanstack/react-router';
 
-import type { BridgeResponse } from '@repo/api-client';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { DeviceInterfaces } from '~/components/device-interfaces';
 
@@ -12,7 +11,7 @@ export const Route = createFileRoute('/_app/dcim/bridges/$bridgeId/interfaces')(
 });
 
 function BridgeInterfaces() {
-  const bridge = parentRoute.useLoaderData() as BridgeResponse;
+  const bridge = parentRoute.useLoaderData();
   useDocumentTitle(bridge.name ?? 'Bridge');
 
   return (

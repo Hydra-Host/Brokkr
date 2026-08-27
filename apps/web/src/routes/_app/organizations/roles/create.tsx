@@ -7,6 +7,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
+import { FormPermissionSelector } from '@repo/domain-ui/form/form-permission-selector';
 import { Button } from '@repo/ui/components/button';
 import {
   Dialog,
@@ -17,9 +18,9 @@ import {
   DialogTitle,
 } from '@repo/ui/components/dialog';
 import { FormInput } from '@repo/ui/form/form-input';
-import { FormPermissionSelector } from '@repo/ui/form/form-permission-selector';
 import { FormTextarea } from '@repo/ui/form/form-textarea';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
+import { unwrapErrorMessage } from '@repo/utils';
 import { usePermissions } from '~/hooks/use-permissions';
 import { tsr } from '~/lib/api';
 
@@ -142,11 +143,10 @@ function CreateRoleDialog() {
         await queryClient.invalidateQueries({ queryKey: ['organization-roles'] });
         navigate({ to: '/organizations/roles' });
       } else {
-        const body = res.body as { message?: string };
-        setError(body?.message ?? 'Failed to create role');
+        setError(unwrapErrorMessage(res, 'Failed to create role'));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create role. Please try again.';
+      const message = unwrapErrorMessage(err, 'Failed to create role. Please try again.');
       setError(message);
     }
   };

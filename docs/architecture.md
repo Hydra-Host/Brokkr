@@ -64,7 +64,7 @@ _devenv · process-compose_
 The whole stack is **declarative**: `devenv.nix` + `devenv/modules/*.nix` describe the
 toolchain, the native datastores, and every process. **devenv** evaluates that and hands it to
 **process-compose**, which supervises everything over a Unix-domain socket (`task logs`
-attaches to it). There is **no Docker for the datastores** — Postgres, Redis, Vault, and the
+attaches to it). There is **no Docker for the datastores** — Postgres, Redis, and the
 nginx OS-layer cache run as native `services.*`.
 
 One command — `task up` — brings it all up: the hub, the spoke, the control center
@@ -77,7 +77,6 @@ flowchart TB
     subgraph data[Native datastores no docker]
         pg[("postgres :5432")]
         rd[("redis :6379")]
-        vt[("vault :8200")]
         ng["nginx OS-layer cache :8888"]
     end
 
@@ -110,18 +109,18 @@ flowchart TB
 
 ### Simulated fleet
 
-The fleet is a set of **libvirt/qemu** guests, each with its own simulated BMC — `virtualbmc`
-(IPMI) and `sushy` (Redfish) — so the full provision → power-cycle → reprovision →
+The fleet is a set of **libvirt/qemu** guests, each with its own simulated BMC — OpenIPMI
+`ipmi_sim` (IPMI) and `sushy` (Redfish) — so the full provision → power-cycle → reprovision →
 deprovision lifecycle runs against virtual hardware. Two host-routable network planes:
 
-- **BMC plane** (default `192.168.105.0/24`) — loopback alias IPs where vbmc + sushy bind.
+- **BMC plane** (default `192.168.105.0/24`) — loopback alias IPs where ipmi_sim + sushy bind.
 - **Data plane** (default `192.168.200.0/24`) — host-routable bridge; each VM's NIC gets a
   static IP. The spoke serves boot artifacts here.
 
 Each VM direct-loads a per-VM **iPXE** binary as its kernel; iPXE chains to the spoke's
 `/api/chain`, which decides discovery-OS vs. boot-from-disk from the device's hub state. For
 the deep engine internals (boot path, seed pipeline, gotchas) see
-[`apps/local-sim/CLAUDE.md`](../apps/local-sim/CLAUDE.md).
+[`apps/local-sim/ARCHITECTURE.md`](../apps/local-sim/ARCHITECTURE.md).
 
 ```mermaid
 flowchart LR
@@ -132,11 +131,11 @@ flowchart LR
             vm2[cpu-2]
             vmn[cpu-N]
         end
-        vbmc["vbmcd · IPMI"]
+        ipmisim["ipmi_sim · IPMI"]
         sushy["sushy · Redfish"]
     end
 
-    vbmc -->|"BMC plane 192.168.105.x"| vms
+    ipmisim -->|"BMC plane 192.168.105.x"| vms
     sushy -->|"BMC plane 192.168.105.x"| vms
     vms -->|"data plane 192.168.200.x<br/>iPXE → /api/chain"| spoke
 ```
@@ -179,5 +178,5 @@ lets the Stack tab render the roster live (state, exit code, tailable log per ta
 - [`README.md`](../README.md) — human onboarding + from-scratch getting started
 - [`devenv/README.md`](../devenv/README.md) — local-dev operator reference (config, secrets,
   platform notes, troubleshooting)
-- [`apps/local-sim/CLAUDE.md`](../apps/local-sim/CLAUDE.md) — simulator engine internals
+- [`apps/local-sim/ARCHITECTURE.md`](../apps/local-sim/ARCHITECTURE.md) — simulator engine internals
 - [`packages/database/SCHEMA_DIAGRAM.md`](../packages/database/SCHEMA_DIAGRAM.md) — database ER diagrams

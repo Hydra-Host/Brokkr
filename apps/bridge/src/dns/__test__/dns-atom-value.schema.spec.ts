@@ -30,6 +30,7 @@ const VALID_ZONE_CONFIG: DnsConfigAtomValue = {
 const VALID_PREFIX_OVERRIDE: DnsPrefixOverrideAtomValue = {
   serveDns: true,
   upstreamOverride: ['10.0.1.1'],
+  cidr: '10.0.1.0/24',
 };
 
 describe('DnsConfigAtomValueSchema (bridge)', () => {
@@ -160,6 +161,42 @@ describe('DnsPrefixOverrideAtomValueSchema (bridge)', () => {
 
   it('rejects non-boolean serveDns', () => {
     expect(DnsPrefixOverrideAtomValueSchema.safeParse({ serveDns: 'yes', upstreamOverride: null }).success).toBe(false);
+  });
+
+  it('accepts an atom without cidr (older hubs omit it)', () => {
+    const { cidr: _, ...withoutCidr } = VALID_PREFIX_OVERRIDE;
+    const result = DnsPrefixOverrideAtomValueSchema.safeParse(withoutCidr);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cidr).toBeUndefined();
+    }
+  });
+
+  it('parses and preserves cidr when present', () => {
+    const result = DnsPrefixOverrideAtomValueSchema.safeParse(VALID_PREFIX_OVERRIDE);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cidr).toBe('10.0.1.0/24');
+    }
+  });
+
+  it('rejects non-string cidr', () => {
+    expect(DnsPrefixOverrideAtomValueSchema.safeParse({ ...VALID_PREFIX_OVERRIDE, cidr: 42 }).success).toBe(false);
+  });
+
+  it('rejects malformed and non-IPv4 cidr strings', () => {
+    expect(DnsPrefixOverrideAtomValueSchema.safeParse({ ...VALID_PREFIX_OVERRIDE, cidr: 'not-a-cidr' }).success).toBe(
+      false,
+    );
+    expect(DnsPrefixOverrideAtomValueSchema.safeParse({ ...VALID_PREFIX_OVERRIDE, cidr: '10.0.0.0' }).success).toBe(
+      false,
+    );
+    expect(DnsPrefixOverrideAtomValueSchema.safeParse({ ...VALID_PREFIX_OVERRIDE, cidr: '10.0.0.0/33' }).success).toBe(
+      false,
+    );
+    expect(
+      DnsPrefixOverrideAtomValueSchema.safeParse({ ...VALID_PREFIX_OVERRIDE, cidr: '2001:db8::/64' }).success,
+    ).toBe(false);
   });
 
   it('allows extra properties (no strict mode)', () => {

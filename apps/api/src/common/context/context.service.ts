@@ -6,11 +6,13 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { OrganizationMembershipRole, RequestSource, TenantType } from '@repo/database';
+import { isRecord } from '@repo/utils';
 import { AsyncLocalStorage } from 'async_hooks';
 import { randomUUID } from 'crypto';
 import { AuthType, IdentityContext } from 'src/auth/identity-context';
 import { OPERATOR_POLICY, type OperatorPolicy } from 'src/common/authz/operator-policy';
 import type { DeviceIdentityContext } from 'src/device-tokens/device-tokens.types';
+import { selectIntents } from './permission-intents';
 
 export interface SessionUser {
   id: string;
@@ -59,9 +61,30 @@ export interface RequestContext {
   userAgent?: string;
 }
 
+/** Structural, not `instanceof Promise`: a cross-realm promise or a hand-rolled thenable must
+ *  still take the async path, or its later rejection would be recorded as a success. */
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return isRecord(value) && typeof value.then === 'function';
+}
+
+export interface SystemFinalizeInput {
+  intents: readonly PermissionIntent[];
+  /** Explicit, because a system scope has no request whose identity could supply it. */
+  organizationId: string;
+  requestId: string | null;
+  error: unknown;
+}
+
+/** Implemented by EventLogSystemFinalizer, which arrives through the setter rather than an
+ *  import, so nothing here has to reach into the event-log module to write a row. */
+export interface SystemIntentFinalizer {
+  finalize(input: SystemFinalizeInput): Promise<void>;
+}
+
 @Injectable()
 export class ContextService {
   private readonly als = new AsyncLocalStorage<RequestContext>();
+  private systemIntentFinalizer?: SystemIntentFinalizer;
 
   constructor(@Inject(OPERATOR_POLICY) private readonly operatorPolicy: OperatorPolicy) {}
 
@@ -69,12 +92,59 @@ export class ContextService {
     this.als.run(context, callback);
   }
 
-  runAsSystem<T>(organizationId: string, fn: () => T): T {
+  /** Set by EventLogModule at init: the finalizer reaches EventLogService, which injects
+   *  ContextService, so a constructor dependency here would close a DI cycle. */
+  setSystemIntentFinalizer(finalizer: SystemIntentFinalizer): void {
+    this.systemIntentFinalizer = finalizer;
+  }
+
+  runAsSystem<T>(organizationId: string, fn: () => Promise<T>): Promise<T>;
+  runAsSystem<T>(organizationId: string, fn: () => T): T;
+  runAsSystem(organizationId: string, fn: () => unknown): unknown {
     const existing = this.als.getStore();
     return this.als.run(
       { requestId: existing?.requestId ?? 'system', system: true, systemOrganizationId: organizationId },
-      fn,
+      () => this.settleSystemScope(organizationId, fn),
     );
+  }
+
+  /** The scope's fresh store dies with the scope, so its intents are finalized here or lost.
+   *  Returns the callback's own value untransformed so a synchronous caller stays synchronous. */
+  private settleSystemScope(organizationId: string, fn: () => unknown): unknown {
+    let result: unknown;
+    try {
+      result = fn();
+    } catch (error) {
+      void this.finalizeSystemScope(organizationId, error);
+      throw error;
+    }
+
+    if (isThenable(result)) {
+      // Promise.resolve adopts the thenable (and is identity for a native promise), so a hand-rolled
+      // `then` returning nothing still yields something the caller can await.
+      return Promise.resolve(result).then(
+        async (value: unknown) => {
+          await this.finalizeSystemScope(organizationId, undefined);
+          return value;
+        },
+        async (error: unknown) => {
+          await this.finalizeSystemScope(organizationId, error);
+          throw error;
+        },
+      );
+    }
+
+    void this.finalizeSystemScope(organizationId, undefined);
+    return result;
+  }
+
+  /** Drains before the first await so a synchronous scope still empties its store in-scope. */
+  private finalizeSystemScope(organizationId: string, error: unknown): Promise<void> {
+    const intents = selectIntents(this, undefined);
+    const finalizer = this.systemIntentFinalizer;
+    if (!finalizer || intents.length === 0) return Promise.resolve();
+
+    return finalizer.finalize({ intents, organizationId, requestId: this.requestId ?? null, error });
   }
 
   get isSystem(): boolean {

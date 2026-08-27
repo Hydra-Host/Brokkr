@@ -1,4 +1,4 @@
-import { classifyProc, CRASHLOOP_RESTARTS, depsReady, procIsUp, type PcProcess } from '../proc-health';
+import { classifyProc, CRASHLOOP_RESTARTS, depsReady, procIsDepReady, procIsUp, type PcProcess } from '../proc-health';
 
 
 const proc = (over: Partial<PcProcess>): PcProcess => ({ name: 'x', status: 'Running', ...over });
@@ -14,6 +14,23 @@ describe('procIsUp', () => {
     expect(procIsUp(proc({ status: 'Running', is_ready: 'Not Ready' }))).toBe(false);
     expect(procIsUp(proc({ status: 'Completed', is_ready: 'Ready' }))).toBe(false);
     expect(procIsUp(undefined)).toBe(false);
+  });
+});
+
+describe('procIsDepReady', () => {
+  it('holds a probe-bearing dependency to its probe, where procIsUp would let "-" through', () => {
+    const probing = proc({ status: 'Running', is_ready: '-', has_ready_probe: true });
+    expect(procIsUp(probing)).toBe(true);
+    expect(procIsDepReady(probing)).toBe(false);
+    expect(procIsDepReady(proc({ status: 'Running', is_ready: 'Ready', has_ready_probe: true }))).toBe(true);
+    expect(procIsDepReady(proc({ status: 'Running', is_ready: 'Not Ready', has_ready_probe: true }))).toBe(false);
+  });
+
+  it('accepts a probe-less dependency once it is Running, since it never reports Ready', () => {
+    expect(procIsDepReady(proc({ status: 'Running', is_ready: '-' }))).toBe(true);
+    expect(procIsDepReady(proc({ status: 'Running', is_ready: '-', has_ready_probe: false }))).toBe(true);
+    expect(procIsDepReady(proc({ status: 'Completed', is_ready: '-' }))).toBe(false);
+    expect(procIsDepReady(undefined)).toBe(false);
   });
 });
 

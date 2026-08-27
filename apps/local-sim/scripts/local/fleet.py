@@ -38,7 +38,7 @@ from local.daemons import (
 )
 from local.derived import effective_bmc_ip, effective_console_port, effective_node_ip, managed_tag_for_slot, node_uuid
 from local.grub_build import build_grub_binaries
-from local.host_os import host_os
+from local.host_os import accel_forced, detect_accel, host_os
 from local.live_initrd import build_bridge_agent_initrd, build_live_initrd
 from local.logger import log
 from local.network import (
@@ -53,7 +53,7 @@ from local.network import (
     write_bootptab,
 )
 from local.node_ops import run_node_verb
-from local.prefetch import assert_discovery_images_served, prefetch_node_discovery_initrd
+from local.prefetch import assert_discovery_images_served, prefetch_node_discovery_initrd, wait_for_spoke
 from local.process_utils import (
     cmd_succeeds,
     ensure_sudo_cached,
@@ -88,8 +88,61 @@ def resolve_index(arg: str, fleet: Fleet | None) -> int:
 # ===== preflight =====
 
 
-def preflight() -> None:
-    """Verify required tools and daemons are present; exit(1) listing anything missing."""
+class PreflightError(RuntimeError):
+    """A preflight check found a blocking problem.
+
+    Deliberately not a ``SystemExit``: ``_records_failure`` catches ``Exception``, so a
+    ``sys.exit(1)`` here would sail past it and leave fleet-progress.json with no failure stamp.
+    """
+
+
+TCG_DEGRADATION_PREAMBLE = """\
+KVM is not available. This fleet uses TCG software emulation instead.
+TCG emulates each CPU instruction in software.
+VM boot and OS install become 5 to 20 times slower. Some spoke timeouts can expire.
+A running VM keeps its accelerator. A KVM repair applies on the next cold cycle."""
+
+TCG_DEGRADATION_CAUSES = """\
+Cause 1: the guest has no /dev/kvm.
+  Enable nested virtualization on the hypervisor.
+  On Proxmox, set the guest CPU type to 'host'.
+  Power the guest off, then on. A reset does not add CPU flags.
+  Run 'grep -c -E " (vmx|svm) " /proc/cpuinfo'. A zero means the CPU type is wrong.
+Cause 2: /dev/kvm exists, but the libvirt qemu user cannot read and write it.
+  Add that user to the group that owns /dev/kvm.
+  Restart libvirtd.
+To force one backend, set LOCAL_ACCEL to kvm, tcg, or hvf."""
+
+TCG_DEGRADATION_FORCED = """\
+LOCAL_ACCEL is set to tcg, so this fleet emulates by choice and not because the host refused KVM.
+Unset LOCAL_ACCEL to auto-detect the accelerator again."""
+
+TCG_DEGRADATION_BRIEF = "running on TCG software emulation — no KVM, so boot and install are 5 to 20 times slower"
+
+
+def report_accel_degradation(fleet: Fleet | None = None, *, brief: bool = False) -> None:
+    """Report that this fleet will run on TCG software emulation.
+
+    Never a blocker: auto-fallback is the settled default, so this reports and returns rather than
+    appending to :func:`preflight`'s issue list. ``brief`` is the one-sentence form for bring-up
+    output, where the full block would scroll away.
+    """
+    if detect_accel() != "tcg":
+        return
+    if brief:
+        log.warn(TCG_DEGRADATION_BRIEF)
+        return
+    tail = TCG_DEGRADATION_FORCED if get_settings().paths.accel == "tcg" else TCG_DEGRADATION_CAUSES
+    log.warn(f"{TCG_DEGRADATION_PREAMBLE}\n{tail}")
+    if fleet is not None and any(n.passthrough for n in fleet.nodes):
+        log.warn("PCI passthrough is configured, but <hostdev> assignment is meaningless without KVM.")
+
+
+def preflight(fleet: Fleet | None = None) -> None:
+    """Verify required tools and daemons are present; raise ``PreflightError`` listing what is missing.
+
+    TCG degradation is reported here but is never an issue — the fleet still comes up.
+    """
     s = get_settings()
     is_mac = host_os() == "macos"
     pm = "brew install" if is_mac else "apt install"
@@ -117,19 +170,16 @@ def preflight() -> None:
         issues.append(f"missing ipmi_sim ({s.paths.ipmi_sim}) — build devenv/pkgs/openipmi.nix / run: task setup")
     if not s.paths.sushy.is_file():
         issues.append("missing sushy-emulator — run: task setup")
-    if not _libvirtd_running():
-        libvirt_hint = (
-            "sudo brew services start libvirt"
-            if is_mac
-            else "sudo systemctl start libvirtd (and ensure $USER is in the 'libvirt' group)"
-        )
-        issues.append(f"libvirt not reachable ({libvirt_hint})")
+    reachable, libvirt_err = _libvirt_probe()
+    if not reachable:
+        issues.append(_libvirt_issue(libvirt_err, is_mac))
     if not is_mac:
         _ensure_memlock(issues)
+    report_accel_degradation(fleet)
     if issues:
         for i in issues:
             log.error(i)
-        sys.exit(1)
+        raise PreflightError("preflight failed: " + "; ".join(issues))
 
 
 def _ensure_memlock(issues: list[str]) -> None:
@@ -150,8 +200,31 @@ def _ensure_memlock(issues: list[str]) -> None:
         )
 
 
-def _libvirtd_running() -> bool:
-    return cmd_succeeds("virsh", "--connect", get_settings().paths.libvirt_uri, "list")
+def _libvirt_probe() -> tuple[bool, str]:
+    """Probe libvirt, returning ``(reachable, stderr)``.
+
+    ``cmd_succeeds`` discards stderr, which is where the real cause lives — a socket
+    'Permission denied' reads identically to a stopped daemon by exit status alone.
+    """
+    res = run("virsh", "--connect", get_settings().paths.libvirt_uri, "list", check=False, capture=True)
+    return res.returncode == 0, (res.stderr or "").strip()
+
+
+def _libvirt_issue(err: str, is_mac: bool) -> str:
+    """The preflight issue for an unreachable libvirt, classified by the daemon's own stderr.
+
+    Telling an operator to start a daemon that is already running, when the socket simply refused
+    their uid, sends them down the wrong path for an afternoon.
+    """
+    if "permission denied" in err.lower():
+        fix = (
+            "check the session socket's owner, then 'sudo brew services restart libvirt'"
+            if is_mac
+            else "add yourself to the 'libvirt' group ('sudo usermod -aG libvirt $USER'), then log out and back in"
+        )
+        return f"libvirt socket refuses this user (permission denied) — {fix}"
+    start = "sudo brew services start libvirt" if is_mac else "sudo systemctl start libvirtd"
+    return f"libvirt not reachable ({start})" + (f": {err}" if err else "")
 
 
 # ===== state dirs =====
@@ -334,6 +407,9 @@ def _records_failure(prefix: str):
             except Exception as e:
                 stderr = getattr(e, "stderr", None)
                 detail = f"{e}\n{stderr.strip()}" if isinstance(stderr, str) and stderr.strip() else str(e)
+                # a bare exit code reads as "fleet up failed: 1" in the control center — useless.
+                if not detail.strip() or detail.strip().isdigit():
+                    detail = "see the fleet:init log for the failing step"
                 progress.error(f"{prefix}: {detail}")
                 raise
 
@@ -357,7 +433,7 @@ def bm_preflight(fleet: Fleet | None) -> None:
     if issues:
         for i in issues:
             log.error(i)
-        sys.exit(1)
+        raise PreflightError("bare-metal preflight failed: " + "; ".join(issues))
     log.info(f"bare-metal preflight ok — iface {bm.iface} up, iface_ip {iface_ip}, docker present")
 
 
@@ -388,8 +464,7 @@ class ModeOps:
 
 class VmOps(ModeOps):
     def preflight(self, fleet: Fleet | None) -> None:
-        del fleet
-        preflight()
+        preflight(fleet)
 
     def init_node(self, fleet: Fleet, name: str, zone: str, device_id: str | None, ordinal: int) -> None:
         node = next(n for n in fleet.nodes if n.name == name)
@@ -405,7 +480,9 @@ class VmOps(ModeOps):
         _build_node_ipxe(fleet, node)
 
     def up(self, fleet: Fleet) -> None:
-        progress.set(Step.RENDER, started=True)
+        # stamped at the START of a bring-up, not only at READY: TCG is slowest while this still
+        # runs, so a reader told at READY is told after the wait the accelerator would explain.
+        progress.set(Step.RENDER, started=True, accel=detect_accel(), accel_forced=accel_forced())
         render_xmls()
 
         progress.set(Step.DAEMONS)
@@ -501,9 +578,10 @@ def cmd_init(args: argparse.Namespace) -> int:
     ops.preflight(fleet)
     ensure_sudo_cached()
     ensure_state_dirs()
+    wait_for_spoke(fleet)
     assert_discovery_images_served(fleet)
 
-    progress.set(Step.BUILD_LIVE_IMG, started=True)
+    progress.set(Step.BUILD_LIVE_IMG, started=True, accel=detect_accel(), accel_forced=accel_forced())
     log.info("build brokkr-live.img")
     live, rebuilt = build_live_initrd()
     log.info(f"  → {'built' if rebuilt else 'up-to-date'} {live} ({live.stat().st_size} bytes)")
@@ -579,8 +657,9 @@ def cmd_up(args: argparse.Namespace) -> int:
     ensure_state_dirs()
 
     ops.up(fleet)
+    report_accel_degradation(brief=True)
     log.info("fleet up")
-    progress.set(Step.READY, total=ops.node_count(fleet))
+    progress.set(Step.READY, total=ops.node_count(fleet), accel=detect_accel(), accel_forced=accel_forced())
     applied.write(fleet)
     if supervise:
         return _supervise()
@@ -873,7 +952,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
     _refresh_data_network_if_needed(desired, plan)
     desired_digest = applied.fleet_digest(desired)
     done = _journal_read(desired_digest)
-    progress.set(Step.POWER_ON, total=len(actionable))
+    progress.set(Step.POWER_ON, total=len(actionable), accel=detect_accel(), accel_forced=accel_forced())
     for i, item in enumerate(actionable, 1):
         if item.name in done:  # journaled = fully applied; never re-run (a re-run must not re-wipe a node-disk)
             log.skip(f"{item.name} already applied this run")
@@ -1023,7 +1102,12 @@ def main() -> int:
     p_verify.set_defaults(func=cmd_verify)
 
     args = p.parse_args()
-    return args.func(args)
+    try:
+        return args.func(args)
+    except PreflightError:
+        # preflight/bm_preflight already logged each issue; re-emitting the joined string reads as
+        # a third, distinct error. The handler exists to suppress the traceback.
+        return 1
 
 
 if __name__ == "__main__":

@@ -8,8 +8,10 @@ import { readAtom } from '../device-record/atom/atom-fetcher.js';
 import { DnsConfigReaderService } from '../dns/dns-config-reader.service.js';
 import { DNS_RECORDS_KEY, DnsRecordsLookup } from '../dns/dns-records-reader.js';
 import { DnsRecordsAtomValueSchema } from '../dns/dns-records-reader.schema.js';
+import { dnsServeCidrs, dnsServeInterfaceIps, unionInterfaceIps } from '../dns/dns-serve-interfaces.js';
 import { DnsServerService, type DnsRecordsReadResult } from '../dns/dns-server.service.js';
 import { defaultDnsConfig, type DnsConfig } from '../dns/dns.config.js';
+import type { InterfaceIp } from '../dns/interfaces.js';
 import { ContextLogger, logInfo } from '../logger/logger.service.js';
 
 import { getAtomServedCidrs, getAtomServedIps } from './atom-served-ips-holder.js';
@@ -23,6 +25,9 @@ export function buildDnsServerDeps(env: NodeJS.ProcessEnv = process.env): DnsSer
       let configReader: DnsConfigReaderService | undefined;
       let readRecords: ((jobId: string) => Promise<DnsRecordsReadResult | null>) | undefined;
       let onStop: (() => Promise<void>) | undefined;
+      // Updated from the DNS reconcile's prefix-override read; no atoms -> empty -> fail-closed.
+      let dnsServeIps: InterfaceIp[] = [];
+      let dnsServeCidrList: string[] = [];
 
       if (zonePrefix !== '') {
         const redisConfig = { ...loadRedisConfig(env), prefix: zonePrefix };
@@ -48,10 +53,14 @@ export function buildDnsServerDeps(env: NodeJS.ProcessEnv = process.env): DnsSer
 
       return new DnsServerService({
         config,
-        listInterfaces: getAtomServedIps,
-        listServedCidrs: getAtomServedCidrs,
+        listInterfaces: () => unionInterfaceIps(getAtomServedIps(), dnsServeIps),
+        listServedCidrs: () => [...new Set([...getAtomServedCidrs(), ...dnsServeCidrList])],
         configReader,
         readRecords,
+        onPrefixOverrides: (overrides) => {
+          dnsServeIps = dnsServeInterfaceIps(overrides);
+          dnsServeCidrList = dnsServeCidrs(overrides);
+        },
         onStop,
       });
     },

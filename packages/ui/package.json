@@ -13,10 +13,6 @@
       "types": "./src/components/utils.ts",
       "import": "./src/components/utils.ts"
     },
-    "./csv": {
-      "types": "./src/csv.ts",
-      "import": "./src/csv.ts"
-    },
     "./lib/*": {
       "types": "./src/lib/*.ts",
       "import": "./src/lib/*.ts"
@@ -24,10 +20,6 @@
     "./hooks/*": {
       "types": "./src/hooks/*.ts",
       "import": "./src/hooks/*.ts"
-    },
-    "./hooks/use-server-table": {
-      "types": "./src/hooks/use-server-table.tsx",
-      "import": "./src/hooks/use-server-table.tsx"
     },
     "./components/*": {
       "types": "./src/components/*.tsx",
@@ -83,14 +75,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hookform/resolvers": "^5.2.2",
-    "@repo/api-client": "workspace:*",
-    "@repo/utils": "workspace:*",
     "@tiptap/extension-link": "^3.22.0",
     "@tiptap/extension-underline": "^3.22.0",
     "@tiptap/react": "^3.22.0",
     "@tiptap/starter-kit": "^3.22.0",
     "@base-ui/react": "^1.1.0",
+    "@fontsource/inter": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@tanstack/react-table": "^8.16.0",
     "class-variance-authority": "^0.7.1",

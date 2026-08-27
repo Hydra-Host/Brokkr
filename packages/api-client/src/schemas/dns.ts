@@ -82,7 +82,12 @@ export const ZoneDnsConfigSchema = z
 export type ZoneDnsConfig = z.infer<typeof ZoneDnsConfigSchema>;
 
 export const PrefixDnsOverrideSchema = z.object({
-  serveDns: z.boolean().nullable().describe('Whether DNS is served on this prefix (null = inherit zone default)'),
+  serveDns: z
+    .boolean()
+    .nullable()
+    .describe(
+      'Whether DNS is served on this prefix (null = inherit zone default). When true, the bridge binds DNS listeners on its local IPs inside this prefix even if DHCP is not served here. Enabling requires an IPv4 prefix.',
+    ),
   upstreamOverride: z
     .array(z.string().ip({ version: 'v4' }))
     .describe('Per-prefix upstream resolver IPv4 addresses (empty = inherit zone default)'),

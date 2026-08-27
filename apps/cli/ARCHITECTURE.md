@@ -71,7 +71,7 @@ The three entry points differ only in **what renders the output** (Commander + c
 | Browser         | `src/browser-entry.ts`            | Same as above, with shims   | Web app embedded terminal        |
 | MCP server      | `src/mcp/index.ts`                | None (returns JSON)         | Claude / Cursor / any MCP client |
 
-**TUI = navigation + visualization only.** All writes (create, update, delete, login) happen in CLI commands. This split is enforced by convention (see `apps/cli/CLAUDE.md` rules #3, #10).
+**TUI = navigation + visualization only.** All writes (create, update, delete, login) happen in CLI commands. This split is enforced by convention, not by the type system.
 
 ---
 

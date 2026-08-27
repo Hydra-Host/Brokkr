@@ -26,6 +26,7 @@ import { useToast } from '@/lib/toast';
 import { useApplyConfirm } from '@/lib/use-apply-confirm';
 import { awaitFleetRun, useLogStream } from '@/lib/use-log-stream';
 import { OPS_POLL_MS, useOps } from '@/lib/use-ops';
+import { usePoll } from '@/lib/use-poll';
 
 function FleetPage() {
   const stream = useLogStream();
@@ -51,9 +52,9 @@ function FleetPage() {
     (msg) => toast.error(msg),
   );
 
-  const machines = tsr.listMachines.useQuery({ queryKey: ['machines'], refetchInterval: 4000 });
-  const stackState = tsr.getStackState.useQuery({ queryKey: ['stack-state'], refetchInterval: 3000 });
-  const verify = tsr.getFleetVerify.useQuery({ queryKey: ['fleet-verify'], refetchInterval: 30000 });
+  const machines = tsr.listMachines.useQuery({ queryKey: ['machines'], refetchInterval: usePoll(4000) });
+  const stackState = tsr.getStackState.useQuery({ queryKey: ['stack-state'], refetchInterval: usePoll(3000) });
+  const verify = tsr.getFleetVerify.useQuery({ queryKey: ['fleet-verify'], refetchInterval: usePoll(30000) });
   const power = tsr.powerMachine.useMutation();
   const reset = tsr.resetMachine.useMutation();
   const heal = tsr.healFleet.useMutation();
@@ -320,7 +321,7 @@ function FleetPage() {
           />
         )}
         <ZoneRuntimeSection />
-        <div className="space-y-2">
+        <div data-tour="fleet-machines" className="space-y-2">
           {machineList.map((m) => (
             <MachineCard
               key={m.name}
@@ -359,7 +360,7 @@ function FleetPage() {
         </div>
 
         {fleetProcesses.length > 0 && (
-          <div className="space-y-2">
+          <div data-tour="fleet-processes" className="space-y-2">
             <SectionHeading>Processes</SectionHeading>
             {fleetProcesses.map((p) => (
               <DatastoreCard
@@ -374,20 +375,20 @@ function FleetPage() {
           </div>
         )}
 
-        <div className="pt-2">
+        <div data-tour="fleet-bringup" className="space-y-2 pt-2">
           <SectionHeading>Bring up</SectionHeading>
+          <OpList ops={byGroup('bringup')} {...opListProps} />
         </div>
-        <OpList ops={byGroup('bringup')} {...opListProps} />
 
-        <div className="pt-2">
+        <div data-tour="fleet-destructive" className="space-y-2 pt-2">
           <SectionHeading>Destructive</SectionHeading>
+          <OpList
+            ops={byGroup('destructive')}
+            {...opListProps}
+            forceDisabled={comingUp}
+            disabledReason="Fleet is coming up — stopping now tears down the in-progress bring-up; wait for ready."
+          />
         </div>
-        <OpList
-          ops={byGroup('destructive')}
-          {...opListProps}
-          forceDisabled={comingUp}
-          disabledReason="Fleet is coming up — stopping now tears down the in-progress bring-up; wait for ready."
-        />
 
         <div className="pt-2">
           <SectionHeading>Recent runs</SectionHeading>

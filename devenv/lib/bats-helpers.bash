@@ -129,3 +129,26 @@ pty_run() { # <cmd> [args...]
     script -q /dev/null "$@"
   fi
 }
+
+# with-task-log.sh's specs all need the same sandbox: a fake runtime dir, a lock dir TMPDIR points
+# at, and a checkout the lock key hashes. Shared so a second spec file cannot drift from the first.
+task_test_setup() {
+  ROOT="$PWD"
+  RUNTIME="$BATS_TEST_TMPDIR/runtime"
+  LOCKS="$BATS_TEST_TMPDIR/locks"
+  CHECKOUT="$BATS_TEST_TMPDIR/checkout"
+  # shellcheck disable=SC2034
+  LOGS="$RUNTIME/processes/logs"
+  # shellcheck disable=SC2034
+  SOCK="$RUNTIME/pc.sock"
+  mkdir -p "$RUNTIME" "$LOCKS" "$CHECKOUT"
+}
+
+task_env() {
+  env -u PC_SOCKET_PATH DEVENV_RUNTIME="$RUNTIME" TMPDIR="$LOCKS" DEVENV_ROOT="$CHECKOUT" "$@"
+}
+
+task_log() { # <task> <body>
+  run task_env bash -c '. "$1/devenv/lib/with-task-log.sh"; begin_task_log "$2"; shift 2; eval "$@"' \
+    _ "$ROOT" "$@"
+}

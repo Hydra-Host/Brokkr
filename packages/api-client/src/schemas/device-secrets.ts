@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PaginationQuerySchema, createPaginatedResponseSchema } from './pagination';
 
 export const DeviceSecretPurposeSchema = z
   .enum(['BMC', 'CONSOLE'])
@@ -75,3 +76,38 @@ export const DeviceSecretRevealStatusResponseSchema = z
     }),
   ])
   .describe('Reveal-status result; `secret` is populated only on the ready variant.');
+
+export const DeviceSecretAuditEventTypeSchema = z
+  .enum(['WRITE', 'UPDATE', 'REVEAL_REQUESTED', 'REVEAL_DELIVERED', 'DISPATCH', 'INVALIDATED'])
+  .describe('The audited device-secret lifecycle event; REVEAL_DELIVERED is the disclosure point.');
+
+export const DeviceSecretAuditActorTypeSchema = z
+  .enum(['USER', 'BRIDGE', 'SYSTEM'])
+  .describe('Who performed the audited action.');
+
+export const DeviceSecretAuditEventSchema = z.object({
+  id: z.string().describe('UUID of the audit event row.'),
+  deviceId: z.string().nullable().describe('Device the event concerns, or null for a device-less (ephemeral) event.'),
+  zoneId: z.string().nullable().describe('Data center the event concerns when there is no device, else null.'),
+  event: DeviceSecretAuditEventTypeSchema,
+  purpose: DeviceSecretPurposeSchema.nullable().describe('Secret purpose the event concerns, if applicable.'),
+  kind: DeviceSecretKindSchema.nullable().describe('Secret kind the event concerns, if applicable.'),
+  version: z.number().int().nullable().describe('Secret version the event concerns, if applicable.'),
+  actorType: DeviceSecretAuditActorTypeSchema,
+  actor: z.string().nullable().describe('User id / bridge id / null — not an FK. Kept raw for forensics.'),
+  actorDisplay: z
+    .string()
+    .nullable()
+    .describe(
+      'Human-friendly actor label: user email for USER, data center name for BRIDGE when the actor id maps to a zone. Null when unresolved (e.g. deleted user) — fall back to the raw actor id.',
+    ),
+  requestId: z.string().nullable().describe('Reveal/dispatch correlation id, if applicable.'),
+  createdAt: z.coerce.date().describe('When the event was recorded.'),
+});
+export type DeviceSecretAuditEvent = z.infer<typeof DeviceSecretAuditEventSchema>;
+
+export const DeviceSecretAuditListResponseSchema = createPaginatedResponseSchema(DeviceSecretAuditEventSchema);
+export type DeviceSecretAuditListResponse = z.infer<typeof DeviceSecretAuditListResponseSchema>;
+
+export const DeviceSecretAuditQuerySchema = PaginationQuerySchema.omit({ filters: true });
+export type DeviceSecretAuditQuery = z.infer<typeof DeviceSecretAuditQuerySchema>;

@@ -4,13 +4,13 @@ import { Cpu, ExternalLink, HardDrive, MemoryStick, Network, Power, Server as Se
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 
+import { DeviceStatusBadge } from '@repo/domain-ui/components/device-status-badge';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
-import { DeviceStatusBadge } from '@repo/ui/components/device-status-badge';
 import { Separator } from '@repo/ui/components/separator';
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@repo/ui/components/sheet';
 import { Skeleton } from '@repo/ui/components/skeleton';
-import { formatPriceFromCentsToDollars, formatSize, perDriveSizeGb } from '@repo/utils/format';
+import { formatPriceFromCentsToDollars, formatSize, perDriveSizeGb } from '@repo/utils';
 import { tsr } from '~/lib/api';
 
 const searchSchema = z.object({

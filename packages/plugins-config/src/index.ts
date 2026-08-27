@@ -19,6 +19,19 @@ const radarConfigured = radarSecretKey !== '';
 const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY ?? '';
 const googleMapsConfigured = googleMapsApiKey !== '';
 
+// Nomad is opt-in via NOMAD_PLUGIN_ENABLED — never auto-enable from NOMAD_ADDR alone.
+// Empty address/token are fine when disabled (configSchema short-circuits).
+const nomadAddress = process.env.NOMAD_ADDR ?? '';
+const nomadToken = process.env.NOMAD_TOKEN ?? '';
+const nomadNamespace = process.env.NOMAD_NAMESPACE || 'default';
+const nomadRegion = process.env.NOMAD_REGION ?? '';
+const nomadTimeoutRaw = process.env.NOMAD_HTTP_TIMEOUT_MS ?? '';
+const nomadTimeoutMs = nomadTimeoutRaw !== '' ? Number(nomadTimeoutRaw) : undefined;
+const nomadSkipVerifyRaw = (process.env.NOMAD_SKIP_VERIFY ?? '').toLowerCase();
+const nomadTlsSkipVerify = nomadSkipVerifyRaw === 'true' || nomadSkipVerifyRaw === '1';
+// Intent-only gate: incomplete addr/token fails Zod at boot (loud), not silent disable.
+const nomadPluginEnabled = process.env.NOMAD_PLUGIN_ENABLED === 'true';
+
 const hubspotAccessToken = process.env.HUBSPOT_ACCESS_TOKEN ?? '';
 const hubspotPortalId = process.env.HUBSPOT_PORTAL_ID ?? '';
 const hubspotContactOwnerId = process.env.HUBSPOT_CONTACT_OWNER_ID ?? '';
@@ -89,6 +102,7 @@ export function loadOptionalPluginEntries(requireFn: RequireFn = createRequire(i
         clickhouseUser,
         clickhousePassword,
         environment: process.env.HH_ENV ?? 'dev',
+        adminOrganizationId: process.env.BROKKR_ADMIN_ORG_ID ?? '',
       },
     });
   });
@@ -129,6 +143,22 @@ export function loadOptionalPluginEntries(requireFn: RequireFn = createRequire(i
       });
     },
   );
+  // Public marketplace is always on when the package is present; HubSpot notify is fail-soft.
+  loadOptionalManifest(requireFn, '@hydrahost/plugin-bid-ask', 'bidAskManifest', (plugin) => {
+    entries.push({
+      plugin,
+      enabled: true,
+      settings: {
+        accessToken: hubspotAccessToken,
+        portalId: hubspotPortalId,
+        contactOwnerId: hubspotContactOwnerId,
+        demandRequestFormId: hubspotDemandRequestFormId,
+        demandRequestObjectTypeId: hubspotDemandRequestObjectTypeId,
+        adminOrganizationId: process.env.BROKKR_ADMIN_ORG_ID ?? '',
+        trackerPortalId: hubspotTrackerPortalId,
+      },
+    });
+  });
   // Device-monitoring Prometheus proxy: always enabled when present. Empty Thanos
   // settings fail closed per request (503); the adapter constructor must not throw at boot.
   loadOptionalManifest(requireFn, '@hydrahost/plugin-device-monitoring', 'deviceMonitoringManifest', (plugin) => {
@@ -156,6 +186,23 @@ export function loadOptionalPluginEntries(requireFn: RequireFn = createRequire(i
   });
   loadOptionalManifest(requireFn, '@hydrahost/plugin-operator-hub', 'operatorHubManifest', (plugin) => {
     entries.push({ plugin, enabled: true, settings: {} });
+  });
+  // Nomad is opt-in via NOMAD_PLUGIN_ENABLED (never auto-enabled from NOMAD_ADDR
+  // alone); disabled short-circuits configSchema so empty addr/token don't throw.
+  loadOptionalManifest(requireFn, '@hydrahost/plugin-nomad', 'nomadManifest', (plugin) => {
+    entries.push({
+      plugin,
+      enabled: nomadPluginEnabled,
+      settings: {
+        address: nomadAddress,
+        token: nomadToken,
+        namespace: nomadNamespace,
+        ...(nomadRegion !== '' ? { region: nomadRegion } : {}),
+        ...(nomadTimeoutMs !== undefined && Number.isFinite(nomadTimeoutMs) ? { timeoutMs: nomadTimeoutMs } : {}),
+        tlsSkipVerify: nomadTlsSkipVerify,
+        adminOrganizationId: process.env.BROKKR_ADMIN_ORG_ID ?? '',
+      },
+    });
   });
   loadOptionalManifest(
     requireFn,

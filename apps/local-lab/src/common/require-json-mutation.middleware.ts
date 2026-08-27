@@ -60,7 +60,13 @@ export function requireJsonMutation(audit: AuditStore) {
     // a dual-stack socket reports an ipv4 peer/address with the ::ffff: prefix; compare on the v4 form
     const local = req.socket.localAddress;
     const localAddress = local?.startsWith('::ffff:') ? local.slice('::ffff:'.length) : local;
-    if (origin !== undefined && !isMutationOriginAllowed(origin, localAddress)) {
+    // a valid token stands in for an allowlisted origin: it IS an anti-csrf proof, and it is what makes a
+    // LAN operator's own hostname work without an allowlist entry per name. A drive-by page cannot hold it
+    // — localStorage is origin-scoped, the vite dev server refuses to serve the bundle to a foreign origin,
+    // and sending the header at all forces a preflight our CORS allowlist rejects. Loopback callers present
+    // no token (they need none), so the gate below is unchanged for them — which is who it was written for.
+    const tokenAuth = currentOrigin()?.tokenAuth === true;
+    if (origin !== undefined && !tokenAuth && !isMutationOriginAllowed(origin, localAddress)) {
       deny(req, res, 403, ORIGIN_DENIAL);
       return;
     }

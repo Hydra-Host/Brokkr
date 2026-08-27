@@ -29,6 +29,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@repo/ui/components/pop
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@repo/ui/components/table';
 import { cn } from '@repo/ui/utils';
 
+import { unwrapErrorMessage } from '@repo/utils';
 import { ServerCommissionIcon } from '~/components/server-commission-icon';
 import { tsr } from '~/lib/api';
 
@@ -77,11 +78,6 @@ export function formatMacInput(raw: string): string {
     .toUpperCase()
     .slice(0, 12);
   return hex.match(/.{1,2}/g)?.join(':') ?? '';
-}
-export function errorBodyMessage(body: unknown, fallback: string): string {
-  return typeof body === 'object' && body !== null && 'message' in body && typeof body.message === 'string'
-    ? body.message
-    : fallback;
 }
 export function identityKey(mac: string | null | undefined, ip: string | null | undefined): string {
   const normMac = normalizeMac(mac);
@@ -288,9 +284,9 @@ function CommissionZonePage() {
         .mutateAsync({ params: { zoneId }, body })
         .then((res) => {
           if (res.status === 200) setSessionId(res.body.sessionId);
-          else setScanError(errorBodyMessage(res.body, 'Failed to start scan'));
+          else setScanError(unwrapErrorMessage(res, 'Failed to start scan'));
         })
-        .catch((err: unknown) => setScanError(err instanceof Error ? err.message : 'Failed to start scan'));
+        .catch((err: unknown) => setScanError(unwrapErrorMessage(err, 'Failed to start scan')));
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [zoneId],
@@ -316,10 +312,10 @@ function CommissionZonePage() {
         setSelectedSubnets((prev) => (prev === null || prev.includes(prefix) ? prev : [...prev, prefix]));
         void queryClient.invalidateQueries({ queryKey: ['commissioning-mgmt-subnets', zoneId] });
       } else {
-        toast.error(errorBodyMessage(res.body, 'Failed to add management subnet'));
+        toast.error(unwrapErrorMessage(res, 'Failed to add management subnet'));
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to add management subnet');
+      toast.error(unwrapErrorMessage(err, 'Failed to add management subnet'));
     }
   }, [customSubnet, zoneId, createPrefixMutation, queryClient]);
 
@@ -343,7 +339,7 @@ function CommissionZonePage() {
 
   useEffect(() => {
     if (scanPoll.isError) {
-      setScanError(scanPoll.error instanceof Error ? scanPoll.error.message : 'Scan polling failed');
+      setScanError(unwrapErrorMessage(scanPoll.error, 'Scan polling failed'));
       return;
     }
     if (!scanPoll.data) return;
@@ -594,7 +590,7 @@ function CommissionZonePage() {
         toast.success('Enrichment started — the device will reboot into discovery');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to start enrichment');
+      toast.error(unwrapErrorMessage(err, 'Failed to start enrichment'));
     }
   };
 
@@ -607,7 +603,7 @@ function CommissionZonePage() {
       await cancelEnrichMutation.mutateAsync({ params: { zoneId, planId }, body: {} });
       toast.success('Enrichment cancelled');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to cancel enrichment');
+      toast.error(unwrapErrorMessage(err, 'Failed to cancel enrichment'));
     }
   };
 
@@ -627,7 +623,7 @@ function CommissionZonePage() {
         }
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Validation failed');
+      toast.error(unwrapErrorMessage(err, 'Validation failed'));
     } finally {
       setValidatingKeys((prev) => {
         const next = new Set(prev);
@@ -658,7 +654,7 @@ function CommissionZonePage() {
         toast.error(message);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Commissioning failed';
+      const message = unwrapErrorMessage(err, 'Commissioning failed');
       setCommissionErrors((prev) => ({ ...prev, [key]: message }));
       toast.error(message);
     }
@@ -681,7 +677,7 @@ function CommissionZonePage() {
           disabled={scanInProgress || scanDisabledReason !== undefined}
           title={scanDisabledReason}
         >
-          <RefreshCw className={`mr-2 h-4 w-4 ${scanInProgress ? 'animate-spin' : ''}`} />
+          <RefreshCw className={cn('mr-2 h-4 w-4', scanInProgress && 'animate-spin')} />
           Rescan
         </Button>
       </CardHeader>
@@ -833,7 +829,7 @@ function CommissionZonePage() {
                 const res = await retryStepMutation.mutateAsync({ params: { zoneId, deviceId }, body: {} });
                 if (res.status === 200) toast[res.body.success ? 'success' : 'error'](res.body.message);
               } catch (err) {
-                toast.error(err instanceof Error ? err.message : 'Failed to retry step');
+                toast.error(unwrapErrorMessage(err, 'Failed to retry step'));
               }
               refetchProgress();
             }}

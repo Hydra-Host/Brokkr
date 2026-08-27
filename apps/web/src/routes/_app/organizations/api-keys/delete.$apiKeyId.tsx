@@ -17,6 +17,7 @@ import { Input } from '@repo/ui/components/input';
 import { Label } from '@repo/ui/components/label';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
+import { unwrapErrorMessage } from '@repo/utils';
 import { tsr } from '~/lib/api';
 
 export const Route = createFileRoute('/_app/organizations/api-keys/delete/$apiKeyId')({
@@ -62,7 +63,7 @@ function DeleteApiKeyPage() {
         setError('Failed to delete API key');
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete API key. Please try again.';
+      const message = unwrapErrorMessage(err, 'Failed to delete API key. Please try again.');
       setError(message);
     }
   };

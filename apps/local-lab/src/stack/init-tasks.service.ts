@@ -151,6 +151,10 @@ function readExitCode(path: string): number | null {
   } catch {
     return null;
   }
-  const result = ExitCodeSchema.safeParse(raw.trim());
+  // only line 1 is the contract; the writer stamp on line 2 is diagnostics, and an empty line 1
+  // is a half-written sidecar, never a zero exit.
+  const first = (raw.split('\n', 1)[0] ?? '').trim();
+  if (first === '') return null;
+  const result = ExitCodeSchema.safeParse(first);
   return result.success ? result.data : null;
 }

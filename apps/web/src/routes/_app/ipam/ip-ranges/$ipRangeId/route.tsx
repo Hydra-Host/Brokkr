@@ -2,21 +2,9 @@ import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
+import { getIpamStatusBadgeVariant } from '@repo/utils';
 import { Link, Outlet, createFileRoute } from '@tanstack/react-router';
 import { tsr } from '~/lib/api';
-
-function statusVariant(status: string) {
-  switch (status) {
-    case 'ACTIVE':
-      return 'default';
-    case 'RESERVED':
-      return 'secondary';
-    case 'DEPRECATED':
-      return 'destructive';
-    default:
-      return 'outline';
-  }
-}
 
 export const Route = createFileRoute('/_app/ipam/ip-ranges/$ipRangeId')({
   staticData: { breadcrumb: 'IP Range Detail' },
@@ -55,7 +43,7 @@ function IpRangeLayout() {
           <span className="font-mono text-lg font-medium">
             {ipRange.start} - {ipRange.end}
           </span>
-          <Badge variant={statusVariant(ipRange.status)}>{ipRange.status}</Badge>
+          <Badge variant={getIpamStatusBadgeVariant(ipRange.status)}>{ipRange.status}</Badge>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" asChild>

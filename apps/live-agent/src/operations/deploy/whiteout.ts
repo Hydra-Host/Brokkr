@@ -4,7 +4,7 @@ import { lstat, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { registerOperation } from '../../dispatch/registry';
 import { makeLogger } from '../../logger';
-import { assertTargetPathSafe } from './targetPath';
+import { assertTargetPathSafe } from './target-path';
 const logger = makeLogger('deploy');
 
 export function registerWhiteoutRemover(): void {

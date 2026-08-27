@@ -112,13 +112,16 @@ export class FleetController {
   @LabRoute({ exposure: 'loopback-only' })
   putConfig() {
     return tsRestHandler(contract.putFleetConfig, async ({ body }) => {
-      this.fleet.putConfig({
+      const rejected = this.fleet.putConfig({
         mode: body.mode,
         nodes: body.nodes,
         bmcDefaults: body.bmcDefaults,
+        defaults: body.defaults,
+        network: body.network,
+        prune: body.prune,
         baremetal: body.baremetal,
       });
-      return { status: 200 as const, body: { ok: true, pending: await this.fleet.pending() } };
+      return { status: 200 as const, body: { ok: true, pending: await this.fleet.pending(), rejected } };
     });
   }
 
@@ -142,6 +145,15 @@ export class FleetController {
     return tsRestHandler(contract.getFleetApplyPlan, async () => ({
       status: 200 as const,
       body: await this.fleet.applyPlan(),
+    }));
+  }
+
+  @TsRestHandler(contract.previewFleetApplyPlan)
+  @LabRoute({ exposure: 'loopback-only' })
+  previewApplyPlan() {
+    return tsRestHandler(contract.previewFleetApplyPlan, async ({ body }) => ({
+      status: 200 as const,
+      body: await this.fleet.previewPlan(body),
     }));
   }
 

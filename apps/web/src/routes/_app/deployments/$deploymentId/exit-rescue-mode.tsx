@@ -2,7 +2,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, getRouteApi, useNavigate, useRouter } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 
-import type { Deployment } from '@repo/api-client';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -23,7 +22,7 @@ export const Route = createFileRoute('/_app/deployments/$deploymentId/exit-rescu
 });
 
 function ExitRescueModeDialog() {
-  const deployment = parentRoute.useLoaderData() as Deployment;
+  const deployment = parentRoute.useLoaderData();
   const navigate = useNavigate();
   const router = useRouter();
   const queryClient = useQueryClient();

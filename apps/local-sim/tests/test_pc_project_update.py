@@ -214,7 +214,7 @@ def test_identical_update_restarts_nothing(daemon):
 
 @_skip
 def test_single_process_env_edit_restarts_only_that_process(daemon):
-    sock, cwd, cfg = daemon
+    sock, cwd, _cfg = daemon
     edited = cwd / "pc.edited.yaml"
     edited.write_text(yaml.safe_dump(_config(beta_env="2")))
     before = _pids(sock, cwd)
@@ -230,7 +230,7 @@ def test_single_process_env_edit_restarts_only_that_process(daemon):
 def test_info_self_consistent_with_rendered_config(daemon):
     from pc_config import _EXTENDED_FIELDS, normalize_process
 
-    sock, cwd, cfg = daemon
+    sock, _cwd, cfg = daemon
     rendered = yaml.safe_load(cfg.read_text())["processes"]
     surface = ("depends_on", *_EXTENDED_FIELDS)
     for name in ("alpha", "beta"):
@@ -243,7 +243,7 @@ def test_info_self_consistent_with_rendered_config(daemon):
 
 @_skip
 def test_dotenv_alignment_keeps_planted_env_out_of_config(daemon):
-    sock, cwd, cfg = daemon
+    sock, _cwd, _cfg = daemon
     for name in ("alpha", "beta"):
         info = _get_info(sock, name)
         env = info.get("Environment") or []

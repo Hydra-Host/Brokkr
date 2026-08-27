@@ -1,6 +1,6 @@
 {
   "availability": "{\"max_restarts\": 5, \"restart\": \"on_failure\"}",
-  "command": "exec /nix/store/$HASH-rust_devenv-tasks-2.1.3/bin/devenv-tasks run --task-file /nix/store/$HASH-tasks.json --mode all --cache-dir $REPO/.devenv --runtime-dir /run/user/$UID/devenv-$ID --ignore-process-deps devenv:processes:spoke",
+  "command": "exec /nix/store/$HASH-rust_devenv-tasks-$DEVENV_TASKS/bin/devenv-tasks run --task-file /nix/store/$HASH-tasks.json --mode all --cache-dir $REPO/.devenv --runtime-dir /run/user/$UID/devenv-$ID --ignore-process-deps devenv:processes:spoke",
   "depends_on": "{\"redis\": {\"condition\": \"process_healthy\"}}",
   "description": "\"Bridge\"",
   "disabled": "null",
@@ -59,7 +59,7 @@
     "TELEGRAF_POLL_INTERVAL=30s",
     "TFTP_ENABLED=false"
   ],
-  "exec": "#!/nix/store/$HASH-bash-interactive-5.2p37/bin/bash\nset -e\n__repo=\"${HUB_REPO_PATH/#\\~/$HOME}\"; __repo=\"${__repo/#\\$HOME/$HOME}\"; cd \"$__repo\"\nexport ASSETS_DIR=\"$PWD/apps/bridge/assets\"\nif [ -z \"${BROKKR_REGISTRATION_TOKEN:-}\" ] && [ -s \"${BRIDGE_REGISTRATION_TOKEN_FILE:-}\" ]; then\n  export BROKKR_REGISTRATION_TOKEN=\"$(cat \"$BRIDGE_REGISTRATION_TOKEN_FILE\")\"\nfi\n# VRRP sim e2e (modules/vrrp-sim.nix, opt-in): put the fake `ip`/`arping` first on PATH\n# so the reconciler binds VIPs against a state file, not a real interface. No-op when unset.\nif [ -n \"${VRRP_SIM_SHIM_DIR:-}\" ]; then\n  export PATH=\"$VRRP_SIM_SHIM_DIR:$PATH\"\nfi\nBRIDGE_NODE_BIN=\"${BRIDGE_NODE_BIN:-node}\"\nif [ \"$BRIDGE_NODE_BIN\" != node ] && [ ! -x \"$BRIDGE_NODE_BIN\" ]; then\n  echo \"capped node binary missing at $BRIDGE_NODE_BIN \u2014 run the fleet-mode Apply from the control center (provisions the ambient-cap wrapper)\" >&2\n  exit 1\nfi\n# --watch: restart when spoke-watch rewrites dist. Caps survive reloads \u2014 the bm\n# BRIDGE_NODE_BIN is a setcap'd COPY of node, and watch re-execs that same inode.\nexec \"$BRIDGE_NODE_BIN\" --watch --watch-preserve-output apps/bridge/dist/main.js\n\n\n",
+  "exec": "#!/nix/store/$HASH-bash-interactive-5.3p9/bin/bash\nset -e\n__repo=\"${HUB_REPO_PATH/#\\~/$HOME}\"; __repo=\"${__repo/#\\$HOME/$HOME}\"; cd \"$__repo\"\nexport ASSETS_DIR=\"$PWD/apps/bridge/assets\"\nif [ -z \"${BROKKR_REGISTRATION_TOKEN:-}\" ] && [ -s \"${BRIDGE_REGISTRATION_TOKEN_FILE:-}\" ]; then\n  export BROKKR_REGISTRATION_TOKEN=\"$(cat \"$BRIDGE_REGISTRATION_TOKEN_FILE\")\"\nfi\n# VRRP sim e2e (modules/vrrp-sim.nix, opt-in): put the fake `ip`/`arping` first on PATH\n# so the reconciler binds VIPs against a state file, not a real interface. No-op when unset.\nif [ -n \"${VRRP_SIM_SHIM_DIR:-}\" ]; then\n  export PATH=\"$VRRP_SIM_SHIM_DIR:$PATH\"\nfi\nBRIDGE_NODE_BIN=\"${BRIDGE_NODE_BIN:-node}\"\nif [ \"$BRIDGE_NODE_BIN\" != node ] && [ ! -x \"$BRIDGE_NODE_BIN\" ]; then\n  echo \"capped node binary missing at $BRIDGE_NODE_BIN \u2014 run the fleet-mode Apply from the control center (provisions the ambient-cap wrapper)\" >&2\n  exit 1\nfi\n# --watch: restart when spoke-watch rewrites dist. Caps survive reloads \u2014 the bm\n# BRIDGE_NODE_BIN is a setcap'd COPY of node, and watch re-execs that same inode.\nexec \"$BRIDGE_NODE_BIN\" --watch --watch-preserve-output apps/bridge/dist/main.js\n\n\n",
   "extensions": "null",
   "is_elevated": "null",
   "liveness_probe": "null",

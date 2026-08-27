@@ -1,6 +1,6 @@
-import { BRAND_NAME } from '@/lib/branding';
 import { ASCII_LOGOS } from '@repo/ui/ascii-art';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { BRAND_NAME } from '~/lib/branding';
 
 const LOGO_COLORS = [
   'text-accent',

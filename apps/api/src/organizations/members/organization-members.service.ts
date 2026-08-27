@@ -2,11 +2,26 @@ import { PLUGIN_EVENT_BUS, type PluginEventBus } from '@hydrahost/plugin-sdk';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { OrganizationMembersQuery } from '@repo/api-client';
 import { MAIN_APP_PERMISSIONS, RbacService, roleBelongsToCatalog, type RolePermissionSource } from '@repo/auth/rbac';
-import { OrganizationMembershipRole } from '@repo/database';
-import { ContextService } from 'src/common/context/context.service';
+import { OrganizationMembershipRole, type Prisma } from '@repo/database';
+import { ContextService, type PermissionIntentHandle } from 'src/common/context/context.service';
 import { Logger } from 'src/common/decorators/logger.decorator';
+import { EventLogService } from 'src/event-log/event-log.service';
+import type { EventLogMetadata } from 'src/event-log/event-log.types';
 import { LoggerService } from 'src/logger/logger.service';
+import { PrismaClient } from 'src/prisma/prisma.client';
 import { OrganizationMembershipsRepository } from './organization-members.repository';
+
+const MEMBER_REMOVED = { resource: 'member', action: 'removed', actionKey: 'member.removed' };
+const MEMBER_ROLE_CHANGED = { resource: 'member', action: 'role-changed', actionKey: 'member.role-changed' };
+
+interface MemberEvent {
+  resource: string;
+  action: string;
+  actionKey: string;
+  membershipId: string;
+  email: string;
+  metadata?: EventLogMetadata;
+}
 
 function projectRole<
   T extends {
@@ -32,6 +47,8 @@ export class OrganizationMembershipsService {
     private readonly rbacService: RbacService,
     @Inject(PLUGIN_EVENT_BUS)
     private readonly eventBus: PluginEventBus,
+    private readonly eventLog: EventLogService,
+    private readonly prisma: PrismaClient,
     @Logger(OrganizationMembershipsService.name) private readonly logger: LoggerService,
   ) {}
 
@@ -63,9 +80,11 @@ export class OrganizationMembershipsService {
     }
 
     const isSelfRemoval = membership.userId === this.contextService.userId;
-    if (!isSelfRemoval) {
-      this.contextService.requirePermission('member', 'delete');
-    }
+    // A member leaving needs no permission, but still records an intent: without one the interceptor
+    // mints a synthetic row beside the tier 1 evidence, and a failed departure would go unrecorded.
+    const handle = isSelfRemoval
+      ? this.contextService.pushIntent('member', 'delete', false)
+      : this.contextService.requirePermission('member', 'delete');
     this.rbacService.assertOrdinaryMemberActionAllowed(
       { userId: this.contextService.userId, permissions: this.contextService.permissions },
       membership,
@@ -74,7 +93,17 @@ export class OrganizationMembershipsService {
       ? membership.assignedRole.name
       : 'managed';
 
-    const deletedMembership = await this.membershipsRepository.delete(organizationMembershipId);
+    const deletedMembership = await this.prisma.$transaction(async (tx) => {
+      const deleted = await this.membershipsRepository.delete(organizationMembershipId, tx);
+      await this.recordEvent(tx, {
+        ...MEMBER_REMOVED,
+        membershipId: organizationMembershipId,
+        email: deleted.user.email,
+        metadata: { userId: deleted.userId },
+      });
+      return deleted;
+    });
+    this.supersede(handle);
 
     const audit = this.contextService.buildAuditPayload();
     this.logger.log(
@@ -103,13 +132,22 @@ export class OrganizationMembershipsService {
   }
 
   async updateOrganizationMembershipRole(organizationMembershipId: string, data: { role: OrganizationMembershipRole }) {
-    this.contextService.requirePermission('member', 'change-role');
+    const handle = this.contextService.requirePermission('member', 'change-role');
     const organizationId = this.contextService.organizationId;
     const roleId = await this.membershipsRepository.requireSystemRoleId(data.role);
-    await this.rbacService.assignRoleToMember(organizationId, organizationMembershipId, roleId, {
-      userId: this.contextService.userId,
-      permissions: this.contextService.permissions,
-    });
+    // The emit is handed to RbacService rather than run here, so this endpoint and the roles-service
+    // one it shares `member.role-changed` with each produce exactly one row, inside the same transaction.
+    await this.rbacService.assignRoleToMember(
+      organizationId,
+      organizationMembershipId,
+      roleId,
+      {
+        userId: this.contextService.userId,
+        permissions: this.contextService.permissions,
+      },
+      (tx) => this.emitRoleChanged(tx, organizationMembershipId, roleId),
+    );
+    this.supersede(handle);
     const updated = await this.membershipsRepository.findByIdAndOrganizationId(
       organizationMembershipId,
       organizationId,
@@ -148,5 +186,45 @@ export class OrganizationMembershipsService {
 
   async getMembersForAnOrganization(organizationId: string) {
     return this.membershipsRepository.findByOrganizationId(organizationId);
+  }
+
+  /** Reads the member inside the mutation's own transaction, so the row is labelled as the membership
+   *  stood at the time; the update that precedes this emit already proved the row exists. */
+  private async emitRoleChanged(tx: Prisma.TransactionClient, membershipId: string, roleId: string): Promise<void> {
+    const member = await tx.member.findUniqueOrThrow({
+      where: { id: membershipId },
+      select: { userId: true, user: { select: { email: true } } },
+    });
+    await this.recordEvent(tx, {
+      ...MEMBER_ROLE_CHANGED,
+      membershipId,
+      email: member.user.email,
+      metadata: { userId: member.userId, assignedRoleId: roleId },
+    });
+  }
+
+  /** The membership id is the target because it is what the endpoint addresses; `userId` rides in metadata
+   *  because a membership id dies with the membership, and re-inviting the same person mints a new one. */
+  private recordEvent(tx: Prisma.TransactionClient, event: MemberEvent): Promise<void> {
+    return this.eventLog.recordInTransaction(tx, {
+      organizationId: this.contextService.organizationId,
+      tier: 'EVIDENCE',
+      durability: 'ATOMIC',
+      resource: event.resource,
+      action: event.action,
+      actionKey: event.actionKey,
+      ...this.contextService.actorFields(),
+      ...this.contextService.requestFields(),
+      targetId: event.membershipId,
+      targetLabel: event.email,
+      outcome: 'SUCCEEDED',
+      requestId: this.contextService.requestId ?? null,
+      ...(event.metadata ? { metadata: event.metadata } : {}),
+    });
+  }
+
+  /** Called after the mutation resolves: a rollback leaves the handle pending so tier 2 records the failure. */
+  private supersede(handle: PermissionIntentHandle | undefined): void {
+    if (handle) this.contextService.finalizeIntents([handle]);
   }
 }

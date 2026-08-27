@@ -31,8 +31,19 @@ function build(membership: object | null = { id: 'member-1', userId: 'target', a
   const context = {
     organizationId: 'org-1',
     userId: 'actor',
+    requestId: 'req-1',
     permissions: new Set(['member:read', 'member:delete', 'member:change-role']),
     requirePermission: vi.fn(),
+    pushIntent: vi.fn().mockReturnValue('intent-1'),
+    finalizeIntents: vi.fn(),
+    actorFields: vi.fn().mockReturnValue({
+      actorType: 'UI',
+      actorId: 'actor',
+      actorLabel: 'actor@example.com',
+      apiKeyId: null,
+      apiKeyLabel: null,
+    }),
+    requestFields: vi.fn().mockReturnValue({ method: null, path: null, ipAddress: null, userAgent: null }),
     buildAuditPayload: vi.fn().mockReturnValue({
       triggeredBy: 'actor',
       triggeredByEmail: 'actor@example.com',
@@ -44,15 +55,20 @@ function build(membership: object | null = { id: 'member-1', userId: 'target', a
     assignRoleToMember: vi.fn(),
   };
   const eventBus = { emit: vi.fn() };
+  const eventLog = { recordInTransaction: vi.fn() };
+  const tx = {};
+  const prisma = { $transaction: vi.fn((fn: (client: unknown) => unknown) => fn(tx)) };
   const logger = { log: vi.fn() };
   const service = new OrganizationMembershipsService(
     repo as never,
     context as never,
     rbac as never,
     eventBus as never,
+    eventLog as never,
+    prisma as never,
     logger as never,
   );
-  return { service, repo, context, rbac, eventBus, logger };
+  return { service, repo, context, rbac, eventBus, eventLog, prisma, tx, logger };
 }
 
 describe('OrganizationMembershipsService', () => {
@@ -72,7 +88,7 @@ describe('OrganizationMembershipsService', () => {
       { userId: 'actor', permissions: context.permissions },
       expect.objectContaining({ userId: 'target' }),
     );
-    expect(repo.delete).toHaveBeenCalledWith('member-1');
+    expect(repo.delete).toHaveBeenCalledWith('member-1', expect.anything());
     expect(eventBus.emit).toHaveBeenCalledWith('member.removed', expect.objectContaining({ userId: 'target' }));
     expect(logger.log).toHaveBeenCalledWith(expect.stringContaining('actor@example.com'));
   });
@@ -99,17 +115,20 @@ describe('OrganizationMembershipsService', () => {
     await service.removeOrganizationMembership('member-1');
 
     expect(context.requirePermission).not.toHaveBeenCalledWith('member', 'delete');
-    expect(repo.delete).toHaveBeenCalledWith('member-1');
+    expect(repo.delete).toHaveBeenCalledWith('member-1', expect.anything());
   });
 
   it('delegates the legacy enum endpoint to the ordinary RBAC assignment path', async () => {
     const { service, repo, context, rbac } = build();
     await service.updateOrganizationMembershipRole('member-1', { role: OrganizationMembershipRole.Admin });
     expect(repo.requireSystemRoleId).toHaveBeenCalledWith(OrganizationMembershipRole.Admin);
-    expect(rbac.assignRoleToMember).toHaveBeenCalledWith('org-1', 'member-1', 'role-admin', {
-      userId: 'actor',
-      permissions: context.permissions,
-    });
+    expect(rbac.assignRoleToMember).toHaveBeenCalledWith(
+      'org-1',
+      'member-1',
+      'role-admin',
+      { userId: 'actor', permissions: context.permissions },
+      expect.any(Function),
+    );
   });
 
   it('redacts private-catalog assigned-role metadata from member projections', async () => {

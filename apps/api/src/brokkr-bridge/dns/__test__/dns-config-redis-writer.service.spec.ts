@@ -1,7 +1,12 @@
 import type { ConfigAtomWriter } from 'src/common/redis';
 import { DNS_CONFIG_KEY, TTL_DNS_CONFIG_SECONDS, dnsPrefixConfig } from 'src/common/redis';
 import { vi } from 'vitest';
-import { DnsConfigAtomSchema, DnsPrefixOverrideAtomSchema, type DnsConfigAtom, type DnsPrefixOverrideAtom } from '../dns-atom.schema';
+import {
+  DnsConfigAtomSchema,
+  DnsPrefixOverrideAtomSchema,
+  type DnsConfigAtom,
+  type DnsPrefixOverrideAtom,
+} from '../dns-atom.schema';
 import { DnsConfigRedisWriterService } from '../dns-config-redis-writer.service';
 
 describe('DnsConfigRedisWriterService', () => {
@@ -30,6 +35,7 @@ describe('DnsConfigRedisWriterService', () => {
   const PREFIX_ATOM: DnsPrefixOverrideAtom = {
     serveDns: true,
     upstreamOverride: ['1.1.1.1'],
+    cidr: '10.0.1.0/24',
   };
 
   beforeEach(() => {

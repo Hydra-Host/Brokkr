@@ -1,12 +1,15 @@
+import { getErrorMessage } from '@repo/utils';
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Backoff } from '../../connection/backoff';
+import { sleepWithAbort } from '../../connection/sleep';
 import { dispatchContext } from '../../dispatch/context';
 import { registerOperation } from '../../dispatch/registry';
 import { run } from '../../exec';
 import { makeLogger } from '../../logger';
-import { assertTargetPathSafe } from './targetPath';
+import { assertTargetPathSafe } from './target-path';
 
 const logger = makeLogger('deploy');
 
@@ -15,8 +18,9 @@ const MKDIR_TIMEOUT_MS = 5_000;
 
 const MAX_ATTEMPTS = 3;
 const BASE_BACKOFF_MS = 2_000;
-const BACKOFF_MULTIPLIER = 4;
-const BACKOFF_JITTER = 0.2;
+const MAX_BACKOFF_MS = 8_000;
+// Full jitter alone can roll ~0ms; keep the removed hand-rolled backoff's positive floor (80% of base).
+const MIN_BACKOFF_MS = 1_600;
 
 const PROGRESS_PCT_STEP = 0.05;
 const PROGRESS_TIME_STEP_MS = 5_000;
@@ -48,32 +52,16 @@ function shouldRetry(err: unknown, status: number | null): boolean {
   return true;
 }
 
-function backoffMs(attempt: number): number {
-  const base = BASE_BACKOFF_MS * Math.pow(BACKOFF_MULTIPLIER, attempt - 1);
-  const jitter = base * BACKOFF_JITTER * (Math.random() * 2 - 1);
-  return Math.max(0, Math.floor(base + jitter));
-}
-
-async function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  if (ms <= 0) return;
-  await new Promise<void>((resolve, reject) => {
-    const t = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    const onAbort = (): void => {
-      clearTimeout(t);
-      reject(new Error('aborted during backoff'));
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
+async function backoffDelay(backoff: Backoff, signal: AbortSignal | undefined): Promise<void> {
+  await sleepWithAbort(backoff.next(), signal);
+  if (signal?.aborted) throw new Error('aborted during backoff');
 }
 
 async function safeUnlink(path: string): Promise<void> {
   try {
     await unlink(path);
   } catch (error) {
-    logger.warn('temp layer file unlink failed', { path, error: String(error) });
+    logger.warn('temp layer file unlink failed', { path, error: getErrorMessage(error) });
   }
 }
 
@@ -112,6 +100,12 @@ async function fetchAndVerify(args: {
 
   let lastStatus: number | null = null;
   let lastErr: unknown = null;
+  const backoff = new Backoff({
+    initial_ms: BASE_BACKOFF_MS,
+    max_ms: MAX_BACKOFF_MS,
+    min_ms: MIN_BACKOFF_MS,
+    factor: 4,
+  });
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const headers: Record<string, string> = {};
@@ -129,7 +123,7 @@ async function fetchAndVerify(args: {
         await safeUnlink(tmpPath);
         throw err;
       }
-      await sleep(backoffMs(attempt), signal);
+      await backoffDelay(backoff, signal);
       continue;
     }
 
@@ -139,13 +133,13 @@ async function fetchAndVerify(args: {
       try {
         await resp.body?.cancel();
       } catch (error) {
-        logger.warn('layer fetch response body cancel failed', { status: resp.status, error: String(error) });
+        logger.warn('layer fetch response body cancel failed', { status: resp.status, error: getErrorMessage(error) });
       }
       if (!shouldRetry(null, resp.status) || attempt === MAX_ATTEMPTS) {
         await safeUnlink(tmpPath);
         throw lastErr;
       }
-      await sleep(backoffMs(attempt), signal);
+      await backoffDelay(backoff, signal);
       continue;
     }
 
@@ -172,7 +166,7 @@ async function fetchAndVerify(args: {
         await safeUnlink(tmpPath);
         throw lastErr;
       }
-      await sleep(backoffMs(attempt), signal);
+      await backoffDelay(backoff, signal);
       continue;
     }
 
@@ -244,7 +238,7 @@ async function fetchAndVerify(args: {
         await safeUnlink(tmpPath);
         throw streamError;
       }
-      await sleep(backoffMs(attempt), signal);
+      await backoffDelay(backoff, signal);
       continue;
     }
 

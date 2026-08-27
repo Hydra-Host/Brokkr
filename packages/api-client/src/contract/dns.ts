@@ -67,7 +67,8 @@ export const prefixDnsRoutes = c.router({
       404: ErrorResponseSchema,
     },
     summary: 'Update prefix DNS override',
-    description: 'Replaces the per-prefix DNS override settings and triggers republication of DNS atoms to the bridge.',
+    description:
+      'Replaces the per-prefix DNS override settings and triggers republication of DNS atoms to the bridge. Enabling serveDns requires an IPv4 prefix.',
     metadata: { visibility: 'public' } as RouteMetadata,
   },
 });

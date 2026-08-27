@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { handleTourKeydown, isEditableEventTarget } from './tour';
+import { handleTourKeydown, isEditableEventTarget, reportMissingAnchor } from './tour';
 
 describe('isEditableEventTarget', () => {
   const dispatchFrom = (el: EventTarget): EventTarget | null => {
@@ -102,5 +102,21 @@ describe('tour keydown wiring', () => {
     expect(ev.defaultPrevented).toBe(true);
     expect(actions.endPeek).toHaveBeenCalledTimes(1);
     expect(actions.advance).not.toHaveBeenCalled();
+  });
+});
+
+describe('reportMissingAnchor', () => {
+  it('names the step, the selector and the route', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    reportMissingAnchor(7, '[data-tour="gone"]', '/config/zones');
+    expect(spy).toHaveBeenCalledWith('tour step 7 never found [data-tour="gone"] on /config/zones');
+    spy.mockRestore();
+  });
+
+  it('stays quiet for a step that anchors nothing', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    reportMissingAnchor(0, undefined, '/');
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });

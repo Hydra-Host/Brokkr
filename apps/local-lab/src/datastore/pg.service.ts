@@ -7,6 +7,19 @@ import { type LenientRead, readRows } from '../common/lenient-rows';
 import type { DbMigrationRow, PgColumn, PgResult, PgTable } from '../contract';
 import { resolvePgUrl } from '../ports';
 
+export interface DeviceStatusRow {
+  id: string;
+  lifecycleStatus: string | null;
+  gpuModel: string | null;
+}
+
+/** `failed` is not the same as an empty map: a fleet whose devices the hub has not seeded and a read
+ *  that threw both return no rows, and only the second must not read as a measurement. */
+export interface DevicesStatusRead {
+  byName: Map<string, DeviceStatusRow>;
+  failed: boolean;
+}
+
 // Prisma writes naive timestamp columns in UTC, but node-postgres parses them in the process's
 // local zone — so every stamp read here lands offset by that zone unless the parser is told.
 types.setTypeParser(types.builtins.TIMESTAMP, (value) => new Date(`${value.replace(' ', 'T')}Z`));
@@ -201,33 +214,37 @@ export class PgService implements OnModuleDestroy {
     }
   }
 
-  async devicesStatusByName(
-    names: string[],
-  ): Promise<Map<string, { id: string; lifecycleStatus: string | null; gpuModel: string | null }>> {
-    const out = new Map<string, { id: string; lifecycleStatus: string | null; gpuModel: string | null }>();
-    if (names.length === 0) return out;
+  /** A device can hold several GPUs, so the lateral picks the lowest-indexed one as the representative
+   *  model. There is no denormalized column on Device — selecting one fails the whole statement. */
+  async devicesStatusByName(names: string[]): Promise<DevicesStatusRead> {
+    const byName = new Map<string, DeviceStatusRow>();
+    if (names.length === 0) return { byName, failed: false };
     try {
       const rows = await this.readTx(async (run) => {
         const res = await run(
-          `SELECT d.id, d.name, d."gpuModel" AS gpu_model, s."lifecycleStatus" AS lifecycle
+          `SELECT d.id, d.name, gpu.model AS gpu_model, s."lifecycleStatus" AS lifecycle
              FROM "Device" d
              LEFT JOIN "Server" s ON s."deviceId" = d.id
+             LEFT JOIN LATERAL (
+               SELECT g.model FROM "Gpu" g WHERE g."deviceId" = d.id ORDER BY g."index" LIMIT 1
+             ) gpu ON TRUE
             WHERE d.name = ANY($1)`,
           [names],
         );
         return res.rows;
       });
       for (const r of rows) {
-        out.set(String(r.name), {
+        byName.set(String(r.name), {
           id: String(r.id),
           lifecycleStatus: r.lifecycle == null ? null : String(r.lifecycle),
           gpuModel: r.gpu_model == null ? null : String(r.gpu_model),
         });
       }
     } catch (e) {
-      this.log.warn(`devicesStatusByName failed: ${getErrorMessage(e)}`);
+      this.log.error(`devicesStatusByName failed: ${getErrorMessage(e)}`);
+      return { byName: new Map(), failed: true };
     }
-    return out;
+    return { byName, failed: false };
   }
 
   /** Typed read for a domain query. The sql is always a module constant in our own code and every

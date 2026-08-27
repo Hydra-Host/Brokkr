@@ -1,5 +1,5 @@
-import type { ServerPriceFormServer } from '@repo/ui/form/server-price-form';
-import { isServerNotAvailableToList } from '@repo/ui/form/server-price-form';
+import type { ServerPriceFormServer } from '@repo/domain-ui/form/server-price-form';
+import { isServerNotAvailableToList } from '@repo/domain-ui/form/server-price-form';
 import { describe, expect, it } from 'vitest';
 
 function stubDevice(overrides: {

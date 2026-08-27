@@ -1,13 +1,13 @@
-import { PrivateCategoryItemCard } from '@/components/category-item-card';
-import { tsr } from '@/lib/api';
-import { inventoryCategories, mergeCategoryPrices } from '@/lib/category-data';
-import { PluginSlot } from '@/plugin-host/plugin-slot';
 import { DeviceCategoriesSchema, type InventoryListing } from '@repo/api-client';
 import { useSession } from '@repo/auth/client';
 import { Button } from '@repo/ui/components/button';
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
 import { ChevronLeft } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PrivateCategoryItemCard } from '~/components/category-item-card';
+import { tsr } from '~/lib/api';
+import { inventoryCategories, mergeCategoryPrices } from '~/lib/category-data';
+import { PluginSlot } from '~/plugin-host/plugin-slot';
 
 export const Route = createFileRoute('/_navbar-layout/inventory/categories/$category')({
   loader: async ({ context: { queryClient }, params }) => {

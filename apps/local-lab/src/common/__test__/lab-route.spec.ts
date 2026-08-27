@@ -22,7 +22,7 @@ class FixtureController {
   @LabRoute({ exposure: 'loopback-only' })
   sharp() {}
 
-  @TsRestHandler(contract.getGettingStarted)
+  @TsRestHandler(contract.listServices)
   plain() {}
 }
 

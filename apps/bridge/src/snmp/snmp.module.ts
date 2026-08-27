@@ -14,9 +14,8 @@ export class SnmpModule implements OnApplicationBootstrap, OnModuleDestroy {
   constructor(private readonly engine: SnmpEngine) {}
 
   async onApplicationBootstrap(): Promise<void> {
-    // SNMP is opt-in via SNMP_ENABLED=true (default off): the SNMP engine startup is heavy and
-    // unneeded for build-verification / non-monitoring bridges. The Engine/Client providers stay
-    // wired so DI (e.g. bridge-status health) is unaffected — the engine simply isn't started.
+    // SNMP is opt-in via SNMP_ENABLED=true (default off): engine startup is heavy; the
+    // Engine/Client providers stay wired so DI is unaffected — the engine just isn't started.
     if (process.env.SNMP_ENABLED === 'true') {
       await this.engine.start();
     }

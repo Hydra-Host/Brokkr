@@ -1,5 +1,5 @@
 import type { NetplanPhase } from '@repo/api-client';
-import { NetplanViewer } from '@repo/ui/components/netplan-viewer';
+import { NetplanViewer } from '@repo/domain-ui/components/netplan-viewer';
 import { tsr } from '~/lib/api';
 
 interface DeviceNetplanContentProps {

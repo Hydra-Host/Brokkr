@@ -1,5 +1,6 @@
 import { BringupStepSchema, type FleetStatus } from '@/contract';
 
+import { AccelChip } from './status/accel-chip';
 import { FLEET_HEALTH_UI } from './status/health-ui';
 import { StagedProgress, type Step } from './status/staged-progress';
 import { StatusCard } from './status/status-card';
@@ -60,6 +61,7 @@ export function FleetStatusCard({
       title="Fleet"
       ui={FLEET_HEALTH_UI[fleet.health]}
       detail={fleet.detail}
+      badge={<AccelChip fleet={fleet} />}
       failed={failed}
       actions={actions}
     >

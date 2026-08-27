@@ -1,5 +1,6 @@
 import { setDocumentTitleSuffix } from '@repo/ui/hooks/use-document-title';
 import { configureUiBrand } from '@repo/ui/lib/brand';
+import { unwrapErrorMessage } from '@repo/utils';
 import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createRouter } from '@tanstack/react-router';
 import { StrictMode } from 'react';
@@ -46,13 +47,7 @@ const queryClient = new QueryClient({
     onError: (error, _variables, _context, mutation) => {
       if (mutation.meta?.silent) return;
 
-      if (error && typeof error === 'object' && 'status' in error && 'body' in error) {
-        const response = error as { status: number; body: { message?: string } };
-        toast.error(mutation.meta?.errorMessage ?? response.body?.message ?? 'Something went wrong');
-        return;
-      }
-
-      toast.error(mutation.meta?.errorMessage ?? error.message ?? 'Something went wrong');
+      toast.error(mutation.meta?.errorMessage ?? unwrapErrorMessage(error, 'Something went wrong'));
     },
   }),
 });

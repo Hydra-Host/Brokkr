@@ -2,6 +2,7 @@ import { Controller, Req } from '@nestjs/common';
 import { contract } from '@repo/api-client';
 import { TsRestHandler, tsRestHandler } from '@ts-rest/nest';
 import { Request } from 'express';
+import { AuditAction } from 'src/event-log/audit-action.decorator';
 import { OrganizationApiKeysService } from './organization-api-keys.service';
 
 @Controller()
@@ -19,6 +20,7 @@ export class OrganizationApiKeysController {
     });
   }
 
+  @AuditAction({ actionKey: 'api-key.created', resource: 'api-key', action: 'create' })
   @TsRestHandler(contract.createApiKey)
   async createApiKey(@Req() req: Request) {
     return tsRestHandler(contract.createApiKey, async ({ body }) => {
@@ -46,6 +48,7 @@ export class OrganizationApiKeysController {
     });
   }
 
+  @AuditAction({ actionKey: 'api-key.scope-changed', resource: 'api-key', action: 'update' })
   @TsRestHandler(contract.updateApiKey)
   async updateApiKey() {
     return tsRestHandler(contract.updateApiKey, async ({ params, body }) => {
@@ -57,6 +60,7 @@ export class OrganizationApiKeysController {
     });
   }
 
+  @AuditAction({ actionKey: 'api-key.revoked', resource: 'api-key', action: 'delete' })
   @TsRestHandler(contract.deleteApiKey)
   async deleteApiKey() {
     return tsRestHandler(contract.deleteApiKey, async ({ params }) => {

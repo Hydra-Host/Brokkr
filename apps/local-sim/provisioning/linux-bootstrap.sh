@@ -10,8 +10,110 @@
 # containers — grub2 is Linux-only and can't come from Nix on Darwin, so the
 # build is uniform docker on both hosts). Nix + direnv come from the dispatcher.
 
+# One rule for every slot. LOCAL_STATE is slot-derived (~/.local/share/local, then -s<N>), and the
+# AppArmor block only re-runs when the bootstrap sha changes, so a per-slot rule silently misses.
+_overlay_rule_glob() {
+  local root=${LOCAL_STATE:-$HOME/.local/share/local}
+  case "$root" in
+  *-s[0-9] | *-s[0-9][0-9]) root=${root%-s*} ;;
+  esac
+  printf '%s{,-s[0-9],-s[0-9][0-9]}/disks/overlays\n' "$root"
+}
+
+# Run libvirt's qemu sub-process as the current user (default is libvirt-qemu), so qemu can read the
+# NVRAM/overlay files brok-local writes under $HOME — Ubuntu's /home/$USER is mode 750 and would
+# otherwise give "Permission denied".
+_configure_qemu_conf() {
+  local QEMU_CONF=${BROKK_BOOTSTRAP_QEMU_CONF:-/etc/libvirt/qemu.conf}
+  if [ ! -f "$QEMU_CONF" ]; then
+    return 0
+  fi
+  if sudo grep -qE "^[[:space:]]*user[[:space:]]*=[[:space:]]*\"$USER\"" "$QEMU_CONF" 2>/dev/null; then
+    return 0
+  fi
+  echo "==> configure libvirt qemu to run as $USER (was libvirt-qemu)"
+  # Backup taken once: an in-place `sed -i.brokk-bak` rewrites it per entry, so a second run
+  # would overwrite the pristine original. `.brokk-tmp` is for portability — a bare `-i` is GNU-only.
+  if [ ! -f "$QEMU_CONF.brokk-bak" ]; then
+    sudo cp "$QEMU_CONF" "$QEMU_CONF.brokk-bak"
+  fi
+  sudo sed -i.brokk-tmp \
+    -e "s/^#*user[[:space:]]*=.*/user = \"$USER\"/" \
+    -e "s/^#*group[[:space:]]*=.*/group = \"$USER\"/" \
+    "$QEMU_CONF"
+  sudo rm -f "$QEMU_CONF.brokk-tmp"
+  sudo systemctl restart libvirtd 2>/dev/null || sudo systemctl restart libvirt 2>/dev/null || true
+}
+
+# A wedged docker daemon makes `docker buildx version` hang forever, and this runs during
+# bootstrap — before host-access-check.sh's own bounded probes exist to protect the bring-up.
+_buildx_ok() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${BROKK_BOOTSTRAP_TIMEOUT:-5}" docker buildx version >/dev/null 2>&1
+  else
+    docker buildx version >/dev/null 2>&1
+  fi
+}
+
+# One package name, its own transaction, then a re-probe. Never fold a buildx name into the
+# nine-package install above: one unknown name aborts that whole transaction.
+_install_buildx_pkg() { # <distro> <pkg> — 0 once `docker buildx` answers
+  case "$1" in
+  apt) sudo apt-get install -y --no-install-recommends "$2" || true ;;
+  dnf) sudo dnf install -y "$2" || true ;;
+  pacman) sudo pacman -S --needed --noconfirm "$2" || true ;;
+  esac
+  _buildx_ok
+}
+
+# The plugin ships apart from the engine under a different name per distribution. The last resort
+# links the Nix-pinned one by its devenv profile path, which survives a store-path rotation.
+ensure_docker_buildx() {
+  local distro=${1:-} profile plugin_dir
+  plugin_dir="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins"
+  if _buildx_ok; then
+    echo "  ✓ docker buildx plugin present"
+    return 0
+  fi
+
+  echo "==> install the docker buildx plugin (the iPXE + grub images build with buildx)"
+  case "$distro" in
+  apt)
+    if ! _install_buildx_pkg apt docker-buildx; then
+      _install_buildx_pkg apt docker-buildx-plugin || true
+    fi
+    ;;
+  dnf)
+    if ! _install_buildx_pkg dnf moby-buildx; then
+      _install_buildx_pkg dnf docker-buildx || true
+    fi
+    ;;
+  pacman)
+    _install_buildx_pkg pacman docker-buildx || true
+    ;;
+  esac
+  if _buildx_ok; then
+    echo "  ✓ docker buildx plugin installed"
+    return 0
+  fi
+
+  profile="${DEVENV_ROOT:-}/.devenv/profile/bin/docker-buildx"
+  if [ -n "${DEVENV_ROOT:-}" ] && [ -x "$profile" ]; then
+    mkdir -p "$plugin_dir"
+    ln -sf "$profile" "$plugin_dir/docker-buildx"
+    echo "  ✓ linked the devenv's docker-buildx into $plugin_dir"
+    return 0
+  fi
+
+  echo "  ⚠ no docker buildx plugin available from $distro, and none in the devenv profile." >&2
+  echo "    The iPXE + grub boot binaries build with 'docker buildx' and will fail without it." >&2
+  echo "    Install it by hand: put the buildx release binary at" >&2
+  echo "    $plugin_dir/docker-buildx (or /usr/libexec/docker/cli-plugins/docker-buildx), chmod +x." >&2
+  return 0
+}
+
 linux_host_packages() {
-  local ARCH DISTRO QEMU_CONF AA_DAEMON AA_QEMU OVERLAYS aa_changed f
+  local ARCH DISTRO AA_DAEMON AA_QEMU OVERLAYS aa_changed f
   ARCH=$(uname -m)
   case "$ARCH" in
   x86_64 | aarch64) echo "→ Linux $ARCH" ;;
@@ -38,8 +140,9 @@ linux_host_packages() {
   fi
   echo "→ package manager: $DISTRO"
 
-  # Sudo cache once upfront. Non-interactive first (NOPASSWD), fall back to -v.
-  if ! sudo -n true 2>/dev/null; then
+  # Sudo cache once upfront. `-n -v` asks whether a credential is held; never `-n true`, which the
+  # sim sudoers drop-in allowlists NOPASSWD — it reports success and primes nothing.
+  if ! sudo -n -v 2>/dev/null; then
     sudo -v
   fi
 
@@ -126,22 +229,11 @@ linux_host_packages() {
     getent group "$g" >/dev/null 2>&1 || continue
     if ! id -nG "$USER" | tr ' ' '\n' | grep -qx "$g"; then
       sudo usermod -aG "$g" "$USER"
-      echo "  → added $USER to '$g' group. Log out + back in (or 'newgrp $g') for this to take effect."
+      echo "  → added $USER to '$g' group. Log out and back in (or reboot) before you run 'task up'."
     fi
   done
 
-  # Run libvirt's qemu sub-process as the current user (default is libvirt-qemu),
-  # so qemu can read the NVRAM/overlay files brok-local writes under $HOME — Ubuntu's
-  # /home/$USER is mode 750 and would otherwise give "Permission denied".
-  QEMU_CONF=/etc/libvirt/qemu.conf
-  if ! sudo grep -qE "^[[:space:]]*user[[:space:]]*=[[:space:]]*\"$USER\"" "$QEMU_CONF" 2>/dev/null; then
-    echo "==> configure libvirt qemu to run as $USER (was libvirt-qemu)"
-    sudo sed -i.brokk-bak \
-      -e "s/^#*user[[:space:]]*=.*/user = \"$USER\"/" \
-      -e "s/^#*group[[:space:]]*=.*/group = \"$USER\"/" \
-      "$QEMU_CONF"
-    sudo systemctl restart libvirtd 2>/dev/null || sudo systemctl restart libvirt 2>/dev/null || true
-  fi
+  _configure_qemu_conf
 
   # AppArmor (Debian/Ubuntu) confines libvirtd and each guest's qemu to system paths, so
   # the devenv's setup needs local allow-rules:
@@ -155,7 +247,7 @@ linux_host_packages() {
   # no-op on non-AppArmor hosts (Fedora/SELinux, Arch-sans-apparmor, NixOS).
   AA_DAEMON=/etc/apparmor.d/local/usr.sbin.libvirtd
   AA_QEMU=/etc/apparmor.d/local/abstractions/libvirt-qemu
-  OVERLAYS="${LOCAL_STATE:-$HOME/.local/share/local}/disks/overlays"
+  OVERLAYS=$(_overlay_rule_glob)
   if [ -d /etc/apparmor.d/abstractions ]; then
     aa_changed=
     sudo install -d /etc/apparmor.d/local /etc/apparmor.d/local/abstractions
@@ -165,11 +257,13 @@ linux_host_packages() {
       printf '# brok-local: devenv runs qemu + EDK2 firmware from the Nix store\n/nix/store/** rmix,\n' | sudo tee -a "$f" >/dev/null
       aa_changed=1
     done
-    if ! sudo grep -qs "$OVERLAYS/\*-d" "$AA_QEMU" 2>/dev/null; then
+    if ! sudo grep -Fqs "$OVERLAYS/*-d" "$AA_QEMU" 2>/dev/null; then
       echo "==> AppArmor: allow fleet-builder NVMe overlays ($OVERLAYS/*-d*.img)"
       printf '# brok-local fleet builder: emulated-NVMe overlays (qemu:commandline -drive)\n"%s/*-d*.img" rwk,\n' "$OVERLAYS" | sudo tee -a "$AA_QEMU" >/dev/null
       aa_changed=1
     fi
     [ -n "$aa_changed" ] && sudo systemctl reload apparmor 2>/dev/null || true
   fi
+
+  ensure_docker_buildx "$DISTRO"
 }

@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@repo/utils';
 import { readdir, readFile } from 'node:fs/promises';
 import { registerOperation } from '../../dispatch/registry';
 import { run } from '../../exec';
@@ -69,7 +70,7 @@ async function readVbiosMap(): Promise<Record<string, string>> {
         }
       }
     } catch (error) {
-      logger.trace('nvidia gpu information read failed', { dir, error: String(error) });
+      logger.trace('nvidia gpu information read failed', { dir, error: getErrorMessage(error) });
     }
   }
 
@@ -82,7 +83,7 @@ export function registerNvidiaCollector(): void {
     try {
       list = await run('nvidia-smi', ['-L'], { timeout_ms: 10_000 });
     } catch (error) {
-      throw new Error(`nvidia-smi unavailable: ${String(error)}`);
+      throw new Error(`nvidia-smi unavailable: ${getErrorMessage(error)}`);
     }
     if (list.exit_code !== 0 || !list.stdout.includes('GPU')) {
       throw new Error('no GPU detected by nvidia-smi -L');

@@ -1,5 +1,5 @@
-import { registerCcModeChecker } from './ccMode';
-import { registerRunBenchmarks } from './runBenchmarks';
+import { registerCcModeChecker } from './cc-mode';
+import { registerRunBenchmarks } from './run-benchmarks';
 
 export function registerBenchmarkOperations(): void {
   registerCcModeChecker();

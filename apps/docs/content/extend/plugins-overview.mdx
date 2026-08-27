@@ -37,7 +37,7 @@ Plugin authors depend on one package, `@hydrahost/plugin-sdk`. The SDK provides:
 - **UI slots.** Named extension points (`dashboard-widget`, `sidebar-nav`, `address-autocomplete`, `inventory-page-extras`, `inventory-item-cta`). Each slot has a compile-time-checked contribution shape. Widgets render inside an error boundary, so a broken plugin cannot crash the host UI.
 - **The event bus.** Typed, fire-and-forget notifications of core activity (organization created, device failed, Bridge saga completed). Handlers are observers. They cannot intercept the action, and one handler's failure never reaches its siblings.
 - **Lifecycle gates.** The blocking counterpart to events. The host awaits gate handlers, in priority order, before an irreversible action. A handler can reject the job or defer it until the plugin resumes it. A plugin may only register for gates declared in its manifest's `allowedGates` field. The host denies undeclared registrations.
-- **Host services.** Injection tokens for the database client, request identity (`requirePermission`, `requireInstanceOperator`, `requireSessionAuth`), lifecycle requests (provision, reprovision, deprovision, power control), device operations, IPAM provisioning, and email. See [Events, gates, and host services](/extend/events-gates-and-host-services).
+- **Host services.** Injection tokens for the database client, request identity (`requirePermission`, `requireOperator`, `requireInstanceOperator`, `requireSessionAuth`), lifecycle requests (provision, reprovision, deprovision, power control), device operations, IPAM provisioning, and email. Operator HTTP handlers should use `PluginOperatorGuard` rather than a plugin-local copy. See [Events, gates, and host services](/extend/events-gates-and-host-services).
 
 ## Anatomy of a manifest
 
@@ -83,7 +83,7 @@ The Operator Hub provides user management and cross-tenant deployment views. It 
 - contributes `sidebar-nav` entries and a root route at `/plugins/operator-hub`, dispatching its own sub-pages from the URL splat
 - owns the `plugin_operator_hub` Postgres schema
 - registers a `provision.authorize` gate handler that parks [provisioning jobs](/deployments/lifecycle) for operator approval before dispatch
-- gates every backend handler with `requireInstanceOperator()`, with an `operatorOnly` frontend flag as defense in depth
+- gates every backend handler with `PluginOperatorGuard` (instance-operator only — it does not provide `PLUGIN_OPERATOR_ADMIN_ORG`), with an `operatorOnly` frontend flag as defense in depth
 
 ## Trust model
 

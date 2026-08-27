@@ -29,6 +29,8 @@ const vmNode = (over: Record<string, unknown> = {}) => ({
   passthrough: [],
   nics: [],
   data_mtu: null,
+  arch: null,
+  network_type: null,
   ip: null,
   bmc_ip: null,
   bmc: null,
@@ -45,9 +47,10 @@ const putBody = (nodes: ReturnType<typeof vmNode>[]) => ({
 const putSvc = (cidr: string, bmcCidr = '192.168.105.0/24') => {
   const overlay = {
     fleetConfig: () => ({ network: { cidr, bmc_cidr: bmcCidr }, defaults: {}, nodes: {} }),
-    setFleetConfig: vi.fn(),
+    setFleetConfig: vi.fn().mockReturnValue([]),
     fleetMode: () => 'vm',
     fleetZones: () => ['sim-zone'],
+    fleetTombstones: () => [],
     fleetCustomized: () => true,
   };
   return new FleetTopologyService({} as never, overlay as never, {} as never);
@@ -80,6 +83,7 @@ const getConfigSvc = (network: Record<string, unknown>, nodes: Record<string, Re
     fleetConfig: () => ({ network, defaults: {}, nodes }),
     baremetalConfig: () => null,
     fleetZones: () => ['sim-zone'],
+    fleetTombstones: () => [],
     fleetCustomized: () => false,
     fleetMode: () => 'vm',
   };
@@ -129,7 +133,7 @@ describe('FleetTopologyService.getConfig — effective IPs', () => {
 
 describe('FleetTopologyService.addCommissioningNodesConfig — no derived-field leak', () => {
   it('never persists effective_ip / effective_bmc_ip into the overlay', async () => {
-    const setFleetConfig = vi.fn();
+    const setFleetConfig = vi.fn().mockReturnValue([]);
     const overlay = {
       fleetConfig: () => ({
         network: { cidr: '192.168.200.0/24', bmc_cidr: '192.168.105.0/24' },
@@ -139,6 +143,7 @@ describe('FleetTopologyService.addCommissioningNodesConfig — no derived-field 
       setFleetConfig,
       baremetalConfig: () => null,
       fleetZones: () => ['sim-zone'],
+      fleetTombstones: () => [],
       fleetCustomized: () => false,
       fleetMode: () => 'vm',
     };
@@ -164,6 +169,7 @@ describe('FleetTopologyService.rawFleet — malformed LOCAL_FLEET_PATH yaml', ()
       fleetConfig: () => null,
       baremetalConfig: () => null,
       fleetZones: () => ['sim-zone'],
+      fleetTombstones: () => [],
       fleetCustomized: () => false,
       fleetMode: () => 'vm',
     };

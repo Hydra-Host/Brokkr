@@ -7,6 +7,7 @@ import { ContextService } from 'src/common/context/context.service';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { getErrorMessage } from 'src/common/error-utils';
 import { LoggerService } from 'src/logger/logger.service';
+import { toEventLogFilter, toEventLogWhere } from './event-log.filters';
 import { EventLogRepository } from './event-log.repository';
 import type { EventLogWrite } from './event-log.types';
 
@@ -37,32 +38,43 @@ export class EventLogService {
       ...paginationQuery
     } = query;
 
-    // Mapped explicitly rather than through the pagination helper's `filters` string: these are
-    // named contract params, and the helper would never see them.
-    const where: Prisma.EventLogWhereInput = {
-      organizationId,
-      ...(actionKey ? { actionKey } : {}),
-      ...(resource ? { resource } : {}),
-      ...(tier ? { tier } : {}),
-      ...(durability ? { durability } : {}),
-      ...(actorId ? { actorId } : {}),
-      ...(outcome ? { outcome } : {}),
-      ...(targetId ? { targetId } : {}),
+    // Compiled through the shared builder rather than the pagination helper's `filters` string: these
+    // are named contract params, and the export path must resolve them identically.
+    const filter = toEventLogFilter(organizationId, {
+      from,
+      to,
+      includeSystemActors,
+      actionKey,
+      resource,
+      tier,
+      durability,
+      actorId,
+      actorType,
+      outcome,
+      targetId,
+    });
+
+    const page = await this.repository.list(toEventLogWhere(filter), paginationQuery);
+    return { ...page, data: page.data.map(toEntry) };
+  }
+
+  /** Tier 1 class A. An export is the exfiltration-relevant read, so it is recorded even though a
+   *  plain browse is not. Unthrottled: one bulk download is already bounded by the row cap. */
+  async recordExport(): Promise<void> {
+    const write: EventLogWrite = {
+      organizationId: this.contextService.organizationId,
+      tier: 'EVIDENCE',
+      durability: 'ATOMIC',
+      resource: 'event-log',
+      action: 'exported',
+      actionKey: 'event-log.exported',
+      ...this.contextService.actorFields(),
+      ...this.contextService.requestFields(),
+      outcome: 'SUCCEEDED',
+      requestId: this.contextService.requestId ?? null,
     };
 
-    if (actorType) {
-      where.actorType = actorType;
-    } else if (!includeSystemActors) {
-      // Stored but hidden by default, so the feed reads as human activity rather than machine noise.
-      where.actorType = { notIn: ['DEVICE', 'SYSTEM'] };
-    }
-
-    if (from || to) {
-      where.createdAt = { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) };
-    }
-
-    const page = await this.repository.list(where, paginationQuery);
-    return { ...page, data: page.data.map(toEntry) };
+    await this.repository.insert(write);
   }
 
   /** Tier 1 class A. Shares the mutation's transaction, so a failure here rolls the mutation back. */

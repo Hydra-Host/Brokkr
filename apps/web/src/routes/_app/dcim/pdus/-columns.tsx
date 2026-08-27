@@ -1,6 +1,6 @@
 import type { Pdu } from '@repo/api-client';
+import type { ServerColumnDef } from '@repo/domain-ui/hooks/use-server-table';
 import { Badge } from '@repo/ui/components/badge';
-import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
 import { Link } from '@tanstack/react-router';
 
 const dash = <span className="text-muted-foreground">--</span>;

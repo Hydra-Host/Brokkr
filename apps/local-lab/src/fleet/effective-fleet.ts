@@ -16,6 +16,8 @@ export const EffectiveNodeSchema = z
     passthrough: z.array(z.string()).optional(),
     nics: z.array(z.object({ mac: z.string().min(1) }).catchall(z.unknown())).optional(),
     data_mtu: z.number().int().nullable().optional(),
+    arch: z.string().nullable().optional(),
+    network_type: z.enum(['nat', 'public']).nullable().optional(),
     ip: z.string().nullable().optional(),
     bmc_ip: z.string().nullable().optional(),
     bmc: EffectiveBmcSchema.nullable().optional(),
@@ -26,7 +28,14 @@ export const EffectiveNodeSchema = z
 export type EffectiveNode = z.infer<typeof EffectiveNodeSchema>;
 
 export const EffectiveNetworkSchema = z
-  .object({ cidr: z.string().optional(), bmc_cidr: z.string().optional() })
+  .object({
+    name: z.string().optional(),
+    cidr: z.string().optional(),
+    bmc_cidr: z.string().optional(),
+    domain: z.string().optional(),
+    dhcp: z.boolean().optional(),
+    rendered_netplan: z.boolean().optional(),
+  })
   .passthrough();
 export type EffectiveNetwork = z.infer<typeof EffectiveNetworkSchema>;
 
@@ -38,6 +47,7 @@ export const EffectiveDefaultsSchema = z
     disks: z.array(DiskSpecSchema).optional(),
     passthrough: z.array(z.string()).optional(),
     bmc: EffectiveBmcSchema.nullable().optional(),
+    arch: z.string().optional(),
   })
   .passthrough();
 export type EffectiveDefaults = z.infer<typeof EffectiveDefaultsSchema>;

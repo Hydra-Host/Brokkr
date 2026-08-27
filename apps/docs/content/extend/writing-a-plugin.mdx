@@ -126,7 +126,11 @@ export class HelloWorldService {
 }
 ```
 
-Authentication is automatic. The host's identity guard runs before every plugin route, and the injectable request context exposes the caller's identity and permission checks. See [Events, Gates, and Host Services](/extend/events-gates-and-host-services).
+Authentication is automatic. The host's identity guard runs before every plugin route, and the injectable request context exposes the caller's identity and permission checks. Intentionally anonymous routes use `PublicRoute`; anonymous writes also use `PluginRateLimit`, both from `@hydrahost/plugin-sdk/nest`.
+
+Gate operator endpoints with `PluginOperatorGuard` from `@hydrahost/plugin-sdk/nest` (provide `PLUGIN_OPERATOR_ADMIN_ORG` from your config when the configured admin organization should also pass; omit it for instance-operator only). Do not copy a plugin-local `InstanceOperatorGuard`. See [Events, Gates, and Host Services](/extend/events-gates-and-host-services).
+
+`operatorOnly` on the frontend manifest is UI-only. The backend must still gate.
 
 ## Validate configuration with Zod
 

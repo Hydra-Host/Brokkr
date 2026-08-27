@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { ContextService } from 'src/common/context/context.service';
+import { EventLogService } from 'src/event-log/event-log.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SshKeysService } from '../sshkeys.service';
@@ -40,13 +41,26 @@ describe('SshKeysService', () => {
     member: {
       findMany: vi.fn(),
     },
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockPrisma)),
   };
 
   const mockContext = {
     userId: CURRENT_USER_ID,
     organizationId: CURRENT_ORG_ID,
     requirePermission: vi.fn(),
+    actorFields: vi.fn(() => ({
+      actorType: 'UI',
+      actorId: CURRENT_USER_ID,
+      actorLabel: 'a@example.com',
+      apiKeyId: null,
+      apiKeyLabel: null,
+    })),
+    requestFields: vi.fn(() => ({ method: 'POST', path: '/api/v1/ssh-keys', ipAddress: null, userAgent: null })),
+    requestId: 'req-1',
+    finalizeIntents: vi.fn(),
   };
+
+  const mockEventLog = { recordInTransaction: vi.fn().mockResolvedValue(undefined) };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -54,6 +68,7 @@ describe('SshKeysService', () => {
         SshKeysService,
         { provide: PrismaClient, useValue: mockPrisma },
         { provide: ContextService, useValue: mockContext },
+        { provide: EventLogService, useValue: mockEventLog },
       ],
     }).compile();
 

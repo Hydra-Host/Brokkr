@@ -5,7 +5,7 @@ import { registerOperation } from '../../dispatch/registry';
 import { getErrorMessage } from '../../errors';
 import { run } from '../../exec';
 import { makeLogger } from '../../logger';
-import { assertTargetPathSafe } from './targetPath';
+import { assertTargetPathSafe } from './target-path';
 const logger = makeLogger('deploy');
 
 const FAST_TIMEOUT_MS = 30_000;

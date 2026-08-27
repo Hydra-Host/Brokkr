@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 
 import type { OperationInput, OperationOutput } from '@repo/bridge-agent-protocol';
+import { getErrorMessage } from '@repo/utils';
 import type { HandlerContext } from '../../dispatch/registry';
 import { registerOperation } from '../../dispatch/registry';
 import { scheduleExit } from './upgrade-exit';
@@ -59,13 +60,13 @@ export async function handleAgentUpgrade(input: UpgradeInput, ctx: HandlerContex
     if (error instanceof Error && error.message.startsWith('SHA256_MISMATCH')) {
       throw error;
     }
-    throw new Error(`DOWNLOAD_FAILED: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`DOWNLOAD_FAILED: ${getErrorMessage(error)}`, { cause: error });
   }
 
   try {
     await atomicWriteAndSwap(BUNDLE_TARGET, bytes, 0o600);
   } catch (error) {
-    throw new Error(`DISK_WRITE_FAILED: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`DISK_WRITE_FAILED: ${getErrorMessage(error)}`, { cause: error });
   }
 
   let unitReplaced = false;
@@ -74,13 +75,13 @@ export async function handleAgentUpgrade(input: UpgradeInput, ctx: HandlerContex
     try {
       unitBytes = await drainAndVerify(ctx.fetchArtifact(input.unit_sha256, 'unit'), input.unit_sha256, 'unit');
     } catch (error) {
-      throw new Error(`UNIT_WRITE_FAILED: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`UNIT_WRITE_FAILED: ${getErrorMessage(error)}`, { cause: error });
     }
     try {
       await atomicWriteAndSwap(UNIT_TARGET, unitBytes, 0o644);
       unitReplaced = true;
     } catch (error) {
-      throw new Error(`UNIT_WRITE_FAILED: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`UNIT_WRITE_FAILED: ${getErrorMessage(error)}`, { cause: error });
     }
   }
 
@@ -94,14 +95,14 @@ export async function handleAgentUpgrade(input: UpgradeInput, ctx: HandlerContex
         'config',
       );
     } catch (error) {
-      throw new Error(`CONFIG_WRITE_FAILED: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`CONFIG_WRITE_FAILED: ${getErrorMessage(error)}`, { cause: error });
     }
     // 0o600: agent.yaml carries secrets; must match the SSH-bootstrap path's chmod.
     try {
       await atomicWriteAndSwap(CONFIG_TARGET, configBytes, 0o600);
       configReplaced = true;
     } catch (error) {
-      throw new Error(`CONFIG_WRITE_FAILED: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`CONFIG_WRITE_FAILED: ${getErrorMessage(error)}`, { cause: error });
     }
   }
 

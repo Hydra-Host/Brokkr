@@ -17,7 +17,7 @@
 # here, so this is a no-op locally; dev/stg pull real values from the provider. Posture vars
 # are NOT in the contract and stay literal Nix.
 let
-  inherit ((import ./lib.nix)) cdRepo;
+  inherit ((import ./lib.nix)) cdRepo envKnobMeta;
   P = (import ./ports.nix).fromConfig config; # effective port/route map (overridable via config.ports)
   # hermetic local stack vs. dev/stg remote infra (modules/profiles.nix sets remoteInfra.enable). Under
   # remote, hub-api drops the local migrate/seed/redis deps.
@@ -152,6 +152,55 @@ let
     })
   );
 
+  # Control-center knobs, described from the code that consumes each one. The value a knob reverts
+  # to is NOT restated here — modules/overrides.nix reads it back out of stackDefaults.hub below,
+  # through hubKnobEnv for the one knob whose name is not itself an env key.
+  hubKnobs = {
+    HUB_REPO_PATH = {
+      label = "Hub repo path";
+      group = "Location";
+      kind = "text";
+      description = "Absolute path to the hub checkout on this host. The control center launches the hub (api/web) from here — required; the hub cannot start without a valid path.";
+    };
+    AUTH_BYPASS_ENABLED = {
+      label = "Auth bypass";
+      group = "Security";
+      kind = "bool";
+      danger = true;
+      description = "Relaxes auth SSO + Entra link + CSRF/origin + password length + seeds the local brokkr Owner. ON in sim; toggle OFF to exercise the production auth path locally. Gated by HH_ENV ∈ AUTH_BYPASS_ALLOWED_ENVS — never honored in prod.";
+    };
+    LOG_LEVEL = {
+      label = "Log level";
+      group = "Logging";
+      kind = "select";
+      choices = [
+        "debug"
+        "info"
+        "warn"
+        "error"
+      ];
+      description = "Nest log floor: the named level and every level above it in verbose < debug < log < warn < error < fatal is emitted. `info` and `warning` are aliases for log and warn; an unknown value warns and falls back to log.";
+    };
+    DATABASE_URL = {
+      label = "Postgres URL";
+      group = "Datastores";
+      kind = "text";
+      description = "Postgres connection string for the hub's Prisma client. Read with no fallback, so the hub cannot boot without it; the Prisma CLI reads the same var for migrations.";
+    };
+    REDIS_URL = {
+      label = "Redis URL";
+      group = "Datastores";
+      kind = "text";
+      description = "The single Redis endpoint every hub consumer dials: the BullMQ queues, the shared client (zone ACLs, device secrets, config atoms), the Nest microservice transport, the SSE pub/sub pair and the better-auth session cache.";
+    };
+    BASE_URL = {
+      label = "Base URL";
+      group = "URLs";
+      kind = "text";
+      description = "Public URL root of the hub: the allowed CORS origin, a better-auth trusted origin, and the link root for outbound email. Device phone-home uses it only as the fallback when PHONE_HOME_BASE_URL is unset.";
+    };
+  };
+
   # control-center stack-settings overrides win over the static defaults (a HUB_REPO_PATH
   # override also flows here → the per-process env → cdRepo launches from that checkout).
   # zone-crypto (S1): the hub private key is layered last and ONLY when configured, so an unset
@@ -259,6 +308,8 @@ in
     inherit hubKnobEnv;
   };
 
+  knobMeta = envKnobMeta lib "hub" hubKnobEnv hubKnobs;
+
   tasks = {
     "hub:init" = {
       description = "hub: pnpm install + workspace package build (prisma generate + tsc) + cli browser bundle.";
@@ -280,6 +331,7 @@ in
         # task must run. (A lockfile edit also moves the fingerprint, so this is belt-and-braces.)
         [ -e node_modules/.modules.yaml ] || exit 1
         [ node_modules/.modules.yaml -nt pnpm-lock.yaml ] || exit 1
+        [ -x node_modules/.bin/turbo ] || exit 1
         fp="$(${hubInitFingerprint})" || exit 1
         [ -n "$fp" ] || exit 1
         [ "$fp" = "$(cat "$stamp")" ] || exit 1

@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import type { PcProcess } from '../../services/proc-health';
 import { FleetStatusService } from '../fleet-status.service';
 
+const bridge = (proc: string) => ({ proc, zone: 'sim-zone', replica: 0, port: 8000, grpc: 9082 });
+
 const mk = (
   pc: PcProcess[],
   names: string[],
@@ -12,6 +14,7 @@ const mk = (
   prog: object | null,
   tailError: (name: string) => string | undefined = () => undefined,
   tailTaskLog: (name: string) => string | undefined = () => undefined,
+  bridges: ReturnType<typeof bridge>[] = [],
 ) =>
   new FleetStatusService(
     { listAll: async () => pc, tailError, tailTaskLog } as any,
@@ -25,6 +28,7 @@ const mk = (
           deviceId: null,
         })),
     } as any,
+    { labBridges: () => bridges } as any,
     { readProgress: () => prog } as any,
   );
 
@@ -119,9 +123,83 @@ describe('FleetStatusService.status', () => {
           { name: 's1-cpu-1', power: 'on', configured: false, deviceId: null },
         ],
       } as any,
+      { labBridges: () => [] } as any,
       { readProgress: () => null } as any,
     );
     expect((await svc.status()).machinesRunning).toBe(1);
+  });
+});
+
+describe('FleetStatusService.status with the spoke that serves the boot chain', () => {
+  const fleetUp: PcProcess[] = [{ name: 'fleet', status: 'Running', is_ready: 'Ready' }];
+
+  it('ready when every bridge process is up', async () => {
+    const svc = mk(
+      [...fleetUp, { name: 'spoke', status: 'Running', is_ready: 'Ready' }],
+      ['cpu-1'],
+      ['cpu-1'],
+      null,
+      undefined,
+      undefined,
+      [bridge('spoke')],
+    );
+    const s = await svc.status();
+    expect(s.health).toBe('ready');
+    expect(s.detail).toBe('ready · 1/1 VMs running');
+  });
+
+  it('degraded — naming the dead spoke — while every VM is still running', async () => {
+    const svc = mk(
+      [...fleetUp, { name: 'spoke', status: 'Error', is_ready: '-', exit_code: 1 }],
+      ['cpu-1', 'cpu-2'],
+      ['cpu-1', 'cpu-2'],
+      null,
+      undefined,
+      undefined,
+      [bridge('spoke')],
+    );
+    const s = await svc.status();
+    expect(s.health).toBe('degraded');
+    expect(s.detail).toContain('2/2 VMs running');
+    expect(s.detail).toContain('spoke');
+    expect(s.machinesRunning).toBe(2);
+  });
+
+  it('names every down bridge of a multi-bridge zone set', async () => {
+    const svc = mk(
+      [
+        ...fleetUp,
+        { name: 'spoke', status: 'Running', is_ready: 'Ready' },
+        { name: 'spoke-2', status: 'Completed', is_ready: '-', exit_code: 143 },
+      ],
+      ['cpu-1'],
+      ['cpu-1'],
+      null,
+      undefined,
+      undefined,
+      [bridge('spoke'), bridge('spoke-2')],
+    );
+    const s = await svc.status();
+    expect(s.health).toBe('degraded');
+    expect(s.detail).toContain('spoke-2');
+    expect(s.detail).not.toContain('spoke,');
+  });
+
+  it('claims nothing about the spokes when the process list is unavailable', async () => {
+    const svc = new FleetStatusService(
+      {
+        listAll: async () => {
+          throw new Error('pc socket gone');
+        },
+        tailError: () => undefined,
+        tailTaskLog: () => undefined,
+      } as any,
+      { nodeNames: () => ['cpu-1'] } as any,
+      { machines: async () => [] } as any,
+      { labBridges: () => [bridge('spoke')] } as any,
+      { readProgress: () => null } as any,
+    );
+    expect((await svc.status()).health).toBe('idle');
   });
 });
 
@@ -141,6 +219,7 @@ describe('FleetStatusService.status with a caller-supplied snapshot', () => {
           return [];
         },
       } as any,
+      { labBridges: () => [] } as any,
       { readProgress: () => null } as any,
     );
 

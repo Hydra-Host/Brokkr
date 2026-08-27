@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { applyScopeNamespaces } from '../apply-scope';
 import type { ProcessComposeClient } from '../process-compose.client';
 import { extractFleetPaths, RenderedConfigService } from '../rendered-config.service';
+import { useScratchState } from './isolated-state';
 
 const { fsMock } = vi.hoisted(
   (): {
@@ -16,10 +18,14 @@ const { fsMock } = vi.hoisted(
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
+  const { tmpdir } = await import('node:os');
   return {
     ...actual,
-    mkdirSync: vi.fn(),
+    mkdirSync: vi.fn((p: string, opts?: { recursive?: boolean }) => {
+      if (p.startsWith(tmpdir())) actual.mkdirSync(p, opts);
+    }),
     rmSync: vi.fn((p: string, opts?: { force?: boolean }) => {
+      if (p.startsWith(tmpdir())) return actual.rmSync(p, opts);
       if (!opts?.force) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
       fsMock.ops.push(`rm:${p}`);
     }),
@@ -32,6 +38,7 @@ vi.mock('node:fs', async (importOriginal) => {
       fsMock.ops.push(`copy:${dst}`);
     }),
     renameSync: vi.fn((tmp: string, dst: string) => {
+      if (dst.startsWith(tmpdir())) return actual.renameSync(tmp, dst);
       fsMock.renames.push({ tmp, dst });
       fsMock.ops.push(`rename:${dst}`);
     }),
@@ -46,6 +53,7 @@ const CFG_TEXT = [
   'environment:',
   '  - LOCAL_FLEET_SOURCE = "/nix/store/abc-fleet/fleet.yml"',
   '  - LOCAL_FLEET_PATH = "/state/local/fleet.yaml"',
+  'processes: {}',
   '',
 ].join('\n');
 
@@ -69,6 +77,8 @@ function makeService() {
 }
 
 describe('RenderedConfigService fleet.yml staging — D1.1 desired vs staged split', () => {
+  useScratchState();
+
   beforeEach(() => {
     fsMock.copies = [];
     fsMock.renames = [];
@@ -143,6 +153,54 @@ describe('RenderedConfigService fleet.yml staging — D1.1 desired vs staged spl
       'copy:/state/local/fleet.yaml.tmp',
       'rename:/state/local/fleet.yaml',
     ]);
+  });
+
+  it('applyOverlay stages the rendered fleet source, not the one the pin froze', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lab-scoped-fleet-'));
+    const cfgPath = join(dir, 'process-compose.yaml');
+    writeFileSync(
+      cfgPath,
+      [
+        'processes:',
+        '  hub-api:',
+        '    namespace: hub',
+        '    command: run-hub',
+        '  fleet:',
+        '    namespace: fleet',
+        '    command: run-fleet',
+        '    environment:',
+        '      - LOCAL_FLEET_SOURCE=/nix/store/rendered-fleet/fleet.yml',
+        '      - LOCAL_FLEET_PATH=/state/local/fleet.yaml',
+        '',
+      ].join('\n'),
+    );
+    const submittedPaths: string[] = [];
+    const pc = {
+      listAll: vi.fn(async () => [{ name: 'hub-api' }, { name: 'fleet' }]),
+      processInfo: vi.fn(async (name: string) =>
+        name === 'fleet'
+          ? {
+              command: 'run-fleet',
+              environment: [
+                'LOCAL_FLEET_SOURCE=/nix/store/running-fleet/fleet.yml',
+                'LOCAL_FLEET_PATH=/state/local/fleet.yaml',
+              ],
+              dependsOn: {},
+              namespace: 'fleet',
+            }
+          : { command: 'run-hub', environment: [], dependsOn: {}, namespace: 'hub' },
+      ),
+      projectUpdate: vi.fn(async (submitted: string) => {
+        submittedPaths.push(submitted);
+      }),
+    };
+    const svc = new RenderedConfigService(pc as unknown as ProcessComposeClient);
+
+    const out = await svc.applyOverlay(cfgPath, applyScopeNamespaces('hub'));
+
+    expect(out).toBe('/state/local/fleet.yaml');
+    expect(submittedPaths[0]).not.toBe(cfgPath);
+    expect(fsMock.copies).toEqual([{ src: '/nix/store/rendered-fleet/fleet.yml', dst: '/state/local/fleet.yaml.tmp' }]);
   });
 });
 

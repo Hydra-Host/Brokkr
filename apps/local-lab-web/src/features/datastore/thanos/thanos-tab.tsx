@@ -12,6 +12,7 @@ import {
 } from '@/features/datastore/shared';
 import { tsr } from '@/lib/api';
 import { thanosChartPending } from '@/lib/thanos-chart-state';
+import { usePoll } from '@/lib/use-poll';
 import { useRangeAnchor } from '@/lib/use-range-anchor';
 
 import { PromqlRunner } from './promql-runner';
@@ -23,7 +24,7 @@ import { WindowChips } from './window-chips';
 const RANGE_ADVANCE_MS = 30_000;
 
 export function ThanosTab() {
-  const status = tsr.getThanosStatus.useQuery({ queryKey: ['thanos-status'], refetchInterval: 5000 });
+  const status = tsr.getThanosStatus.useQuery({ queryKey: ['thanos-status'], refetchInterval: usePoll(5000) });
   const metrics = tsr.listThanosMetrics.useQuery({ queryKey: ['thanos-metrics'], queryData: { query: {} } });
   const { metric: selected } = useDatastoreSearch();
   const setSearch = useSetDatastoreSearch();

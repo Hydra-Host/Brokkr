@@ -12,10 +12,11 @@
 # center drive the fleet over the same process-compose REST it uses for hub/spoke (start/stop/
 # restart the `fleet` process).
 #
-# DAG: hub-api healthy → sim:seed → (spoke healthy + libvirt:up) → fleet:init → fleet.
+# DAG: hub-api healthy → sim:seed → (spoke + libvirt:up) → fleet:init → fleet. The spoke edge below
+# does NOT wait for health — cmd_init polls the spoke itself; see the `after` note.
 # fleet.autoStart=false (modules/overrides.nix) leaves `fleet` defined-but-`disabled`, so
 # `devenv up` stops at the control plane and the fleet starts on demand (control center /
-# `devenv processes start fleet`); sim:seed + fleet:init only fire when the fleet does (the
+# `process-compose … process start fleet`); sim:seed + fleet:init only fire when the fleet does (the
 # control plane comes up unseeded, same as a bare pre-fleet `devenv up`).
 #
 # `python -m local.*` needs sim/scripts on PYTHONPATH — enterShell sets that for the
@@ -91,6 +92,8 @@ lib.mkIf (!config.remoteInfra.enable) {
       # libvirt must be up before preflight's `virsh list`: macOS depends on the supervised
       # virtqemud process; Linux on the `libvirt:up` task (system libvirtd). OS-exclusive — Linux
       # never references the macOS-`disabled` virtqemud process (an unsatisfiable dep would stall).
+      # The spoke entry is ordering intent only: devenv launches every process with
+      # --ignore-process-deps, which strips process-type tasks, so cmd_init polls the spoke itself.
       after = [
         "sim:seed"
         "devenv:processes:spoke"
@@ -159,7 +162,7 @@ lib.mkIf (!config.remoteInfra.enable) {
   # pc REST, logs stream over the same WebSocket, and `devenv down` tears it down. `up
   # --supervise` powers the VMs on then blocks; on SIGTERM it runs `fleet down`.
   processes.fleet = {
-    # macOS: also a direct dep on virtqemud so a bare `devenv processes restart fleet` (which may
+    # macOS: also a direct dep on virtqemud so a bare `process-compose … process restart fleet` (which may
     # skip fleet:init) still waits on it. Linux gets the libvirt readiness transitively via fleet:init.
     after = [ "fleet:init" ] ++ lib.optionals pkgs.stdenv.isDarwin [ "devenv:processes:virtqemud" ];
     cwd = simDir;

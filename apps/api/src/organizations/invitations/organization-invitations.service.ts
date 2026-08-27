@@ -3,13 +3,16 @@ import { HttpException, HttpStatus, Inject, Injectable, NotFoundException } from
 import type { Invitation } from '@repo/api-client';
 import { InvitationStatusSchema } from '@repo/api-client';
 import { MAIN_APP_PERMISSIONS, RbacService, roleBelongsToCatalog } from '@repo/auth/rbac';
-import { OrganizationMembershipRole } from '@repo/database';
+import { OrganizationMembershipRole, type Prisma } from '@repo/database';
 import { PaginatedResult, PaginationQuery } from '@repo/database/pagination';
 import { AuthType } from 'src/auth/identity-context';
-import { ContextService } from 'src/common/context/context.service';
+import { ContextService, type PermissionIntentHandle } from 'src/common/context/context.service';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { getErrorMessage } from 'src/common/error-utils';
 import { EmailService } from 'src/email/email.service';
+import { resolveErrorCode } from 'src/event-log/event-log-status-mapper';
+import { EventLogService } from 'src/event-log/event-log.service';
+import type { EventLogWrite } from 'src/event-log/event-log.types';
 import { LoggerService } from 'src/logger/logger.service';
 import { OrganizationMembershipsRepository } from '../members/organization-members.repository';
 import {
@@ -23,6 +26,25 @@ const API_KEY_UNSUPPORTED_MESSAGE =
 const INVITATION_EXPIRES_MS = 48 * 60 * 60 * 1000;
 const PENDING_INVITATION_LIMIT = 100;
 
+const MEMBER_INVITED = { resource: 'member', action: 'invited', actionKey: 'member.invited' };
+const MEMBER_JOINED = { resource: 'member', action: 'joined', actionKey: 'member.joined' };
+const INVITATION_REJECTED = { resource: 'invitation', action: 'rejected', actionKey: 'invitation.rejected' };
+// Double-l deliberately: the stored status literal is 'canceled', but action keys are their own namespace.
+const INVITATION_CANCELLED = { resource: 'invitation', action: 'cancelled', actionKey: 'invitation.cancelled' };
+
+interface InvitationEvent {
+  organizationId: string;
+  resource: string;
+  action: string;
+  actionKey: string;
+  invitationId: string;
+  email: string;
+}
+
+function eventTarget(invitation: InvitationWithAssignedRole): { organizationId: string; email: string } {
+  return { organizationId: invitation.organizationId, email: invitation.email.trim().toLowerCase() };
+}
+
 @Injectable()
 export class OrganizationInvitationsService {
   constructor(
@@ -33,6 +55,7 @@ export class OrganizationInvitationsService {
     private readonly eventBus: PluginEventBus,
     private readonly repository: OrganizationInvitationsRepository,
     private readonly membershipsRepository: OrganizationMembershipsRepository,
+    private readonly eventLog: EventLogService,
     @Logger(OrganizationInvitationsService.name) private readonly logger: LoggerService,
   ) {}
 
@@ -61,10 +84,65 @@ export class OrganizationInvitationsService {
     }
   }
 
+  /** The organization is a required argument, never read from the request context: an invitee accepting or
+   *  rejecting is not yet a member, so the ambient organization is a different tenant. */
+  private baseWrite(event: InvitationEvent): Omit<EventLogWrite, 'durability' | 'outcome'> {
+    return {
+      organizationId: event.organizationId,
+      tier: 'EVIDENCE',
+      resource: event.resource,
+      action: event.action,
+      actionKey: event.actionKey,
+      ...this.contextService.actorFields(),
+      ...this.contextService.requestFields(),
+      targetId: event.invitationId,
+      targetLabel: event.email,
+      requestId: this.contextService.requestId ?? null,
+    };
+  }
+
+  private recordEvent(tx: Prisma.TransactionClient, event: InvitationEvent): Promise<void> {
+    return this.eventLog.recordInTransaction(tx, {
+      ...this.baseWrite(event),
+      durability: 'ATOMIC',
+      outcome: 'SUCCEEDED',
+    });
+  }
+
+  /** Standalone rather than atomic: these failures throw inside the mutation's transaction, so an insert on
+   *  that transaction would roll back with them. A crash between the throw and this write loses the row. */
+  private async withFailureEvent<T>(event: () => InvitationEvent, mutation: () => Promise<T>): Promise<T> {
+    try {
+      return await mutation();
+    } catch (error) {
+      const write: EventLogWrite = {
+        ...this.baseWrite(event()),
+        durability: 'POST_COMMIT',
+        outcome: 'FAILED',
+        errorCode: resolveErrorCode(error),
+      };
+      try {
+        await this.eventLog.record(write);
+      } catch (auditError) {
+        // Throwing here would answer a rolled-back 400 with a 500, and these paths record no intent
+        // for tier 2 to fall back on. Losing the row is what POST_COMMIT already concedes.
+        this.logger.error(
+          `Failed to persist event ${write.actionKey} for organization ${write.organizationId}: ${getErrorMessage(auditError)}`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  /** Called after the mutation resolves: a rollback leaves the handle pending so tier 2 records the failure. */
+  private supersede(handle: PermissionIntentHandle | undefined): void {
+    if (handle) this.contextService.finalizeIntents([handle]);
+  }
+
   async createInvitation(data: { email: string; roleId: string }): Promise<Invitation> {
     this.requireSessionAuth();
 
-    this.contextService.requirePermission('invitation', 'create');
+    const handle = this.contextService.requirePermission('invitation', 'create');
 
     const organizationId = this.contextService.organizationId;
     const organization = await this.repository.findActiveOrganizationName(organizationId);
@@ -92,7 +170,7 @@ export class OrganizationInvitationsService {
 
       const assignedRole = await this.rbacService.getRoleById(data.roleId, organizationId, tx);
       this.rbacService.assertRoleAssignableBy(assignedRole, this.contextService.permissions, true);
-      return this.repository.createInvitation(
+      const created = await this.repository.createInvitation(
         {
           email,
           assignedRoleId: assignedRole.id,
@@ -102,7 +180,12 @@ export class OrganizationInvitationsService {
         },
         tx,
       );
+      // Inside the transaction, so it precedes the email send below: a row without an email is
+      // recoverable, an email without a row is not.
+      await this.recordEvent(tx, { ...MEMBER_INVITED, organizationId, invitationId: created.id, email });
+      return created;
     });
+    this.supersede(handle);
 
     try {
       const inviterName = `${this.contextService.user.firstName} ${this.contextService.user.lastName}`.trim();
@@ -155,36 +238,50 @@ export class OrganizationInvitationsService {
       throw new NotFoundException('Invitation not found');
     }
 
-    const accepted = await this.rbacService.withOwnerLock(initial.organizationId, async (tx) => {
-      const existing = await this.repository.findById(invitationId, tx);
-      if (!existing || existing.email.trim().toLowerCase() !== email) {
-        throw new NotFoundException('Invitation not found');
-      }
-      if (existing.status !== 'pending') {
-        throw new HttpException(`Cannot accept invitation with status '${existing.status}'`, HttpStatus.BAD_REQUEST);
-      }
-      if (existing.expiresAt.getTime() < Date.now()) {
-        throw new HttpException('Invitation has expired', HttpStatus.BAD_REQUEST);
-      }
+    // Reassigned under the lock so both outcomes are attributed to the row as reloaded.
+    let target = eventTarget(initial);
 
-      await this.rbacService.getRoleById(existing.assignedRoleId, existing.organizationId, tx);
-      const liveMember = await this.repository.findLiveMemberByEmail(email, existing.organizationId, tx);
-      if (liveMember) {
-        throw new HttpException('User is already a member of this organization', HttpStatus.BAD_REQUEST);
-      }
-      const claimed = await this.repository.claimPendingAsAccepted(invitationId, tx);
-      if (!claimed) {
-        throw new HttpException('Invitation is no longer pending', HttpStatus.CONFLICT);
-      }
-      await this.membershipsRepository.create(
-        existing.organizationId,
-        userId,
-        OrganizationMembershipRole.Member,
-        existing.assignedRoleId,
-        tx,
-      );
-      return { ...existing, status: 'accepted' };
-    });
+    const accepted = await this.withFailureEvent(
+      () => ({ ...MEMBER_JOINED, ...target, invitationId }),
+      () =>
+        this.rbacService.withOwnerLock(initial.organizationId, async (tx) => {
+          const existing = await this.repository.findById(invitationId, tx);
+          if (existing) {
+            target = eventTarget(existing);
+          }
+          if (!existing || existing.email.trim().toLowerCase() !== email) {
+            throw new NotFoundException('Invitation not found');
+          }
+          if (existing.status !== 'pending') {
+            throw new HttpException(
+              `Cannot accept invitation with status '${existing.status}'`,
+              HttpStatus.BAD_REQUEST,
+            );
+          }
+          if (existing.expiresAt.getTime() < Date.now()) {
+            throw new HttpException('Invitation has expired', HttpStatus.BAD_REQUEST);
+          }
+
+          await this.rbacService.getRoleById(existing.assignedRoleId, existing.organizationId, tx);
+          const liveMember = await this.repository.findLiveMemberByEmail(email, existing.organizationId, tx);
+          if (liveMember) {
+            throw new HttpException('User is already a member of this organization', HttpStatus.BAD_REQUEST);
+          }
+          const claimed = await this.repository.claimPendingAsAccepted(invitationId, tx);
+          if (!claimed) {
+            throw new HttpException('Invitation is no longer pending', HttpStatus.CONFLICT);
+          }
+          await this.membershipsRepository.create(
+            existing.organizationId,
+            userId,
+            OrganizationMembershipRole.Member,
+            existing.assignedRoleId,
+            tx,
+          );
+          await this.recordEvent(tx, { ...MEMBER_JOINED, ...target, invitationId });
+          return { ...existing, status: 'accepted' };
+        }),
+    );
 
     this.eventBus.emit('member.added', {
       organizationId: accepted.organizationId,
@@ -209,21 +306,32 @@ export class OrganizationInvitationsService {
       throw new NotFoundException('Invitation not found');
     }
 
-    const updated = await this.rbacService.withOwnerLock(existing.organizationId, async (tx) => {
-      const current = await this.repository.findById(invitationId, tx);
-      if (!current) {
-        throw new NotFoundException('Invitation not found');
-      }
-      if (current.status !== 'pending') {
-        throw new HttpException(`Cannot reject invitation with status '${current.status}'`, HttpStatus.BAD_REQUEST);
-      }
-      return this.repository.updateStatus(invitationId, 'rejected', tx);
-    });
+    let target = eventTarget(existing);
+
+    const updated = await this.withFailureEvent(
+      () => ({ ...INVITATION_REJECTED, ...target, invitationId }),
+      () =>
+        this.rbacService.withOwnerLock(existing.organizationId, async (tx) => {
+          const current = await this.repository.findById(invitationId, tx);
+          if (current) {
+            target = eventTarget(current);
+          }
+          if (!current) {
+            throw new NotFoundException('Invitation not found');
+          }
+          if (current.status !== 'pending') {
+            throw new HttpException(`Cannot reject invitation with status '${current.status}'`, HttpStatus.BAD_REQUEST);
+          }
+          const rejected = await this.repository.updateStatus(invitationId, 'rejected', tx);
+          await this.recordEvent(tx, { ...INVITATION_REJECTED, ...target, invitationId });
+          return rejected;
+        }),
+    );
     return this.mapInvitation(updated);
   }
 
   async cancelInvitation(invitationId: string): Promise<Invitation> {
-    this.contextService.requirePermission('invitation', 'delete');
+    const handle = this.contextService.requirePermission('invitation', 'delete');
 
     const organizationId = this.contextService.organizationId;
     const existing = await this.repository.findByIdAndOrganizationId(invitationId, organizationId);
@@ -240,8 +348,11 @@ export class OrganizationInvitationsService {
       if (current.status !== 'pending') {
         throw new HttpException(`Cannot cancel invitation with status '${current.status}'`, HttpStatus.BAD_REQUEST);
       }
-      return this.repository.updateStatus(invitationId, 'canceled', tx);
+      const canceled = await this.repository.updateStatus(invitationId, 'canceled', tx);
+      await this.recordEvent(tx, { ...INVITATION_CANCELLED, ...eventTarget(current), invitationId });
+      return canceled;
     });
+    this.supersede(handle);
     return this.mapInvitation(updated);
   }
 }

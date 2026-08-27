@@ -62,11 +62,10 @@
   settings.formatter.deadnix.priority = 1;
   programs.statix.enable = true;
   settings.formatter.statix.priority = 2;
-  # RFC-166 formatter. Pin the package explicitly: treefmt-nix's programs.nixfmt resolves the
-  # `pkgs.nixfmt` alias, which on the pinned nixpkgs is still nixfmt-classic (0.6.0) — the
-  # ecosystem standard is nixfmt-rfc-style (`nix fmt` + nixpkgs use it), so select it directly.
+  # RFC-166 formatter. No explicit package: on the pinned nixpkgs `pkgs.nixfmt` already IS
+  # nixfmt-rfc-style (1.4.0, same derivation), and naming the alias now warns. nixfmt-classic
+  # (0.6.0) remains a separate attribute, so the default cannot regress to it silently.
   programs.nixfmt.enable = true;
-  programs.nixfmt.package = pkgs.nixfmt-rfc-style;
   settings.formatter.nixfmt.priority = 3;
 
   # apps/local-sim/**/*.py — ruff-format honors the sim's pyproject.toml (line-length 120 / py312).

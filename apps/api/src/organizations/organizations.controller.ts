@@ -4,6 +4,7 @@ import { TsRestHandler, tsRestHandler } from '@ts-rest/nest';
 import { CurrentSessionUser } from 'src/auth/decorators/current-session-user.decorator';
 import { SessionOnly } from 'src/auth/decorators/session-only.decorator';
 import type { SessionUser } from 'src/common/context/context.service';
+import { AuditAction } from 'src/event-log/audit-action.decorator';
 import { OrganizationsService } from './organizations.service';
 
 @Controller()
@@ -54,6 +55,7 @@ export class OrganizationsController {
     });
   }
 
+  @AuditAction({ actionKey: 'organization.settings-updated', resource: 'organization', action: 'update' })
   @TsRestHandler(contract.updateOrganization)
   async update() {
     return tsRestHandler(contract.updateOrganization, async ({ body }) => {

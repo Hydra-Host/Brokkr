@@ -403,11 +403,46 @@ export class FooController {
 
 Available fields: `userId`, `email`, `firstName`, `lastName`, `organizationId`, `role` (`OrganizationMembershipRole`), `authType` (`'session' | 'api-key'`).
 
-`requirePermission(resource, action)` throws `ForbiddenException` unless the caller holds that `resource:action` permission. `requireSessionAuth()` rejects API-key callers — use it for operations that should never run from automation (MFA setup, password change, etc.).
+`requirePermission(resource, action)` throws `ForbiddenException` unless the caller holds that `resource:action` permission. `requireSessionAuth()` rejects API-key callers — use it for operations that should never run from automation (MFA setup, password change, etc.). `requireInstanceOperator()` accepts only the designated instance-operator org.
+
+**Operator plugin endpoints** use `PluginOperatorGuard` from `@hydrahost/plugin-sdk/nest`. It calls host-backed `ctx.requireOperator({ adminOrganizationId })`:
+
+- Instance operators always pass.
+- When `PLUGIN_OPERATOR_ADMIN_ORG` is provided with a non-empty string that matches the caller's `organizationId`, that org also passes (managed-edition admin panel). Empty string does not grant access.
+- Omit the token for instance-operator only (this is `operator-hub`).
+- Missing request identity fails closed.
+
+```typescript
+import { getPluginConfigToken } from '@hydrahost/plugin-sdk';
+import { PLUGIN_OPERATOR_ADMIN_ORG, PluginOperatorGuard } from '@hydrahost/plugin-sdk/nest';
+
+// PluginOperatorGuard must be a provider: an unresolvable controller-scoped guard is silently skipped (gate bypass), not a boot error.
+@Module({
+  controllers: [OperatorFooController],
+  providers: [
+    PluginOperatorGuard,
+    {
+      provide: PLUGIN_OPERATOR_ADMIN_ORG,
+      useFactory: (config: FooConfig) => config.adminOrganizationId,
+      inject: [getPluginConfigToken('foo')],
+    },
+  ],
+})
+export class FooModule {}
+```
 
 **Authentication is automatic.** `UnifiedIdentityGuard` is registered as an `APP_GUARD` in the host. Every plugin route runs through it before reaching your handler. The context is populated by the time your handler executes, or `UnauthorizedException` was already thrown — you never see unauthenticated calls.
 
-**Public routes are the rare exception.** A controller can opt out of authentication by setting the host guard's `isPublic` metadata (`SetMetadata('isPublic', true)`, usually wrapped in a small `PublicRoute` decorator inside your plugin). Reserve this for routes serving anonymous visitors that touch no tenant data, and never read `PLUGIN_REQUEST_CONTEXT` from them — its accessors throw without an identity.
+**Public routes are the rare exception.** Import `PublicRoute` from `@hydrahost/plugin-sdk/nest` to opt out of host authentication. Reserve it for routes serving anonymous visitors that touch no tenant data, and never read `PLUGIN_REQUEST_CONTEXT` from them — its accessors throw without an identity.
+
+Anonymous write endpoints must also use `PluginRateLimit` from `@hydrahost/plugin-sdk/nest`. Add `PluginRateLimitGuard` to the plugin module's providers, then declare a plugin-local policy:
+
+```typescript
+@PublicRoute()
+@PluginRateLimit({ name: 'lead-submission', limit: 10, windowSeconds: 60 })
+```
+
+The host consumes the fixed window atomically in namespaced Redis, so limits hold across replicas and restarts. Requests without a resolved client IP fail closed with `429`.
 
 **Don't reach for the host's `ContextService` directly.** Plugins distributed via npm have no path access to `apps/api/src/common/context/context.service`. The SDK token is the supported abstraction.
 

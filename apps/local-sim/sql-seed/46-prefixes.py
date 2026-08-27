@@ -14,7 +14,7 @@ import uuid
 from local.derived import LOCAL_NS, NODE_IP_BASE
 from local.schema import require_fleet
 from local.sqlemit import header, logs_to_stderr, q
-from local.zones import zone_uuid
+from local.zones import IPAM_OWNER_INDEX, zone_uuid
 
 # (slug, display name, IpamRole enum, Network field). The enum is set for
 # parity with the hub catalog; the slug is what netplan actually consumes.
@@ -160,43 +160,42 @@ def generate() -> str:
     for slug, name, _enum, _key in _ROLES:
         out.append(_role_sql(slug, name))
     out.append("\n")
-    for z in sorted(fleet.zones, key=lambda zz: zz.index):
-        zid = zone_uuid(z.index)
-        for slug, _name, role_enum, net_field in _ROLES:
-            cidr = getattr(network, net_field)
-            prefix_id = _prefix_uuid(zid, slug)
-            # DHCP served only on the primary prefix, only when opted in, and only for zone 0: all zones
-            # share one network.cidr, so a pool per zone would publish duplicate DHCP atoms for the same subnet.
-            if dhcp_enabled and slug == "primary" and z.index == 0:
+    # One pair of prefixes for the fleet, not one per zone: every zone shares network.cidr, and
+    # Prefix_active_unique is (org, vrfId, prefix), so a row per zone is the same subnet twice.
+    zid = zone_uuid(IPAM_OWNER_INDEX)
+    for slug, _name, role_enum, net_field in _ROLES:
+        cidr = getattr(network, net_field)
+        prefix_id = _prefix_uuid(zid, slug)
+        if dhcp_enabled and slug == "primary":
+            net = ipaddress.ip_network(cidr, strict=False)
+            gw_ip_id = str(uuid.uuid5(LOCAL_NS, f"dhcp-gw:{zid}"))
+            out.append(_gateway_ip_sql(gw_ip_id, str(net.network_address + 1), net.prefixlen, zid))
+            out.append(_prefix_sql(prefix_id, cidr, role_enum, slug, zid, dhcp=True, gw_ip_id=gw_ip_id))
+            pool_id = str(uuid.uuid5(LOCAL_NS, f"dhcp-pool:{zid}"))
+            pool_start_offset, pool_end_offset = _dhcp_pool_offsets(net, node_count)
+            pool_start = str(net.network_address + pool_start_offset)
+            pool_end = str(net.network_address + pool_end_offset)
+            out.append(_pool_sql(pool_id, prefix_id, pool_start, pool_end, zid))
+        else:
+            out.append(_prefix_sql(prefix_id, cidr, role_enum, slug, zid))
+            if slug == "primary":
+                # Emitted either way so toggling rendered_netplan converges in both directions.
                 net = ipaddress.ip_network(cidr, strict=False)
-                gw_ip_id = str(uuid.uuid5(LOCAL_NS, f"dhcp-gw:{zid}"))
-                out.append(_gateway_ip_sql(gw_ip_id, str(net.network_address + 1), net.prefixlen, zid))
-                out.append(_prefix_sql(prefix_id, cidr, role_enum, slug, zid, dhcp=True, gw_ip_id=gw_ip_id))
-                pool_id = str(uuid.uuid5(LOCAL_NS, f"dhcp-pool:{zid}"))
-                pool_start_offset, pool_end_offset = _dhcp_pool_offsets(net, node_count)
-                pool_start = str(net.network_address + pool_start_offset)
-                pool_end = str(net.network_address + pool_end_offset)
-                out.append(_pool_sql(pool_id, prefix_id, pool_start, pool_end, zid))
-            else:
-                out.append(_prefix_sql(prefix_id, cidr, role_enum, slug, zid))
-                if slug == "primary":
-                    # Emitted either way so toggling rendered_netplan converges in both directions.
-                    net = ipaddress.ip_network(cidr, strict=False)
-                    gw_ip_id = str(uuid.uuid5(LOCAL_NS, f"rendered-gw-ip:{zid}"))
-                    gw_id = str(uuid.uuid5(LOCAL_NS, f"rendered-gw:{zid}"))
-                    if network.rendered_netplan:
-                        out.append(_gateway_ip_sql(gw_ip_id, str(net.network_address + 1), net.prefixlen, zid))
-                        out.append(_gateway_row_sql(gw_id, gw_ip_id, prefix_id))
-                    else:
-                        out.append(_rendered_gateway_delete_sql(gw_id, gw_ip_id))
-                if slug == "management" and z.index == 0:
-                    net = ipaddress.ip_network(cidr, strict=False)
-                    fixture_ip_id = str(uuid.uuid5(LOCAL_NS, f"gateway-fixture-ip:{zid}"))
-                    fixture_id = str(uuid.uuid5(LOCAL_NS, f"gateway-fixture:{zid}"))
-                    out.append(
-                        _gateway_ip_sql(fixture_ip_id, str(net.network_address + 2), net.prefixlen, zid),
-                    )
-                    out.append(_gateway_row_sql(fixture_id, fixture_ip_id, prefix_id))
+                gw_ip_id = str(uuid.uuid5(LOCAL_NS, f"rendered-gw-ip:{zid}"))
+                gw_id = str(uuid.uuid5(LOCAL_NS, f"rendered-gw:{zid}"))
+                if network.rendered_netplan:
+                    out.append(_gateway_ip_sql(gw_ip_id, str(net.network_address + 1), net.prefixlen, zid))
+                    out.append(_gateway_row_sql(gw_id, gw_ip_id, prefix_id))
+                else:
+                    out.append(_rendered_gateway_delete_sql(gw_id, gw_ip_id))
+            if slug == "management":
+                net = ipaddress.ip_network(cidr, strict=False)
+                fixture_ip_id = str(uuid.uuid5(LOCAL_NS, f"gateway-fixture-ip:{zid}"))
+                fixture_id = str(uuid.uuid5(LOCAL_NS, f"gateway-fixture:{zid}"))
+                out.append(
+                    _gateway_ip_sql(fixture_ip_id, str(net.network_address + 2), net.prefixlen, zid),
+                )
+                out.append(_gateway_row_sql(fixture_id, fixture_ip_id, prefix_id))
     out.append("COMMIT;\n")
     return "".join(out)
 

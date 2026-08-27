@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
+import { ServerPriceForm, type ServerPriceFormSubmitData } from '@repo/domain-ui/form/server-price-form';
 import { Button } from '@repo/ui/components/button';
 import {
   Dialog,
@@ -13,7 +14,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@repo/ui/components/dialog';
-import { ServerPriceForm, type ServerPriceFormSubmitData } from '@repo/ui/form/server-price-form';
 import { navigatePreservingSearch } from '@repo/ui/utils';
 import { tsr } from '~/lib/api';
 

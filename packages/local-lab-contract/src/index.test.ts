@@ -5,8 +5,11 @@ import { CcBuildSchema } from './schemas/common';
 import {
   DiskSpecSchema,
   FleetConfigSchema,
+  FleetNetworkSchema,
   FleetNodeEffectiveSchema,
+  FleetNodeSchema,
   FleetPendingSchema,
+  FleetTombstoneSchema,
   FleetVerifyReportSchema,
   HostInfoSchema,
   LayersManifestSchema,
@@ -32,6 +35,7 @@ const EXPECTED_ROUTES = [
   'reloadService',
   'getProcessEnv',
   'getStackConfig',
+  'getConfigTree',
   'putStackConfig',
   'redeployStack',
   'getStackBranches',
@@ -56,11 +60,14 @@ const EXPECTED_ROUTES = [
   'getMachineConsoleLog',
   'baremetalPower',
   'getHost',
-  'getGettingStarted',
   'listHostNics',
   'listPci',
   'getFleetConfig',
   'getFleetApplyPlan',
+  'getStackPending',
+  'getZonesConfig',
+  'putZonesConfig',
+  'previewFleetApplyPlan',
   'getFleetVerify',
   'healFleet',
   'getDevPubkey',
@@ -153,6 +160,19 @@ describe('local-lab contract', () => {
       applied: [],
       rejected: [],
     });
+    expect(() => route.responses[200].parse({ ok: true })).toThrow();
+  });
+
+  it('putFleetConfig 200 parses the rejected array and rejects a body missing it', () => {
+    const route = contract.putFleetConfig;
+    if (!isAppRoute(route)) throw new Error('putFleetConfig not a route');
+    expect(route.responses[200].parse({ ok: true, rejected: [] })).toEqual({ ok: true, rejected: [] });
+    expect(
+      route.responses[200].parse({
+        ok: true,
+        rejected: [{ path: 'fleet.mode', reason: 'pinned', detail: 'FLEET_MODE' }],
+      }),
+    ).toMatchObject({ rejected: [{ path: 'fleet.mode', reason: 'pinned' }] });
     expect(() => route.responses[200].parse({ ok: true })).toThrow();
   });
 
@@ -258,6 +278,8 @@ describe('local-lab contract', () => {
       elapsedSec: 72,
       machinesExpected: 4,
       machinesRunning: 0,
+      accel: 'tcg',
+      accelForced: false,
       detail: 'building per-VM iPXE binary for cpu-3',
     };
 
@@ -397,13 +419,28 @@ describe('local-lab contract', () => {
     cpus: 2,
     memory_mb: 4096,
     disk_gb: 40,
+    arch: null,
     disks: [],
     passthrough: [],
     nics: [],
     data_mtu: null,
+    network_type: null,
     ip: null,
     bmc_ip: null,
     bmc: null,
+    effective_cpus: 2,
+    effective_memory_mb: 4096,
+    effective_disk_gb: 40,
+    ...over,
+  });
+
+  const fleetNetwork = (over: Record<string, unknown> = {}) => ({
+    name: 'brokkr-net',
+    cidr: '192.168.200.0/24',
+    bmcCidr: '192.168.105.0/24',
+    domain: 'sim.local',
+    dhcp: false,
+    renderedNetplan: false,
     ...over,
   });
 
@@ -414,8 +451,58 @@ describe('local-lab contract', () => {
     bakedChainUrl: null,
     nodes,
     zones: [],
-    network: { cidr: '192.168.200.0/24', bmcCidr: '192.168.105.0/24' },
+    network: fleetNetwork(),
+    tombstones: [],
     bmcDefaults: { username: 'admin', password: 'admin' },
+    defaults: { cpus: null, memory_mb: null, disk_gb: null, arch: null },
+  });
+
+  it('FleetNetworkSchema requires every plane field, so a partial network cannot round-trip', () => {
+    expect(FleetNetworkSchema.parse(fleetNetwork())).toMatchObject({ name: 'brokkr-net', dhcp: false });
+    expect(() => FleetNetworkSchema.parse({ cidr: '192.168.200.0/24', bmcCidr: '192.168.105.0/24' })).toThrow();
+  });
+
+  it('FleetTombstoneSchema carries the base-declared flag a prune has to consult', () => {
+    expect(FleetTombstoneSchema.parse({ name: 'cpu-3', zone: 'sim-zone', baseDeclared: true })).toEqual({
+      name: 'cpu-3',
+      zone: 'sim-zone',
+      baseDeclared: true,
+    });
+    expect(() => FleetTombstoneSchema.parse({ name: 'cpu-3', zone: 'sim-zone' })).toThrow();
+  });
+
+  it('FleetNodeSchema keeps arch and network_type explicit rather than optional', () => {
+    expect(FleetNodeSchema.parse(fleetNode({ arch: 'arm64', network_type: 'public' }))).toMatchObject({
+      arch: 'arm64',
+      network_type: 'public',
+    });
+    const { arch, ...noArch } = fleetNode();
+    void arch;
+    expect(() => FleetNodeSchema.parse(noArch)).toThrow();
+    expect(() => FleetNodeSchema.parse(fleetNode({ network_type: 'bridged' }))).toThrow();
+  });
+
+  it('putFleetConfig accepts a network block and a prune list, and leaves both optional', () => {
+    const route = contract.putFleetConfig;
+    if (!isAppRoute(route) || !route.body) throw new Error('putFleetConfig has no body');
+    const base = {
+      mode: 'vm',
+      nodes: [fleetNode()],
+      baremetal: { nics: [], arch: 'amd64', bmcDefaults: { username: '', password: '' }, nodes: [] },
+    };
+    expect(route.body.parse(base)).not.toHaveProperty('prune');
+    expect(route.body.parse({ ...base, network: fleetNetwork({ dhcp: true }), prune: ['cpu-3'] })).toMatchObject({
+      network: { dhcp: true },
+      prune: ['cpu-3'],
+    });
+  });
+
+  it('previewFleetApplyPlan requires a draft topology and returns the same plan shape as the applied one', () => {
+    const route = contract.previewFleetApplyPlan;
+    if (!isAppRoute(route) || !route.body) throw new Error('previewFleetApplyPlan has no body');
+    expect(route.body.parse({ nodes: [fleetNode()] }).nodes).toHaveLength(1);
+    expect(() => route.body.parse({})).toThrow();
+    expect(route.responses[200]).toBe(contract.getFleetApplyPlan.responses[200]);
   });
 
   it('FleetNodeEffectiveSchema requires the nullable effective IP fields', () => {
@@ -512,7 +599,7 @@ describe('local-lab contract', () => {
       ports: { hub: [], spoke: [] },
       servicePorts: [],
       values: { hub: {}, spoke: {} },
-      counts: { hub: 1, spoke: 1 },
+      topology: { zones: 1, bridges: 1 },
       identity: { pg: { user: 'u', password: 'p', db: 'd' }, orgId: 'o' },
       osLayerCache: { originHost: '', resolvers: '' },
       lan: { expose: false },
@@ -526,9 +613,9 @@ describe('local-lab contract', () => {
   it('putStackConfig body accepts an optional slot and declares a 409 conflict response', () => {
     const route = contract.putStackConfig;
     if (!isAppRoute(route) || !route.body) throw new Error('putStackConfig body missing');
-    expect(route.body.parse({ hub: {}, spoke: {}, slot: 3 }).slot).toBe(3);
-    expect(route.body.parse({ hub: {}, spoke: {} }).slot).toBeUndefined();
-    expect(() => route.body.parse({ hub: {}, spoke: {}, slot: 47 })).toThrow();
+    expect(route.body.parse({ entries: {}, slot: 3 }).slot).toBe(3);
+    expect(route.body.parse({ entries: {} }).slot).toBeUndefined();
+    expect(() => route.body.parse({ entries: {}, slot: 47 })).toThrow();
     expect(route.responses[409]).toBeDefined();
     expect(route.responses[409].parse({ error: 'slot 3 already claimed by /other/wt' })).toEqual({
       error: 'slot 3 already claimed by /other/wt',

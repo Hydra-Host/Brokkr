@@ -1,0 +1,70 @@
+{
+  "name": "@repo/domain-ui",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./csv": {
+      "types": "./src/csv.ts",
+      "import": "./src/csv.ts"
+    },
+    "./hooks/*": {
+      "types": "./src/hooks/*.ts",
+      "import": "./src/hooks/*.ts"
+    },
+    "./hooks/use-server-table": {
+      "types": "./src/hooks/use-server-table.tsx",
+      "import": "./src/hooks/use-server-table.tsx"
+    },
+    "./components/*": {
+      "types": "./src/components/*.tsx",
+      "import": "./src/components/*.tsx"
+    },
+    "./form/*": {
+      "types": "./src/components/form/*.tsx",
+      "import": "./src/components/form/*.tsx"
+    },
+    "./provision/*": {
+      "types": "./src/components/provision/*.tsx",
+      "import": "./src/components/provision/*.tsx"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
+    "@repo/api-client": "workspace:*",
+    "@repo/ui": "workspace:*",
+    "@repo/utils": "workspace:*",
+    "@tanstack/react-table": "^8.16.0",
+    "lucide-react": "^0.562.0",
+    "zod": "^3.25.0"
+  },
+  "peerDependencies": {
+    "@tanstack/react-router": "^1.0.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0",
+    "react-hook-form": "^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react-hook-form": {
+      "optional": true
+    },
+    "@tanstack/react-router": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@tanstack/react-router": "^1.158.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.8",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
+}

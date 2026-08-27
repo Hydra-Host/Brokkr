@@ -4,6 +4,9 @@ import { Cable, Crown, MoreHorizontal } from 'lucide-react';
 import { useMemo } from 'react';
 
 import type { BridgeResponse } from '@repo/api-client';
+import { ServerDataTable } from '@repo/domain-ui/components/server-data-table';
+import type { ServerColumnDef } from '@repo/domain-ui/hooks/use-server-table';
+import { useServerTable } from '@repo/domain-ui/hooks/use-server-table';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
@@ -13,11 +16,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@repo/ui/components/dropdown-menu';
-import { ServerDataTable } from '@repo/ui/components/server-data-table';
 import type { FilterFieldConfig } from '@repo/ui/hooks/use-filters';
-import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
-import { useServerTable } from '@repo/ui/hooks/use-server-table';
-import { capitalizeFirstLetter, getBridgeStatusBadgeVariant, getBridgeTypeBadgeVariant } from '@repo/utils/format';
+import { capitalizeFirstLetter, getBridgeStatusBadgeVariant, getBridgeTypeBadgeVariant } from '@repo/utils';
 import { tsr } from '~/lib/api';
 
 function useBridgeFilterFields(): FilterFieldConfig[] {

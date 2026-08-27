@@ -63,7 +63,7 @@ def test_bm_preflight_never_checks_virsh_or_libvirt(monkeypatch):
     def boom():
         pytest.fail("bm preflight must not probe libvirt")
 
-    monkeypatch.setattr(fleetmod, "_libvirtd_running", boom)
+    monkeypatch.setattr(fleetmod, "_libvirt_probe", boom)
     monkeypatch.setattr(fleetmod, "preflight", boom)
     fleetmod.bm_preflight(_bm())
 
@@ -72,7 +72,7 @@ def test_bm_preflight_fails_when_iface_down(monkeypatch):
     monkeypatch.setattr(fleetmod, "iface_is_up", lambda iface: False)
     monkeypatch.setattr(fleetmod, "iface_ipv4", lambda iface: "10.0.0.5")
     monkeypatch.setattr(fleetmod.shutil, "which", lambda tool: "/usr/bin/docker")
-    with pytest.raises(SystemExit):
+    with pytest.raises(fleetmod.PreflightError):
         fleetmod.bm_preflight(_bm())
 
 
@@ -80,7 +80,7 @@ def test_bm_preflight_fails_when_iface_has_no_ip(monkeypatch):
     monkeypatch.setattr(fleetmod, "iface_is_up", lambda iface: True)
     monkeypatch.setattr(fleetmod, "iface_ipv4", lambda iface: None)
     monkeypatch.setattr(fleetmod.shutil, "which", lambda tool: "/usr/bin/docker")
-    with pytest.raises(SystemExit):
+    with pytest.raises(fleetmod.PreflightError):
         fleetmod.bm_preflight(_bm())
 
 
@@ -88,7 +88,7 @@ def test_bm_preflight_fails_when_docker_missing(monkeypatch):
     monkeypatch.setattr(fleetmod, "iface_is_up", lambda iface: True)
     monkeypatch.setattr(fleetmod, "iface_ipv4", lambda iface: "10.0.0.5")
     monkeypatch.setattr(fleetmod.shutil, "which", lambda tool: None)
-    with pytest.raises(SystemExit):
+    with pytest.raises(fleetmod.PreflightError):
         fleetmod.bm_preflight(_bm())
 
 

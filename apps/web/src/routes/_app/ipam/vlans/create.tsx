@@ -10,6 +10,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
+import { VrfCombobox } from '~/components/fk-comboboxes';
 import { tsr } from '~/lib/api';
 
 const statusOptions = [
@@ -23,6 +24,7 @@ const createVlanSchema = z.object({
   vid: z.coerce.number().int().min(VLAN_VID_MIN, VLAN_VID_RANGE_MESSAGE).max(VLAN_VID_MAX, VLAN_VID_RANGE_MESSAGE),
   status: z.string(),
   description: z.string(),
+  vrfId: z.string(),
 });
 
 type CreateVlanFormData = z.infer<typeof createVlanSchema>;
@@ -47,6 +49,7 @@ function CreateVlanPage() {
       vid: VLAN_VID_MIN,
       status: 'ACTIVE',
       description: '',
+      vrfId: '',
     },
   });
 
@@ -57,6 +60,7 @@ function CreateVlanPage() {
         vid: data.vid,
         status: data.status as 'ACTIVE' | 'RESERVED' | 'DEPRECATED',
         description: data.description || undefined,
+        vrfId: data.vrfId || null,
       },
     });
     await queryClient.invalidateQueries({ queryKey: ['vlans'] });
@@ -88,6 +92,7 @@ function CreateVlanPage() {
               options={statusOptions}
               placeholder="Select status"
             />
+            <VrfCombobox control={control} name="vrfId" noneLabel="None (global table)" />
             <FormTextarea control={control} name="description" label="Description" />
           </CardContent>
         </Card>

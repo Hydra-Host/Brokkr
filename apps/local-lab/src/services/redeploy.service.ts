@@ -3,11 +3,32 @@ import { Injectable, Logger } from '@nestjs/common';
 import { getErrorMessage } from '../common/errors';
 import { RunnerService, type RunState } from '../runner/runner.service';
 import { readAppliedMode } from './applied-manifest';
+import { applyScopeNamespaces } from './apply-scope';
 import { OverlayStoreService } from './overlay-store';
-import { classifyProc, depsReady, ProcessComposeClient, procIsUp, type PcProcess } from './process-compose.client';
+import {
+  classifyProc,
+  depsReady,
+  ProcessComposeClient,
+  procIsDepReady,
+  procIsUp,
+  type PcProcess,
+} from './process-compose.client';
 import { isRollableService, RenderedConfigService, resolveCatalog } from './rendered-config.service';
 import { OBSERVABILITY_PROCS, type StackGroup } from './stack-knobs';
 import { StackRestartService } from './stack-restart.service';
+
+// A telemetry toggle recreates the sink and the hub/spoke processes that export to it — nothing else.
+const TELEMETRY_APPLY_SCOPE = applyScopeNamespaces('observability', 'hub', 'spoke');
+
+type RestartOutcome = 'restarted' | 'failed' | 'skipped';
+
+// 'skipped' is not a failed restart: the process was never touched, so a run log that called it
+// "did not restart" described an attempt that never happened.
+const RESTART_LINE: Record<RestartOutcome, string> = {
+  restarted: 'restarted',
+  failed: 'did not restart',
+  skipped: 'skipped — a dependency did not come back',
+};
 
 @Injectable()
 export class RedeployService {
@@ -187,7 +208,7 @@ export class RedeployService {
       return;
     this.runner.emit(run, 'applying overlay\n');
     try {
-      await this.rendered.applyOverlay();
+      await this.rendered.applyOverlay(undefined, applyScopeNamespaces(group));
     } catch (e) {
       const msg = getErrorMessage(e);
       this.log.error(`reload ${group}: overlay regenerate/apply failed: ${msg}`);
@@ -197,10 +218,17 @@ export class RedeployService {
     }
     if (run.status !== 'running') return;
     try {
-      const names = await this.groupProcs(group);
+      const [names, graph] = await Promise.all([this.groupProcs(group), this.rendered.dependsGraph()]);
       if (run.status !== 'running') return;
       this.runner.emit(run, `restarting ${names.length} service${names.length === 1 ? '' : 's'}\n`);
-      await Promise.all(names.map((n) => this.pc.restart(n)));
+      const first = await this.restartAll(names, graph, (name, outcome) =>
+        this.runner.emit(run, `  ${name} ${RESTART_LINE[outcome]}\n`),
+      );
+      const { failed, skipped } = await this.recoverWedged(run, names, graph, first);
+      if (await this.failIfNotUp(run, `reload ${group}`, names, graph, failed, skipped)) return;
+      // only on success, and only this group's own class: a hub reload never restarted the spoke, so
+      // clearing by rank would drop a spoke path that is still waiting.
+      this.overlay.clearSatisfiedBy(group === 'hub' ? 'reload-hub' : 'reload-spoke');
       this.runner.finalize(run, 0);
     } catch (e) {
       const msg = getErrorMessage(e);
@@ -223,7 +251,7 @@ export class RedeployService {
     let ok = true;
     let overlayOk = true;
     try {
-      await this.rendered.applyOverlay();
+      await this.rendered.applyOverlay(undefined, TELEMETRY_APPLY_SCOPE);
     } catch (e) {
       ok = false;
       overlayOk = false;
@@ -245,7 +273,15 @@ export class RedeployService {
               n.startsWith('hub-api-') ||
               ((n === 'spoke' || n.startsWith('spoke-')) && !n.endsWith('-telegraf')),
           );
-        await Promise.all(reloadable.map((n) => this.pc.restart(n)));
+        const { failed, skipped } = await this.restartAll(reloadable, await this.rendered.dependsGraph());
+        if (failed.length > 0) {
+          ok = false;
+          this.log.error(`telemetry apply: services did not restart: ${failed.join(', ')}`);
+        }
+        if (skipped.length > 0) {
+          ok = false;
+          this.log.error(`telemetry apply: services skipped after a dependency failed: ${skipped.join(', ')}`);
+        }
       } catch (e) {
         ok = false;
         this.log.error(`telemetry apply: hub/spoke reload failed: ${getErrorMessage(e)}`);
@@ -278,6 +314,139 @@ export class RedeployService {
     }
   }
 
+  // A start on a Skipped process is a no-op process-compose reports as a success, so a run's verdict
+  // has to come from the state afterwards rather than from any call it made.
+  private async verifyUp(
+    names: string[],
+    graph: Record<string, string[]>,
+  ): Promise<{ down: string[]; detail: string[]; probePending: string[] }> {
+    const byName = new Map((await this.pc.listAll()).map((p) => [p.name, p]));
+    const scope = new Set(names);
+    const down = names.filter((n) => !procIsUp(byName.get(n)));
+    // procIsUp is lenient where waitUntilDepReady is strict, so a probe that never landed leaves the
+    // process out of `down` and its diagnostic empty — the one case the operator most needs named.
+    const probePending = names.filter((n) => procIsUp(byName.get(n)) && !procIsDepReady(byName.get(n)));
+    const detail = down.map((n) => {
+      const status = byName.get(n)?.status ?? 'absent';
+      if (status.toLowerCase() !== 'skipped') return `${n} is ${status}`;
+      const outside = (graph[n] ?? []).filter((d) => !scope.has(d));
+      return outside.length > 0
+        ? `${n} is Skipped — only restarting ${outside.join(', ')} clears that, and this run must not touch them; run Redeploy`
+        : `${n} is Skipped`;
+    });
+    return { down, detail, probePending };
+  }
+
+  /** Finalizes the run as failed, naming what is broken, and reports whether it did. */
+  private async failIfNotUp(
+    run: RunState,
+    label: string,
+    names: string[],
+    graph: Record<string, string[]>,
+    failed: string[],
+    skipped: string[] = [],
+  ): Promise<boolean> {
+    const { down, detail, probePending } = await this.verifyUp(names, graph);
+    for (const n of failed.filter((x) => probePending.includes(x)))
+      this.runner.emit(run, `  ${n} is Running but its readiness probe has not passed\n`);
+    if (failed.length > 0) {
+      this.log.error(`${label}: services did not restart: ${failed.join(', ')}`);
+      this.runner.emit(run, `did not restart: ${failed.join(', ')}\n`);
+    }
+    if (skipped.length > 0) {
+      this.log.error(`${label}: services skipped after a dependency failed: ${skipped.join(', ')}`);
+      this.runner.emit(run, `skipped after a dependency failed: ${skipped.join(', ')}\n`);
+    }
+    const stillDown = down.filter((n) => !failed.includes(n) && !skipped.includes(n));
+    if (stillDown.length > 0) {
+      this.log.error(`${label}: services are down after the restart: ${stillDown.join(', ')}`);
+      this.runner.emit(run, `down after the restart: ${stillDown.join(', ')}\n`);
+    }
+    for (const line of detail) this.runner.emit(run, `  ${line}\n`);
+    if (failed.length === 0 && skipped.length === 0 && down.length === 0) return false;
+    this.runner.finalize(run, 1);
+    return true;
+  }
+
+  // Names grouped so that no level holds a process depending on one in a later level. A dependency
+  // outside `names` cannot be ordered here — the caller's scope check owns that case.
+  private restartLevels(names: string[], graph: Record<string, string[]>): string[][] {
+    const pending = new Set(names);
+    const levels: string[][] = [];
+    while (pending.size > 0) {
+      const free = [...pending].filter((n) => !(graph[n] ?? []).some((d) => pending.has(d)));
+      // a dependency cycle frees nothing — take the rest rather than spin
+      const level = free.length > 0 ? free : [...pending];
+      for (const n of level) pending.delete(n);
+      levels.push(level);
+    }
+    return levels;
+  }
+
+  // Level by level and gated on procIsDepReady: a process restarted before its dependency is Ready
+  // is left Skipped for good. A failure blocks only its own dependents; the rest still restart.
+  private async restartAll(
+    names: string[],
+    graph: Record<string, string[]>,
+    onEach?: (name: string, outcome: RestartOutcome) => void,
+  ): Promise<{ failed: string[]; skipped: string[] }> {
+    const levels = this.restartLevels(names, graph);
+    const failed: string[] = [];
+    const skipped: string[] = [];
+    const blocked = new Set<string>();
+    for (const level of levels) {
+      const attempt = level.filter((name) => {
+        // a dependency outside `names` never blocks here — the caller's scope check owns that case
+        if (!(graph[name] ?? []).some((d) => blocked.has(d))) return true;
+        onEach?.(name, 'skipped');
+        skipped.push(name);
+        blocked.add(name);
+        return false;
+      });
+      // restartAndWait, not restart: POST /process/restart can 200 without starting the process
+      const outcomes = await Promise.allSettled(
+        attempt.map(async (name) => {
+          const ok = (await this.pc.restartAndWait(name)) && (await this.pc.waitUntilDepReady(name));
+          onEach?.(name, ok ? 'restarted' : 'failed');
+          return ok;
+        }),
+      );
+      attempt.forEach((name, j) => {
+        const outcome = outcomes[j];
+        if (outcome.status === 'rejected' || outcome.value === false) {
+          failed.push(name);
+          blocked.add(name);
+        }
+      });
+    }
+    return { failed, skipped };
+  }
+
+  /** A process left Skipped by the recreate cannot be revived by restarting it — only a dependency
+   *  transition clears it, so hand the residue to the reconcile ladder that already does that. */
+  private async recoverWedged(
+    run: RunState,
+    names: string[],
+    graph: Record<string, string[]>,
+    first: { failed: string[]; skipped: string[] },
+  ): Promise<{ failed: string[]; skipped: string[] }> {
+    const stuck = new Set([...first.failed, ...first.skipped]);
+    if (stuck.size === 0) return first;
+    const wedged = (await this.verifyUp(names, graph)).down.filter((n) => stuck.has(n));
+    // nothing this restart reported is actually down — report what was measured, do not clear it
+    if (wedged.length === 0) return first;
+    this.runner.emit(run, `reconciling ${wedged.join(', ')}\n`);
+    const code = await this.runner.spawn(run, 'stack-reconcile', []);
+    if (code !== 0) {
+      this.log.warn(`reload recovery: stack-reconcile exited ${code}`);
+      this.runner.emit(run, `reconcile exited ${code} — the verdict below is what the processes report\n`);
+    }
+    const stillDown = (await this.verifyUp(names, graph)).down.filter((n) => stuck.has(n));
+    if (stillDown.length > 0) return { failed: stillDown, skipped: [] };
+    this.runner.emit(run, `recovered ${wedged.join(', ')}\n`);
+    return { failed: [], skipped: [] };
+  }
+
   private async applyOverlayAndRestart(run: RunState): Promise<void> {
     this.runner.emit(run, 'applying overlay\n');
     try {
@@ -294,12 +463,17 @@ export class RedeployService {
     try {
       const procs = await this.pc.list();
       const catalog = await this.rendered.catalog();
+      const graph = await this.rendered.dependsGraph();
       const targets = procs
         .filter((p) => isRollableService(resolveCatalog(p.name, catalog)?.entry.namespace ?? ''))
         .map((p) => p.name);
       if (run.status !== 'running') return;
       this.runner.emit(run, `restarting ${targets.length} service${targets.length === 1 ? '' : 's'}\n`);
-      await Promise.all(targets.map((name) => this.pc.restart(name)));
+      const { failed, skipped } = await this.restartAll(targets, graph, (name, outcome) =>
+        this.runner.emit(run, `  ${name} ${RESTART_LINE[outcome]}\n`),
+      );
+      if (await this.failIfNotUp(run, 'redeploy', targets, graph, failed, skipped)) return;
+      this.overlay.clearSatisfiedBy('redeploy');
       this.runner.finalize(run, 0);
     } catch (e) {
       const msg = getErrorMessage(e);

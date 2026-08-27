@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
-import type { Server } from '@repo/api-client';
 import { Alert, AlertDescription } from '@repo/ui/components/alert';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
@@ -19,6 +18,7 @@ import { useCopyToClipboard } from '@repo/ui/hooks/use-copy-to-clipboard';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { DecommissionedServerOverlay } from '~/components/decommissioned-server-overlay';
 import { tsr } from '~/lib/api';
+import { DeviceSecretAuditTimeline } from './-device-secret-audit-timeline';
 
 const parentRoute = getRouteApi('/_app/dcim/servers/$deviceId');
 const PURPOSE = 'BMC' as const;
@@ -50,7 +50,7 @@ interface VersionMeta {
 }
 
 function BmcSecretsPage() {
-  const device = parentRoute.useLoaderData() as Server;
+  const device = parentRoute.useLoaderData();
   const { deviceId } = Route.useParams();
   useDocumentTitle('BMC Secrets');
 
@@ -71,6 +71,7 @@ function BmcSecretsPage() {
         isPending={versionsQuery.isPending}
         onChanged={() => void versionsQuery.refetch()}
       />
+      <DeviceSecretAuditTimeline deviceId={deviceId} />
     </div>
   );
 }

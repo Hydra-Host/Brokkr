@@ -171,22 +171,25 @@ export class DeviceSecretService {
       { zoneId, zoneKeyId: enrollment.id, deviceId, purpose, kind, keyGen: enrollment.generation },
     );
 
-    // HARD, not fail-soft: a failed audit insert aborts the seal — never hand a sealed credential out without a durable record.
-    await this.prisma.$transaction((tx) =>
-      this.audit.record(
-        {
-          deviceId: null,
-          zoneId,
-          event: DeviceSecretAuditEventType.DISPATCH,
-          purpose,
-          kind,
-          actor,
-          requestId: deviceId,
-          payload: { ephemeral: true, planId: deviceId, keyGen: enrollment.generation },
-        },
-        tx,
-      ),
-    );
+    // SYSTEM dispatch is log-only (material is sealed to the zone key; the insert is hot-path DB
+    // load). Other actors keep the HARD, not fail-soft record — a failed insert aborts the seal.
+    if (actor.type !== DeviceSecretActorType.SYSTEM) {
+      await this.prisma.$transaction((tx) =>
+        this.audit.record(
+          {
+            deviceId: null,
+            zoneId,
+            event: DeviceSecretAuditEventType.DISPATCH,
+            purpose,
+            kind,
+            actor,
+            requestId: deviceId,
+            payload: { ephemeral: true, planId: deviceId, keyGen: enrollment.generation },
+          },
+          tx,
+        ),
+      );
+    }
 
     this.logger.log(
       `Sealed ephemeral ${kind}/${purpose} secret for zone ${zoneId} (gen ${enrollment.generation}) under plan ${deviceId}`,
@@ -325,15 +328,22 @@ export class DeviceSecretService {
       return null;
     }
 
-    await this.audit.record({
-      deviceId,
-      event: DeviceSecretAuditEventType.DISPATCH,
-      purpose,
-      kind: row.kind,
-      version: row.version,
-      actor,
-      payload: { zoneId: row.zoneId, keyGen: row.keyGen },
-    });
+    if (actor.type === DeviceSecretActorType.SYSTEM) {
+      this.logger.log(
+        `Dispatched sealed ${row.kind}/${purpose} secret v${row.version} for device ${deviceId} ` +
+          `to zone ${row.zoneId} (gen ${row.keyGen})`,
+      );
+    } else {
+      await this.audit.record({
+        deviceId,
+        event: DeviceSecretAuditEventType.DISPATCH,
+        purpose,
+        kind: row.kind,
+        version: row.version,
+        actor,
+        payload: { zoneId: row.zoneId, keyGen: row.keyGen },
+      });
+    }
     return this.toEnvelope(row);
   }
 

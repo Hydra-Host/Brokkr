@@ -3,6 +3,10 @@
    render-context vars decide accel backend, machine type, firmware paths,
    and network plumbing.
 
+   Acceleration is three keys render.py computes, never a block tag here:
+   trim_blocks=False makes a lone block tag inject a blank line and break byte-identity.
+   domain_type is 'qemu' under TCG (libvirt has no type='tcg'); cpu_mode is 'maximum' there.
+
    Boot path: qemu direct-loads a per-VM iPXE EFI binary via <kernel>. iPXE
    DHCPs (or uses the static netplan baked into the discovery initrd),
    then HTTP-fetches kernel + 3-layer initrd (Ubuntu base,
@@ -22,7 +26,7 @@
    rotation_rate=1 + discard=unmap so the guest sees an SSD that honors
    the blkdiscard→zero contract.
 #}
-<domain type='{{ accel }}' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
+<domain type='{{ domain_type }}' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
   <name>{{ node.name }}</name>
   <uuid>{{ uuid }}</uuid>
   <!-- Marks this domain as managed by this stack's slot tag so teardown can find its own
@@ -49,7 +53,7 @@
     <acpi/>
     {% if host_arch == "amd64" %}<apic/>{% endif %}
   </features>
-  <cpu mode='host-passthrough'/>
+  <cpu mode='{{ cpu_mode }}'/>
   <clock offset='utc'/>
   <on_poweroff>destroy</on_poweroff>
   <on_reboot>restart</on_reboot>

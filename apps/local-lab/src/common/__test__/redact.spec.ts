@@ -108,7 +108,10 @@ describe('maskEmbeddedDsns', () => {
   it.each([
     ['postgres://brokkr:s3cret@db.internal:5432/brokkr', 'postgres://***@db.internal:5432/brokkr'],
     ["SELECT 'postgres://u:p@h/db'", "SELECT 'postgres://***@h/db'"],
-    ['see https://docs.example.com/x or email ops@example.com', 'see https://docs.example.com/x or email ops@example.com'],
+    [
+      'see https://docs.example.com/x or email ops@example.com',
+      'see https://docs.example.com/x or email ops@example.com',
+    ],
     ['https://example.com/path?q=a@b', 'https://example.com/path?q=a@b'],
     ['postgres://u:p@h/db and redis://a:b@c/0', 'postgres://***@h/db and redis://***@c/0'],
     ['postgres://u:p@ss@host/db', 'postgres://***@host/db'],
@@ -396,10 +399,7 @@ describe('redactPayloadCapped', () => {
   });
 
   it('masks a dsn before the budget cut so a cut inside the userinfo leaks nothing', () => {
-    const { value, truncated } = redactPayloadCapped(
-      { dsn: 'postgres://brokkr:s3cret@db.internal:5432/brokkr' },
-      30,
-    );
+    const { value, truncated } = redactPayloadCapped({ dsn: 'postgres://brokkr:s3cret@db.internal:5432/brokkr' }, 30);
     const rendered = JSON.stringify(value);
     expect(truncated).toBe(true);
     expect(rendered).toContain('***@');
@@ -524,5 +524,38 @@ describe('serializeAuditParams', () => {
     expect(out).not.toBeNull();
     if (out === null) return;
     expect(out).not.toContain('hunter2');
+  });
+});
+
+describe('a path-keyed config write body', () => {
+  it('masks a secret knob whose path reads as ordinary', () => {
+    const body = { entries: { 'zoneCrypto.bridgeAtRestKey': 'sentinel-value-not-a-key' } };
+
+    expect(redactPayload(body)).toEqual({ entries: { 'zoneCrypto.bridgeAtRestKey': '***' } });
+    expect(serializeAuditParams(body)).not.toContain('sentinel-value-not-a-key');
+  });
+
+  it('masks an ordinary knob too, so a knob declared secret later is not a coin flip', () => {
+    expect(redactPayload({ entries: { 'stackDefaults.hub.LOG_LEVEL': 'warn' } })).toEqual({
+      entries: { 'stackDefaults.hub.LOG_LEVEL': '***' },
+    });
+  });
+
+  it('keeps the paths, which is what an auditor needs', () => {
+    const out = redactPayload({ entries: { 'a.b': 'x', 'c.d': 'y' } }) as Record<string, unknown>;
+
+    expect(Object.keys(out.entries as Record<string, unknown>)).toEqual(['a.b', 'c.d']);
+  });
+
+  it('keeps a null entry visible, since a revert is not a secret', () => {
+    expect(redactPayload({ entries: { 'ports.postgres': null } })).toEqual({
+      entries: { 'ports.postgres': null },
+    });
+  });
+
+  it('masks on the capped path too', () => {
+    const out = redactPayloadCapped({ entries: { 'zoneCrypto.bridgeAtRestKey': 'secret-bytes' } });
+
+    expect(JSON.stringify(out.value)).not.toContain('secret-bytes');
   });
 });

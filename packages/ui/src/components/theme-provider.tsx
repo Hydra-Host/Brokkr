@@ -1,6 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-export type Theme = 'hydra-dark' | 'yellow' | 'blue' | 'green' | 'pink' | 'hydra-light' | 'solarized-light';
+export type Theme =
+  | 'commerce-dark'
+  | 'hydra-dark'
+  | 'yellow'
+  | 'blue'
+  | 'green'
+  | 'pink'
+  | 'commerce-light'
+  | 'hydra-light'
+  | 'solarized-light';
 export type ThemeMode = Theme | 'system';
 
 export interface ThemeOption {
@@ -16,6 +25,7 @@ export interface ThemeCategory {
 }
 
 export const DARK_THEMES: ThemeOption[] = [
+  { value: 'commerce-dark', label: 'Commerce', color: '#857CFF' },
   { value: 'hydra-dark', label: 'Violet', color: '#ECEAFF' },
   { value: 'yellow', label: 'Gold', color: '#FFDC75' },
   { value: 'blue', label: 'Blue', color: '#6BC1FF' },
@@ -24,6 +34,7 @@ export const DARK_THEMES: ThemeOption[] = [
 ];
 
 export const LIGHT_THEMES: ThemeOption[] = [
+  { value: 'commerce-light', label: 'Commerce', color: '#635BFF' },
   { value: 'hydra-light', label: 'Violet', color: '#5554FF' },
   { value: 'solarized-light', label: 'Solar', color: '#2AA198' },
 ];
@@ -90,11 +101,11 @@ interface Preferences {
   preferredLight: Theme;
 }
 
-function loadPreferences(): Preferences {
+function loadPreferences(defaultMode: ThemeMode, defaultDark: Theme, defaultLight: Theme): Preferences {
   return {
-    mode: read<ThemeMode>(STORAGE_KEYS.MODE, VALID_MODES, DEFAULT_DARK),
-    preferredDark: read<Theme>(STORAGE_KEYS.PREFERRED_DARK, DARK_SET, DEFAULT_DARK),
-    preferredLight: read<Theme>(STORAGE_KEYS.PREFERRED_LIGHT, LIGHT_SET, DEFAULT_LIGHT),
+    mode: read<ThemeMode>(STORAGE_KEYS.MODE, VALID_MODES, defaultMode),
+    preferredDark: read<Theme>(STORAGE_KEYS.PREFERRED_DARK, DARK_SET, defaultDark),
+    preferredLight: read<Theme>(STORAGE_KEYS.PREFERRED_LIGHT, LIGHT_SET, defaultLight),
   };
 }
 
@@ -103,8 +114,18 @@ function resolveTheme(prefs: Preferences, systemIsLight: boolean): Theme {
   return systemIsLight ? prefs.preferredLight : prefs.preferredDark;
 }
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [prefs, setPrefs] = useState(loadPreferences);
+export function ThemeProvider({
+  children,
+  defaultDark = DEFAULT_DARK,
+  defaultLight = DEFAULT_LIGHT,
+  defaultMode = defaultDark,
+}: {
+  children: React.ReactNode;
+  defaultDark?: Theme;
+  defaultLight?: Theme;
+  defaultMode?: ThemeMode;
+}) {
+  const [prefs, setPrefs] = useState(() => loadPreferences(defaultMode, defaultDark, defaultLight));
   const [systemIsLight, setSystemIsLight] = useState(() => window.matchMedia('(prefers-color-scheme: light)').matches);
 
   useEffect(() => {

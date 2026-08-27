@@ -1,16 +1,17 @@
 import type { WebhookDeliveryResponse } from '@repo/api-client';
+import { ServerDataTable } from '@repo/domain-ui/components/server-data-table';
+import type { ServerColumnDef } from '@repo/domain-ui/hooks/use-server-table';
+import { useServerTable } from '@repo/domain-ui/hooks/use-server-table';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
-import { ServerDataTable } from '@repo/ui/components/server-data-table';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@repo/ui/components/sheet';
 import { useCopyToClipboard } from '@repo/ui/hooks/use-copy-to-clipboard';
-import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
-import { useServerTable } from '@repo/ui/hooks/use-server-table';
+import { cn } from '@repo/ui/utils';
 import { formatShortDateTime } from '@repo/utils';
 import { keepPreviousData } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { Activity, CheckCircle2, Copy, Eye, RefreshCw } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { tsr } from '~/lib/api';
 
 const EVENT_LABELS: Record<string, string> = {
@@ -52,7 +53,7 @@ function HttpStatusBadge({ status }: { status: number | null }) {
   if (status === null) return <span className="text-muted-foreground text-sm">—</span>;
   const variant =
     status >= 200 && status < 300 ? 'text-status-online' : status >= 400 ? 'text-red-500' : 'text-amber-500';
-  return <code className={`text-sm font-medium ${variant}`}>{status}</code>;
+  return <code className={cn('text-sm font-medium', variant)}>{status}</code>;
 }
 
 export const Route = createFileRoute('/_app/organizations/webhooks/deliveries')({
@@ -65,9 +66,12 @@ function DeliveriesPage() {
 
   const { mutateAsync: retryDelivery, isPending: isRetrying } = tsr.retryWebhookDelivery.useMutation();
 
-  const handleRetry = async (deliveryId: string) => {
-    await retryDelivery({ params: { deliveryId }, body: {} });
-  };
+  const handleRetry = useCallback(
+    async (deliveryId: string) => {
+      await retryDelivery({ params: { deliveryId }, body: {} });
+    },
+    [retryDelivery],
+  );
 
   const handleCopyPayload = async (payload: unknown) => {
     await copy(JSON.stringify(payload, null, 2));
@@ -146,7 +150,7 @@ function DeliveriesPage() {
         ),
       },
     ],
-    [isRetrying],
+    [handleRetry, isRetrying],
   );
 
   const table = useServerTable<WebhookDeliveryResponse>({ name: 'webhook-deliveries', columns });

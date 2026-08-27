@@ -116,7 +116,7 @@ def test_poll_in_progress_then_failed(monkeypatch):
         ],
     )
     client = HubClient()
-    with pytest.raises(CommissionError, match="commissioning failed.*disk_wipe.*boom"):
+    with pytest.raises(CommissionError, match=r"commissioning failed.*disk_wipe.*boom"):
         ob._poll_until_terminal(client, NODE, DEVICE_ID, timeout_seconds=999)
 
 

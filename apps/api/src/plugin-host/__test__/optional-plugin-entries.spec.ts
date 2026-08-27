@@ -14,6 +14,7 @@ const MANIFEST_EXPORTS: Record<string, string> = {
   '@hydrahost/plugin-operator-lifecycle': 'operatorLifecycleManifest',
   '@hydrahost/plugin-operator-bridge-requests': 'operatorBridgeRequestsManifest',
   '@hydrahost/plugin-lender-device-associations': 'lenderDeviceAssociationsManifest',
+  '@hydrahost/plugin-bid-ask': 'bidAskManifest',
   '@hydrahost/plugin-email-mailgun': 'emailMailgunManifest',
   '@hydrahost/plugin-operator-hub': 'operatorHubManifest',
   '@hydrahost/plugin-google-maps-geocoding': 'googleMapsGeocodingManifest',
@@ -125,6 +126,42 @@ describe('loadOptionalPluginEntries', () => {
     it('leaves salesforce-leads enabled when hubspot-leads is configured but absent', async () => {
       const enabled = await enabledWith(LEADS_ENV, ['@hydrahost/plugin-salesforce-leads']);
       expect(enabled.get('salesforce-leads')).toBe(true);
+    });
+  });
+
+  describe('bid-ask enablement', () => {
+    it('enables bid-ask when the package is present and HubSpot env is unset', async () => {
+      const enabled = await enabledWith(
+        {
+          HUBSPOT_ACCESS_TOKEN: '',
+          HUBSPOT_PORTAL_ID: '',
+          HUBSPOT_CONTACT_OWNER_ID: '',
+          HUBSPOT_FORM_ID_DEMAND_REQUEST: '',
+          HUBSPOT_DEMAND_REQUEST_OBJECT_TYPE_ID: '',
+        },
+        ['@hydrahost/plugin-bid-ask'],
+      );
+      expect(enabled.get('bid-ask')).toBe(true);
+    });
+
+    it('enables bid-ask when HubSpot env is set', async () => {
+      const enabled = await enabledWith(LEADS_ENV, ['@hydrahost/plugin-bid-ask']);
+      expect(enabled.get('bid-ask')).toBe(true);
+    });
+
+    it('does not enable hubspot-leads as a side effect of bid-ask being present', async () => {
+      const enabled = await enabledWith(
+        {
+          HUBSPOT_ACCESS_TOKEN: '',
+          HUBSPOT_PORTAL_ID: '',
+          HUBSPOT_CONTACT_OWNER_ID: '',
+          HUBSPOT_FORM_ID_DEMAND_REQUEST: '',
+          HUBSPOT_DEMAND_REQUEST_OBJECT_TYPE_ID: '',
+        },
+        ['@hydrahost/plugin-bid-ask', '@hydrahost/plugin-hubspot-leads'],
+      );
+      expect(enabled.get('bid-ask')).toBe(true);
+      expect(enabled.get('hubspot-leads')).toBe(false);
     });
   });
 

@@ -37,6 +37,8 @@ REPO_REF=''
 SSH_KEY=''
 KNOWN_HOSTS_FILE=''
 TARGET_DIR=''
+TARGET_STATE=''
+TARGET_ORIGIN=''
 NO_UP=''
 ASSUME_YES=''
 DOCKER_WAIT=''
@@ -44,6 +46,7 @@ STOP_AFTER=''
 HOST_OS=''
 HAVE_TTY=0
 SUDO_KEEPALIVE_PID=''
+SUDO_UNPRIMED=''
 PENDING_GROUPS=''
 PROGRESS_INTERVAL=''
 TICKER_PID=''
@@ -294,7 +297,11 @@ print_plan() {
   log "Brokkr local-stack installer"
   info "repository : $REPO_URL${REPO_REF:+ (ref $REPO_REF)}"
   [ -z "$SSH_KEY" ] || info "ssh key    : $SSH_KEY"
-  info "clone into : $TARGET_DIR"
+  if [ "$TARGET_STATE" = adopt ]; then
+    info "adopt      : $TARGET_DIR${TARGET_ORIGIN:+ (tracks $TARGET_ORIGIN)}"
+  else
+    info "clone into : $TARGET_DIR"
+  fi
   info "host       : $HOST_OS $(uname -m)"
   [ -z "$LOG_FILE" ] || info "log        : $LOG_FILE"
   # --stop-after outranks --no-up, and both outrank the default: the plan must name the phase
@@ -325,31 +332,50 @@ as_root() {
   fi
 }
 
-# prime_sudo — take the credential once, then hold it. The chain prompts in two places
-# minutes apart (the OS package install, and install-sim-sudoers.sh under `task up`) with
-# the first devenv build in between, so without a keepalive the sudo timestamp expires and
-# the second prompt fires at an unattended terminal — which is the documented
-# "3 incorrect password attempts" failure.
+# prime_sudo — take the credential once, then hold it. The chain needs root twice, minutes apart
+# (the OS package install, then install_sim_sudoers) with the first devenv build in between, so
+# without a keepalive the timestamp expires and the second use prompts at a terminal nobody is
+# watching — the documented "3 incorrect password attempts" failure. SUDO_UNPRIMED records that
+# this failed, so the epilogue can name a later prompt as expected rather than guess.
 prime_sudo() {
   [ "$(id -u)" = 0 ] && return 0
-  # `sudo -n true` succeeds for a NOPASSWD rule AND for a merely cached timestamp. Returning
-  # here on that basis would skip the keepalive and let a cached credential expire mid-build —
-  # exactly the failure this function exists to prevent. Only the prompt is conditional.
-  if ! sudo -n true 2>/dev/null; then
+  # never probe with a command the sim drop-in allowlists: modules/sudo.nix grants NOPASSWD on
+  # /usr/bin/true, so `sudo -n true` reports success while holding no credential, and a NOPASSWD
+  # match authenticates nobody — it writes no timestamp, so the keepalive below refreshes nothing
+  # and the real prompt fires later, buried inside `task up`. `sudo -n -v` asks the policy itself
+  # and, on success, extends the window. Same probe as install-sim-sudoers.sh.
+  if ! sudo -n -v 2>/dev/null; then
     if [ "$HAVE_TTY" != 1 ]; then
       warn "no terminal for a sudo prompt — steps needing root will fail or be skipped."
+      SUDO_UNPRIMED=1
       return 1
     fi
-    sudo -v </dev/tty || return 1
+    sudo -v </dev/tty || {
+      SUDO_UNPRIMED=1
+      return 1
+    }
+  fi
+  # never trust the write: `sudo -v` can succeed and still cache nothing (timestamp_timeout=0, or
+  # a record tied to something that does not survive), and the keepalive would then spin against a
+  # credential that does not exist — the exact shape of the failure this function prevents
+  if ! sudo -n -v 2>/dev/null; then
+    warn "sudo did not cache the credential on this host — a later step will ask again."
+    info "  answer that prompt when it appears; it installs the passwordless sim-sudo drop-in."
+    SUDO_UNPRIMED=1
+    return 1
   fi
   # bounded by the installer's own lifetime, not just by the trap: a trap cannot catch SIGKILL, and
   # an orphaned refresher would hold the sudo timestamp open indefinitely after the script is gone
   _ps_owner=$$
-  while true; do
-    sleep 50
-    kill -0 "$_ps_owner" 2>/dev/null || exit 0
-    sudo -n true 2>/dev/null || exit 0
-  done &
+  # set +x: under `sh -x` a 50s heartbeat buries whatever the run is really waiting on
+  (
+    set +x
+    while true; do
+      sleep 50
+      kill -0 "$_ps_owner" 2>/dev/null || exit 0
+      sudo -n -v 2>/dev/null || exit 0
+    done
+  ) &
   SUDO_KEEPALIVE_PID=$!
   return 0
 }
@@ -447,6 +473,12 @@ log_header() {
   [ -n "$LOG_FILE" ] || return 0
   log_write "--- brokkr installer log"
   log_write "    argv      : $*"
+  # the interpreter, because "it works under bash but not sh" is otherwise an untestable theory:
+  # macOS /bin/sh is bash 3.2 in posix mode, and BASH_VERSION still reports it
+  _lh_shell='unknown POSIX sh'
+  [ -z "${BASH_VERSION:-}" ] || _lh_shell="bash $BASH_VERSION"
+  [ -z "${ZSH_VERSION:-}" ] || _lh_shell="zsh $ZSH_VERSION"
+  log_write "    shell     : $_lh_shell (invoked as $0)"
   log_write "    uname     : $(uname -a 2>/dev/null)"
   log_write "    user      : $(id -un 2>/dev/null) (uid $(id -u))"
   log_write "    home      : $HOME"
@@ -519,6 +551,7 @@ begin_step() {
   [ "$_bs_every" -gt 0 ] 2>/dev/null || return 0
   [ -n "$PHASE_FILE" ] || return 0
   (
+    set +x
     while true; do
       sleep "$_bs_every"
       kill -0 "$_bs_owner" 2>/dev/null || exit 0
@@ -674,14 +707,28 @@ to_ssh_url() {
       -e 's|^https\{0,1\}://\([^/]*\)/|git@\1:|'
 }
 
-# git_ssh_command — the ssh invocation for this checkout. IdentitiesOnly is the load-bearing
-# option: an agent holding a personal key would otherwise authenticate with it first, and github
-# answers a valid-but-unauthorized identity with "Repository not found" rather than a denial.
+# ssh_host_of — the host an ssh clone of this remote reaches, or nothing when ssh is not the
+# transport at all. --repo accepts any forge, so no message may hardcode github.
+ssh_host_of() {
+  case "$1" in
+  ssh://*) printf '%s' "$1" | sed -e 's|^ssh://||' -e 's|^[^@/]*@||' -e 's|[/:].*$||' ;;
+  http://* | https://* | file://* | /* | ./* | ../*) ;;
+  *:*) printf '%s' "$1" | sed -e 's|^[^@]*@||' -e 's|:.*$||' ;;
+  esac
+}
+
+# git_ssh_command — the ssh invocation for this checkout. `-F none` is the load-bearing option: it
+# reads NO ssh config, neither ~/.ssh/config nor the system-wide one. IdentitiesOnly suppresses
+# only identities the AGENT offers, never an IdentityFile a config declares — so a `Host github.com`
+# block adds a second identity, and github answers a valid-but-unauthorized one with "Repository
+# not found" or an SSO refusal rather than a denial. IdentityAgent=none is belt and braces on top.
 # Aggravated here because `task local:setup` later CREATES ~/.ssh/id_ed25519 for the sim, a
 # default identity ssh would offer to github on every fetch after that.
+# The trade-off is a real ProxyCommand/HostName/Port for the forge, discarded with the rest of the
+# config — on a host that needs one, clone by hand and adopt the checkout with --dir.
 # The pin file comes first so accept-new writes new hosts there and github is never "new".
 git_ssh_command() {
-  printf 'ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=%s' \
+  printf 'ssh -F none -o IdentityAgent=none -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=%s' \
     "$(shq "$SSH_KEY")" "$(shq "$KNOWN_HOSTS_FILE $HOME/.ssh/known_hosts")"
 }
 
@@ -777,31 +824,59 @@ resolve_target_dir() {
   TARGET_DIR="$(CDPATH='' cd -- "$_rt_parent" && pwd)/$_rt_base"
 }
 
-clone_or_adopt() {
+# classify_target — decide clone-vs-adopt once: print_plan reports it, clone_or_adopt acts on it.
+# Every rejection therefore lands before the confirmation, the sudo prompt and the OS packages.
+classify_target() {
+  TARGET_STATE=''
+  TARGET_ORIGIN=''
+
   if [ -e "$TARGET_DIR" ] && [ ! -d "$TARGET_DIR" ]; then
     die "$TARGET_DIR exists and is not a directory. Pass --dir to choose another target."
   fi
 
-  if [ -d "$TARGET_DIR" ] && [ -n "$(ls -A "$TARGET_DIR" 2>/dev/null)" ]; then
-    if [ ! -e "$TARGET_DIR/.git" ]; then
-      die "$TARGET_DIR is not empty and is not a git checkout. Pass --dir to choose another target."
-    fi
-    _ca_origin="$(git -C "$TARGET_DIR" remote get-url origin 2>/dev/null || true)"
-    [ -n "$_ca_origin" ] ||
-      die "$TARGET_DIR is a git checkout with no 'origin' remote. Pass --dir to choose another target."
-    if [ "$(normalize_git_url "$_ca_origin")" != "$(normalize_git_url "$REPO_URL")" ]; then
-      die "$TARGET_DIR already tracks $_ca_origin, not $REPO_URL. Pass --dir to choose another target."
-    fi
+  if [ ! -d "$TARGET_DIR" ] || [ -z "$(ls -A "$TARGET_DIR" 2>/dev/null)" ]; then
+    TARGET_STATE=clone
+    return 0
+  fi
+
+  [ -e "$TARGET_DIR/.git" ] ||
+    die "$TARGET_DIR is not empty and is not a git checkout. Pass --dir to choose another target."
+  TARGET_STATE=adopt
+
+  # git arrives with ensure_pre_clone_deps, which runs after the plan — so the remote half is
+  # skipped on a bare host here and re-run from clone_or_adopt, where git is guaranteed
+  command -v git >/dev/null 2>&1 || return 0
+
+  TARGET_ORIGIN="$(git -C "$TARGET_DIR" remote get-url origin 2>/dev/null || true)"
+  if [ -z "$TARGET_ORIGIN" ]; then
+    warn "$TARGET_DIR is a git checkout with no 'origin' remote."
+    info "A tree copied in rather than cloned arrives without one. Give it the remote:"
+    info "  git -C $TARGET_DIR remote add origin $REPO_URL"
+    info "Or pass --dir to choose another target."
+    print_log_hint
+    exit 1
+  fi
+
+  if [ "$(normalize_git_url "$TARGET_ORIGIN")" != "$(normalize_git_url "$REPO_URL")" ]; then
+    die "$TARGET_DIR already tracks $TARGET_ORIGIN, not $REPO_URL. Pass --dir to choose another target."
+  fi
+}
+
+clone_or_adopt() {
+  # re-run with git guaranteed present: the plan-time pass skips the remote check on a bare host
+  classify_target
+
+  if [ "$TARGET_STATE" = adopt ]; then
     # adopt as-is: the checkout may carry local work, and moving it is never our call
     log "reusing the existing checkout at $TARGET_DIR"
     if [ -n "$SSH_KEY" ]; then
       git -C "$TARGET_DIR" config --local core.sshCommand "$(git_ssh_command)"
       # warn, never rewrite: the remote is the user's, and a checkout cloned over https before the
       # remote went private is the case that hits this
-      case "$_ca_origin" in
+      case "$TARGET_ORIGIN" in
       http://* | https://*)
-        warn "origin is https ($_ca_origin) — the ssh key cannot authenticate a fetch from it"
-        info "  switch it with: git -C $TARGET_DIR remote set-url origin $(to_ssh_url "$_ca_origin")"
+        warn "origin is https ($TARGET_ORIGIN) — the ssh key cannot authenticate a fetch from it"
+        info "  switch it with: git -C $TARGET_DIR remote set-url origin $(to_ssh_url "$TARGET_ORIGIN")"
         ;;
       esac
     fi
@@ -830,7 +905,9 @@ clone_failed() {
     info "  authorized : the key must be authorized on THIS repository — 'Repository not found'"
     info "               means it authenticated as something else"
     info "  transport  : an ssh key works over ssh only (git@host:owner/repo.git)"
-    info "  check it   : ssh -i $SSH_KEY -o IdentitiesOnly=yes -T git@github.com"
+    _cf_host="$(ssh_host_of "$REPO_URL")"
+    [ -z "$_cf_host" ] ||
+      info "  check it   : ssh -F none -o IdentityAgent=none -i $SSH_KEY -o IdentitiesOnly=yes -T git@$_cf_host"
     print_log_hint
     exit 1
   fi
@@ -941,6 +1018,8 @@ wait_for_docker() {
 can_run_up() {
   [ "$(id -u)" = 0 ] && return 0
   [ "$HAVE_TTY" = 1 ] && return 0
+  # deliberately the allowlisted probe, not `-n -v`: a NOPASSWD hit is the only evidence a
+  # tty-less host has that the drop-in is installed already and the bring-up needs no prompt
   sudo -n true 2>/dev/null && return 0
   return 1
 }
@@ -1032,8 +1111,142 @@ run_onboarding() {
   _ro_rc=$?
   set -e
   stop_ticker
+  # a re-login owed is a checkpoint, not a failure. The report ends in the host gate, which blocks
+  # on groups this session cannot see; devenv and task both rewrite its 78 before it reaches here.
+  if [ "$_ro_rc" = "$RC_GROUPS_STALE" ] ||
+    { [ "$_ro_rc" != 0 ] && [ -n "$PENDING_GROUPS" ]; }; then
+    stop_and_instruct_relogin
+  fi
   [ "$_ro_rc" = 0 ] || die "task local:setup failed — fix the cause, then re-run."
   end_step "onboarding done"
+}
+
+# install_sim_sudoers — install the drop-in HERE, as its own announced step, rather than leaving it
+# to `task up`, where the same script runs screens deep in devenv output and an unanswered prompt
+# reads as a hang. Idempotent, and prompt-free once the credential is primed or the drop-in is
+# current, so `task up`'s own sudo:setup then hits its fast path and stays silent.
+install_sim_sudoers() {
+  begin_step_quiet "installing the passwordless sim-sudo drop-in (one prompt if needed)"
+  set +e
+  devenv_run 'task sudo:setup'
+  _is_rc=$?
+  set -e
+  stop_ticker
+  [ "$_is_rc" = 0 ] ||
+    die "task sudo:setup failed — the sim's privileged operations need it. Fix the cause, then re-run."
+  end_step "passwordless sim sudo ready"
+}
+
+# read_rc <file> — a pipeline runs its left side in a subshell, so an exit status has to travel
+# back through a file. An empty file means the command never got as far as reporting one.
+read_rc() {
+  _rr_v="$(cat "$1" 2>/dev/null)"
+  [ -n "$_rr_v" ] || _rr_v=1
+  printf '%s' "$_rr_v"
+}
+
+# tee_stack_log — the bring-up's own output is the only record of a task failure inside the
+# stack, and neither run_stack path reached the log before, so a failing run logged the build only.
+tee_stack_log() {
+  strip_ansi | while IFS= read -r _tsl_line; do
+    printf '%s\n' "$_tsl_line"
+    log_raw "$_tsl_line"
+    # the same PHASE_FILE touch filter_devenv_line does: its mtime is what tells the ticker
+    # output is still flowing, so without it the pulse fires straight through a talkative step
+    [ -z "$PHASE_FILE" ] || printf '%s\n' 'stack bring-up' >"$PHASE_FILE"
+  done
+}
+
+# write_pc_check — staged as a file so the shell string that runs it needs no nested quoting.
+# Narrower than proc-health.ts on purpose: a live process is never failed, whatever its restarts.
+write_pc_check() {
+  [ -n "$PHASE_DIR" ] || return 1
+  PC_CHECK_PY="$PHASE_DIR/pc-check.py"
+  cat >"$PC_CHECK_PY" <<'PC_CHECK_EOF'
+import json, sys
+
+STOP_SIGNAL_EXITS = (130, 137, 143)
+try:
+    procs = json.load(sys.stdin)
+except Exception:
+    sys.exit(5)
+if isinstance(procs, dict):
+    procs = procs.get('data') or []
+if not isinstance(procs, list) or not procs:
+    sys.exit(5)
+failed = []
+for p in procs:
+    if not isinstance(p, dict):
+        continue
+    status = str(p.get('status') or '?')
+    code = p.get('exit_code') if isinstance(p.get('exit_code'), int) else 0
+    restarts = p.get('restarts') if isinstance(p.get('restarts'), int) else 0
+    live = status.lower() in ('running', 'pending', 'launching', 'restarting')
+    crashed = not live and code > 0 and code not in STOP_SIGNAL_EXITS
+    if status.lower() == 'error' or crashed:
+        failed.append('pc-failed: %s (status=%s exit=%s restarts=%s)'
+                      % (p.get('name') or '?', status, code, restarts))
+for line in failed:
+    print(line)
+sys.exit(1 if failed else 0)
+PC_CHECK_EOF
+}
+
+# print_stack_hints — the three verbs that answer "what is down / why / fix it", shared by both
+# paths that report a bad bring-up.
+print_stack_hints() {
+  info "  cd $TARGET_DIR && devenv --no-tui shell -- task status   # what is down"
+  info "  cd $TARGET_DIR && devenv --no-tui shell -- task logs     # why"
+  info "  cd $TARGET_DIR && devenv --no-tui shell -- task up       # reconcile (idempotent)"
+}
+
+# verify_stack_ready — `devenv up -d` detaches and returns 0 the moment process-compose is
+# supervising, so every task failure lands AFTER run_stack has already reported success.
+verify_stack_ready() {
+  if ! write_pc_check; then
+    warn "could not stage the stack readiness check — skipping it."
+    return 0
+  fi
+  # through the devenv shell: process-compose, python3 and the runtime socket path only resolve
+  # there. Not run_stack — that carries the sudo group re-exec, which a read-only query must not.
+  set +e
+  _vsr_out="$(devenv_run 'rid=$(readlink .devenv/run 2>/dev/null || true); rid="${rid##*/}"
+sock=""
+for c in "${PC_SOCKET_PATH:-}" "${DEVENV_RUNTIME:-}/pc.sock" "$PWD/.devenv/run/pc.sock" \
+  "${XDG_RUNTIME_DIR:-}/$rid/pc.sock" "${TMPDIR:-/tmp}/$rid/pc.sock" "/tmp/$rid/pc.sock"; do
+  case "$c" in "" | "/pc.sock" | */"/pc.sock") continue ;; esac
+  [ -S "$c" ] || continue
+  sock="$c"
+  break
+done
+[ -n "$sock" ] || exit 3
+command -v python3 >/dev/null 2>&1 || exit 4
+process-compose -U -u "$sock" process list -o json 2>/dev/null | python3 '"$PC_CHECK_PY")"
+  _vsr_rc=$?
+  set -e
+
+  case "$_vsr_rc" in
+  0)
+    ok "every supervised process is healthy"
+    return 0
+    ;;
+  1) ;;
+  *)
+    warn "could not verify the stack (readiness probe rc=$_vsr_rc) — check it by hand."
+    print_stack_hints
+    return 0
+    ;;
+  esac
+
+  warn "the stack came up but processes failed:"
+  printf '%s\n' "$_vsr_out" | while IFS= read -r _vsr_line; do
+    case "$_vsr_line" in
+    'pc-failed: '*) info "  ${_vsr_line#pc-failed: }" ;;
+    esac
+  done
+  print_stack_hints
+  print_log_hint
+  return 1
 }
 
 # run_stack — the group wrapper matters more than it looks: devenv up -d forks the
@@ -1044,9 +1257,14 @@ run_onboarding() {
 # committing rather than assuming it worked.
 run_stack() {
   _rs_cmd="$1"
+  _rs_rcfile="${PHASE_DIR:-${TMPDIR:-/tmp}}/stack-rc"
+  : >"$_rs_rcfile"
   if [ -z "$PENDING_GROUPS" ]; then
-    devenv_run "$_rs_cmd"
-    return $?
+    {
+      devenv_run "$_rs_cmd" 2>&1
+      printf '%s\n' "$?" >"$_rs_rcfile"
+    } | tee_stack_log
+    return "$(read_rc "$_rs_rcfile")"
   fi
 
   log "activating new group membership ($PENDING_GROUPS) for the stack supervisor"
@@ -1064,17 +1282,23 @@ exec devenv --no-tui shell -- sh -c "$2"'
   # the long-lived supervisor, whose hostpaths:setup task chowns to SUDO_UID:SUDO_GID.
   set +e
   if [ "$HAVE_TTY" = 1 ]; then
-    sudo -u "$(id -un)" -- \
-      env -u SUDO_USER -u SUDO_UID -u SUDO_GID -u SUDO_COMMAND \
-      HOME="$HOME" PATH="$PATH" \
-      sh -c "$_rs_inner" _ "$TARGET_DIR" "$_rs_cmd" "$RC_GROUPS_STALE" </dev/tty
+    {
+      sudo -u "$(id -un)" -- \
+        env -u SUDO_USER -u SUDO_UID -u SUDO_GID -u SUDO_COMMAND \
+        HOME="$HOME" PATH="$PATH" \
+        sh -c "$_rs_inner" _ "$TARGET_DIR" "$_rs_cmd" "$RC_GROUPS_STALE" </dev/tty 2>&1
+      printf '%s\n' "$?" >"$_rs_rcfile"
+    } | tee_stack_log
   else
-    sudo -u "$(id -un)" -- \
-      env -u SUDO_USER -u SUDO_UID -u SUDO_GID -u SUDO_COMMAND \
-      HOME="$HOME" PATH="$PATH" \
-      sh -c "$_rs_inner" _ "$TARGET_DIR" "$_rs_cmd" "$RC_GROUPS_STALE"
+    {
+      sudo -u "$(id -un)" -- \
+        env -u SUDO_USER -u SUDO_UID -u SUDO_GID -u SUDO_COMMAND \
+        HOME="$HOME" PATH="$PATH" \
+        sh -c "$_rs_inner" _ "$TARGET_DIR" "$_rs_cmd" "$RC_GROUPS_STALE" 2>&1
+      printf '%s\n' "$?" >"$_rs_rcfile"
+    } | tee_stack_log
   fi
-  _rs_rc=$?
+  _rs_rc="$(read_rc "$_rs_rcfile")"
   set -e
 
   if [ "$_rs_rc" = "$RC_GROUPS_STALE" ]; then
@@ -1161,6 +1385,9 @@ main() {
   # after resolve_target_dir and before print_plan: the plan must name the URL the run will really
   # clone, and an unusable key must fail before the sudo prompt, not after the OS packages
   resolve_ssh_key
+  # after resolve_ssh_key so the remote compares against the ssh URL the run will really use, and
+  # before print_plan so the plan names clone-or-adopt and an unusable target fails here
+  classify_target
 
   print_plan
   confirm
@@ -1196,7 +1423,10 @@ main() {
     exit 0
   fi
 
-  begin_step_quiet "bringing up the stack (datastores, hub, spoke, control center, fleet)"
+  # after the no-up and can_run_up gates, so neither headless behaviour changes
+  install_sim_sudoers
+
+  begin_step "bringing up the stack (datastores, hub, spoke, control center, fleet)"
   set +e
   run_stack 'task up'
   _up_rc=$?
@@ -1204,12 +1434,15 @@ main() {
   stop_ticker
   if [ "$_up_rc" != 0 ]; then
     warn "the stack did not come up cleanly."
-    info "  cd $TARGET_DIR && devenv --no-tui shell -- task status   # what is down"
-    info "  cd $TARGET_DIR && devenv --no-tui shell -- task logs     # why"
-    info "  cd $TARGET_DIR && devenv --no-tui shell -- task up       # reconcile (idempotent)"
+    # only when priming failed. Probing sudo here would fire on every failure instead: the sudoers
+    # install ends in `sudo -k`, so no credential is EVER cached past that point, by design
+    [ -z "$SUDO_UNPRIMED" ] ||
+      info "  sudo never cached a credential here — if the run stopped at a Password: prompt, answer it"
+    print_stack_hints
     print_log_hint
     exit 1
   fi
+  verify_stack_ready || exit 1
   end_step "stack up"
 
   stop_keepalive

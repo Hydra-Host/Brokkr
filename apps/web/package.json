@@ -26,6 +26,7 @@
     "@repo/api-client": "workspace:*",
     "@repo/auth": "workspace:*",
     "@repo/cli": "workspace:*",
+    "@repo/domain-ui": "workspace:*",
     "@repo/ui": "workspace:*",
     "@repo/utils": "workspace:*",
     "@tailwindcss/vite": "^4.1.18",

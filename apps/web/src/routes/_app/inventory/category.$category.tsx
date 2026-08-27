@@ -1,15 +1,15 @@
-import { PrivateCategoryItemCard } from '@/components/category-item-card';
-import { tsr } from '@/lib/api';
-import { inventoryCategories, mergeCategoryPrices } from '@/lib/category-data';
-import { PluginSlot } from '@/plugin-host/plugin-slot';
 import { DeviceCategoriesSchema, type InventoryListing } from '@repo/api-client';
 import { useSession } from '@repo/auth/client';
-import { ServerPagination } from '@repo/ui/components/server-pagination';
+import { ServerPagination } from '@repo/domain-ui/components/server-pagination';
+import { usePagination } from '@repo/domain-ui/hooks/use-pagination';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import { usePagination } from '@repo/ui/hooks/use-pagination';
-import { formatCategoryTitle } from '@repo/utils/format';
+import { formatCategoryTitle } from '@repo/utils';
 import { keepPreviousData } from '@tanstack/react-query';
 import { createFileRoute, redirect } from '@tanstack/react-router';
+import { PrivateCategoryItemCard } from '~/components/category-item-card';
+import { tsr } from '~/lib/api';
+import { inventoryCategories, mergeCategoryPrices } from '~/lib/category-data';
+import { PluginSlot } from '~/plugin-host/plugin-slot';
 
 import { useCallback } from 'react';
 

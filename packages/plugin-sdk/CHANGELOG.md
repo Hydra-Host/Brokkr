@@ -9,6 +9,9 @@ in a minor.
 
 ### Added
 
+- `PluginRateLimit` / `PluginRateLimitGuard` and the host-provided `PLUGIN_RATE_LIMITER` for atomic, plugin-scoped Redis limits.
+- `PublicRoute` from `@hydrahost/plugin-sdk/nest` for controllers that intentionally bypass host authentication.
+- `PluginOperatorGuard` and `PLUGIN_OPERATOR_ADMIN_ORG` from `@hydrahost/plugin-sdk/nest` for operator HTTP handlers.
 - `SidebarNavContribution.popup?: boolean` — when set, the host opens the entry's
   `to` target in a popup window and never re-navigates a window that is still
   open, so its document state is preserved across clicks. Backward compatible:

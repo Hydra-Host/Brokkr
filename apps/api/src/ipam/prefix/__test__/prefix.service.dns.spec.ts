@@ -18,7 +18,7 @@ function makeService(overrides: { requirePermission?: ReturnType<typeof vi.fn> }
     getDnsOverride: vi.fn().mockResolvedValue({ serveDns: null, upstreamOverride: [] }),
     updateDnsOverride: vi.fn().mockResolvedValue({ serveDns: true, upstreamOverride: ['1.1.1.1'] }),
     updateDnsOverrideUnderZoneLock: vi.fn().mockResolvedValue({ serveDns: true, upstreamOverride: ['1.1.1.1'] }),
-    restore: vi.fn().mockResolvedValue({ zoneId: 'zone-1' }),
+    restore: vi.fn().mockResolvedValue({ zoneId: 'zone-1', prefix: '10.0.0.0/24' }),
     requireLiveZone: vi.fn().mockResolvedValue(undefined),
   };
   const dnsPublisher = {
@@ -127,7 +127,7 @@ describe('PrefixService DNS override', () => {
 
     it('serializes a force-off override with the zone delete lock', async () => {
       const { service, repo } = makeService();
-      repo.restore.mockResolvedValue({ zoneId: 'zone-1' });
+      repo.restore.mockResolvedValue({ zoneId: 'zone-1', prefix: '10.0.0.0/24' });
       repo.updateDnsOverrideUnderZoneLock.mockResolvedValue({ serveDns: false, upstreamOverride: [] });
 
       await service.updateDnsOverride(PREFIX_ID, { serveDns: false, upstreamOverride: [] });
@@ -141,7 +141,7 @@ describe('PrefixService DNS override', () => {
 
     it('requires live zone when enabling DNS', async () => {
       const { service, repo } = makeService();
-      repo.restore.mockResolvedValue({ zoneId: 'zone-1' });
+      repo.restore.mockResolvedValue({ zoneId: 'zone-1', prefix: '10.0.0.0/24' });
 
       await service.updateDnsOverride(PREFIX_ID, { serveDns: true, upstreamOverride: [] });
 
@@ -150,11 +150,32 @@ describe('PrefixService DNS override', () => {
 
     it('requires live zone when setting upstream overrides', async () => {
       const { service, repo } = makeService();
-      repo.restore.mockResolvedValue({ zoneId: 'zone-1' });
+      repo.restore.mockResolvedValue({ zoneId: 'zone-1', prefix: '10.0.0.0/24' });
 
       await service.updateDnsOverride(PREFIX_ID, { serveDns: null, upstreamOverride: ['1.1.1.1'] });
 
       expect(repo.requireLiveZone).toHaveBeenCalledWith('zone-1');
+    });
+
+    it('rejects enabling serveDns on a non-IPv4 prefix', async () => {
+      const { service, repo } = makeService();
+      repo.restore.mockResolvedValue({ zoneId: 'zone-1', prefix: '2001:db8::/64' });
+
+      await expect(service.updateDnsOverride(PREFIX_ID, { serveDns: true, upstreamOverride: [] })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(repo.updateDnsOverride).not.toHaveBeenCalled();
+      expect(repo.updateDnsOverrideUnderZoneLock).not.toHaveBeenCalled();
+    });
+
+    it('allows non-enabling overrides on a non-IPv4 prefix', async () => {
+      const { service, repo } = makeService();
+      repo.restore.mockResolvedValue({ zoneId: 'zone-1', prefix: '2001:db8::/64' });
+
+      await service.updateDnsOverride(PREFIX_ID, { serveDns: false, upstreamOverride: [] });
+      await service.updateDnsOverride(PREFIX_ID, { serveDns: null, upstreamOverride: ['1.1.1.1'] });
+
+      expect(repo.updateDnsOverrideUnderZoneLock).toHaveBeenCalledTimes(2);
     });
   });
 });

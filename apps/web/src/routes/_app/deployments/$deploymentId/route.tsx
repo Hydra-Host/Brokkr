@@ -2,12 +2,12 @@ import { createFileRoute, Outlet } from '@tanstack/react-router';
 import { Ambulance, MapPin, Power, RefreshCw, Settings } from 'lucide-react';
 
 import type { Deployment } from '@repo/api-client';
+import { DeviceStatusBadge } from '@repo/domain-ui/components/device-status-badge';
 import { Alert, AlertDescription, AlertTitle } from '@repo/ui/components/alert';
 import { Badge } from '@repo/ui/components/badge';
 import { ButtonLink } from '@repo/ui/components/button-link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { CountdownTimer } from '@repo/ui/components/countdown-timer';
-import { DeviceStatusBadge } from '@repo/ui/components/device-status-badge';
 import { TypewriterText } from '@repo/ui/components/typewriter-text';
 
 import { useDeploymentEvents } from '~/hooks/use-device-events';
@@ -39,7 +39,7 @@ export const Route = createFileRoute('/_app/deployments/$deploymentId')({
 });
 
 function DeploymentLayout() {
-  const deployment = Route.useLoaderData() as Deployment;
+  const deployment = Route.useLoaderData();
   useDeploymentEvents(String(deployment.id));
 
   return (

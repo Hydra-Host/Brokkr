@@ -44,7 +44,7 @@ export const CONCEPT_ENTRIES: WikiEntry[] = [
     title: 'Fleet',
     brief: 'The set of simulated machines your scenario runs against — the hub node(s) and spoke node(s).',
     category: 'Concepts',
-    related: ['hub', 'spoke', 'vm', 'fleet-builder'],
+    related: ['hub', 'spoke', 'vm', 'fleet-builder', 'fleet-topology'],
     body: (
       <>
         <P>
@@ -56,8 +56,9 @@ export const CONCEPT_ENTRIES: WikiEntry[] = [
         </P>
         <P>
           Each machine is a <WikiLink slug="vm">VM</WikiLink> rather than physical metal, so a fleet is cheap to create,
-          reshape, and throw away. The size and wiring of a fleet (how many hubs, how many spokes, how they connect) is
-          something you compose and save with the <WikiLink slug="fleet-builder">Fleet Builder</WikiLink>.
+          reshape, and throw away. The size and wiring of a fleet — how many nodes, which zone each is in, how they are
+          addressed — is what you compose on the <WikiLink slug="fleet-builder">Fleet nodes</WikiLink> page, and what
+          the <WikiLink slug="fleet-topology">fleet graph</WikiLink> draws back to you.
         </P>
         <P>Think of the fleet as the "test bench" your scenarios are executed on.</P>
       </>
@@ -387,6 +388,51 @@ export const CONCEPT_ENTRIES: WikiEntry[] = [
         <P>
           The <WikiLink slug="hub-page">Hub page</WikiLink> lists lifecycle jobs and draws each one's timeline. The{' '}
           <WikiLink slug="queues">Queues tab</WikiLink> shows the same work as raw BullMQ state.
+        </P>
+      </>
+    ),
+  },
+  {
+    slug: 'apply',
+    title: 'Apply (saving is not applying)',
+    brief: 'A save writes your overlay; an apply is the run that makes the stack read it.',
+    category: 'Concepts',
+    related: ['config', 'fleet-builder', 'config-advanced', 'stack-slot', 'audit'],
+    body: (
+      <>
+        <P>
+          It is two steps, always. A <Term>save</Term> writes your <Code>stack.local.nix</Code> overlay. An{' '}
+          <Term>apply</Term> is the run that makes the stack read it. Nothing the running stack reads changes on a save.
+        </P>
+        <H>The apply panel</H>
+        <P>
+          The panel sits at the top of every Configuration page, above that page's own bar. It holds one row per
+          outstanding item: what is waiting, what it costs, and the one action that clears it. Expand a row to read the
+          ordered steps that action performs, and why each step is there.
+        </P>
+        <H>What an apply costs</H>
+        <UL>
+          <LI>Nothing — the value is already applied on save, because the stack reads it live.</LI>
+          <LI>Nothing — the path is inert. No process reads it.</LI>
+          <LI>A hub reload, or a spoke reload.</LI>
+          <LI>A redeploy, which rebuilds the process.</LI>
+          <LI>A fleet apply, which reconciles the VMs.</LI>
+          <LI>The zone seed, which also restarts the bridges.</LI>
+          <LI>
+            A full recreation. A reload cannot pick up a re-bind, and a new <WikiLink slug="stack-slot">slot</WikiLink>{' '}
+            recreates everything on a new port band.
+          </LI>
+          <LI>A datastore reset, which wipes the hub database and Redis. No button performs this one.</LI>
+        </UL>
+        <Note>
+          A row that no run performs shows no button, and says so. A disabled button would read as "try again later".
+        </Note>
+        <P>
+          A dirty form blocks only its own domain. Editing a stack knob does not make a fleet apply unsafe, so that row
+          alone asks you to save first.
+        </P>
+        <P>
+          Every apply the cockpit runs lands in the <WikiLink slug="audit">audit log</WikiLink>, with its parameters.
         </P>
       </>
     ),

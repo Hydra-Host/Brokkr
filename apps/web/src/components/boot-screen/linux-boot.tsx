@@ -1,6 +1,7 @@
-import { BRAND_NAME, COMPANY_NAME } from '@/lib/branding';
 import { ASCII_LOGOS } from '@repo/ui/ascii-art';
+import { cn } from '@repo/ui/utils';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { BRAND_NAME, COMPANY_NAME } from '~/lib/branding';
 
 const LOGO_COLORS = [
   'text-accent',
@@ -29,7 +30,7 @@ const BATCH_DELAY = 50;
 function kernelLine(timestamp: string, message: string, hasOk?: boolean, color?: string) {
   if (hasOk) {
     return (
-      <div className={`flex justify-between gap-4 ${color || ''}`}>
+      <div className={cn('flex justify-between gap-4', color)}>
         <span>
           <span className="text-text-dim">{timestamp}</span> {message}
         </span>
@@ -83,7 +84,10 @@ function buildLines(logoIndex: number): ReactNode[] {
     lines.push(
       <pre
         key={`logo-${i}`}
-        className={`overflow-hidden text-[0.35rem] leading-tight whitespace-pre select-none sm:text-[0.5rem] md:text-[0.55rem] ${getLogoColor(i, logoLines.length)}`}
+        className={cn(
+          'overflow-hidden text-[0.35rem] leading-tight whitespace-pre select-none sm:text-[0.5rem] md:text-[0.55rem]',
+          getLogoColor(i, logoLines.length),
+        )}
       >
         {logoLines[i]}
       </pre>,

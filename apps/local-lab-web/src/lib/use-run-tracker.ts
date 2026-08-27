@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { tsr } from '@/lib/api';
+import { usePoll } from '@/lib/use-poll';
 
 export const RUN_POLL_INTERVAL_MS = 1500;
 // measures silence, not run duration: a lost run (api restarted mid-run) stops reporting and would
@@ -25,7 +26,7 @@ export function useRunTracker({ holdOnTerminal = false, onTerminal }: RunTracker
   const run = tsr.getRun.useQuery({
     queryKey: ['run', runId],
     queryData: { params: { runId: runId ?? '' } },
-    refetchInterval: RUN_POLL_INTERVAL_MS,
+    refetchInterval: usePoll(RUN_POLL_INTERVAL_MS),
     enabled: runId !== null,
     retry: false,
   });

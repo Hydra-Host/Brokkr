@@ -7,7 +7,7 @@ import {
 } from '../bridge-network/bridge-network.module';
 import { fetchLiveNetplanForInitrd } from '../bridge-network/initrd-netplan';
 import { NetplanAtomService } from '../bridge-network/netplan-atom.service';
-import { BULLMQ_QUEUE_FACTORY, BullmqQueueService } from '../bullmq/queue.service';
+import { BULLMQ_QUEUE_FACTORY, BullmqQueueService, type BullmqQueueFactory } from '../bullmq/queue.service';
 import { deviceIpxeUrl, deviceServerToken } from '../common/redis/redis-keys';
 import { RedisService } from '../common/redis/redis.service';
 import { createRealBullmqQueueFactory } from '../composition/bullmq-factories';
@@ -22,6 +22,8 @@ import {
 import { DeviceService, type AtomFetcherLike, type GetLiveNetplanFn } from '../devices/device.service';
 import { getLeaderConfig } from '../leader-election/leader-election.config';
 import { logDebug, logError, logInfo, logWarning } from '../logger/logger.service';
+import { ZoneCryptoModule } from '../zone-crypto/zone-crypto.module';
+import { ZoneCryptoService } from '../zone-crypto/zone-crypto.service';
 
 import {
   ChainService,
@@ -149,6 +151,7 @@ const inventoryTriggerProvider: Provider = {
         sagaName: 'inventory_collection',
         payload: { device_id: deviceId },
         deviceId,
+        bridgeLocal: true,
       });
       if (enqueued) {
         await logInfo(`Triggered inventory_collection saga for device ${deviceId} (plan=${planId})`, { jobId });
@@ -233,8 +236,9 @@ const bullmqQueueFactoryProvider: Provider = {
 
 const bullmqQueueServiceProvider: Provider = {
   provide: BullmqQueueService,
-  useFactory: (factory) => new BullmqQueueService(factory),
-  inject: [BULLMQ_QUEUE_FACTORY],
+  useFactory: (factory: BullmqQueueFactory, zoneCrypto: ZoneCryptoService) =>
+    new BullmqQueueService(factory, undefined, zoneCrypto),
+  inject: [BULLMQ_QUEUE_FACTORY, ZoneCryptoService],
 };
 
 @Module({})
@@ -280,6 +284,7 @@ export class IpxeModule {
 
     return {
       module: IpxeModule,
+      imports: [ZoneCryptoModule],
       controllers: [IpxeController],
       providers,
       exports,

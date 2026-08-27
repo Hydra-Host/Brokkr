@@ -1,0 +1,12 @@
+# Shorthand names for the knobs pinned most often; the canonical BROKKR_CFG_<path> form always
+# works. VAR=dotted.path, so a shell and Nix both parse it, and an uncatalogued path fails the eval.
+
+BROKKR_PIN_HUB_LOG_LEVEL=stackDefaults.hub.LOG_LEVEL
+BROKKR_PIN_SPOKE_LOG_LEVEL=stackDefaults.spoke.LOG_LEVEL
+BROKKR_PIN_AUTH_BYPASS=stackDefaults.hub.AUTH_BYPASS_ENABLED
+BROKKR_PIN_FLEET_MODE=fleet.mode
+BROKKR_PIN_FLEET_AUTOSTART=fleet.autoStart
+BROKKR_PIN_LAN_EXPOSE=lan.expose
+BROKKR_PIN_TELEMETRY=telemetry.enable
+BROKKR_PIN_PG_PORT=ports.postgres
+BROKKR_PIN_REDIS_PORT=ports.redis

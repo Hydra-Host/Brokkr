@@ -14,7 +14,8 @@ export function fmtElapsed(sec: number): string {
   return m > 0 ? `${m}m${String(s).padStart(2, '0')}s` : `${s}s`;
 }
 
-/** A negative exit (SIGTERM stop/cancel) is `stopped`, not `failed` — only status `Error`, a positive non-zero exit, or a recorded engine error counts as a crash. */
+/** A negative exit (SIGTERM stop/cancel) is `stopped`, not `failed` — only status `Error`, a positive non-zero exit, or a recorded engine error counts as a crash.
+ *  `spokesDown` names the bridge processes the VMs boot from: running domains whose boot chain is gone are `degraded`, never `ready`. */
 export function deriveFleetStatus(
   p: PcProcess | undefined,
   prog: FleetProgress | null,
@@ -22,6 +23,7 @@ export function deriveFleetStatus(
   machinesRunning: number,
   nowMs: number,
   lastError?: string,
+  spokesDown: readonly string[] = [],
 ): FleetStatus {
   const elapsedSec = prog?.startedAt != null ? Math.max(0, Math.round(nowMs / 1000 - prog.startedAt)) : null;
   const base = {
@@ -36,13 +38,23 @@ export function deriveFleetStatus(
     elapsedSec,
     machinesExpected,
     machinesRunning,
+    accel: prog?.accel ?? null,
+    accelForced: prog?.accelForced ?? null,
   };
   if (!p) return { ...base, health: 'idle', detail: 'not started — click Start' };
   const s = (p.status ?? '').toLowerCase();
   const ready = (p.is_ready ?? '').toLowerCase() === 'ready';
   if (s === 'disabled') return { ...base, health: 'disabled', detail: 'disabled — autoStart off' };
-  if (s === 'running' && ready)
-    return { ...base, health: 'ready', detail: `ready · ${machinesRunning}/${machinesExpected} VMs running` };
+  if (s === 'running' && ready) {
+    const vms = `${machinesRunning}/${machinesExpected} VMs running`;
+    if (spokesDown.length > 0)
+      return {
+        ...base,
+        health: 'degraded',
+        detail: `${vms} · ${spokesDown.join(', ')} down — the VMs have no boot chain`,
+      };
+    return { ...base, health: 'ready', detail: `ready · ${vms}` };
+  }
   if (s === 'running' || s === 'pending') {
     const label = prog?.label ?? 'starting';
     const per = prog && prog.total > 0 ? ` (${prog.index}/${prog.total})` : '';

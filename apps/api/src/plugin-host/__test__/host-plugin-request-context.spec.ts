@@ -7,13 +7,23 @@ import { ContextService } from '../../common/context/context.service';
 import { HostPluginRequestContext } from '../host-plugin-request-context';
 
 function sessionIdentity(
-  overrides: Partial<{ role: string; orgId: string; email: string; userId: string; permissions: Set<string> }> = {},
+  overrides: Partial<{
+    role: string;
+    orgId: string;
+    email: string;
+    userId: string;
+    permissions: Set<string>;
+    isInstanceOperator: boolean;
+  }> = {},
 ): IdentityContext {
   return {
     authType: AuthType.Session,
     role: (overrides.role ?? 'Member') as IdentityContext['role'],
     organizationId: overrides.orgId ?? 'org-1',
-    organization: { id: overrides.orgId ?? 'org-1' } as IdentityContext['organization'],
+    organization: {
+      id: overrides.orgId ?? 'org-1',
+      isInstanceOperator: overrides.isInstanceOperator === true,
+    } as IdentityContext['organization'],
     permissions: overrides.permissions ?? new Set<string>(),
     session: {
       user: {
@@ -83,6 +93,41 @@ describe('HostPluginRequestContext', () => {
     });
     runWith(apiKeyIdentity(), (ctx) => {
       expect(() => ctx.requireSessionAuth()).toThrow(ForbiddenException);
+    });
+  });
+
+  describe('requireOperator', () => {
+    it('allows instance operators without an admin-org grant', () => {
+      runWith(sessionIdentity({ isInstanceOperator: true, orgId: 'tenant-org' }), (ctx) => {
+        expect(() => ctx.requireOperator()).not.toThrow();
+        expect(() => ctx.requireOperator({ adminOrganizationId: '' })).not.toThrow();
+      });
+    });
+
+    it('allows the configured admin organization when the id is set and matches', () => {
+      runWith(sessionIdentity({ orgId: 'admin-org' }), (ctx) => {
+        expect(() => ctx.requireOperator({ adminOrganizationId: 'admin-org' })).not.toThrow();
+      });
+    });
+
+    it('rejects when neither grant applies', () => {
+      runWith(sessionIdentity({ orgId: 'tenant-org' }), (ctx) => {
+        expect(() => ctx.requireOperator({ adminOrganizationId: 'admin-org' })).toThrow(ForbiddenException);
+      });
+    });
+
+    it('rejects when adminOrganizationId is empty even if the caller org id is empty', () => {
+      runWith(sessionIdentity({ orgId: '' }), (ctx) => {
+        expect(() => ctx.requireOperator({ adminOrganizationId: '' })).toThrow(ForbiddenException);
+        expect(() => ctx.requireOperator()).toThrow(ForbiddenException);
+      });
+    });
+
+    it('fails closed with UnauthorizedException when request identity is missing', () => {
+      runWith(undefined, (ctx) => {
+        expect(() => ctx.requireOperator()).toThrow(UnauthorizedException);
+        expect(() => ctx.requireOperator({ adminOrganizationId: 'admin-org' })).toThrow(UnauthorizedException);
+      });
     });
   });
 });

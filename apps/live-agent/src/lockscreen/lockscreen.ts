@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
+import { getErrorMessage } from '@repo/utils';
 import { makeLogger } from '../logger';
 
 const logger = makeLogger('lockscreen');
@@ -231,7 +232,7 @@ function writeIssueFile(content: string): void {
       tryExecFile('agetty', ['--reload'], 5_000);
     }
   } catch (err) {
-    logger.warn('failed to write /etc/issue', { error: err instanceof Error ? err.message : String(err) });
+    logger.warn('failed to write /etc/issue', { error: getErrorMessage(err) });
   }
 }
 
@@ -252,7 +253,7 @@ export function startLockscreen(opts: LockscreenOptions = {}): void {
       process.stdout.write(content);
       writeIssueFile(content);
     } catch (err) {
-      logger.warn('lockscreen one-shot failed', { error: err instanceof Error ? err.message : String(err) });
+      logger.warn('lockscreen one-shot failed', { error: getErrorMessage(err) });
     }
     return;
   }
@@ -273,7 +274,7 @@ export function startLockscreen(opts: LockscreenOptions = {}): void {
         writeIssueFile(content);
       }
     } catch (err) {
-      logger.warn('lockscreen tick failed', { error: err instanceof Error ? err.message : String(err) });
+      logger.warn('lockscreen tick failed', { error: getErrorMessage(err) });
     }
     if (!signal?.aborted) {
       timer = setTimeout(tick, interval_ms);

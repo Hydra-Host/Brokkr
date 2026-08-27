@@ -4,7 +4,7 @@ camelCases on the wire to match the Zod ``ApplyPlanSchema``; ``PlanItem.action``
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -13,7 +13,7 @@ from local.applied import DISK_FIELDS, HOT_FIELDS, IDENTITY_FIELDS, FleetDiff, N
 from local.host_os import HostOS
 
 
-class NodeAction(str, Enum):
+class NodeAction(StrEnum):
     NOOP = "noop"
     HOT_NODE = "hot-node"
     NODE_DISK = "node-disk"

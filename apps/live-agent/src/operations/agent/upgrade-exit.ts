@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@repo/utils';
 import { run } from '../../exec';
 import { makeLogger } from '../../logger';
 const logger = makeLogger('agent');
@@ -19,7 +20,7 @@ export function scheduleExit(unitReplaced: boolean, drain: Promise<void>): void 
       await drain;
     } catch (err) {
       logger.warn('result delivery failed; staying on old bundle for bridge-driven retry', {
-        err: err instanceof Error ? err.message : String(err),
+        err: getErrorMessage(err),
       });
       return;
     }
@@ -30,7 +31,7 @@ export function scheduleExit(unitReplaced: boolean, drain: Promise<void>): void 
         await daemonReload();
       } catch (error) {
         logger.warn('daemon-reload failed', {
-          err: error instanceof Error ? error.message : String(error),
+          err: getErrorMessage(error),
         });
       }
     }

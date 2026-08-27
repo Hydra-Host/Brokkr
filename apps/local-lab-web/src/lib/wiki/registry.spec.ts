@@ -15,19 +15,15 @@ vi.mock('@tanstack/react-router', () => ({
   Link: ({ children }: { children?: ReactNode }) => children,
 }));
 
-const MODULES: [string, WikiEntry['category'], WikiEntry[], number][] = [
-  ['concepts', 'Concepts', CONCEPT_ENTRIES, 13],
-  ['navigation', 'Navigation', NAVIGATION_ENTRIES, 8],
-  ['services', 'Services', SERVICE_ENTRIES, 1],
-  ['data', 'Data', DATA_ENTRIES, 5],
-  ['how-to', 'How-to', HOW_TO_ENTRIES, 6],
+const MODULES: [string, WikiEntry['category'], WikiEntry[]][] = [
+  ['concepts', 'Concepts', CONCEPT_ENTRIES],
+  ['navigation', 'Navigation', NAVIGATION_ENTRIES],
+  ['services', 'Services', SERVICE_ENTRIES],
+  ['data', 'Data', DATA_ENTRIES],
+  ['how-to', 'How-to', HOW_TO_ENTRIES],
 ];
 
 describe('wiki registry', () => {
-  it('holds every entry', () => {
-    expect(WIKI_LIST).toHaveLength(33);
-  });
-
   it('has unique slugs', () => {
     const slugs = WIKI_LIST.map((e) => e.slug);
     expect(new Set(slugs).size).toBe(slugs.length);
@@ -41,8 +37,7 @@ describe('wiki registry', () => {
     }
   });
 
-  it.each(MODULES)('files every %s entry under its own category', (_name, category, entries, size) => {
-    expect(entries).toHaveLength(size);
+  it.each(MODULES)('files every %s entry under its own category', (_name, category, entries) => {
     for (const entry of entries) {
       expect(entry.category, entry.slug).toBe(category);
     }

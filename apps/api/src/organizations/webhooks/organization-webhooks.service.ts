@@ -1,10 +1,19 @@
 import { ForbiddenException, HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { WebhookDelivery } from '@repo/database';
+import { Prisma, WebhookDelivery } from '@repo/database';
 import { paginateArray, type PaginationQuery } from '@repo/database/pagination';
-import { ContextService } from 'src/common/context/context.service';
+import { ContextService, type PermissionIntentHandle } from 'src/common/context/context.service';
+import { EventLogService } from 'src/event-log/event-log.service';
+import { PrismaClient } from 'src/prisma/prisma.client';
 import { WebhookDeliveryService } from 'src/webhook/webhook-delivery.service';
 import { WebhookService } from 'src/webhook/webhook.service';
 import { CreateWebhookDTO, UpdateWebhookDTO, isPublicHttpsUrl } from 'src/webhook/webhook.types';
+
+interface WebhookEvent {
+  action: string;
+  actionKey: string;
+  targetId: string;
+  targetLabel: string;
+}
 
 @Injectable()
 export class OrganizationWebhooksService {
@@ -12,10 +21,12 @@ export class OrganizationWebhooksService {
     private readonly contextService: ContextService,
     private readonly webhookService: WebhookService,
     private readonly webhookDeliveryService: WebhookDeliveryService,
+    private readonly eventLog: EventLogService,
+    private readonly prisma: PrismaClient,
   ) {}
 
   async createWebhook(createWebhookDto: CreateWebhookDTO) {
-    this.contextService.requirePermission('webhook', 'create');
+    const handle = this.contextService.requirePermission('webhook', 'create');
 
     if (!isPublicHttpsUrl(createWebhookDto.endpoint)) {
       throw new HttpException(
@@ -25,7 +36,15 @@ export class OrganizationWebhooksService {
     }
 
     const organizationId = this.contextService.organizationId;
-    const webhook = await this.webhookService.create(organizationId, createWebhookDto);
+    const webhook = await this.prisma.$transaction(async (tx) => {
+      const created = await this.webhookService.create(organizationId, createWebhookDto, tx);
+      await this.emitFor(
+        { action: 'created', actionKey: 'webhook.created', targetId: created.id, targetLabel: created.endpoint },
+        tx,
+      );
+      return created;
+    });
+    this.supersede(handle);
 
     return {
       id: webhook.id,
@@ -104,7 +123,7 @@ export class OrganizationWebhooksService {
   }
 
   async updateWebhook(webhookId: string, updateWebhookDto: UpdateWebhookDTO) {
-    this.contextService.requirePermission('webhook', 'update');
+    const handle = this.contextService.requirePermission('webhook', 'update');
 
     if (!isPublicHttpsUrl(updateWebhookDto.endpoint)) {
       throw new HttpException(
@@ -121,7 +140,15 @@ export class OrganizationWebhooksService {
     }
 
     const isBeingReactivated = !existingWebhook.isActive && updateWebhookDto.isActive;
-    const webhook = await this.webhookService.update(webhookId, updateWebhookDto, isBeingReactivated);
+    const webhook = await this.prisma.$transaction(async (tx) => {
+      const updated = await this.webhookService.update(webhookId, updateWebhookDto, isBeingReactivated, tx);
+      await this.emitFor(
+        { action: 'updated', actionKey: 'webhook.updated', targetId: webhookId, targetLabel: updated.endpoint },
+        tx,
+      );
+      return updated;
+    });
+    this.supersede(handle);
 
     return {
       id: webhook.id,
@@ -135,7 +162,7 @@ export class OrganizationWebhooksService {
   }
 
   async deleteWebhook(webhookId: string) {
-    this.contextService.requirePermission('webhook', 'delete');
+    const handle = this.contextService.requirePermission('webhook', 'delete');
 
     const organizationId = this.contextService.organizationId;
     const webhook = await this.webhookService.findOne(webhookId);
@@ -144,7 +171,14 @@ export class OrganizationWebhooksService {
       throw new ForbiddenException('Webhook not found');
     }
 
-    return this.webhookService.remove(webhookId);
+    await this.prisma.$transaction(async (tx) => {
+      await this.webhookService.remove(webhookId, tx);
+      await this.emitFor(
+        { action: 'deleted', actionKey: 'webhook.deleted', targetId: webhookId, targetLabel: webhook.endpoint },
+        tx,
+      );
+    });
+    this.supersede(handle);
   }
 
   async retryDelivery(deliveryId: string) {
@@ -166,5 +200,28 @@ export class OrganizationWebhooksService {
     this.contextService.requirePermission('webhook', 'read');
     const organizationId = this.contextService.organizationId;
     return this.webhookService.getWebhookStats(organizationId);
+  }
+
+  /** Shares the mutation's transaction: a webhook is a data-egress path, so a failed insert must roll it back. */
+  private emitFor(event: WebhookEvent, tx: Prisma.TransactionClient): Promise<void> {
+    return this.eventLog.recordInTransaction(tx, {
+      organizationId: this.contextService.organizationId,
+      tier: 'EVIDENCE',
+      durability: 'ATOMIC',
+      resource: 'webhook',
+      action: event.action,
+      actionKey: event.actionKey,
+      ...this.contextService.actorFields(),
+      ...this.contextService.requestFields(),
+      targetId: event.targetId,
+      targetLabel: event.targetLabel,
+      outcome: 'SUCCEEDED',
+      requestId: this.contextService.requestId ?? null,
+    });
+  }
+
+  /** Called after the transaction resolves: a rollback leaves the handle pending so tier 2 records the failure. */
+  private supersede(handle: PermissionIntentHandle | undefined): void {
+    if (handle) this.contextService.finalizeIntents([handle]);
   }
 }

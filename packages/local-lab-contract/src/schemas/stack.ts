@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { ProcHealthSchema, StackCountsSchema, StackSlotSchema } from './common';
+import { ProcHealthSchema, StackSlotSchema } from './common';
 import { FleetPendingSchema } from './fleet';
+import { ZoneStepSchema } from './zones';
 
 export { StackSlotSchema } from './common';
 
@@ -96,13 +97,22 @@ export const BringupStepSchema = z
   );
 
 export const FleetHealthSchema = z
-  .enum(['ready', 'coming-up', 'stopped', 'failed', 'disabled', 'idle'])
+  .enum(['ready', 'degraded', 'coming-up', 'stopped', 'failed', 'disabled', 'idle'])
   .describe(
-    'Fleet health: ready=all VMs running; coming-up=building/powering on; stopped=down (Start to bring up); failed=crashed; disabled=autoStart off; idle=never started.',
+    'Fleet health: ready=all VMs running and the boot chain serving; degraded=VMs running but a spoke that serves them is down; coming-up=building/powering on; stopped=down (Start to bring up); failed=crashed; disabled=autoStart off; idle=never started.',
   );
+// Mirrors local.host_os.Accel. libvirt has no `<domain type='tcg'>` — the engine renders software
+// emulation as type='qemu', so 'tcg' names the accelerator here and never the domain type.
+export const FleetAccelSchema = z
+  .enum(['hvf', 'kvm', 'tcg'])
+  .describe(
+    'qemu accelerator: hvf on macOS, kvm on Linux hardware virtualization, tcg for software emulation when neither is available.',
+  );
+
 export type BringupPhase = z.infer<typeof BringupPhaseSchema>;
 export type BringupStep = z.infer<typeof BringupStepSchema>;
 export type FleetHealth = z.infer<typeof FleetHealthSchema>;
+export type FleetAccel = z.infer<typeof FleetAccelSchema>;
 
 export const FleetStatusSchema = z.object({
   health: FleetHealthSchema,
@@ -117,6 +127,15 @@ export const FleetStatusSchema = z.object({
   elapsedSec: z.number().nullable().describe('Seconds since bring-up started, or null.'),
   machinesExpected: z.number().describe('Number of nodes in the active fleet config.'),
   machinesRunning: z.number().describe('Number of fleet domains currently powered on.'),
+  accel: FleetAccelSchema.nullable().describe(
+    'Accelerator the engine resolved for this fleet, or null when no progress record carries one. `tcg` emulates every CPU instruction in software, so boot and OS install run 5 to 20 times slower.',
+  ),
+  accelForced: z
+    .boolean()
+    .nullable()
+    .describe(
+      'Whether an explicit setting chose the accelerator rather than the host probe. Under `tcg` this separates a deliberate choice from a host that refused KVM — opposite problems with opposite remedies.',
+    ),
   detail: z.string().describe('One-line human status for the card.'),
 });
 export type FleetStatus = z.infer<typeof FleetStatusSchema>;
@@ -165,19 +184,200 @@ export const ProcessEnvSchema = z.object({
 export type ProcessEnv = z.infer<typeof ProcessEnvSchema>;
 export type ProcessEnvVar = z.infer<typeof ProcessEnvVarSchema>;
 
+export const ApplyClassSchema = z
+  .enum([
+    'inert',
+    'auto',
+    'reload-hub',
+    'reload-spoke',
+    'redeploy',
+    'fleet-op',
+    'rebind-recreate',
+    'reslot',
+    'zone-apply',
+    'datastore-reset',
+  ])
+  .describe(
+    'What applying a change to this path costs. Ordered weakest to strongest by APPLY_CLASS_RANK, so a change set reports the strongest class any dirty path declares.',
+  );
+export type ApplyClass = z.infer<typeof ApplyClassSchema>;
+
+/** rebind-recreate outranks redeploy because it is a superset; reslot outranks it in turn, since a slot
+ *  move recreates everything AND claims a new port band. datastore-reset is highest: no button does it. */
+export const APPLY_CLASS_RANK: Record<ApplyClass, number> = {
+  inert: 0,
+  auto: 1,
+  'reload-hub': 3,
+  'reload-spoke': 3,
+  redeploy: 4,
+  'fleet-op': 5,
+  'zone-apply': 5,
+  'rebind-recreate': 6,
+  reslot: 7,
+  'datastore-reset': 8,
+};
+
 export const StackKnobSchema = z.object({
+  path: z
+    .string()
+    .describe(
+      'Canonical Nix path — the one that resolves in `devenv eval` and the one BROKKR_CFG_ derives its variable name from. The key for every write.',
+    ),
   env: z.string(),
   label: z.string(),
-  default: z.string(),
+  default: z
+    .string()
+    .nullable()
+    .describe('Pre-override value; null when the option declares none, which is not an empty string'),
   kind: z.enum(['text', 'select', 'number', 'bool']),
   options: z.array(z.string()).optional(),
   group: z.string().describe('UI sub-section (Logging, Workers, URLs, …)'),
   danger: z.boolean().optional().describe('Render the field in red — toggling it can break the stack'),
   info: z.string().optional().describe('Tooltip shown in an ⓘ bubble next to the field'),
+  source: z
+    .enum(['nix', 'derived', 'lab'])
+    .optional()
+    .describe(
+      "Where `default` came from: 'nix' = the pre-override value the Nix knob catalog publishes, 'derived' = recomputed by the control center from a newer identity/origin edit the eval has not seen yet, 'lab' = the catalog declares no value for this knob",
+    ),
+  pinnedBy: z
+    .string()
+    .optional()
+    .describe(
+      'Environment variable holding this knob outside the overlay. While set, the field is not editable: the server drops a write to it into `rejected[]` rather than writing an override the pin would outrank',
+    ),
+  writable: z
+    .boolean()
+    .describe(
+      'A typed writer owns this path, so a save can persist it. Derived from the writer rather than from the catalog `editable` flag, because the two disagree for stack.slot.',
+    ),
 });
+export const ConfigTreeEntrySchema = z.object({
+  path: z
+    .string()
+    .describe(
+      'Canonical Nix path — `stackDefaults.hub.LOG_LEVEL`, `ports.postgres`, `lan.expose`. It resolves in `devenv eval`, it is the key putStackConfig writes, and BROKKR_CFG_ derives its variable name from it by replacing each dot with a double underscore.',
+    ),
+  label: z.string().describe('Human name for the knob, declared beside the option in Nix'),
+  group: z.string().describe('UI sub-section the knob declares (Datastores, Logging, Fleet, …)'),
+  description: z
+    .string()
+    .describe('Why the knob exists, written against the code that consumes it — the same text the editor shows'),
+  value: z
+    .string()
+    .nullable()
+    .describe(
+      "Effective value as a string: the override where one is set, else the pre-override default. A secret reads as '***' and its real value is never sent. Null means the knob is declared and unset, which is not the same as an empty string.",
+    ),
+  default: z
+    .string()
+    .nullable()
+    .describe('Pre-override value; null when the option declares none. A value differing from it is an override.'),
+  overridden: z
+    .boolean()
+    .nullable()
+    .describe(
+      'Whether the effective value differs from the default. Null means it cannot be told apart — render the reason, never `default`.',
+    ),
+  valueDigest: z
+    .string()
+    .optional()
+    .describe(
+      'Comparison-only fingerprint of a secret value (sha256 prefix plus length). Present only for a secret, so an overridden secret is detectable without either value leaving the host.',
+    ),
+  defaultDigest: z.string().optional().describe('The same fingerprint for the default, for the same comparison'),
+  writable: z
+    .boolean()
+    .describe('A typed writer owns this path. A false here means the UI must show the value and offer no control.'),
+  kind: z
+    .enum(['text', 'select', 'number', 'bool', 'port'])
+    .describe('Widget the option type implies. Derived from the option, never declared beside it twice'),
+  choices: z.array(z.string()).describe('Allowed values for a select, empty for every other kind'),
+  danger: z.boolean().describe('Changing it can break the stack, so the field is marked whatever else it says'),
+  applyClass: ApplyClassSchema.nullable().describe(
+    'What applying a change to this path costs. It never decides editability — `writable` above is the only editability signal. Null means no rule owns the path, which the config-reference generator refuses for a writable knob.',
+  ),
+  definedIn: z
+    .array(z.string())
+    .describe(
+      'Repo-relative files the Nix module system attributes this value to — real definition sites, never a scan of file text',
+    ),
+  pinnedBy: z
+    .string()
+    .optional()
+    .describe('Environment variable holding this path outside the overlay; absent when nothing pins it'),
+  secret: z.boolean().describe('The knob is declared sensitive, so `value` above is masked'),
+});
+export type ConfigTreeEntry = z.infer<typeof ConfigTreeEntrySchema>;
+
+export const RejectedEntrySchema = z.object({
+  path: z.string().describe('Canonical path the save did not write'),
+  reason: z
+    .enum([
+      'not-catalogued',
+      'no-writer',
+      'pinned',
+      'not-coercible',
+      'slot-move-drops-entries',
+      'no-overlay-line',
+      'tombstoned',
+    ])
+    .describe('Why it was dropped, so the UI names the cause rather than only the key'),
+  detail: z.string().optional().describe('The variable holding a pinned path, or the kind a value failed to coerce to'),
+});
+export type RejectedEntry = z.infer<typeof RejectedEntrySchema>;
+
+export const StackPendingSchema = z.object({
+  seeded: z
+    .boolean()
+    .describe('False when the devenv eval seed failed. Every count below then reads null rather than zero.'),
+  savedNotApplied: z
+    .object({
+      paths: z.array(z.string()).describe('Canonical paths written to the overlay that the running stack has not read'),
+      classes: z.array(ApplyClassSchema).describe('Distinct apply classes those paths declare'),
+    })
+    .describe('Work already persisted and still waiting on an apply action'),
+  strongestClass: ApplyClassSchema.nullable().describe(
+    'Highest-ranked class among savedNotApplied, or null when clean',
+  ),
+  rebindArmed: z
+    .boolean()
+    .describe('A port or lan.expose change armed the recreate latch, so a plain reload cannot pick it up'),
+  restart: RestartStateSchema.describe('The detached-restart marker, so a failed or stale restart never reads as idle'),
+  resetRequired: z
+    .array(z.string())
+    .describe('Paths whose change needs a datastore reset. The reinit op performs one, behind a destructive gate.'),
+  zoneSteps: z
+    .array(ZoneStepSchema)
+    .describe(
+      'Ordered steps the zone-seed op runs, for the row disclosure. Empty when no zone work is outstanding. Held server-side so the plan survives a page refresh.',
+    ),
+  unknownSince: z
+    .string()
+    .nullable()
+    .describe(
+      'ISO timestamp of an overlay write this control center did not make, taken while it was running — so `savedNotApplied` cannot be trusted and a redeploy is the safe move. Null when this control center wrote every change since it started. A write made before it started is not reported, because that case is indistinguishable from a stack brought up with those values.',
+    ),
+});
+export type StackPending = z.infer<typeof StackPendingSchema>;
+
+export const ConfigTreeSchema = z.object({
+  seeded: z
+    .boolean()
+    .describe('False when the devenv eval seed failed: `entries` is empty rather than a guess at the live config'),
+  entries: z.array(ConfigTreeEntrySchema).describe('Every knob the Nix module system declares, sorted by path'),
+});
+export type ConfigTree = z.infer<typeof ConfigTreeSchema>;
+
 export const StackPortSchema = z.object({ label: z.string(), value: z.string(), note: z.string().optional() });
 export const ServicePortSchema = z.object({
   key: z.string().describe('config.ports key (nginx, postgres, redis, redfish, vbmc, thanos*)'),
+  path: z.string().describe('Canonical Nix path — `ports.<key>`, the key a write uses'),
+  group: z
+    .string()
+    .describe(
+      'Topic the port declares in Nix (Datastores, Boot/cache, Email, Observability, Fleet), so the grid groups',
+    ),
   label: z.string(),
   value: z.number().int().min(1).max(65535),
   info: z.string().optional().describe('Tooltip — e.g. apply caveats for vbmc/redfish'),
@@ -215,7 +415,14 @@ export const StackConfigSchema = z.object({
   ports: z.object({ hub: z.array(StackPortSchema), spoke: z.array(StackPortSchema) }),
   servicePorts: z.array(ServicePortSchema).describe('Editable datastore/service ports (effective values)'),
   values: z.object({ hub: z.record(z.string(), z.string()), spoke: z.record(z.string(), z.string()) }),
-  counts: StackCountsSchema,
+  topology: z
+    .object({
+      zones: z.number().int().nonnegative().describe('Zones the fleet declares, counted from the eval'),
+      bridges: z.number().int().nonnegative().describe('Bridge processes across every zone, counted from the eval'),
+    })
+    .describe(
+      'Measured, not requested. It replaces stackCounts, which was an editable stepper nothing consumed: the number that decides spoke count is fleet.zones.<z>.bridges.',
+    ),
   slot: StackSlotSchema,
   identity: IdentityConfigSchema,
   osLayerCache: OsLayerCacheSchema,

@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { registerOperation } from '../../dispatch/registry';
-import { assertTargetPathSafe } from './targetPath';
+import { assertTargetPathSafe } from './target-path';
 
 async function writeTextFile(targetPath: string, relativePath: string, content: string, mode: number): Promise<void> {
   const full = join(targetPath, relativePath);

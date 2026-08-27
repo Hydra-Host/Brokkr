@@ -6,7 +6,16 @@ from __future__ import annotations
 from local.config import get_settings
 from local.derived import effective_bmc_ip, sim_device_uuid
 from local.schema import require_fleet
-from local.seed.interfaces import DATA_NIC, IPMI_NIC, emit_interface, emit_ip_delete, emit_ip_on_interface
+from local.seed.interfaces import (
+    DATA_NIC,
+    IPMI_NIC,
+    emit_device_name_clear,
+    emit_device_zone_move_prep,
+    emit_interface,
+    emit_ip_delete,
+    emit_ip_on_interface,
+    emit_role_trigger,
+)
 from local.sqlemit import header, logs_to_stderr, q
 from local.zones import zone_uuid
 
@@ -19,7 +28,13 @@ def generate() -> str:
     fleet = require_fleet()
     bmc_cidr = fleet.network.bmc_cidr
 
+    # Bracket the write-once trigger only when this generator has a device to write: an empty run
+    # would take ACCESS EXCLUSIVE on Device for nothing.
+    has_commissioning = any(not n.seed_as_server for n in fleet.nodes)
+
     out: list[str] = [header("51-commissioning-devices.py"), "BEGIN;\n"]
+    if has_commissioning:
+        out.append(emit_role_trigger(on=False))
 
     for i, n in enumerate(fleet.nodes):
         if n.seed_as_server:
@@ -31,6 +46,8 @@ def generate() -> str:
         ipmi = effective_bmc_ip(n, bmc_cidr, i)
 
         out.append(f"-- {name} id={device_id} (role=null commissioning, dhcp) ipmi={ipmi}")
+        out.append(emit_device_name_clear(device_id, zone_id, name, org))
+        out.append(emit_device_zone_move_prep(device_id, zone_id))
         out.append(
             f"""INSERT INTO "Device" (
     id, name, status, role, "deviceType",
@@ -49,7 +66,7 @@ ON CONFLICT (id) DO UPDATE SET
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId", "organizationId" = EXCLUDED."organizationId",
     architecture = EXCLUDED.architecture, "netplanOverride" = NULL,
-    "updatedAt" = NOW();"""
+    "deletedAt" = NULL, "updatedAt" = NOW();"""
         )
         out.append(
             f"""DO $$ BEGIN
@@ -79,6 +96,8 @@ ON CONFLICT ("deviceId") DO UPDATE SET
         out.extend(emit_ip_on_interface(device_id, IPMI_NIC, ipmi, org))
         out.append("")
 
+    if has_commissioning:
+        out.append(emit_role_trigger(on=True))
     out.append("COMMIT;")
     return "\n".join(out) + "\n"
 

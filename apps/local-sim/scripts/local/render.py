@@ -14,7 +14,7 @@ from local.derived import (
     node_uuid,
     node_wwn,
 )
-from local.host_os import host_os
+from local.host_os import domain_type, host_os
 from local.pxe import kernel_ipxe_path
 from local.schema import Fleet, Node
 
@@ -97,6 +97,7 @@ def render_domain(
     emulator_path: str | None = None,
     host_os_override: str | None = None,
     host_arch_override: str | None = None,
+    accel_override: str | None = None,
 ) -> str:
     """Render a libvirt domain XML for one sim node (PXE-boot variant).
 
@@ -104,6 +105,8 @@ def render_domain(
     """
     s = get_settings()
     h_os = host_os_override if host_os_override is not None else host_os()
+    h_arch = host_arch_override if host_arch_override is not None else _detect_arch()
+    accel = accel_override if accel_override is not None else _detect_accel()
     # Extra disks split by transport: ssd/hdd → virtio-scsi <disk>; nvme → emulated NVMe via
     # qemu:commandline (libvirt has no bus='nvme'). Overlay name uses index i to match fleet.py.
     scsi_disks: list[dict] = []
@@ -157,10 +160,14 @@ def render_domain(
         "edk2_vars_template_path": s.paths.edk2_vars_template_path,
         "nvram_path": f"{s.state.nvram_root}/{node.name}.fd",
         "host_os": h_os,
-        "host_arch": host_arch_override or _detect_arch(),
-        "accel": "hvf" if h_os == "macos" else "kvm",
-        "domain_arch": "aarch64" if (host_arch_override or _detect_arch()) == "arm64" else "x86_64",
-        "machine": "virt" if (host_arch_override or _detect_arch()) == "arm64" else "q35",
+        "host_arch": h_arch,
+        "accel": accel,
+        "domain_type": domain_type(accel),
+        # TCG cannot pass the host CPU through, and on aarch64 `maximum` is what keeps -M virt off
+        # its 32-bit cortex-a15 default, which cannot run the aarch64 EDK2 firmware.
+        "cpu_mode": "maximum" if accel == "tcg" else "host-passthrough",
+        "domain_arch": "aarch64" if h_arch == "arm64" else "x86_64",
+        "machine": "virt" if h_arch == "arm64" else "q35",
     }
     return _env(templates_dir).get_template("domain.xml.j2").render(**ctx)
 
@@ -170,6 +177,13 @@ def _detect_arch() -> str:
     from local.host_os import host_arch
 
     return host_arch()
+
+
+def _detect_accel() -> str:
+    """Wrap host_os.detect_accel() so one monkeypatch neutralizes the libvirt probe."""
+    from local.host_os import detect_accel
+
+    return detect_accel()
 
 
 def render_bootptab_section(fleet: Fleet, slot: int) -> str:

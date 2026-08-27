@@ -32,7 +32,9 @@ task down
 
 # each sibling's own fleet down removes its bootptab section; sweep stragglers for stacks
 # that were already dead when we got here. no-op without passwordless sudo.
-if sudo -n true 2>/dev/null; then
+# probe the helper, not the allowlisted /usr/bin/true: a sibling checkout's drop-in allowlists that
+# too while pinning a different helper, so the probe would pass and the call below prompt.
+if sudo -n "${LOCAL_SIM_PRIV_BIN:?LOCAL_SIM_PRIV_BIN unset}" noop 2>/dev/null; then
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
     slot=$(printf '%s' "$entry" | json_get slot)

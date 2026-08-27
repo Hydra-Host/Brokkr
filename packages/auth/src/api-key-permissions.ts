@@ -9,7 +9,12 @@ export type ApiKeyPermissionScope =
 
 // Mutating api-key actions are a standing escalation path if a scoped key leaks, so they are never
 // delegable; `api-key:read` carries no such risk and stays delegable.
-const NON_DELEGABLE_API_KEY_ACTIONS = new Set(['api-key:create', 'api-key:update', 'api-key:delete']);
+const NON_DELEGABLE_API_KEY_ACTIONS = new Set([
+  'api-key:create',
+  'api-key:update',
+  'api-key:delete',
+  'admin.deployment-keys:create',
+]);
 
 export function isGrantableApiKeyPermission(permission: string): boolean {
   return (

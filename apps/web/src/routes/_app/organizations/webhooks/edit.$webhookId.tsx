@@ -23,6 +23,7 @@ import { FormInput } from '@repo/ui/form/form-input';
 import { FormMultiSelect } from '@repo/ui/form/form-multi-select';
 import { FormTextarea } from '@repo/ui/form/form-textarea';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
+import { unwrapErrorMessage } from '@repo/utils';
 import { tsr } from '~/lib/api';
 
 export const Route = createFileRoute('/_app/organizations/webhooks/edit/$webhookId')({
@@ -107,11 +108,10 @@ function EditWebhookPage() {
         await queryClient.invalidateQueries({ queryKey: ['webhook', webhookId] });
         navigate({ to: '/organizations/webhooks' });
       } else {
-        const body = res.body as { message?: string; error?: { message?: string } };
-        setError(body?.message || body?.error?.message || 'Failed to update webhook');
+        setError(unwrapErrorMessage(res, 'Failed to update webhook'));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to update webhook. Please try again.';
+      const message = unwrapErrorMessage(err, 'Failed to update webhook. Please try again.');
       setError(message);
     }
   };

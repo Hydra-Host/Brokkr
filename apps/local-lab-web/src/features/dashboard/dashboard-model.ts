@@ -33,6 +33,7 @@ export const RUN_STATUS_TEXT: Record<Run['status'], string> = {
   passed: 'text-status-online',
   failed: 'text-status-offline',
   cancelled: 'text-text-dim',
+  orphaned: 'text-status-warning',
 };
 
 export const RUN_STATUS_DOT: Record<Run['status'], string> = {
@@ -40,6 +41,7 @@ export const RUN_STATUS_DOT: Record<Run['status'], string> = {
   passed: 'bg-status-online',
   failed: 'bg-status-offline',
   cancelled: 'bg-text-dim',
+  orphaned: 'bg-status-warning',
 };
 
 export const STAGE_DOT: Record<StepState, string> = {

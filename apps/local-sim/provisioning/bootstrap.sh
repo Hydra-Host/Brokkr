@@ -82,6 +82,52 @@ ensure_nix_trusted_user() {
   fi
 }
 
+# Advisory floor, never a gate: this repo does not own the CLI. MUST equal devenv.latestVersion
+# in devenv.nix — devenv/tests/bootstrap-skip-messages.bats asserts they agree.
+DEVENV_MIN_VERSION="2.2.2"
+
+# _version_lt A B — true when A sorts strictly below B, over the first three numeric fields.
+# awk rather than `sort -V`, which is a GNU extension a stock macOS host does not have.
+_version_lt() {
+  awk -v a="$1" -v b="$2" '
+    BEGIN {
+      na = split(a, x, "."); nb = split(b, y, ".")
+      for (i = 1; i <= 3; i++) {
+        av = (i <= na) ? x[i] + 0 : 0
+        bv = (i <= nb) ? y[i] + 0 : 0
+        if (av < bv) exit 0
+        if (av > bv) exit 1
+      }
+      exit 1
+    }'
+}
+
+# _devenv_version — the bare version out of `devenv 2.2.2 (aarch64-darwin)`. Empty when the output
+# does not match that shape, which the caller reads as "cannot tell", never as "too old".
+_devenv_version() {
+  devenv --version 2>/dev/null | awk '{print $2}' | grep -Eo '^[0-9]+(\.[0-9]+)*' || true
+}
+
+# _check_devenv_version — report, never upgrade. The host's devenv comes from this bootstrap's `nix
+# profile`, from home-manager, or from nix-darwin, and only the first is ours to touch; rewriting a
+# profile the user manages declaratively is worse than the skew it fixes.
+_check_devenv_version() {
+  local have
+  have="$(_devenv_version)"
+  if [ -z "$have" ]; then
+    echo "   note: no version in \`devenv --version\`; skipping the >=$DEVENV_MIN_VERSION check"
+    return 0
+  fi
+  if _version_lt "$have" "$DEVENV_MIN_VERSION"; then
+    echo "⚠ devenv $have is below the $DEVENV_MIN_VERSION this repo pins (devenv.latestVersion in devenv.nix)."
+    echo "   the shell still loads, but nothing below the floor is tested. use whichever installed it:"
+    echo "     nix profile upgrade devenv     # if this bootstrap installed it"
+    echo "     home-manager switch            # or rebuild your home-manager / nix-darwin flake"
+    return 0
+  fi
+  echo "✓ devenv $have satisfies the >=$DEVENV_MIN_VERSION floor"
+}
+
 install_nix_and_direnv() {
   # announce the DECISION, not the intention: printing a header and then silently doing nothing
   # reads as a stall, which is exactly how a long bootstrap gets misread as a hang
@@ -112,6 +158,9 @@ install_nix_and_direnv() {
     echo "==> installing devenv (via nix profile)"
     nix profile install nixpkgs#devenv
   fi
+  # outside the branches: the skip path is where an old CLI survives, and the install path
+  # resolves `nixpkgs` through the unlocked registry, which can trail the floor too.
+  _check_devenv_version
 }
 
 # install_docker_macos — Docker Desktop via the Brewfile cask. The one host dep Nix

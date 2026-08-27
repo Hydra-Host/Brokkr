@@ -76,6 +76,7 @@ describe('API-key permission storage', () => {
     'api-key:delete',
     'organization:manage-owners',
     'organization:manage-api-keys',
+    'admin.deployment-keys:create',
   ])('keeps privileged permission %s out of API-key scopes', (permission) => {
     expect(isGrantableApiKeyPermission(permission)).toBe(false);
   });

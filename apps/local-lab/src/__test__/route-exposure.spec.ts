@@ -16,7 +16,6 @@ import { contract } from '../contract';
 import { DatastoreController } from '../datastore/datastore.controller';
 import { closeDb } from '../db/db';
 import { AuditStore } from '../ledger/audit-store';
-import { DocsController } from '../docs/docs.controller';
 import { FleetController } from '../fleet/fleet.controller';
 import { LayersController } from '../layers/layers.controller';
 import { QueuesController } from '../queues/queues.controller';
@@ -27,11 +26,11 @@ import { StatusController } from '../status/status.controller';
 import { StorageController } from '../storage/storage.controller';
 import { SudoController } from '../sudo/sudo.controller';
 import { TestController } from '../test/test.controller';
+import { ZonesController } from '../zones/zones.controller';
 
 const CONTROLLERS = [
   BuildController,
   DatastoreController,
-  DocsController,
   FleetController,
   LayersController,
   QueuesController,
@@ -42,6 +41,7 @@ const CONTROLLERS = [
   StorageController,
   SudoController,
   TestController,
+  ZonesController,
 ];
 
 const TOKEN_OK_BY_DESIGN: Record<string, string> = {

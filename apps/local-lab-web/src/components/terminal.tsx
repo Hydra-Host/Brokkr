@@ -10,6 +10,7 @@ import { tsr } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
 import { withLabToken } from '@/lib/lab-token';
 import { MAX_STREAM_RETRIES, STREAM_STABLE_MS } from '@/lib/reconnect';
+import { usePoll } from '@/lib/use-poll';
 
 const TERM_OPTS = {
   fontSize: 13,
@@ -162,7 +163,7 @@ export function HistoryConsole({ node }: { node: string }) {
   const q = tsr.getMachineConsoleLog.useQuery({
     queryKey: ['console-log', node],
     queryData: { params: { name: node }, query: { tail_bytes: HISTORY_TAIL_BYTES } },
-    refetchInterval: following ? 1500 : false,
+    refetchInterval: usePoll(following ? 1500 : false),
   });
   // On a failed poll `body` is the STALE last-good 200 — guard writes on `isError`, not just on `body`.
   const body = q.data?.status === 200 ? q.data.body : null;

@@ -5,12 +5,12 @@ import { useMemo } from 'react';
 
 import type { ZoneListItem } from '@repo/api-client';
 
+import { ServerDataTable } from '@repo/domain-ui/components/server-data-table';
+import type { ServerColumnDef } from '@repo/domain-ui/hooks/use-server-table';
+import { useServerTable } from '@repo/domain-ui/hooks/use-server-table';
 import { Button } from '@repo/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
-import { ServerDataTable } from '@repo/ui/components/server-data-table';
 import type { FilterFieldConfig } from '@repo/ui/hooks/use-filters';
-import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
-import { useServerTable } from '@repo/ui/hooks/use-server-table';
 
 import { ServerCommissionIcon } from '~/components/server-commission-icon';
 import { tsr } from '~/lib/api';

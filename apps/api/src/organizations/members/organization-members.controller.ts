@@ -1,6 +1,7 @@
 import { Controller } from '@nestjs/common';
 import { contract } from '@repo/api-client';
 import { TsRestHandler, tsRestHandler } from '@ts-rest/nest';
+import { AuditAction } from 'src/event-log/audit-action.decorator';
 import { OrganizationMembershipsService } from './organization-members.service';
 
 @Controller()
@@ -29,6 +30,7 @@ export class OrganizationMembershipsController {
     });
   }
 
+  @AuditAction({ actionKey: 'member.role-changed', resource: 'member', action: 'change-role' })
   @TsRestHandler(contract.updateOrganizationMemberRole)
   async updateOrganizationMemberRole() {
     return tsRestHandler(contract.updateOrganizationMemberRole, async ({ params, body }) => {
@@ -43,6 +45,7 @@ export class OrganizationMembershipsController {
     });
   }
 
+  @AuditAction({ actionKey: 'member.removed', resource: 'member', action: 'delete' })
   @TsRestHandler(contract.deleteOrganizationMembership)
   async deleteOrganizationMembership() {
     return tsRestHandler(contract.deleteOrganizationMembership, async ({ params }) => {

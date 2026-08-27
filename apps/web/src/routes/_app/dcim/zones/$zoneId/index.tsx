@@ -27,6 +27,7 @@ import type {
   ZoneVrrpPrefixSummary,
 } from '@repo/api-client';
 
+import { ServerDataTable } from '@repo/domain-ui/components/server-data-table';
 import { Alert, AlertDescription, AlertTitle } from '@repo/ui/components/alert';
 import {
   AlertDialog,
@@ -56,16 +57,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@repo/ui/components/dropdown-menu';
-import { ServerDataTable } from '@repo/ui/components/server-data-table';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { Switch } from '@repo/ui/components/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@repo/ui/components/tooltip';
 
-import { ZoneRedisCredentialDialog } from '@repo/ui/components/zone-redis-credential-dialog';
+import { ZoneRedisCredentialDialog } from '@repo/domain-ui/components/zone-redis-credential-dialog';
+import type { ServerColumnDef } from '@repo/domain-ui/hooks/use-server-table';
+import { useServerTable } from '@repo/domain-ui/hooks/use-server-table';
 import { useCopyToClipboard } from '@repo/ui/hooks/use-copy-to-clipboard';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
-import { useServerTable } from '@repo/ui/hooks/use-server-table';
 import { formatPhoneNumber } from '@repo/utils';
 import { tsr } from '~/lib/api';
 

@@ -5,3 +5,8 @@ export interface PluginDb {
   $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>;
   $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number>;
 }
+
+/** Prisma interactive transactions omit `$transaction` on the callback client. */
+export type PluginTransactionalDb = PluginDb & {
+  $transaction<T>(fn: (tx: PluginDb) => Promise<T>): Promise<T>;
+};

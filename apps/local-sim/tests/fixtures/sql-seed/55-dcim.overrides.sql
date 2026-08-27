@@ -459,7 +459,7 @@ ON CONFLICT ("deviceId", name) DO UPDATE SET
     type = EXCLUDED.type, "maximumDraw" = EXCLUDED."maximumDraw", "allocatedDraw" = EXCLUDED."allocatedDraw",
     "updatedAt" = NOW();
 
--- Switch interfaces (mgmt0 + swp1..swp5)
+-- Switch interfaces (mgmt0 + swp1..swp4 + swp47/swp48)
 INSERT INTO "Interface" (id, name, type, enabled, "mgmtOnly", speed, "deviceId", "updatedAt")
 VALUES ('38c3dae9-4826-597a-9a14-7e163f5d6dde', 'mgmt0', 'ETHERNET_1G'::"InterfaceType", true, true, 1000,
     'fb26b01a-15fd-5ff3-8a28-9611a46aceb6', NOW())
@@ -486,7 +486,12 @@ VALUES ('11f7a7ae-e4f7-5178-9d0b-c04da8504160', 'swp4', 'ETHERNET_25G'::"Interfa
 ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
     type = EXCLUDED.type, "mgmtOnly" = EXCLUDED."mgmtOnly", speed = EXCLUDED.speed, "updatedAt" = NOW();
 INSERT INTO "Interface" (id, name, type, enabled, "mgmtOnly", speed, "deviceId", "updatedAt")
-VALUES ('fa920d25-c947-55b6-bf78-f66d3dd9ad37', 'swp5', 'ETHERNET_25G'::"InterfaceType", true, false, 25000,
+VALUES ('7f03778e-eb03-50e5-9cd1-6c01fddc54c3', 'swp47', 'ETHERNET_25G'::"InterfaceType", true, false, 25000,
+    'fb26b01a-15fd-5ff3-8a28-9611a46aceb6', NOW())
+ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
+    type = EXCLUDED.type, "mgmtOnly" = EXCLUDED."mgmtOnly", speed = EXCLUDED.speed, "updatedAt" = NOW();
+INSERT INTO "Interface" (id, name, type, enabled, "mgmtOnly", speed, "deviceId", "updatedAt")
+VALUES ('8f687429-85af-50fe-949c-b00cb151ee90', 'swp48', 'ETHERNET_25G'::"InterfaceType", true, false, 25000,
     'fb26b01a-15fd-5ff3-8a28-9611a46aceb6', NOW())
 ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
     type = EXCLUDED.type, "mgmtOnly" = EXCLUDED."mgmtOnly", speed = EXCLUDED.speed, "updatedAt" = NOW();
@@ -559,6 +564,20 @@ ON CONFLICT ("deviceId", name) DO UPDATE SET
     type = EXCLUDED.type, "rearPortId" = EXCLUDED."rearPortId", "updatedAt" = NOW();
 
 -- Cables
+DELETE FROM "Cable" c
+WHERE c.id NOT IN ('83015101-4204-52be-9fc8-cbf28596a4ae', 'ad01f9cd-f9be-5f34-a229-dfb1a859633d',
+    '990730aa-45f5-5574-9033-6764153bb81c', 'e1b18c50-c16a-55cf-82e6-f257070c8edf',
+    '89d6b2a5-5f8b-547c-8d69-6289b40e0df4', '25878bb1-612e-5d46-b505-184a692ca996',
+    '3d34c750-bb37-5f48-a5cf-3f5c4321ab98', '1d76dbb6-25ec-5bfd-82ad-4f45c224acc2',
+    '61210ba9-0a33-5bb4-8af4-abe4baa044c5', 'da1eee97-d353-58ab-b69b-4f1619296808',
+    'cb0f23f6-b402-5c17-ba0b-88a71e0766b8')
+    AND EXISTS (
+        SELECT 1 FROM "CableTermination" ct
+        JOIN "Interface" i ON i.id = ct."terminationId"
+        WHERE ct."cableId" = c.id
+            AND ct."terminationType" = 'INTERFACE'::"CableTerminationType"
+            AND i."deviceId" = 'fb26b01a-15fd-5ff3-8a28-9611a46aceb6'
+    );
 INSERT INTO "Cable" (id, type, status, label, "updatedAt")
 VALUES ('83015101-4204-52be-9fc8-cbf28596a4ae', 'DAC'::"CableType", 'CONNECTED'::"CableStatus",
     'cpu-1 eth0 → sim-tor-1 swp1', NOW())
@@ -653,7 +672,7 @@ ON CONFLICT ("cableId", "cableSide") DO UPDATE SET
     "terminationType" = EXCLUDED."terminationType", "terminationId" = EXCLUDED."terminationId";
 INSERT INTO "Cable" (id, type, status, label, "updatedAt")
 VALUES ('3d34c750-bb37-5f48-a5cf-3f5c4321ab98', 'DAC'::"CableType", 'CONNECTED'::"CableStatus",
-    'cpu-4 eth0 → sim-tor-1 swp3', NOW())
+    'cpu-4 eth0 → sim-tor-1 swp4', NOW())
 ON CONFLICT (id) DO UPDATE SET
     type = EXCLUDED.type, status = EXCLUDED.status, label = EXCLUDED.label, "updatedAt" = NOW();
 INSERT INTO "CableTermination" (id, "cableSide", "terminationType", "terminationId", "cableId")
@@ -664,7 +683,7 @@ ON CONFLICT ("cableId", "cableSide") DO UPDATE SET
     "terminationType" = EXCLUDED."terminationType", "terminationId" = EXCLUDED."terminationId";
 INSERT INTO "CableTermination" (id, "cableSide", "terminationType", "terminationId", "cableId")
 VALUES ('9d3f788a-18b0-5247-b299-f6ee5706cbbf', 'B'::"CableSide", 'INTERFACE'::"CableTerminationType",
-    '50a53190-f25c-518a-8ebd-7614c617104c', '3d34c750-bb37-5f48-a5cf-3f5c4321ab98')
+    '11f7a7ae-e4f7-5178-9d0b-c04da8504160', '3d34c750-bb37-5f48-a5cf-3f5c4321ab98')
 ON CONFLICT ("cableId", "cableSide") DO UPDATE SET
     "terminationType" = EXCLUDED."terminationType", "terminationId" = EXCLUDED."terminationId";
 INSERT INTO "Cable" (id, type, status, label, "updatedAt")
@@ -699,7 +718,7 @@ ON CONFLICT ("cableId", "cableSide") DO UPDATE SET
     "terminationType" = EXCLUDED."terminationType", "terminationId" = EXCLUDED."terminationId";
 INSERT INTO "Cable" (id, type, status, label, "updatedAt")
 VALUES ('da1eee97-d353-58ab-b69b-4f1619296808', 'SMF_OS2'::"CableType", 'CONNECTED'::"CableStatus",
-    'sim-patch-1 FP-01 → sim-tor-1 swp4', NOW())
+    'sim-patch-1 FP-01 → sim-tor-1 swp47', NOW())
 ON CONFLICT (id) DO UPDATE SET
     type = EXCLUDED.type, status = EXCLUDED.status, label = EXCLUDED.label, "updatedAt" = NOW();
 INSERT INTO "CableTermination" (id, "cableSide", "terminationType", "terminationId", "cableId")
@@ -709,12 +728,12 @@ ON CONFLICT ("cableId", "cableSide") DO UPDATE SET
     "terminationType" = EXCLUDED."terminationType", "terminationId" = EXCLUDED."terminationId";
 INSERT INTO "CableTermination" (id, "cableSide", "terminationType", "terminationId", "cableId")
 VALUES ('b7c15c9f-f142-58b1-b67b-6a9d07c014e4', 'B'::"CableSide", 'INTERFACE'::"CableTerminationType",
-    '11f7a7ae-e4f7-5178-9d0b-c04da8504160', 'da1eee97-d353-58ab-b69b-4f1619296808')
+    '7f03778e-eb03-50e5-9cd1-6c01fddc54c3', 'da1eee97-d353-58ab-b69b-4f1619296808')
 ON CONFLICT ("cableId", "cableSide") DO UPDATE SET
     "terminationType" = EXCLUDED."terminationType", "terminationId" = EXCLUDED."terminationId";
 INSERT INTO "Cable" (id, type, status, label, "updatedAt")
 VALUES ('cb0f23f6-b402-5c17-ba0b-88a71e0766b8', 'SMF_OS2'::"CableType", 'CONNECTED'::"CableStatus",
-    'sim-patch-1 RP-02 → sim-tor-1 swp5', NOW())
+    'sim-patch-1 RP-02 → sim-tor-1 swp48', NOW())
 ON CONFLICT (id) DO UPDATE SET
     type = EXCLUDED.type, status = EXCLUDED.status, label = EXCLUDED.label, "updatedAt" = NOW();
 INSERT INTO "CableTermination" (id, "cableSide", "terminationType", "terminationId", "cableId")
@@ -724,7 +743,7 @@ ON CONFLICT ("cableId", "cableSide") DO UPDATE SET
     "terminationType" = EXCLUDED."terminationType", "terminationId" = EXCLUDED."terminationId";
 INSERT INTO "CableTermination" (id, "cableSide", "terminationType", "terminationId", "cableId")
 VALUES ('4d9cb33c-937c-56f6-8b17-8d291076b31c', 'B'::"CableSide", 'INTERFACE'::"CableTerminationType",
-    'fa920d25-c947-55b6-bf78-f66d3dd9ad37', 'cb0f23f6-b402-5c17-ba0b-88a71e0766b8')
+    '8f687429-85af-50fe-949c-b00cb151ee90', 'cb0f23f6-b402-5c17-ba0b-88a71e0766b8')
 ON CONFLICT ("cableId", "cableSide") DO UPDATE SET
     "terminationType" = EXCLUDED."terminationType", "terminationId" = EXCLUDED."terminationId";
 

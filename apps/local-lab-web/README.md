@@ -17,26 +17,33 @@ pnpm --filter local-lab-web dev    # vite
 
 ## Routes
 
-Fourteen routes, grouped the way the nav rail groups them (`SECTIONS` in `src/components/app-sidebar.tsx` is the authority):
+Grouped the way the nav rail groups them. `SECTIONS` in `src/components/app-sidebar.tsx` is the authority, and `src/lib/doc-coverage.spec.tsx` fails when this table drifts from it.
 
-| Group           | Route              | What it does                                                            |
-| --------------- | ------------------ | ----------------------------------------------------------------------- |
-| **Environment** | `/`                | Overview — bring-up pipeline, init progress, stacks, fleet, recent runs |
-|                 | `/stack`           | Process supervision, stack ops, seed, live logs                         |
-|                 | `/datastore`       | Postgres, Redis, Thanos and BullMQ queue explorers (tab in the URL)     |
-|                 | `/hub`             | Read-only hub views: lifecycle jobs, webhooks, device tokens            |
-|                 | `/storage`         | Artifacts the spoke serves, with verify / resync / wipe                 |
-|                 | `/fleet`           | Per-VM power, serial console, topology                                  |
-| **Testing**     | `/testing`         | Pick a scenario and launch a run                                        |
-|                 | `/results`         | Finished runs: step tree, timings, attachments                          |
-| **Config**      | `/settings`        | Stack settings, Fleet Builder, layers, this checkout's slot             |
-|                 | `/docs`            | The lab API reference                                                   |
-|                 | `/audit`           | Every mutation performed and every one refused                          |
-| **Wiki**        | `/getting-started` | The self-hosting guide                                                  |
-|                 | `/wiki`            | The glossary index                                                      |
-|                 | `/wiki/$slug`      | A single wiki entry                                                     |
+| Group             | Route              | What it does                                                            |
+| ----------------- | ------------------ | ----------------------------------------------------------------------- |
+| **Environment**   | `/`                | Overview — bring-up pipeline, init progress, stacks, fleet, recent runs |
+|                   | `/stack`           | Process supervision, stack ops, seed, live logs                         |
+|                   | `/datastore`       | Postgres, Redis, Thanos and BullMQ queue explorers (tab in the URL)     |
+|                   | `/hub`             | Read-only hub views: lifecycle jobs, webhooks, device tokens            |
+|                   | `/storage`         | Artifacts the bridge serves, with verify / resync / wipe                |
+|                   | `/fleet`           | Per-VM power and serial console                                         |
+|                   | `/layers`          | The OS-layer release manifest, its graph, and the layer cache           |
+| **Testing**       | `/testing`         | Scenarios — pick one and launch a run                                   |
+|                   | `/results`         | Finished runs: step tree, timings, attachments                          |
+| **Configuration** | `/config`          | Summary — what this stack changed, and where each override came from    |
+|                   | `/config/stack`    | Stack knobs: hub and bridge env, identity, ports, this checkout's slot  |
+|                   | `/config/fleet`    | Fleet nodes — per-node hardware, the networks, and the mode             |
+|                   | `/config/zones`    | Zones & topology — the declared zones, and the live fleet graph         |
+|                   | `/config/advanced` | Advanced — behavioural forks, zone crypto, and the inert knobs          |
+| **Reference**     | `/docs`            | The lab API reference                                                   |
+|                   | `/audit`           | Every mutation performed and every one refused                          |
+|                   | `/getting-started` | Out to the self-hosting guide in the hub docs                           |
+|                   | `/wiki`            | The glossary index                                                      |
+|                   | `/wiki/$slug`      | A single wiki entry                                                     |
 
-The wiki is also where the two guided tours live — an orientation deck and an operations deck. Decks are defined in `src/lib/tour-steps.ts`; a step targets a `data-tour` anchor, and a step that names a tab carries it in `search`.
+`/settings` is a redirect shim to `/config/stack`, kept for old bookmarks. It is not in the nav.
+
+Three guided decks live in `src/lib/tour-steps.ts`: an orientation tour of the cockpit, a **Guided Deploy** that drives the real controls, and an operations walkthrough started from the wiki. A step targets a `data-tour` anchor or an `id`, and a step that names a tab carries it in `search`. `src/lib/tour-anchors.spec.tsx` resolves every selector and route against the app, so a step cannot outlive the element it points at.
 
 ## How it talks to the API
 

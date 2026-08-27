@@ -144,3 +144,61 @@ def test_discovery_prefetch_wraps_spoke_failure_with_context(tmp_path, monkeypat
     node = types.SimpleNamespace(name="cpu-1", arch="arm64")
     with pytest.raises(RuntimeError, match="spoke could not serve"):
         prefetch.prefetch_node_discovery_initrd(node, "dev-1")
+
+
+def _fleet_one_zone():
+    node = types.SimpleNamespace(name="cpu-1", arch="x86_64", zone="sim-zone")
+    return types.SimpleNamespace(nodes=[node], zone_port_ordinal=lambda _z: 0)
+
+
+def test_wait_for_spoke_returns_as_soon_as_the_inventory_answers(monkeypatch):
+    monkeypatch.setattr(prefetch, "zone_endpoint", lambda _o=0: "http://127.0.0.1:8000")
+    calls = []
+    monkeypatch.setattr(prefetch, "_spoke_answers", lambda url: calls.append(url) or True)
+    slept: list[int] = []
+    monkeypatch.setattr(prefetch.time, "sleep", lambda d: slept.append(d))
+
+    assert prefetch.wait_for_spoke(_fleet_one_zone()) is True
+    assert len(calls) == 1
+    assert slept == []
+
+
+def test_wait_for_spoke_gives_up_and_names_the_spoke(monkeypatch):
+    out = _capture_log(monkeypatch)
+    monkeypatch.setattr(prefetch, "zone_endpoint", lambda _o=0: "http://127.0.0.1:8000")
+
+    monkeypatch.setattr(prefetch, "_spoke_answers", lambda _url: False)
+    monkeypatch.setattr(prefetch.time, "sleep", lambda _d: None)
+
+    assert prefetch.wait_for_spoke(_fleet_one_zone(), tries=3, delay=1) is False
+    assert "is the spoke process running?" in out.getvalue()
+
+
+def test_unreachable_spoke_reports_the_spoke_not_the_asset_origin(monkeypatch):
+    out = _capture_log(monkeypatch)
+    monkeypatch.setattr(prefetch, "zone_endpoint", lambda _o=0: "http://127.0.0.1:8000")
+
+    def boom(_url):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(prefetch, "_fetch_inventory", boom)
+
+    prefetch.assert_discovery_images_served(_fleet_one_zone())
+
+    text = out.getvalue()
+    assert "the spoke is not answering" in text
+    assert "DISCOVERY_BASE_URL" not in text
+
+
+def test_spoke_liveness_probe_does_not_use_the_retrying_curl(monkeypatch):
+    seen: list[list[str]] = []
+
+    def fake(*cmd, check: bool = True, capture: bool = False, **kw):
+        seen.append([str(c) for c in cmd])
+        return subprocess.CompletedProcess(seen[-1], 7, stdout="", stderr="")
+
+    monkeypatch.setattr(prefetch, "run", fake)
+
+    assert prefetch._spoke_answers("http://127.0.0.1:8000/api/discovery/inventory") is False
+    assert "--retry" not in seen[0]
+    assert "--max-time" in seen[0] and seen[0][seen[0].index("--max-time") + 1] == "3"

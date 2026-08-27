@@ -2,7 +2,7 @@ import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { registerOperation } from '../../dispatch/registry';
 import { renderLuksLock, renderLuksRekey, renderLuksUnlock, type LuksVolumeRenderInput } from '../../render/luks';
-import { assertTargetPathSafe } from './targetPath';
+import { assertTargetPathSafe } from './target-path';
 
 const SCRIPT_DIR = 'usr/local/bin';
 const SCRIPT_MODE = 0o755;

@@ -1,26 +1,12 @@
 import { Badge } from '@repo/ui/components/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Skeleton } from '@repo/ui/components/skeleton';
+import { getIpamStatusBadgeVariant } from '@repo/utils';
 import { createFileRoute } from '@tanstack/react-router';
 import { PrefixDhcpSummaryCard } from '~/components/prefix-dhcp-summary-card';
 import { PrefixVrrpSummaryCard } from '~/components/prefix-vrrp-summary-card';
 import { SummaryRow } from '~/components/summary-row';
 import { tsr } from '~/lib/api';
-
-function statusVariant(status: string) {
-  switch (status) {
-    case 'ACTIVE':
-      return 'default';
-    case 'RESERVED':
-      return 'secondary';
-    case 'DEPRECATED':
-      return 'destructive';
-    case 'CONTAINER':
-      return 'outline';
-    default:
-      return 'outline';
-  }
-}
 
 export const Route = createFileRoute('/_app/ipam/prefixes/$prefixId/')({
   component: PrefixOverview,
@@ -98,7 +84,7 @@ function PrefixOverview() {
                 <span className="font-mono">{prefix.prefix}</span>
               </SummaryRow>
               <SummaryRow label="Status" nullFallback="--">
-                <Badge variant={statusVariant(prefix.status)}>{prefix.status}</Badge>
+                <Badge variant={getIpamStatusBadgeVariant(prefix.status)}>{prefix.status}</Badge>
               </SummaryRow>
               <SummaryRow label="Is Pool" nullFallback="--">
                 <Badge variant={prefix.isPool ? 'default' : 'outline'}>{prefix.isPool ? 'Yes' : 'No'}</Badge>

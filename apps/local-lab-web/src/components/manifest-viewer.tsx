@@ -6,6 +6,7 @@ import { streamPaths } from '@/contract';
 import { tsr } from '@/lib/api';
 import { bodyError, errorMessage } from '@/lib/errors';
 import { useLogStream, usePaintedHtml } from '@/lib/use-log-stream';
+import { usePoll } from '@/lib/use-poll';
 
 interface Agg {
   name: string;
@@ -69,7 +70,7 @@ export function ManifestViewer() {
       ? (bodyError(manifestQ.data.body) ?? `request failed (${manifestQ.data.status})`)
       : (errorMessage(manifestQ.error) ?? '');
   const banner = seedError ?? err;
-  const cache = tsr.getLayerCache.useQuery({ queryKey: ['layer-cache'], refetchInterval: m ? 5000 : false });
+  const cache = tsr.getLayerCache.useQuery({ queryKey: ['layer-cache'], refetchInterval: usePoll(m ? 5000 : false) });
   const defaultUrl = tsr.getLayersDefaultUrl.useQuery({ queryKey: ['layers-default-url'] });
   const cachedSet = useMemo(() => new Set(cache.data?.status === 200 ? cache.data.body.shas : []), [cache.data]);
   const stream = useLogStream();

@@ -1,6 +1,14 @@
-import type { ExtensionSlot, PluginFrontendModule, PluginRoute, SlotContributionMap } from '@hydrahost/plugin-sdk';
+import {
+  EXTENSION_SLOTS,
+  type ExtensionSlot,
+  type PluginFrontendModule,
+  type PluginRoute,
+  type SlotContributionMap,
+} from '@hydrahost/plugin-sdk';
 import frontendPluginsConfig from '@hydrahost/plugins-config/frontend';
 import { createApiClient } from '@repo/api-client';
+
+import { type PublicRouteRegistryEntry } from './public-routes';
 
 const api = createApiClient({ baseUrl: '' });
 
@@ -34,16 +42,19 @@ export interface RouteRegistryEntry {
 export interface PluginRegistry {
   slots: Map<ExtensionSlot, SlotRegistryEntry[]>;
   routes: Map<string, RouteRegistryEntry>;
+  publicRoutes: PublicRouteRegistryEntry[];
 }
 
-export interface PluginRegistry {
-  slots: Map<ExtensionSlot, SlotRegistryEntry[]>;
-  routes: Map<string, RouteRegistryEntry>;
-}
+export const EMPTY_PLUGIN_REGISTRY: PluginRegistry = {
+  slots: new Map(),
+  routes: new Map(),
+  publicRoutes: [],
+};
 
 export async function loadPluginRegistry(): Promise<PluginRegistry> {
   const slots: PluginRegistry['slots'] = new Map();
   const routes: PluginRegistry['routes'] = new Map();
+  const publicRoutes: PublicRouteRegistryEntry[] = [];
 
   const [enabledPluginIds, isInstanceOperator] = await Promise.all([
     fetchEnabledPluginIds(),
@@ -58,9 +69,9 @@ export async function loadPluginRegistry(): Promise<PluginRegistry> {
       const frontendModule: PluginFrontendModule = 'default' in mod ? mod.default : mod;
 
       if (frontendModule.slots) {
-        for (const [slotName, contributions] of Object.entries(frontendModule.slots)) {
+        for (const slot of EXTENSION_SLOTS) {
+          const contributions = frontendModule.slots[slot];
           if (!contributions) continue;
-          const slot = slotName as ExtensionSlot;
           const list = slots.get(slot) ?? [];
           for (const contribution of contributions) {
             list.push({ pluginId: entry.plugin.id, contribution });
@@ -69,7 +80,11 @@ export async function loadPluginRegistry(): Promise<PluginRegistry> {
         }
       }
 
-      if (frontendModule.rootRoute) {
+      if ('publicRoutes' in frontendModule && frontendModule.publicRoutes) {
+        for (const route of frontendModule.publicRoutes) {
+          publicRoutes.push({ pluginId: entry.plugin.id, route });
+        }
+      } else if (frontendModule.rootRoute) {
         routes.set(entry.plugin.id, {
           pluginId: entry.plugin.id,
           route: frontendModule.rootRoute,
@@ -80,5 +95,5 @@ export async function loadPluginRegistry(): Promise<PluginRegistry> {
     }
   }
 
-  return { slots, routes };
+  return { slots, routes, publicRoutes };
 }

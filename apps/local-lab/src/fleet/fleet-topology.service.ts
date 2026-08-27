@@ -1,13 +1,24 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import * as yaml from 'js-yaml';
 import { execFile, spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { networkInterfaces, arch as osArch, platform } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { networkInterfaces, arch as osArch, platform, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 
+import { REDACTED } from '../common/redact';
+
 const execFileP = promisify(execFile);
+
+/** An empty password stays empty: masking it would make "unset" and "hidden" read the same. */
+export const maskBmcPassword = (password: string | undefined): string => (password ? REDACTED : (password ?? ''));
 
 const ChainStampSchema = z.object({ chain_base_url: z.string().optional() }).passthrough();
 
@@ -29,11 +40,15 @@ import {
   type BareMetalConfigWrite,
   type BareMetalNode,
   type FleetConfig,
+  type FleetDefaults,
   type FleetMode,
+  type FleetNetwork,
   type FleetNodeEffective,
   type FleetPending,
   type HostNic,
+  type RejectedEntry,
 } from '@repo/local-lab-contract';
+import { isRecord } from '@repo/utils';
 import { ccBuildInfo } from '../common/build-info';
 import { isIpv4Family } from '../common/net';
 import type { FleetNode, HostInfo, PciDevice } from '../contract';
@@ -49,6 +64,33 @@ const isMac = (s: string): boolean => /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(s);
 const NIC_MODELS = ['virtio', 'e1000e', 'e1000', 'rtl8139', 'vmxnet3'] as const;
 const nicModel = (v: unknown): (typeof NIC_MODELS)[number] => NIC_MODELS.find((m) => m === v) ?? 'virtio';
 
+const networkView = (raw: EffectiveNetwork): FleetNetwork => ({
+  name: raw.name ?? '',
+  cidr: raw.cidr ?? '',
+  bmcCidr: raw.bmc_cidr ?? '',
+  domain: raw.domain ?? '',
+  dhcp: raw.dhcp === true,
+  renderedNetplan: raw.rendered_netplan === true,
+});
+
+const networkSpec = (n: FleetNetwork): Record<string, string | boolean> => ({
+  name: n.name,
+  cidr: n.cidr,
+  bmc_cidr: n.bmcCidr,
+  domain: n.domain,
+  dhcp: n.dhcp,
+  rendered_netplan: n.renderedNetplan,
+});
+
+const draftDefaults = (base: Record<string, unknown>, d: FleetDefaults): Record<string, unknown> => {
+  const out = { ...base };
+  for (const key of ['cpus', 'memory_mb', 'disk_gb', 'arch'] as const) {
+    if (d[key] === null) delete out[key];
+    else out[key] = d[key];
+  }
+  return out;
+};
+
 const RawFleetDocSchema = z
   .object({ network: z.unknown().optional(), defaults: z.unknown().optional(), nodes: z.array(z.unknown()).optional() })
   .passthrough();
@@ -63,6 +105,12 @@ type BmcCred = { user: string; pass: string };
 type BmcCredFile = Record<string, BmcCred>;
 
 const NON_UPLINK_NIC_RE = /^(lo|br-brokkr|virbr|docker|veth|tun|tap|tailscale|utun)/;
+
+/** Mirrors apps/local-sim schema.py Defaults — what the engine applies when neither the node nor the
+ *  fleet declares a value. */
+const ENGINE_DEFAULTS = { cpus: 2, memory_mb: 4096, disk_gb: 40 } as const;
+
+const numOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 @Injectable()
 export class FleetTopologyService {
@@ -220,9 +268,9 @@ export class FleetTopologyService {
       zone: typeof n.zone === 'string' && n.zone ? n.zone : firstZone,
       ipmi_mac: n.ipmi_mac,
       data_mac: n.data_mac,
-      cpus: n.cpus ?? d.cpus ?? 2,
-      memory_mb: n.memory_mb ?? d.memory_mb ?? 4096,
-      disk_gb: n.disk_gb ?? d.disk_gb ?? 40,
+      cpus: numOrNull(n.cpus),
+      memory_mb: numOrNull(n.memory_mb),
+      disk_gb: numOrNull(n.disk_gb),
       disks: n.disks ?? d.disks ?? [],
       passthrough: n.passthrough ?? d.passthrough ?? [],
       nics: (n.nics ?? []).map((nic) => ({
@@ -232,13 +280,18 @@ export class FleetTopologyService {
         link: nic.link === 'down' ? 'down' : 'up',
       })),
       data_mtu: n.data_mtu ?? null,
+      arch: n.arch ?? null,
+      network_type: n.network_type ?? null,
       ip: n.ip ?? null,
       bmc_ip: n.bmc_ip ?? null,
-      bmc: n.bmc ? { username: n.bmc.username ?? '', password: n.bmc.password ?? '' } : null,
+      bmc: n.bmc ? { username: n.bmc.username ?? '', password: maskBmcPassword(n.bmc.password) } : null,
       console_port: n.console_port ?? null,
       seed_as_server: typeof n.seed_as_server === 'boolean' ? n.seed_as_server : undefined,
       effective_ip: n.ip ? n.ip : ipAtOffset(cidr, NODE_IP_BASE + index) || null,
       effective_bmc_ip: n.bmc_ip ? n.bmc_ip : ipAtOffset(bmcCidr, NODE_IP_BASE + index) || null,
+      effective_cpus: numOrNull(n.cpus) ?? numOrNull(d.cpus) ?? ENGINE_DEFAULTS.cpus,
+      effective_memory_mb: numOrNull(n.memory_mb) ?? numOrNull(d.memory_mb) ?? ENGINE_DEFAULTS.memory_mb,
+      effective_disk_gb: numOrNull(n.disk_gb) ?? numOrNull(d.disk_gb) ?? ENGINE_DEFAULTS.disk_gb,
     }));
     const dbmc = d.bmc;
     return {
@@ -247,9 +300,16 @@ export class FleetTopologyService {
       baremetal: this.baremetalView(),
       bakedChainUrl: this.bakedChainUrl(),
       nodes,
+      defaults: {
+        cpus: numOrNull(d.cpus),
+        memory_mb: numOrNull(d.memory_mb),
+        disk_gb: numOrNull(d.disk_gb),
+        arch: d.arch ?? null,
+      },
       zones,
-      network: { cidr, bmcCidr },
-      bmcDefaults: { username: dbmc?.username ?? 'admin', password: dbmc?.password ?? 'admin' },
+      network: networkView(doc.network),
+      tombstones: this.overlay.fleetTombstones(),
+      bmcDefaults: { username: dbmc?.username ?? 'admin', password: maskBmcPassword(dbmc?.password ?? 'admin') },
       pending: await this.pending(),
     };
   }
@@ -399,21 +459,80 @@ export class FleetTopologyService {
     return ApplyPlanSchema.parse(JSON.parse(stdout));
   }
 
+  /** getConfig hands out REDACTED, so a client echoing a bmc password back means "leave it". Without
+   *  this the next save would store the mask itself and every BMC call would fail to authenticate. */
+  private resolveBmcDefaults(
+    submitted: { username: string; password: string } | undefined,
+  ): { username: string; password: string } | undefined {
+    if (!submitted || submitted.password !== REDACTED) return submitted;
+    return { ...submitted, password: this.activeFleet().defaults.bmc?.password ?? '' };
+  }
+
+  private resolveNodeBmc(nodes: FleetNode[]): FleetNode[] {
+    const stored = new Map(this.activeFleet().nodes.map((n) => [n.name, n.bmc?.password]));
+    return nodes.map((n) => {
+      if (n.bmc?.password !== REDACTED) return n;
+      // No stored password means the mask names nothing, so leave the node as submitted: substituting
+      // an empty string here would turn "I cannot resolve this" into "clear the credential".
+      const kept = stored.get(n.name);
+      return kept ? { ...n, bmc: { ...n.bmc, password: kept } } : n;
+    });
+  }
+
+  /** `cmd_apply` prints the plan and returns before it checks the pinned fleet path and before it
+   *  copies anything, so classifying a draft writes nothing but its own temp file. */
+  async previewPlan(draft: {
+    nodes: FleetNode[];
+    defaults?: FleetDefaults;
+    network?: FleetNetwork;
+  }): Promise<ApplyPlan> {
+    const source = await this.rendered.renderDesiredFleetYaml();
+    if (!source)
+      throw new ServiceUnavailableException('could not refresh the fleet config, so a draft cannot be classified');
+    const specNodes = this.validateAndBuildVmSpecs(draft.nodes, 'vm');
+    const parsed = RawFleetDocSchema.parse(yaml.load(readFileSync(source, 'utf8')) ?? {});
+    const doc: Record<string, unknown> = { ...parsed };
+    doc.nodes = specNodes.map(({ name, spec }) => ({ name, ...spec }));
+    if (draft.network) doc.network = networkSpec(draft.network);
+    if (draft.defaults) doc.defaults = draftDefaults(isRecord(parsed.defaults) ? parsed.defaults : {}, draft.defaults);
+    // pid is constant and pendingGen only moves on a save, so two concurrent previews shared a path
+    const tmp = join(mkdtempSync(join(tmpdir(), 'fleet-draft-')), 'fleet.yaml');
+    try {
+      writeFileSync(tmp, yaml.dump(doc));
+      const { stdout } = await execFileP('python', ['-m', 'local.fleet', 'apply', '--plan', '--source', tmp], {
+        cwd: this.runner.repoRoot,
+        timeout: 30_000,
+      });
+      return ApplyPlanSchema.parse(JSON.parse(stdout));
+    } finally {
+      rmSync(dirname(tmp), { recursive: true, force: true });
+    }
+  }
+
   /** Validates, then persists via OverlayStoreService (the single overlay writer); bare-metal creds are
    *  split out to the 0600 secrets file, never the overlay. */
   putConfig(input: {
     mode: FleetMode;
     nodes: FleetNode[];
     bmcDefaults?: { username: string; password: string };
+    defaults?: { cpus: number | null; memory_mb: number | null; disk_gb: number | null; arch: string | null };
+    network?: FleetNetwork;
+    prune?: string[];
     baremetal: BareMetalConfigWrite;
-  }): void {
-    const { mode, nodes, bmcDefaults, baremetal } = input;
-    const specNodes = this.validateAndBuildVmSpecs(nodes, mode);
+  }): RejectedEntry[] {
+    const { mode, nodes, defaults, network, prune, baremetal } = input;
+    const bmcDefaults = this.resolveBmcDefaults(input.bmcDefaults);
+    const specNodes = this.validateAndBuildVmSpecs(this.resolveNodeBmc(nodes), mode);
     if (mode === 'baremetal') this.validateBaremetalNodes(baremetal);
+    if (network) this.validateNetwork(network, nodes);
+    if (prune?.length) this.validatePrune(prune);
     const bmSpec = this.buildBaremetalSpec(baremetal, mode);
-    this.overlay.setFleetConfig({
+    const rejected = this.overlay.setFleetConfig({
       nodes: specNodes,
       bmcDefaults,
+      defaults,
+      network: network ? networkSpec(network) : undefined,
+      prune,
       mode,
       baremetal: { nics: baremetal.nics, arch: baremetal.arch, nodes: bmSpec.nodes },
     });
@@ -426,6 +545,34 @@ export class FleetTopologyService {
     this.log.log(
       `saved fleet config to the stack overlay (mode=${mode}, ${nodes.length} vm nodes, ${baremetal.nodes.length} bare-metal nodes)`,
     );
+    return rejected;
+  }
+
+  /** schema.py `_check_rendered_netplan` raises on both of these at engine load, minutes into an apply
+   *  run. Refuse at the save instead, with the reason the engine gives. */
+  private validateNetwork(net: FleetNetwork, nodes: FleetNode[]): void {
+    if (!net.renderedNetplan) return;
+    const zones = new Set(nodes.map((n) => n.zone).filter(Boolean));
+    if (zones.size > 1)
+      throw new BadRequestException(
+        `rendered_netplan needs a single-zone fleet: ${zones.size} zones share one org and one cidr (${net.cidr}), so the hub cannot tell their primary prefixes apart and every device falls back to DHCP`,
+      );
+    if (net.dhcp)
+      throw new BadRequestException(
+        'rendered_netplan and dhcp are mutually exclusive: DHCP mode seeds the primary prefix for the DHCP server instead of a routable gateway, so the renderer emits the wildcard DHCP fallback rather than a rendered config',
+      );
+  }
+
+  private validatePrune(prune: string[]): void {
+    const known = new Map(this.overlay.fleetTombstones().map((t) => [t.name, t]));
+    for (const name of prune) {
+      const t = known.get(name);
+      if (!t) throw new BadRequestException(`${name} is not a removed node, so there is no tombstone to drop`);
+      if (t.baseDeclared)
+        throw new BadRequestException(
+          `${name} is still declared outside this overlay, so dropping its tombstone would bring the node back — disable it instead of removing it`,
+        );
+    }
   }
 
   private validateBaremetalNodes(bm: BareMetalConfigWrite): void {
@@ -551,7 +698,13 @@ export class FleetTopologyService {
     }
     const specNodes = nodes.map((n) => {
       const { name, nics, data_mtu, ip, bmc_ip, bmc, disks, passthrough, console_port, ...rest } = n;
-      const spec: Record<string, unknown> = { ...rest };
+      const { cpus, memory_mb, disk_gb, arch, network_type, ...flat } = rest;
+      const spec: Record<string, unknown> = { ...flat };
+      if (arch != null) spec.arch = arch;
+      if (network_type != null) spec.network_type = network_type;
+      if (cpus != null) spec.cpus = cpus;
+      if (memory_mb != null) spec.memory_mb = memory_mb;
+      if (disk_gb != null) spec.disk_gb = disk_gb;
       // slot 0 has no stamp and must keep deriving 9300 + index — never write a backfilled value
       if (console_port != null) spec.console_port = console_port;
       if (disks?.length) spec.disks = disks;
@@ -601,6 +754,8 @@ export class FleetTopologyService {
         zone,
         ipmi_mac: `52:54:00:bc:00:${hex}`,
         data_mac: `52:54:00:da:00:${hex}`,
+        arch: null,
+        network_type: null,
         cpus: 2,
         memory_mb: 2048,
         disk_gb: 40,
@@ -614,11 +769,16 @@ export class FleetTopologyService {
         seed_as_server: false,
       });
     }
-    const baseNodes: FleetNode[] = nodes.map(({ effective_ip, effective_bmc_ip, ...rest }) => {
-      void effective_ip;
-      void effective_bmc_ip;
-      return rest;
-    });
+    const baseNodes: FleetNode[] = nodes.map(
+      ({ effective_ip, effective_bmc_ip, effective_cpus, effective_memory_mb, effective_disk_gb, ...rest }) => {
+        void effective_ip;
+        void effective_bmc_ip;
+        void effective_cpus;
+        void effective_memory_mb;
+        void effective_disk_gb;
+        return rest;
+      },
+    );
     this.putConfig({
       mode: cfg.mode,
       nodes: [...baseNodes, ...added],

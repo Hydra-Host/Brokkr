@@ -88,13 +88,16 @@ in
   # gitignored ./stack.local.nix that sets it (imported only when present — devenv evaluates
   # gitignored files, same as the auto-imported devenv.local.nix). ./stack.slot.nix (also
   # gitignored) is the claim script's slot pin — written at lib.mkDefault priority only,
-  # so a plain-priority stack.local.nix/devenv.local.nix slot always outranks it.
+  # so a plain-priority stack.local.nix/devenv.local.nix slot always outranks it. ./env.local.nix is
+  # the same shape for the environment pins (modules/env-pins.nix) and pins at mkOverride 60, which
+  # is why it is imported after stack.local.nix and still wins.
   imports = [
     ./devenv/modules/hub.nix
     ./devenv/modules/spoke.nix
     ./devenv/modules/zone-crypto.nix
     ./devenv/modules/redis-acl.nix
     ./devenv/modules/overrides.nix
+    ./devenv/modules/env-pins.nix
     ./devenv/modules/sudo.nix
     ./devenv/modules/fleet.nix
     ./devenv/modules/fleet-topology.nix
@@ -103,13 +106,20 @@ in
     ./devenv/modules/dx.nix
     ./devenv/modules/vrrp-sim.nix
     ./devenv/modules/telemetry.nix
+    ./devenv/modules/agent-tooling.nix
   ]
   ++ lib.optionals (builtins.pathExists ./stack.local.nix) [ ./stack.local.nix ]
+  ++ lib.optionals (builtins.pathExists ./env.local.nix) [ ./env.local.nix ]
   ++ lib.optionals (builtins.pathExists ./stack.slot.nix) [ ./stack.slot.nix ];
+
+  # upstream tagged v2.2.2 with src/modules/latest-version still reading 2.2.1, so the built-in
+  # update check nags for a release that does not exist. Track the tag the lock actually pins.
+  devenv.latestVersion = "2.2.2";
 
   overlays = [
     (import ./devenv/pkgs/python-overlay.nix)
     (import ./devenv/pkgs/process-compose-overlay.nix)
+    (import ./devenv/pkgs/statix-overlay.nix)
   ];
 
   languages.python = {
@@ -123,7 +133,7 @@ in
   languages.javascript = {
     enable = true;
     package = jsTools.nodejs; # node — shared with the CI image via js-tools.nix
-    # pnpm pinned to package.json's packageManager (pnpm@8.x); shared with the CI image.
+    # pnpm pinned to package.json's packageManager (pnpm@11.x); shared with the CI image.
     pnpm = {
       enable = true;
       package = jsTools.pnpm;
@@ -155,50 +165,8 @@ in
       pkgs.findutils
       pkgs.gnugrep
     ];
-    exec = ''
-      set -uo pipefail
-
-      _fix_pty() { find node_modules -path '*/node-pty/prebuilds/*/spawn-helper' -exec chmod +x {} + 2>/dev/null || true; }
-
-      # only ever purge at a real pnpm workspace root (defense-in-depth for the rm -rf below)
-      if [ ! -f package.json ] || [ ! -f pnpm-lock.yaml ]; then
-        echo ">> brokkr-pnpm-install: $PWD is not a pnpm workspace root; running plain install" >&2
-        exec pnpm install "$@"
-      fi
-
-      . "${repoRoot}/devenv/lib/with-hardlink-lock.sh"
-      acquire_hardlink_lock \
-        "''${TMPDIR:-/tmp}/brokkr-pnpm-install-$(printf '%s' "$PWD" | cksum | cut -d' ' -f1).lock" \
-        '[ -n "''${log:-}" ] && rm -f "$log"'
-      log=""
-
-      # the lockfile mtime alone misses a newly added/edited workspace member, so also
-      # invalidate the skip when any workspace package.json is newer than .modules.yaml.
-      newer_pkg=""
-      if [ -e node_modules/.modules.yaml ]; then
-        newer_pkg=$(find apps packages -maxdepth 3 -name package.json \
-          -not -path '*/node_modules/*' -newer node_modules/.modules.yaml -print -quit 2>/dev/null || true)
-      fi
-      if [ -e node_modules/.modules.yaml ] \
-         && [ node_modules/.modules.yaml -nt pnpm-lock.yaml ] \
-         && [ -z "$newer_pkg" ]; then
-        echo ">> brokkr-pnpm-install: node_modules up-to-date; skipping install" >&2
-        _fix_pty
-        exit 0
-      fi
-
-      log="$(mktemp)"
-      _run_install() { pnpm install "$@" 2>&1 | tee "$log"; return "''${PIPESTATUS[0]}"; }
-
-      if _run_install "$@"; then _fix_pty; exit 0; fi
-
-      if grep -qiE 'ENOTEMPTY|EEXIST|reinstalled from scratch|not compatible|gyp ERR! build error|\.o\.d\.raw' "$log"; then
-        echo ">> brokkr-pnpm-install: incompatible/stale node_modules detected; purging this repo's node_modules and reinstalling once…" >&2
-        find . -type d -name node_modules -prune -exec rm -rf {} +
-        _run_install "$@"; rc="$?"; [ "$rc" -eq 0 ] && _fix_pty; exit "$rc"
-      fi
-      exit 1
-    '';
+    # body in devenv/scripts/brokkr-pnpm-install.sh so the bats suite can drive it directly.
+    exec = ''exec bash "${repoRoot}/devenv/scripts/brokkr-pnpm-install.sh" "$@"'';
   };
 
   packages = [
@@ -231,6 +199,7 @@ in
     pkgs.OVMF.fd
     pkgs.swtpm
     pkgs.cpio
+    pkgs.docker-buildx # the fleet iPXE build needs the plugin; Docker Desktop ships its own on darwin
   ]
   ++ lib.optionals pkgs.stdenv.isDarwin [ socketVmnet ];
 
@@ -246,9 +215,11 @@ in
     # firmware/emulator paths are baked into the rendered libvirt XML too, so pinning the
     # store path keeps renders reproducible rather than PATH-dependent.
     LOCAL_PYTHON_BIN = "${pythonEnv}/bin";
-    LOCAL_EDK2_CODE_PATH = edk2Code;
-    LOCAL_EDK2_VARS_TEMPLATE_PATH = edk2Vars;
-    LOCAL_QEMU_EMULATOR = qemuEmulator;
+    # mkOptionDefault, not a bare string: a Linux host whose libvirt cannot exec the Nix qemu
+    # (AppArmor, a distro-pinned emulator) must be able to repoint these from .env.
+    LOCAL_EDK2_CODE_PATH = lib.mkOptionDefault edk2Code;
+    LOCAL_EDK2_VARS_TEMPLATE_PATH = lib.mkOptionDefault edk2Vars;
+    LOCAL_QEMU_EMULATOR = lib.mkOptionDefault qemuEmulator;
     LOCAL_IPMI_SIM_BIN = "${openipmi}/bin/ipmi_sim";
     LOCAL_SDRCOMP_BIN = "${openipmi}/bin/sdrcomp";
     LOCAL_SIM_PRIV_BIN = "${simPriv}/bin/brokkr-sim-priv";
@@ -649,6 +620,13 @@ in
     '';
   };
 
+  # Ends this checkout's slot: the same teardown as stack-reslot, but the slot goes back to the
+  # host registry for another checkout instead of being re-claimed here.
+  scripts.stack-release = {
+    description = "DESTRUCTIVE: tear this checkout's stack down and return its slot to the host registry — down, fleet nuke with the slot's env, bootptab section off, datastore + slot-stamped state wiped, the slot's host-global roots removed (spoke storage, agent bundle, sim state), registry entry released. A later `task up` claims whatever slot is then free.";
+    exec = ''exec bash "${repoRoot}/devenv/scripts/stack-release.sh" "$@"'';
+  };
+
   # The migration stack-claim.sh's drift refusal points at: teardown under the OLD slot's env,
   # wipe slot-stamped state, release the registry entry — next `task up` re-claims + re-seeds.
   scripts.stack-reslot = {
@@ -754,13 +732,17 @@ in
       # which is a bring-up's normal cold start — stack-await-down guards instead, because there an
       # unset socket must never read as "the stack is down".
       PC_SOCK="''${PC_SOCKET_PATH:-''${DEVENV_RUNTIME:-}/pc.sock}"
+      # before the claim so a refused bring-up takes no slot (safe: runs no `devenv eval`).
+      # autoStart spliced in: a control-plane-only bring-up needs neither libvirt nor the iPXE build.
+      BROKK_FLEET_AUTOSTART=${lib.boolToString config.fleet.autoStart} \
+        bash "$DEVENV_ROOT/devenv/scripts/host-access-check.sh"
       # claim BEFORE the already-running check / devenv up -d: the first eval must already see
       # the claimed slot (fleet.yaml is cp -n-seeded from it and never re-seeds). lives here and
       # not in Taskfile _up because the control center invokes stack-up directly.
       bash "$DEVENV_ROOT/devenv/scripts/stack-claim.sh"
       # after the claim, so the port scan reads this stack's own slot ports — an unclaimed
       # checkout evaluates slot 0 and would flag a healthy sibling's listeners as squatters.
-      ( cd "$DEVENV_ROOT" && devenv tasks run setup:preflight )
+      ( cd "$DEVENV_ROOT" && devenv tasks run setup:preflight --show-output )
       if process-compose -U -u "$PC_SOCK" process list -o json >/dev/null 2>&1; then
         echo "→ stack already running — devenv up -d skipped (task down first to recreate)."
       else
@@ -805,6 +787,21 @@ in
         brokkr-pnpm-install
         pnpm --filter @repo/local-lab-contract build
         pnpm --filter local-lab build
+      '';
+    };
+
+    # LabAuthGuard denies every off-loopback caller unless LAB_API_TOKEN is set (fail-closed), so LAN mode
+    # needs one to exist. A task, not per-process shell: lab + lab-web both read this file and must agree,
+    # and a task runs once before either. Persistent — rotate by deleting it and restarting both.
+    "lab:token" = {
+      description = "mint the lab API token ($DEVENV_STATE/lab/api-token, 0600) that LabAuthGuard requires from off-loopback callers.";
+      status = ''test -s "$DEVENV_STATE/lab/api-token"'';
+      exec = ''
+        set -eu
+        : "''${DEVENV_STATE:?DEVENV_STATE unset — run inside the devenv shell}"
+        mkdir -p "$DEVENV_STATE/lab"
+        # od, not openssl/uuidgen: no dependency beyond coreutils, same on linux + darwin.
+        ( umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$DEVENV_STATE/lab/api-token" )
       '';
     };
 
@@ -856,7 +853,7 @@ in
   # No static `GET /` in dev (ServeStatic mounts only under NODE_ENV=production), so the
   # probe hits /api/host — always mounted, though an uncached hit now spawns a bounded 2s git subprocess.
   processes.lab = {
-    after = [ "apps:init" ];
+    after = [ "apps:init" ] ++ lib.optional config.lan.expose "lab:token";
     process-compose = {
       # control center drives the local stack/fleet/datastores — pointless against remote infra.
       disabled = config.remoteInfra.enable;
@@ -874,6 +871,17 @@ in
       # lab-web proxies /api over loopback, so a LAN client would look like a loopback peer; trust the
       # proxy's appended x-forwarded-for last hop so LabAuthGuard sees the real client (needs xfwd on).
       export LAB_TRUST_PROXY=1;
+    ''
+    + lib.optionalString config.lan.expose ''
+      # LAN mode is only usable with BOTH gates opened: the token (else every remote call is 401 —
+      # unset is fail-closed) and remote-sharp (else the 29 loopback-only routes — fleet power, service
+      # restarts, SQL console, test runs, the WS terminals — are 403 even with a valid token). lab-web
+      # injects this same token into the SPA, so anything that can load the UI over the LAN holds it:
+      # the LAN itself is the trust boundary here, exactly like the auth-less datastores this toggle exposes.
+      export LAB_API_TOKEN="$(cat "$DEVENV_STATE/lab/api-token")";
+      export LAB_ALLOW_REMOTE_SHARP=1;
+    ''
+    + ''
       exec node dist/main.js
     '';
     ready = {
@@ -894,7 +902,7 @@ in
   # (P.bindHost): 0.0.0.0 exposes it to the LAN/Tailscale, 127.0.0.1 keeps it loopback-only. The
   # vite config derives allowedHosts off HOST too (HOST=0.0.0.0 → relax the host-header check).
   processes.lab-web = {
-    after = [ "apps:init" ];
+    after = [ "apps:init" ] ++ lib.optional config.lan.expose "lab:token";
     process-compose = {
       disabled = config.remoteInfra.enable;
       namespace = "control";
@@ -905,6 +913,13 @@ in
       export HOST=${P.bindHost};
       export LAB_WEB_PORT=${toString P.ports.labWeb};
       export LAB_PORT=${toString P.ports.lab};
+    ''
+    + lib.optionalString config.lan.expose ''
+      # hand the SPA the lab API's token so a LAN browser authenticates with no manual paste (VITE_ ⇒
+      # it reaches client code). Only under lan.expose: loopback callers need no token at all.
+      export VITE_LAB_API_TOKEN="$(cat "$DEVENV_STATE/lab/api-token")";
+    ''
+    + ''
       exec pnpm --filter local-lab-web dev
     '';
     ready = {

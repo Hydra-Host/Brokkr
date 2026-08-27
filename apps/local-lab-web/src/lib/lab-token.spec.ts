@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { labApiToken, setLabApiToken, withLabToken } from './lab-token';
+import { labApiToken, labTokenIsStackProvided, setLabApiToken, withLabToken } from './lab-token';
 
 describe('lab-token', () => {
   beforeEach(() => {
@@ -11,7 +11,10 @@ describe('lab-token', () => {
       removeItem: (k: string) => void store.delete(k),
     });
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
 
   it('round-trips a token and trims it', () => {
     setLabApiToken('  sekret  ');
@@ -26,6 +29,34 @@ describe('lab-token', () => {
 
   it('returns empty when no token is stored', () => {
     expect(labApiToken()).toBe('');
+  });
+
+  it('uses the token the devenv injected under lan.expose, so a lan browser needs no paste', () => {
+    vi.stubEnv('VITE_LAB_API_TOKEN', '  injected  ');
+    expect(labApiToken()).toBe('injected');
+    expect(labTokenIsStackProvided()).toBe(true);
+  });
+
+  it('ignores a stored token while the stack serves one: a token typed to debug a 401 must not outlive it', () => {
+    vi.stubEnv('VITE_LAB_API_TOKEN', 'injected');
+    setLabApiToken('typed-while-guessing');
+    expect(labApiToken()).toBe('injected');
+  });
+
+  it('uses a stored token when nothing is injected (hand-run lab-web against another lab)', () => {
+    setLabApiToken('pasted');
+    expect(labApiToken()).toBe('pasted');
+    expect(labTokenIsStackProvided()).toBe(false);
+  });
+
+  it('still returns the injected token when localStorage is unavailable', () => {
+    vi.stubEnv('VITE_LAB_API_TOKEN', 'injected');
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('unavailable');
+      },
+    });
+    expect(labApiToken()).toBe('injected');
   });
 
   it('does not throw when localStorage is unavailable (private mode / quota)', () => {

@@ -2,6 +2,7 @@ import { chmod, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { dirname } from 'node:path';
 
+import { getErrorMessage } from '@repo/utils';
 import { makeLogger } from '../logger';
 
 const logger = makeLogger('hosts-file');
@@ -121,7 +122,7 @@ export async function writeBridgeHostsBlock(hostsPath: string, original: string,
       try {
         await rm(tmpDir, { recursive: true, force: true });
       } catch (error) {
-        logger.warn('failed to remove hosts temp dir', { path: tmpDir, error: String(error) });
+        logger.warn('failed to remove hosts temp dir', { path: tmpDir, error: getErrorMessage(error) });
       }
     }
   }

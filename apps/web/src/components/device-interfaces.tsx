@@ -20,6 +20,7 @@ import { Skeleton } from '@repo/ui/components/skeleton';
 import { Switch } from '@repo/ui/components/switch';
 import { FormInput } from '@repo/ui/form/form-input';
 import { FormSelect } from '@repo/ui/form/form-select';
+import { cn } from '@repo/ui/utils';
 import { unwrapErrorMessage } from '@repo/utils';
 import { useQueryClient } from '@tanstack/react-query';
 import { Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-react';
@@ -296,9 +297,10 @@ function InterfaceTable({
                 return (
                   <tr
                     key={iface.id}
-                    className={`border-border-dim border-b align-middle last:border-b-0 ${
-                      marked ? 'text-muted-foreground line-through opacity-60' : ''
-                    }`}
+                    className={cn(
+                      'border-border-dim border-b align-middle last:border-b-0',
+                      marked && 'text-muted-foreground line-through opacity-60',
+                    )}
                   >
                     <td className="py-2 pr-4">
                       {editing ? (

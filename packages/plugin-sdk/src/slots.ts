@@ -4,6 +4,7 @@ import type { ComponentType } from 'react';
 export const EXTENSION_SLOTS = [
   'dashboard-widget',
   'sidebar-nav',
+  'public-navbar',
   'address-autocomplete',
   'inventory-page-extras',
   'inventory-item-cta',
@@ -16,12 +17,30 @@ export interface PluginRouteProps {
   splat: string;
   /** Loading screen provided by the host. Render this while async data loads; omit or render nothing if absent. */
   LoadingScreen?: ComponentType;
+  /** Signed-in user's email when a session exists; omit or empty for anonymous visitors. */
+  userEmail?: string;
 }
 
 export interface PluginRoute {
   component: ComponentType<PluginRouteProps>;
   label: string;
   description?: string;
+}
+
+/** Host layout for a public plugin SPA path. `navbar` is `_navbar-layout` (same chrome as `/inventory`). Authenticated plugin pages use `rootRoute`, not this. */
+export type PluginPublicRouteLayout = 'navbar';
+
+export interface PluginPublicRoute {
+  component: ComponentType<PluginRouteProps>;
+  /** Absolute SPA path the host mounts on `_navbar-layout`. Typed file-route `Link` cannot name these. */
+  path: string;
+  layout: PluginPublicRouteLayout;
+}
+
+export interface PublicNavbarContribution {
+  label: string;
+  to: string;
+  external?: boolean;
 }
 
 export interface DashboardWidgetContribution {
@@ -105,17 +124,32 @@ export interface InventoryItemCtaContribution {
 export interface SlotContributionMap {
   'dashboard-widget': DashboardWidgetContribution;
   'sidebar-nav': SidebarNavContribution;
+  'public-navbar': PublicNavbarContribution;
   'address-autocomplete': AddressAutocompleteContribution;
   'inventory-page-extras': InventoryPageExtrasContribution;
   'inventory-item-cta': InventoryItemCtaContribution;
 }
 
-export interface PluginFrontendModule {
+type PluginFrontendSlots = {
   slots?: {
     [K in ExtensionSlot]?: SlotContributionMap[K][];
   };
-  rootRoute?: PluginRoute;
-}
+};
+
+/** `rootRoute` is ignored at runtime when `publicRoutes` is non-empty — the type forbids both. */
+export type PluginFrontendModule = PluginFrontendSlots &
+  (
+    | {
+        /** Authenticated page at `/plugins/:id` (host `_app` shell). Omit when the UI is public-only. */
+        rootRoute?: PluginRoute;
+        publicRoutes?: never;
+      }
+    | {
+        rootRoute?: never;
+        /** Public pages. `layout: 'navbar'` mounts on `_navbar-layout` via the host public-plugin splat. */
+        publicRoutes: PluginPublicRoute[];
+      }
+  );
 
 export function defineFrontendModule(module: PluginFrontendModule): PluginFrontendModule {
   return module;

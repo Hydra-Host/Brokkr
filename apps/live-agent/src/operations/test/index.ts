@@ -1,6 +1,6 @@
 import { registerConnectivityTest } from './connectivity';
 import { registerPerformanceTest } from './performance';
-import { registerRunTestSuite } from './runTestSuite';
+import { registerRunTestSuite } from './run-test-suite';
 import { registerSecurityTest } from './security';
 import { registerStressTest } from './stress';
 

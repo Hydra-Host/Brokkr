@@ -14,7 +14,7 @@ htmlcov/
 certs/
 
 # --- Generated / build output ---
-# sql-seed generators print SQL to stdout, captured here then applied (see CLAUDE.md §10)
+# sql-seed generators print SQL to stdout, captured here then applied
 sql-seed/_generated/
 build/
 dist/

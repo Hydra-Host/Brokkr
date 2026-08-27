@@ -8,7 +8,7 @@ interface FormSubmitButtonProps extends Omit<ButtonProps, 'type'> {
 function FormSubmitButton({ pending = false, disabled, children, ...buttonProps }: FormSubmitButtonProps) {
   return (
     <Button type="submit" disabled={pending || disabled} {...buttonProps}>
-      {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+      {pending && <Loader2 className="h-4 w-4 animate-spin" />}
       {children}
     </Button>
   );

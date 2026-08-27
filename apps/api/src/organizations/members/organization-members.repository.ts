@@ -157,8 +157,9 @@ export class OrganizationMembershipsRepository {
     });
   }
 
-  delete(memberId: string) {
-    return this.prisma.member.update({
+  delete(memberId: string, tx?: Prisma.TransactionClient) {
+    const executor = tx ?? this.prisma;
+    return executor.member.update({
       where: { id: memberId },
       data: { deletedAt: new Date() },
       include: {

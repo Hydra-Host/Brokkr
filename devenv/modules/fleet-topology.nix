@@ -135,6 +135,11 @@ let
   # one zone = one spoke-group of HA bridges. Zone NAME is the attr key (== Hub Zone.name).
   zoneType = lib.types.submodule {
     options = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Render this zone. Set false in an overlay to drop a base zone without mkForce, which would discard every sibling. A rename is the tombstone plus the new key.";
+      };
       index = lib.mkOption {
         type = lib.types.int;
         default = 0;
@@ -159,7 +164,7 @@ let
     lib.mapAttrsToList (name: z: {
       inherit name;
       value = z;
-    }) cfg.zones
+    }) (lib.filterAttrs (_: z: z.enable) cfg.zones)
   );
 
   # one zone's enabled nodes → list sorted by node index, each stamped with its zone name.
@@ -239,6 +244,8 @@ let
     };
 
   zoneShaped =
+    assert lib.assertMsg (builtins.length zonePairs > 0)
+      "every fleet.zones entry is disabled, so the fleet would render no zone, no spoke and no seed; leave at least one enabled.";
     if isDefaultSingle then
       { nodes = map (n: removeAttrs n [ "zone" ]) nodeList; }
     else
@@ -325,6 +332,13 @@ in
         description = "Bare-metal machines keyed by name. Each carries pxe_mac / bmc_ip / bmc_mac (required) + optional arch / zone / system_id. NO creds (sealed separately).";
       };
     };
+  };
+
+  # Presentation metadata for the one fleet knob declared here; modules/overrides.nix owns the
+  # catalog and derives the widget, the choices and the tooltip from the enum above.
+  config.knobMeta."fleet.mode" = {
+    label = "Fleet mode";
+    group = "Fleet";
   };
 
   # Committed base topology — the tracked default the stack renders from. To change the

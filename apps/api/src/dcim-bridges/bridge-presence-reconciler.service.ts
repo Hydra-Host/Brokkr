@@ -214,13 +214,15 @@ export class BridgePresenceReconcilerService {
     const {
       instance_id: instanceId,
       brokkr_worker_version: bridgeVersion,
+      brokkr_live_version: brokkrLiveVersion,
       interfaces_json: interfacesJson,
     } = parsed.data;
     const deviceId = bridgeDeviceId(zoneId, instanceId);
     const version = bridgeVersion ?? '';
+    const liveVersion = brokkrLiveVersion ?? null;
     // `\x01` sentinel: absent interfaces_json (cacheable) vs empty/"" (retry-worthy) — a bare
     // `?? ''` collapses both and can silently skip the malformed-JSON retry on the next tick.
-    const signature = `${version}\x00${interfacesJson ?? '\x01'}`;
+    const signature = `${version}\x00${liveVersion ?? ''}\x00${interfacesJson ?? '\x01'}`;
 
     if (this.known.get(deviceId) === signature) return;
 
@@ -233,13 +235,25 @@ export class BridgePresenceReconcilerService {
         status: DeviceStatus.ACTIVE,
         organizationId,
         zoneId,
-        bridge: { create: { redisQueuePrefix: zoneId, bridgeVersion: version, lastSeenAt: new Date() } },
+        bridge: {
+          create: {
+            redisQueuePrefix: zoneId,
+            bridgeVersion: version,
+            brokkrLiveVersion: liveVersion,
+            lastSeenAt: new Date(),
+          },
+        },
       },
       update: {
         bridge: {
           upsert: {
-            create: { redisQueuePrefix: zoneId, bridgeVersion: version, lastSeenAt: new Date() },
-            update: { bridgeVersion: version, lastSeenAt: new Date() },
+            create: {
+              redisQueuePrefix: zoneId,
+              bridgeVersion: version,
+              brokkrLiveVersion: liveVersion,
+              lastSeenAt: new Date(),
+            },
+            update: { bridgeVersion: version, brokkrLiveVersion: liveVersion, lastSeenAt: new Date() },
           },
         },
       },
@@ -433,8 +447,8 @@ export class BridgePresenceReconcilerService {
     }
   }
 
-  // A containing live prefix wins — inserting anyway would let a roleless connected /24 shadow
-  // a roled supernet; the advisory lock (IPAM org-prefix scope) closes the NOT-EXISTS TOCTOU.
+  // A containing live prefix wins, so a roleless connected /24 cannot shadow a roled supernet. The
+  // exact-CIDR guard is VRF-blind: prefix resolution is org-scoped, so two rows for one CIDR are ambiguous.
   private async ensurePrefixes(
     tx: Prisma.TransactionClient,
     zoneId: string,
@@ -468,7 +482,6 @@ export class BridgePresenceReconcilerService {
           SELECT 1 FROM "Prefix"
           WHERE "organizationId" = ${organizationId}
             AND "deletedAt" IS NULL
-            AND "vrfId" IS NULL
             AND prefix = ${subnet}::cidr
         )
       `);
@@ -484,9 +497,8 @@ export class BridgePresenceReconcilerService {
     if (gateways.length === 0) return;
 
     for (const gw of gateways) {
-      // Exact-CIDR match only: a bridge's default gateway is valid for its connected L2
-      // domain, nothing broader — binding it to a containing supernet would hand sibling
-      // child subnets a router they cannot reach.
+      // Exact-CIDR match only: binding a bridge's default gateway to a containing supernet would
+      // hand sibling child subnets a router they cannot reach.
       const prefixRows = await tx.$queryRaw<Array<{ id: string; gatewayIpId: string | null; vrfId: string | null }>>(
         Prisma.sql`
           SELECT id, "gatewayIpId", "vrfId" FROM "Prefix"
@@ -497,10 +509,8 @@ export class BridgePresenceReconcilerService {
       );
       let prefix = prefixRows[0];
       if (!prefix) {
-        // ensurePrefixes creates the exact prefix when nothing covers it, so a miss here means
-        // only a covering supernet exists. Materialize the exact child (inheriting the
-        // supernet's VRF) so the gateway binds to its own L2 scope — never to the supernet,
-        // where sibling child subnets would inherit an unreachable router.
+        // A miss here means only a covering supernet exists. Materialize the exact child, inheriting
+        // the supernet's VRF, so the gateway binds to its own L2 scope rather than the supernet's.
         const supernetRows = await tx.$queryRaw<Array<{ id: string; vrfId: string | null }>>(
           Prisma.sql`
             SELECT id, "vrfId" FROM "Prefix"
@@ -514,9 +524,8 @@ export class BridgePresenceReconcilerService {
         await tx.$executeRaw(
           Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`ipam:prefix:${organizationId}:default`}))`,
         );
-        // Inherit the supernet's L2/metadata (vlan, tagging, prefix role, parent) so the child
-        // never shadows operator configuration; the NOT-EXISTS mirrors Prefix_active_unique
-        // (org + vrf + prefix) so a same-CIDR prefix elsewhere in the org cannot abort the sync.
+        // Inherit the supernet's vlan/tagging/role/parent so the child never shadows operator config.
+        // The NOT-EXISTS mirrors Prefix_active_unique so a same-CIDR row elsewhere cannot abort the sync.
         await tx.$executeRaw(Prisma.sql`
           INSERT INTO "Prefix" (id, prefix, status, "isPool", "enableVlanTag", "organizationId", "zoneId", "vrfId", "vlanId", "prefixRoleId", "parentId", "createdAt", "updatedAt")
           SELECT gen_random_uuid(), ${gw.subnet}::cidr, 'ACTIVE'::"PrefixStatus", false, s."enableVlanTag", ${organizationId}, ${zoneId}, s."vrfId", s."vlanId", s."prefixRoleId", s.id, now(), now()
@@ -548,9 +557,8 @@ export class BridgePresenceReconcilerService {
         }
       }
       if (prefix.gatewayIpId) continue;
-      // Any existing Gateway row — operator-created or a prior derivation — parks the prefix:
-      // auto-derivation is bootstrap-only, so a cleared gatewayIpId is never re-imposed and
-      // operator Gateway rows (which don't set gatewayIpId) are never contested.
+      // Any existing Gateway row parks the prefix: auto-derivation is bootstrap-only, so a cleared
+      // gatewayIpId is never re-imposed and operator rows (which set no gatewayIpId) are never contested.
       const existingRows = await tx.gateway.findFirst({ where: { prefixId: prefix.id }, select: { id: true } });
       if (existingRows) continue;
 

@@ -1,5 +1,5 @@
 diff --git a/src/types/process.go b/src/types/process.go
-index 139a1bf..203d6ed 100644
+index 4938a6a..bd826fe 100644
 --- a/src/types/process.go
 +++ b/src/types/process.go
 @@ -1,6 +1,8 @@
@@ -9,12 +9,13 @@ index 139a1bf..203d6ed 100644
 +	"bytes"
 +	"encoding/json"
  	"fmt"
- 	"github.com/f1bonacc1/process-compose/src/command"
- 	"github.com/f1bonacc1/process-compose/src/health"
-@@ -81,6 +83,18 @@ func (p *ProcessConfig) IsDeferred() bool {
+ 	"math"
+ 	"os"
+@@ -104,6 +106,19 @@ func (p *ProcessConfig) IsMCPResource() bool {
+ 	return p.MCP != nil && p.MCP.IsResource()
  }
  
- // Compare returns true if two process configs are equal
++// varsEquivalent reports whether two Vars encode to identical JSON.
 +func varsEquivalent(a, b Vars) bool {
 +	if len(a) == 0 && len(b) == 0 {
 +		return true
@@ -27,10 +28,10 @@ index 139a1bf..203d6ed 100644
 +	return bytes.Equal(aj, bj)
 +}
 +
+ // Compare returns true if two process configs are equal
  func (p *ProcessConfig) Compare(another *ProcessConfig) bool {
  	if p == nil || another == nil {
- 		return p == another
-@@ -108,7 +122,7 @@ func (p *ProcessConfig) Compare(another *ProcessConfig) bool {
+@@ -134,7 +149,7 @@ func (p *ProcessConfig) Compare(another *ProcessConfig) bool {
  		!reflect.DeepEqual(p.LivenessProbe, another.LivenessProbe) ||
  		!reflect.DeepEqual(p.ReadinessProbe, another.ReadinessProbe) ||
  		!reflect.DeepEqual(p.ShutDownParams, another.ShutDownParams) ||

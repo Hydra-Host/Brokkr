@@ -51,6 +51,7 @@ export const RentalInvoicesResponseSchema = z.object({
       pendingCount: z.number().describe('Number of pending invoices'),
     })
     .describe('Aggregate summary of invoice metrics'),
+  truncated: z.boolean().optional().describe('True when the invoice list was cut off at the row cap'),
 });
 
 export type RentalInvoicesResponse = z.infer<typeof RentalInvoicesResponseSchema>;

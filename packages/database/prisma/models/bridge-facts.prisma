@@ -1,0 +1,43 @@
+// Materialized read-only bridge bootstrap/health facts collected via the
+// bridge-facts Nomad sysbatch job. One row per (zone, node).
+
+model BridgeFacts {
+  id String @id @default(uuid())
+
+  // Zone FK (nullable so rows survive a hard-deleted zone if one ever occurs;
+  // Zone rows are soft-deleted today so in practice zoneId is always populated).
+  zone   Zone?   @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  zoneId String?
+
+  // Zone path used as the Nomad datacenter (the zone UUID today; the staged
+  // cutover may swap in the fleet naming convention, mirroring resolveZonePath).
+  zonePath String
+  // Nomad node name = the host identity within a zone; nodeId can churn on re-register.
+  nodeName String
+  nodeId   String?
+
+  // Last time the facts CONTENT changed (write-on-change; unchanged runs skip the row).
+  collectedAt DateTime
+  // Full validated collector payload (schemaVersion-gated JSON).
+  factsJson   Json
+  // sha256 of the payload minus collectedAt; drives the write-on-change skip.
+  factsHash   String
+
+  // Promoted columns the fleet alerts query on without unpacking factsJson.
+  packageVersion      String?
+  nomadVersion        String?
+  certNomadNotAfter   DateTime?
+  certRsyslogNotAfter DateTime?
+  certSshHostNotAfter DateTime?
+  staleSecrets        Boolean   @default(false)
+  authorizedKeysCount Int?
+  bootstrapComplete   Boolean?
+  hostnameMismatch    Boolean?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([zonePath, nodeName])
+  @@index([zoneId])
+  @@index([collectedAt])
+}

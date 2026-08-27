@@ -1,5 +1,7 @@
 import { initContract } from '@ts-rest/core';
 import {
+  DeviceSecretAuditListResponseSchema,
+  DeviceSecretAuditQuerySchema,
   DeviceSecretDeviceParamsSchema,
   DeviceSecretRevealRequestResponseSchema,
   DeviceSecretRevealStatusParamsSchema,
@@ -81,6 +83,23 @@ export const deviceSecretRoutes = c.router({
     summary: 'Poll an async reveal request for the decrypted secret',
     description:
       'Returns pending while the bridge round-trip is in flight, ready (with the plaintext, once) when the bridge has replied, or unavailable if the bridge is offline / the request timed out. The plaintext is returned exactly once then discarded. Gated to operator Owners/Admins, session auth only.',
+    metadata: { visibility: 'internal' } satisfies RouteMetadata,
+  },
+
+  listDeviceSecretAuditEvents: {
+    method: 'GET',
+    path: '/devices/:deviceId/secrets/audit',
+    pathParams: DeviceSecretDeviceParamsSchema,
+    query: DeviceSecretAuditQuerySchema,
+    responses: {
+      200: DeviceSecretAuditListResponseSchema,
+      401: ErrorResponseSchema,
+      403: ErrorResponseSchema,
+      404: ErrorResponseSchema,
+    },
+    summary: 'List a device’s secret audit trail',
+    description:
+      'Returns the device-secret audit events for the device, newest first, as a paginated envelope. Metadata only — rows never contain secret material, and actor ids are resolved to a display label (user email or data center name) where possible. Gated to operator Owners/Admins, session auth only. Returns 404 if the device does not exist.',
     metadata: { visibility: 'internal' } satisfies RouteMetadata,
   },
 });

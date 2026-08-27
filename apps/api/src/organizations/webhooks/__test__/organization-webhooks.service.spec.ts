@@ -2,6 +2,8 @@ import { ForbiddenException } from '@nestjs/common';
 import { OrganizationMembershipRole } from '@repo/database';
 import { describe, expect, it, vi } from 'vitest';
 import type { ContextService } from '../../../common/context/context.service';
+import type { EventLogService } from '../../../event-log/event-log.service';
+import type { PrismaClient } from '../../../prisma/prisma.client';
 import type { WebhookDeliveryService } from '../../../webhook/webhook-delivery.service';
 import type { WebhookService } from '../../../webhook/webhook.service';
 import type { CreateWebhookDTO, UpdateWebhookDTO } from '../../../webhook/webhook.types';
@@ -38,12 +40,27 @@ function build(callerRole: OrganizationMembershipRole) {
   const ctx = {
     role: callerRole,
     organizationId: 'org-1',
+    requestId: 'req-1',
     requirePermission: vi.fn((resource: string, action: string) => {
       if (callerRole === Member && action !== 'read') {
         throw new ForbiddenException(`missing permission ${resource}:${action}`);
       }
     }),
+    actorFields: vi.fn().mockReturnValue({
+      actorType: 'UI',
+      actorId: 'u-1',
+      actorLabel: 'admin@example.com',
+      apiKeyId: null,
+      apiKeyLabel: null,
+    }),
+    requestFields: vi.fn().mockReturnValue({ method: null, path: null, ipAddress: null, userAgent: null }),
+    finalizeIntents: vi.fn(),
   } as unknown as ContextService;
+
+  const eventLog = { recordInTransaction: vi.fn() } as unknown as EventLogService;
+  const prisma = {
+    $transaction: vi.fn((fn: (tx: unknown) => unknown) => fn({})),
+  } as unknown as PrismaClient;
 
   const webhookService = { create, update, remove, findOne } as unknown as WebhookService;
   const webhookDeliveryService = {
@@ -51,7 +68,7 @@ function build(callerRole: OrganizationMembershipRole) {
     getDeliveryDetails,
   } as unknown as WebhookDeliveryService;
 
-  const service = new OrganizationWebhooksService(ctx, webhookService, webhookDeliveryService);
+  const service = new OrganizationWebhooksService(ctx, webhookService, webhookDeliveryService, eventLog, prisma);
   return { service, create, update, remove, retryDelivery };
 }
 

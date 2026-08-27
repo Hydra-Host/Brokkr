@@ -3,7 +3,7 @@ import express from 'express';
 import { mkdtempSync, rmSync } from 'node:fs';
 import type { Server } from 'node:http';
 import http from 'node:http';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 
@@ -88,7 +88,6 @@ afterEach(() => {
 });
 
 describe('requireJsonMutation', () => {
-
   it('rejects a form-encoded post with 415 (the drive-by csrf vector)', async () => {
     const res = await send(
       'POST',
@@ -193,7 +192,7 @@ describe('requireJsonMutation', () => {
     expect(res.status).toBe(403);
   });
 
-  it('denies a hostname origin (a dns name can never be checked against the socket)', async () => {
+  it('denies a hostname origin from an untokened caller (a dns name proves nothing about the socket)', async () => {
     const res = await send(
       'POST',
       {
@@ -203,6 +202,34 @@ describe('requireJsonMutation', () => {
       },
       '{}',
     );
+    expect(res.status).toBe(403);
+  });
+
+  it('lets a token-authenticated caller mutate from any origin: the token is the anti-csrf proof', async () => {
+    process.env.LAB_API_TOKEN = 'sekret-token';
+    for (const origin of [
+      `http://${LAN_HOSTNAME}:${WEB_PORT}`,
+      `http://lab-box:${WEB_PORT}`,
+      'https://ops.example.com',
+    ]) {
+      const res = await send(
+        'POST',
+        { 'content-type': 'application/json', origin, 'x-lab-token': 'sekret-token' },
+        '{}',
+      );
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it('denies an unallowlisted origin whose token is absent, wrong, or unconfigured', async () => {
+    process.env.LAB_API_TOKEN = 'sekret-token';
+    const origin = `http://${LAN_HOSTNAME}:${WEB_PORT}`;
+    for (const extra of [{}, { 'x-lab-token': 'wrong-token!' }]) {
+      const res = await send('POST', { 'content-type': 'application/json', origin, ...extra }, '{}');
+      expect(res.status).toBe(403);
+    }
+    delete process.env.LAB_API_TOKEN;
+    const res = await send('POST', { 'content-type': 'application/json', origin, 'x-lab-token': 'sekret-token' }, '{}');
     expect(res.status).toBe(403);
   });
 
@@ -322,6 +349,13 @@ describe('isMutationOriginAllowed', () => {
 
   it('denies a hostname origin even when it resolves to the arrival address', () => {
     expect(isMutationOriginAllowed(`http://${LAN_HOSTNAME}:${WEB_PORT}`, LAN_IP)).toBe(false);
+  });
+
+  it('never consults this host own name: a lan client reaches us by a name we may not know', () => {
+    process.env.LAB_BIND_HOST = '0.0.0.0';
+    const own = hostname();
+    expect(isMutationOriginAllowed(`http://${own}:${WEB_PORT}`, LAN_IP)).toBe(false);
+    expect(isMutationOriginAllowed(`http://${own.split('.')[0]}:${WEB_PORT}`, LAN_IP)).toBe(false);
   });
 });
 

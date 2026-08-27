@@ -178,7 +178,7 @@ describe('bootRunLedger under a stale holder', () => {
     boot();
 
     expect(signalledPids()).toEqual([-1234]);
-    expect(getRunRow('fleet-1')?.status).toBe('failed');
+    expect(getRunRow('fleet-1')?.status).toBe('orphaned');
   });
 });
 
@@ -192,6 +192,6 @@ describe('bootRunLedger after a clean shutdown', () => {
     boot(new StateDirLock());
 
     expect(signalledPids()).toEqual([-1234]);
-    expect(getRunRow('fleet-2')?.status).toBe('failed');
+    expect(getRunRow('fleet-2')?.status).toBe('orphaned');
   });
 });

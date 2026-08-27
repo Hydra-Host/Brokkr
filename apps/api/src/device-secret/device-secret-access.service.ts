@@ -13,15 +13,19 @@ import {
   DeviceSecretKind,
   DeviceSecretPurpose,
   Prisma,
+  type DeviceSecretAuditEvent,
 } from '@repo/database';
+import { createPaginationConfig, paginateQuery, type ModelFieldPaths } from '@repo/database/pagination';
 import { Redis } from 'ioredis';
 import { randomUUID } from 'node:crypto';
 import { AuthType } from 'src/auth/identity-context';
 import { BridgeQueueService } from 'src/brokkr-bridge/queue/bridge-queue.service';
-import { ContextService } from 'src/common/context/context.service';
+import { ContextService, type PermissionIntentHandle } from 'src/common/context/context.service';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { getErrorMessage } from 'src/common/error-utils';
 import { REDIS_CLIENT } from 'src/common/redis';
+import { EventLogService } from 'src/event-log/event-log.service';
+import type { EventLogMetadata } from 'src/event-log/event-log.types';
 import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { ZoneCryptoConfig } from 'src/zone-crypto/zone-crypto.config';
@@ -35,6 +39,33 @@ const revealStashSchema = z.record(z.string());
 
 type VersionMeta = z.infer<(typeof contract.listDeviceSecretVersions.responses)[200]>[number];
 type RevealStatus = z.infer<(typeof contract.getDeviceSecretRevealStatus.responses)[200]>;
+type AuditListResponse = z.infer<(typeof contract.listDeviceSecretAuditEvents.responses)[200]>;
+type AuditEventEntry = AuditListResponse['data'][number];
+type AuditQuery = z.infer<typeof contract.listDeviceSecretAuditEvents.query>;
+
+const SECRET_WRITTEN = { resource: 'device-secret', action: 'written', actionKey: 'device-secret.written' };
+const REVEAL_REQUESTED = {
+  resource: 'device-secret',
+  action: 'reveal-requested',
+  actionKey: 'device-secret.reveal-requested',
+};
+const SECRET_REVEALED = { resource: 'device-secret', action: 'revealed', actionKey: 'device-secret.revealed' };
+
+interface RevealCorrelation {
+  purpose: DeviceSecretPurpose | null;
+  kind: DeviceSecretKind | null;
+  version: number | null;
+}
+
+const auditPaginationConfig = createPaginationConfig<ModelFieldPaths<DeviceSecretAuditEvent>>({
+  searchableFields: ['requestId'],
+  filterFields: {},
+  sortableFields: { createdAt: 'createdAt' },
+  defaultSort: [
+    { field: 'createdAt', direction: 'desc' },
+    { field: 'id', direction: 'desc' },
+  ],
+});
 
 export function revealStashKey(deviceId: string, requestId: string): string {
   return `device-secret:reveal:${deviceId}:${requestId}`;
@@ -55,6 +86,7 @@ export class DeviceSecretAccessService {
     private readonly zoneCryptoConfig: ZoneCryptoConfig,
     private readonly audit: DeviceSecretAuditService,
     private readonly atomPublisher: DeviceSecretAtomPublisher,
+    private readonly eventLog: EventLogService,
     @Logger(DeviceSecretAccessService.name) private readonly logger: LoggerService,
   ) {}
 
@@ -73,11 +105,61 @@ export class DeviceSecretAccessService {
     }));
   }
 
+  async listAuditEvents(deviceId: string, query: AuditQuery): Promise<AuditListResponse> {
+    this.assertInteractiveAdmin('Viewing the device-secret audit trail');
+    await this.assertDeviceExists(deviceId);
+    const page = await paginateQuery<Omit<AuditEventEntry, 'actorDisplay'>>(
+      this.prisma.deviceSecretAuditEvent,
+      query,
+      auditPaginationConfig,
+      {
+        where: { deviceId },
+        select: {
+          id: true,
+          deviceId: true,
+          zoneId: true,
+          event: true,
+          purpose: true,
+          kind: true,
+          version: true,
+          actorType: true,
+          actor: true,
+          requestId: true,
+          createdAt: true,
+        },
+      },
+    );
+
+    const userIds = new Set<string>();
+    const bridgeIds = new Set<string>();
+    for (const row of page.data) {
+      if (!row.actor) continue;
+      if (row.actorType === DeviceSecretActorType.USER) userIds.add(row.actor);
+      if (row.actorType === DeviceSecretActorType.BRIDGE) bridgeIds.add(row.actor);
+    }
+    const [emailByUserId, zoneNameById] = await Promise.all([
+      this.resolveEmails([...userIds]),
+      this.resolveZoneNames([...bridgeIds]),
+    ]);
+
+    return {
+      ...page,
+      data: page.data.map((row) => {
+        let actorDisplay: string | null = null;
+        if (row.actor) {
+          if (row.actorType === DeviceSecretActorType.USER) actorDisplay = emailByUserId.get(row.actor) ?? null;
+          if (row.actorType === DeviceSecretActorType.BRIDGE) actorDisplay = zoneNameById.get(row.actor) ?? null;
+        }
+        return { ...row, actorDisplay };
+      }),
+    };
+  }
+
   async write(
     deviceId: string,
     input: { purpose: DeviceSecretPurpose; kind: DeviceSecretKind; secret: Record<string, string> },
   ): Promise<VersionMeta> {
-    this.assertInteractiveAdmin('Writing a device secret');
+    const handle = this.assertInteractiveAdmin('Writing a device secret');
     await this.assertDeviceExists(deviceId);
     const userId = this.contextService.userId;
     let meta;
@@ -115,6 +197,8 @@ export class DeviceSecretAccessService {
       );
     }
 
+    await this.projectEvent(handle, SECRET_WRITTEN, deviceId, { purpose: input.purpose, version: meta.version });
+
     return {
       version: meta.version,
       purpose: meta.purpose,
@@ -130,7 +214,7 @@ export class DeviceSecretAccessService {
     purpose: DeviceSecretPurpose,
     version: number,
   ): Promise<{ requestId: string; status: 'pending' }> {
-    this.assertInteractiveAdmin('Revealing a device secret');
+    const handle = this.assertInteractiveAdmin('Revealing a device secret');
     // Reject up front when hub crypto is dormant: the stash needs the hub key, so the reveal could never complete.
     if (this.zoneCryptoConfig.privateKey === null) {
       throw new ConflictException('Hub crypto is dormant (BROKKR_HUB_PRIVATE_KEY not set); cannot reveal a secret');
@@ -176,11 +260,14 @@ export class DeviceSecretAccessService {
       { request_id: requestId, device_id: deviceId, secret: sealed },
       deviceId,
     );
+    // revealRequestId is the only precise join to the DeviceSecretAuditEvent row, and the reveal-status
+    // URL puts it in `path` regardless — excluding it here would hide nothing.
+    await this.projectEvent(handle, REVEAL_REQUESTED, deviceId, { purpose, version, revealRequestId: requestId });
     return { requestId, status: 'pending' };
   }
 
   async getRevealStatus(deviceId: string, requestId: string): Promise<RevealStatus> {
-    this.assertInteractiveAdmin('Reading a device secret reveal');
+    const handle = this.assertInteractiveAdmin('Reading a device secret reveal');
     const hubPriv = this.zoneCryptoConfig.privateKey;
     if (hubPriv === null) {
       this.logger.error(`Cannot open reveal stash for ${requestId}: hub crypto dormant`);
@@ -206,9 +293,15 @@ export class DeviceSecretAccessService {
     }
     // The stash is already getdel'd and successfully decrypted — audit correlation is bookkeeping
     // and must never drop the delivered secret, so it fails soft.
-    await this.recordRevealDelivered(deviceId, requestId).catch((error: unknown) =>
-      this.logger.error(`Failed to record REVEAL_DELIVERED for ${deviceId}/${requestId}: ${getErrorMessage(error)}`),
-    );
+    const correlated = await this.recordRevealDelivered(deviceId, requestId).catch((error: unknown) => {
+      this.logger.error(`Failed to record REVEAL_DELIVERED for ${deviceId}/${requestId}: ${getErrorMessage(error)}`);
+      return null;
+    });
+    await this.projectEvent(handle, SECRET_REVEALED, deviceId, {
+      purpose: correlated?.purpose ?? null,
+      version: correlated?.version ?? null,
+      revealRequestId: requestId,
+    });
     return { status: 'ready', secret };
   }
 
@@ -216,7 +309,7 @@ export class DeviceSecretAccessService {
     deviceId: string,
     requestId: string,
     extraPayload?: Prisma.InputJsonObject,
-  ): Promise<void> {
+  ): Promise<RevealCorrelation | null> {
     const requested = await this.prisma.deviceSecretAuditEvent.findFirst({
       where: { deviceId, requestId, event: DeviceSecretAuditEventType.REVEAL_REQUESTED },
       orderBy: { createdAt: 'desc' },
@@ -230,7 +323,7 @@ export class DeviceSecretAccessService {
         actor: { type: DeviceSecretActorType.USER, id: this.contextService.userId },
         payload: { correlationMissing: true, ...extraPayload },
       });
-      return;
+      return null;
     }
     await this.audit.record({
       deviceId,
@@ -242,6 +335,40 @@ export class DeviceSecretAccessService {
       actor: { type: DeviceSecretActorType.USER, id: this.contextService.userId },
       ...(extraPayload ? { payload: extraPayload } : {}),
     });
+    return requested;
+  }
+
+  /** Class C: neither this row nor its preferred DeviceSecretAuditEvent is guaranteed, so it supersedes
+   *  the access intent only once the row lands — a failed insert must leave tier 2 to record the access. */
+  private async projectEvent(
+    handle: PermissionIntentHandle | undefined,
+    event: { resource: string; action: string; actionKey: string },
+    deviceId: string,
+    metadata: EventLogMetadata,
+  ): Promise<void> {
+    try {
+      await this.eventLog.record({
+        organizationId: this.contextService.organizationId,
+        tier: 'EVIDENCE',
+        durability: 'MIRROR',
+        ...event,
+        ...this.contextService.actorFields(),
+        ...this.contextService.requestFields(),
+        targetId: deviceId,
+        // No device name is loaded on any of these paths, and the reveal poll reads no device row at all.
+        targetLabel: null,
+        outcome: 'SUCCEEDED',
+        requestId: this.contextService.requestId ?? null,
+        metadata,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to project ${event.actionKey} for device ${deviceId}: ${getErrorMessage(error)} — ` +
+          'the DeviceSecretAuditEvent row, if it landed, is the only record left',
+      );
+      return;
+    }
+    if (handle) this.contextService.finalizeIntents([handle]);
   }
 
   private async assertDeviceExists(deviceId: string): Promise<void> {
@@ -256,7 +383,14 @@ export class DeviceSecretAccessService {
     return new Map(users.map((u) => [u.id, u.email]));
   }
 
-  private assertInteractiveAdmin(operation: string): void {
+  private async resolveZoneNames(zoneIds: string[]): Promise<Map<string, string>> {
+    const unique = [...new Set(zoneIds)];
+    if (unique.length === 0) return new Map();
+    const zones = await this.prisma.zone.findMany({ where: { id: { in: unique } }, select: { id: true, name: true } });
+    return new Map(zones.map((zone) => [zone.id, zone.name]));
+  }
+
+  private assertInteractiveAdmin(operation: string): PermissionIntentHandle | undefined {
     const identity = this.contextService.identity;
     if (identity === undefined) {
       throw new ForbiddenException(`${operation} requires an authenticated admin session`);
@@ -264,6 +398,6 @@ export class DeviceSecretAccessService {
     if (identity.authType === AuthType.ApiKey) {
       throw new ForbiddenException(`${operation} requires an interactive admin session`);
     }
-    this.contextService.requirePermission('device-secret', 'access');
+    return this.contextService.requirePermission('device-secret', 'access');
   }
 }

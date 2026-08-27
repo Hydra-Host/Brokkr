@@ -133,6 +133,11 @@ function clearResumeMarker(key: string): void {
   }
 }
 
+export function reportMissingAnchor(index: number, selector: string | undefined, pathname: string): void {
+  if (!selector) return;
+  console.error(`tour step ${index} never found ${selector} on ${pathname}`);
+}
+
 export type TourNavigate = (path: string, search?: Record<string, string>) => Promise<unknown> | void;
 
 function showReopenHint(anchorSelector = '[data-tour="tour-button"]', label = 'Reopen the tour here anytime'): void {
@@ -183,16 +188,22 @@ function showReopenHint(anchorSelector = '[data-tour="tour-button"]', label = 'R
   const timer = window.setTimeout(dismiss, 5000);
 }
 
-function waitForEl(selector: string | undefined, timeout: number): Promise<void> {
+/** Resolves true when the selector matched. False means the popover will render unanchored, which is
+ *  otherwise silent — `reportMissingAnchor` is the only signal a step has gone stale. */
+function waitForEl(selector: string | undefined, timeout: number): Promise<boolean> {
   return new Promise((resolve) => {
     if (!selector) {
-      resolve();
+      resolve(true);
       return;
     }
     const start = performance.now();
     const tick = () => {
-      if (document.querySelector(selector) || performance.now() - start > timeout) {
-        resolve();
+      if (document.querySelector(selector)) {
+        resolve(true);
+        return;
+      }
+      if (performance.now() - start > timeout) {
+        resolve(false);
         return;
       }
       requestAnimationFrame(tick);
@@ -402,7 +413,8 @@ function runTour(steps: TourStep[], navigate: TourNavigate, opts: RunTourOptions
       await navigate(step.route, step.search);
     }
     ensureSidebarOpen(step);
-    await waitForEl(step.element, step.route || stepNeedsSidebarOpen(step) ? 900 : 0);
+    const found = await waitForEl(step.element, step.route || stepNeedsSidebarOpen(step) ? 900 : 0);
+    if (!found) reportMissingAnchor(index, step.element, window.location.pathname);
     obj.moveTo(index);
   };
 
@@ -458,7 +470,8 @@ function runTour(steps: TourStep[], navigate: TourNavigate, opts: RunTourOptions
       await navigate(first.route, first.search);
     }
     ensureSidebarOpen(first);
-    await waitForEl(first?.element, first?.route || stepNeedsSidebarOpen(first) ? 900 : 0);
+    const found = await waitForEl(first?.element, first?.route || stepNeedsSidebarOpen(first) ? 900 : 0);
+    if (!found) reportMissingAnchor(startIndex, first?.element, window.location.pathname);
     obj.drive(startIndex);
   })();
 }

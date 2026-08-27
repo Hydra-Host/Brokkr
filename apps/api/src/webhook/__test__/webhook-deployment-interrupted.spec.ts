@@ -141,6 +141,7 @@ describe('Webhook - DEPLOYMENT_INTERRUPTED Event', () => {
         expect.objectContaining({
           events: [WebhookEventType.DEPLOYMENT_INTERRUPTED],
         }),
+        undefined,
       );
     });
 
@@ -256,7 +257,7 @@ describe('Webhook - DEPLOYMENT_INTERRUPTED Event', () => {
       const result = await webhookService.update(existingWebhook.id, updateDto);
 
       expect(result.events).toContain(WebhookEventType.DEPLOYMENT_INTERRUPTED);
-      expect(mockWebhookRepo.update).toHaveBeenCalledWith(existingWebhook.id, updateDto);
+      expect(mockWebhookRepo.update).toHaveBeenCalledWith(existingWebhook.id, updateDto, undefined);
     });
   });
 });

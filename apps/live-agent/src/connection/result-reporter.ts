@@ -6,6 +6,7 @@ import type { PartialResult, WorkProgress, WorkResponse } from '../gen/brokkr/ag
 import { makeLogger } from '../logger';
 import { Backoff } from './backoff';
 import type { TransportPool } from './pool';
+import { sleepWithAbort } from './sleep';
 const logger = makeLogger('result-reporter');
 
 type AgentServiceClient = Client<typeof AgentService>;
@@ -45,13 +46,6 @@ function isRetryable(err: unknown): boolean {
   return /UNAVAILABLE/i.test(msg);
 }
 
-async function sleep(ms: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const t = setTimeout(resolve, ms);
-    if (typeof t === 'object' && 'unref' in t) t.unref();
-  });
-}
-
 async function attemptWithRetry(
   fn: () => Promise<void>,
   onRetry: (err: unknown, delayMs: number, attempt: number) => void,
@@ -70,7 +64,7 @@ async function attemptWithRetry(
       attempt += 1;
       const delayMs = backoff.next();
       onRetry(error, delayMs, attempt);
-      await sleep(delayMs);
+      await sleepWithAbort(delayMs);
     }
   }
 }

@@ -1,6 +1,7 @@
 import { isIPv4 } from 'node:net';
 
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@repo/database';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { getErrorMessage } from 'src/common/error-utils';
 import { LoggerService } from 'src/logger/logger.service';
@@ -21,6 +22,7 @@ interface ZoneDnsRow extends DnsZoneBaseRow {
 interface PrefixDnsRow {
   prefixId: string;
   zoneId: string;
+  cidr: string;
   dnsServeDns: boolean | null;
   dnsUpstreamOverride: string[];
 }
@@ -188,6 +190,7 @@ export class DnsDerivationService {
     const raw = {
       serveDns: row.dnsServeDns,
       upstreamOverride: [...upstreamOverride].sort(),
+      cidr: row.cidr,
     };
 
     return DnsPrefixOverrideAtomSchema.parse(raw);
@@ -234,32 +237,22 @@ export class DnsDerivationService {
   }
 
   // A prefix has a DNS override when it has dnsServeDns set or a non-empty dnsUpstreamOverride.
+  // Raw SQL because Prisma cannot select the Unsupported("cidr") prefix column.
   private async listDnsOverridePrefixes(prefixId?: string): Promise<PrefixDnsRow[]> {
-    return this.prisma.prefix
-      .findMany({
-        where: {
-          deletedAt: null,
-          zoneId: { not: null },
-          zone: { deletedAt: null },
-          ...(prefixId ? { id: prefixId } : {}),
-          OR: [{ dnsServeDns: { not: null } }, { dnsUpstreamOverride: { isEmpty: false } }],
-        },
-        select: {
-          id: true,
-          zoneId: true,
-          dnsServeDns: true,
-          dnsUpstreamOverride: true,
-        },
-      })
-      .then((rows) =>
-        rows
-          .filter((r): r is typeof r & { zoneId: string } => r.zoneId !== null)
-          .map((r) => ({
-            prefixId: r.id,
-            zoneId: r.zoneId,
-            dnsServeDns: r.dnsServeDns,
-            dnsUpstreamOverride: r.dnsUpstreamOverride,
-          })),
-      );
+    const prefixFilter = prefixId ? Prisma.sql`AND p.id = ${prefixId}` : Prisma.empty;
+    return this.prisma.$queryRaw<PrefixDnsRow[]>`
+      SELECT
+        p.id AS "prefixId",
+        p."zoneId",
+        p.prefix::text AS cidr,
+        p."dnsServeDns",
+        p."dnsUpstreamOverride"
+      FROM "Prefix" p
+      JOIN "Zone" z ON z.id = p."zoneId" AND z."deletedAt" IS NULL
+      WHERE p."deletedAt" IS NULL
+        AND p."zoneId" IS NOT NULL
+        AND (p."dnsServeDns" IS NOT NULL OR cardinality(p."dnsUpstreamOverride") > 0)
+        ${prefixFilter}
+    `;
   }
 }

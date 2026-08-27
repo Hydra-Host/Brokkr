@@ -14,11 +14,13 @@ import {
   useState,
 } from 'react';
 
+import { cn } from '@repo/ui/utils';
 import {
   type FlatLeaf,
   type NavLeaf,
   type NavSection,
   findLeafByUrl,
+  followInternalNavClick,
   getSectionForPathname,
   isLeafActive,
   notifyNavPopupResult,
@@ -26,19 +28,21 @@ import {
   safeExternalHref,
   safeInternalPath,
   usePinnedLeaves,
-} from '@/lib/nav';
-import { cn } from '@repo/ui/utils';
+} from '~/lib/nav';
+import { findPublicPluginRoute, usePluginRegistry } from '~/plugin-host';
 
 export function AppSidebar({
   sections,
   dashboard,
   orgSwitcher,
   userMenu,
+  search,
 }: {
   sections: NavSection[];
   dashboard?: NavLeaf;
   orgSwitcher?: ReactNode;
   userMenu?: ReactNode;
+  search?: ReactNode;
 }) {
   const location = useLocation();
   const { state } = useSidebar();
@@ -83,6 +87,7 @@ export function AppSidebar({
           <SectionPanel
             section={selectedSection}
             header={orgSwitcher}
+            search={search}
             pathname={location.pathname}
             pinnedLeaves={pinnedLeaves}
             isPinned={isPinned}
@@ -247,6 +252,7 @@ type DropTarget = { url: string; position: 'above' | 'below' };
 function SectionPanel({
   section,
   header,
+  search,
   pathname,
   pinnedLeaves,
   isPinned,
@@ -256,6 +262,7 @@ function SectionPanel({
 }: {
   section: NavSection;
   header?: ReactNode;
+  search?: ReactNode;
   pathname: string;
   pinnedLeaves: FlatLeaf[];
   isPinned: (url: string) => boolean;
@@ -318,7 +325,9 @@ function SectionPanel({
     <div className={cn('min-w-0 flex-1 flex-col overflow-hidden', collapsed ? 'hidden' : 'flex')}>
       {header && <div className="bg-sidebar border-sidebar-border flex h-16 items-center border-b px-2">{header}</div>}
 
-      <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto pt-2 pb-2">
+      {search && <div className="px-2 pt-2 pb-2">{search}</div>}
+
+      <div ref={scrollRef} className={cn('flex min-h-0 flex-1 flex-col overflow-y-auto pb-2', !search && 'pt-2')}>
         <div ref={pinnedRegionRef}>
           <SectionHeader
             icon={Pin}
@@ -427,6 +436,8 @@ function LeafRow({
 }) {
   const Icon = leaf.icon;
   const active = isLeafActive(pathname, leaf.url);
+  const { publicRoutes } = usePluginRegistry();
+  const publicHref = findPublicPluginRoute(publicRoutes, leaf.url, 'navbar') ? safeInternalPath(leaf.url) : undefined;
 
   const linkClass = cn(
     'text-sidebar-foreground hover:bg-accent/10 data-active:text-accent-glow data-active:font-medium relative flex h-7 w-full items-center gap-2 rounded-sm pr-8 text-sm transition-colors',
@@ -478,6 +489,17 @@ function LeafRow({
         </a>
       ) : leaf.external ? (
         <a href={safeExternalHref(leaf.url)} target="_blank" rel="noopener noreferrer" className={linkClass}>
+          <Icon className="size-4 shrink-0 opacity-70" />
+          <span className="truncate">{leaf.title}</span>
+        </a>
+      ) : publicHref ? (
+        <a
+          href={publicHref}
+          draggable={false}
+          data-active={active || undefined}
+          className={linkClass}
+          onClick={(event) => followInternalNavClick(event, publicHref, (href) => window.location.assign(href))}
+        >
           <Icon className="size-4 shrink-0 opacity-70" />
           <span className="truncate">{leaf.title}</span>
         </a>

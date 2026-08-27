@@ -13,7 +13,7 @@ avoids the import cycle and keeps ``local.fleet`` the monkeypatch surface."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -46,13 +46,13 @@ from local.schema import Fleet
 from local.status import _virsh_domstate
 
 
-class VerifyStatus(str, Enum):
+class VerifyStatus(StrEnum):
     HEALTHY = "healthy"
     FINDINGS = "findings"
     NO_MANIFEST = "no-manifest"
 
 
-class FindingKind(str, Enum):
+class FindingKind(StrEnum):
     NO_MANIFEST = "no-manifest"
     DOMAIN_UNDEFINED = "domain-undefined"
     DOMAIN_NOT_RUNNING = "domain-not-running"

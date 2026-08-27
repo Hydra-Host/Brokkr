@@ -84,6 +84,8 @@ def test_noop_verb_rejects_arguments():
         ("svc-start",),
         ("lo-add",),
         ("bootptab-section-install", "brokkr-slot-0"),
+        ("dropin-current",),
+        ("dropin-current", "brokkr-sim-aaaaaaaaaaaa"),
     ],
 )
 def test_wrong_arity_rejected(args):
@@ -524,6 +526,55 @@ def test_bootptab_lock_invocation_acquires_and_holds(tmp_path):
     finally:
         holder.kill()
         holder.wait()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../shadow",
+        "brokkr-sim/../../etc/shadow",
+        "brokkr-sim;id",
+        "brokkr-sim aaa",
+        "brokkr-sim.rev",
+        "shadow",
+        "",
+    ],
+)
+def test_dropin_current_name_charset_enforced(name, home_work):
+    cand = home_work / "render"
+    cand.write_text("x\n")
+    p = _run("dropin-current", name, str(cand))
+    assert p.returncode == 64
+    assert "bad drop-in name" in p.stderr
+
+
+def test_dropin_current_candidate_outside_home_refused():
+    p = _run("dropin-current", "brokkr-sim-aaaaaaaaaaaa", "/etc/hosts")
+    assert p.returncode == 1
+    assert "outside" in p.stderr
+
+
+def test_dropin_current_candidate_must_be_a_regular_file(home_work):
+    d = home_work / "adir"
+    d.mkdir(exist_ok=True)
+    p = _run("dropin-current", "brokkr-sim-aaaaaaaaaaaa", str(d))
+    assert p.returncode == 1
+    assert "not a regular file" in p.stderr
+
+
+def test_dropin_current_absent_dropin_is_not_current(home_work):
+    cand = home_work / "render"
+    cand.write_text("x\n")
+    p = _run("dropin-current", "brokkr-sim-zzzzzzzzzzzz", str(cand))
+    assert p.returncode == 3
+    assert p.stdout == ""
+
+
+def test_dropin_current_never_exits_one(home_work):
+    cand = home_work / "render"
+    cand.write_text("x\n")
+    p = _run("dropin-current", "brokkr-sim-zzzzzzzzzzzz", str(cand))
+    assert p.returncode != 1
 
 
 if __name__ == "__main__":

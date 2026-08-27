@@ -1,28 +1,16 @@
 import type { Vlan } from '@repo/api-client';
 
+import { ServerDataTable } from '@repo/domain-ui/components/server-data-table';
+import type { ServerColumnDef } from '@repo/domain-ui/hooks/use-server-table';
+import { useServerTable } from '@repo/domain-ui/hooks/use-server-table';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
-import { ServerDataTable } from '@repo/ui/components/server-data-table';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import type { ServerColumnDef } from '@repo/ui/hooks/use-server-table';
-import { useServerTable } from '@repo/ui/hooks/use-server-table';
 
+import { getIpamStatusBadgeVariant } from '@repo/utils';
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router';
 import { tsr } from '~/lib/api';
-
-function statusVariant(status: string) {
-  switch (status) {
-    case 'ACTIVE':
-      return 'default';
-    case 'RESERVED':
-      return 'secondary';
-    case 'DEPRECATED':
-      return 'destructive';
-    default:
-      return 'outline';
-  }
-}
 
 const columns: ServerColumnDef<Vlan>[] = [
   {
@@ -46,7 +34,7 @@ const columns: ServerColumnDef<Vlan>[] = [
     accessorKey: 'status',
     header: 'Status',
     size: 120,
-    cell: ({ row }) => <Badge variant={statusVariant(row.original.status)}>{row.original.status}</Badge>,
+    cell: ({ row }) => <Badge variant={getIpamStatusBadgeVariant(row.original.status)}>{row.original.status}</Badge>,
   },
   {
     id: 'description',

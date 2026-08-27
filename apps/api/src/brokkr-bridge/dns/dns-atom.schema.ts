@@ -68,6 +68,10 @@ export const DnsPrefixOverrideAtomSchema = z
       .array(z.string().ip({ version: 'v4' }))
       .nullable()
       .describe('Per-prefix upstream resolver override (empty array or null = inherit zone).'),
+    cidr: z
+      .string()
+      .cidr({ version: 'v4' })
+      .describe('Prefix CIDR; when serveDns=true the bridge binds its local NIC IPs inside this block.'),
   })
   .strict();
 

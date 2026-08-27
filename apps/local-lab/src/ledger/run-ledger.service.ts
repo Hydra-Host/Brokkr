@@ -43,7 +43,7 @@ export class RunLedgerService implements RunSink {
         );
       }
       if (failed > 0)
-        this.log.warn(`orphan reconcile: ${failed} run(s) left running by the previous process -> failed`);
+        this.log.warn(`orphan reconcile: ${failed} run(s) left running by the previous process -> orphaned`);
       return failed;
     } catch (error) {
       this.log.warn(`orphan reconcile failed: ${getErrorMessage(error)}`);

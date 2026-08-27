@@ -34,24 +34,13 @@
     "@hydrahost/plugin-webvm-terminal": "workspace:*"
   },
   "optionalDependencies": {
-    "@hydrahost/managed-edition": "workspace:*",
-    "@hydrahost/plugin-analytics": "workspace:*",
-    "@hydrahost/plugin-device-monitoring": "workspace:*",
-    "@hydrahost/plugin-email-mailgun": "workspace:*",
-    "@hydrahost/plugin-google-maps-geocoding": "workspace:*",
-    "@hydrahost/plugin-helpdesk-pylon": "workspace:*",
-    "@hydrahost/plugin-hubspot-leads": "workspace:*",
-    "@hydrahost/plugin-lender-device-associations": "workspace:*",
-    "@hydrahost/plugin-operator-bridge-requests": "workspace:*",
-    "@hydrahost/plugin-operator-hub": "workspace:*",
-    "@hydrahost/plugin-operator-lifecycle": "workspace:*",
-    "@hydrahost/plugin-radar-geocoding": "workspace:*",
-    "@hydrahost/plugin-salesforce-leads": "workspace:*"
+    "@hydrahost/plugin-nomad": "workspace:*"
   },
   "devDependencies": {
     "@nestjs/common": "^11.1.11",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "^22.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "zod": "^3.25.0"
   }
 }

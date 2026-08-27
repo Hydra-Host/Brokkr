@@ -4,12 +4,9 @@ import type { Express } from 'express';
 
 import { mountDocsAssets } from '../common/docs-assets';
 import { ApiDocsController } from './api-docs.controller';
-import { DocsController } from './docs.controller';
-import { DocsService } from './docs.service';
 
 @Module({
-  controllers: [DocsController, ApiDocsController],
-  providers: [DocsService],
+  controllers: [ApiDocsController],
 })
 export class DocsModule implements OnModuleInit {
   constructor(private readonly httpAdapterHost: HttpAdapterHost) {}

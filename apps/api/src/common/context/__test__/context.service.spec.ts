@@ -1,10 +1,10 @@
-import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { RequestSource, TenantType } from '@repo/database';
 import { randomUUID } from 'crypto';
 import { AuthType, type IdentityContext } from 'src/auth/identity-context';
 import { DesignationOperatorPolicy } from 'src/common/authz/operator-policy';
 import type { DeviceIdentityContext } from 'src/device-tokens/device-tokens.types';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ContextService, type RequestContext } from '../context.service';
 
 function makeService() {
@@ -470,5 +470,192 @@ describe('ContextService.requirePermission / hasPermission gate', () => {
     svc.run({ requestId: 'r' }, () => {
       expect(() => svc.requirePermission('zone', 'read')).toThrow(UnauthorizedException);
     });
+  });
+});
+
+describe('ContextService system intent drain', () => {
+  function withFinalizer() {
+    const finalize = vi.fn().mockResolvedValue(undefined);
+    const svc = makeService();
+    svc.setSystemIntentFinalizer({ finalize });
+    return { svc, finalize };
+  }
+
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const keysOf = (finalize: ReturnType<typeof vi.fn>) =>
+    finalize.mock.calls.flatMap(([input]) =>
+      input.intents.map((i: { resource: string; action: string }) => `${i.resource}:${i.action}`),
+    );
+
+  it('finalizes a mutating intent raised inside an async scope, against the explicit org', async () => {
+    const { svc, finalize } = withFinalizer();
+
+    await svc.runAsSystem('org-sys', async () => {
+      svc.requirePermission('ipam', 'create');
+    });
+
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: 'org-sys', requestId: 'system', error: undefined }),
+    );
+    expect(keysOf(finalize)).toEqual(['ipam:create']);
+  });
+
+  it('returns a synchronous callback value without wrapping it in a promise', async () => {
+    const { svc, finalize } = withFinalizer();
+
+    const result = svc.runAsSystem('org-sys', () => {
+      svc.requirePermission('ipam', 'create');
+      return 42;
+    });
+
+    expect(result).toBe(42);
+    await flush();
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(keysOf(finalize)).toEqual(['ipam:create']);
+  });
+
+  it('resolves the async callback only after finalization completes', async () => {
+    const { svc, finalize } = withFinalizer();
+    const order: string[] = [];
+    finalize.mockImplementation(async () => {
+      order.push('finalized');
+    });
+
+    await svc.runAsSystem('org-sys', async () => {
+      svc.requirePermission('ipam', 'create');
+    });
+    order.push('resolved');
+
+    expect(order).toEqual(['finalized', 'resolved']);
+  });
+
+  it('finalizes with the error and rethrows when the async callback rejects', async () => {
+    const { svc, finalize } = withFinalizer();
+    const boom = new NotFoundException('gone');
+
+    await expect(
+      svc.runAsSystem('org-sys', async () => {
+        svc.requirePermission('ipam', 'create');
+        throw boom;
+      }),
+    ).rejects.toBe(boom);
+
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(finalize).toHaveBeenCalledWith(expect.objectContaining({ error: boom }));
+  });
+
+  it('finalizes with the error and rethrows when the synchronous callback throws', async () => {
+    const { svc, finalize } = withFinalizer();
+    const boom = new NotFoundException('gone');
+
+    expect(() =>
+      svc.runAsSystem('org-sys', () => {
+        svc.requirePermission('ipam', 'create');
+        throw boom;
+      }),
+    ).toThrow(boom);
+
+    await flush();
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(finalize).toHaveBeenCalledWith(expect.objectContaining({ error: boom }));
+  });
+
+  it('finalizes with the error when a non-native thenable rejects', async () => {
+    const { svc, finalize } = withFinalizer();
+    const boom = new NotFoundException('gone');
+    const thenable = {
+      then(_onFulfilled: (value: unknown) => void, onRejected: (reason: unknown) => void) {
+        queueMicrotask(() => onRejected(boom));
+      },
+    };
+
+    await expect(
+      svc.runAsSystem('org-sys', () => {
+        svc.requirePermission('ipam', 'create');
+        return thenable;
+      }),
+    ).rejects.toBe(boom);
+
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(finalize).toHaveBeenCalledWith(expect.objectContaining({ error: boom }));
+  });
+
+  it('adopts a non-native thenable that resolves, finalizing once it settles', async () => {
+    const { svc, finalize } = withFinalizer();
+    const thenable = {
+      then(onFulfilled: (value: unknown) => void) {
+        queueMicrotask(() => onFulfilled('late'));
+      },
+    };
+
+    await expect(
+      svc.runAsSystem('org-sys', () => {
+        svc.requirePermission('ipam', 'create');
+        return thenable;
+      }),
+    ).resolves.toBe('late');
+
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(finalize).toHaveBeenCalledWith(expect.objectContaining({ error: undefined }));
+  });
+
+  it('drops a read-only intent, leaving nothing to finalize for a scope that only read', async () => {
+    const { svc, finalize } = withFinalizer();
+
+    await svc.runAsSystem('org-sys', async () => {
+      svc.requirePermission('ipam', 'read');
+    });
+
+    expect(finalize).not.toHaveBeenCalled();
+  });
+
+  it('leaves the scope store empty, so a second scope never re-finalizes the first one’s intents', async () => {
+    const { svc, finalize } = withFinalizer();
+
+    await svc.runAsSystem('org-sys', async () => {
+      svc.requirePermission('ipam', 'create');
+    });
+    await svc.runAsSystem('org-sys', async () => {
+      svc.requirePermission('ipam', 'update');
+    });
+
+    expect(finalize).toHaveBeenCalledTimes(2);
+    expect(keysOf(finalize)).toEqual(['ipam:create', 'ipam:update']);
+  });
+
+  it('finalizes once when nested in a request and leaves that request’s intents intact', async () => {
+    const { svc, finalize } = withFinalizer();
+    let outerRemaining: string[] = [];
+
+    await new Promise<void>((resolve, reject) => {
+      svc.run({ requestId: 'req-outer', identity: sessionIdentity() }, () => {
+        svc.pushIntent('device', 'update', false);
+        svc
+          .runAsSystem('org-sys', async () => {
+            svc.requirePermission('ipam', 'create');
+          })
+          .then(() => {
+            outerRemaining = svc.drainIntents().map((i) => `${i.resource}:${i.action}`);
+          })
+          .then(resolve, reject);
+      });
+    });
+
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(keysOf(finalize)).toEqual(['ipam:create']);
+    expect(finalize).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'req-outer' }));
+    expect(outerRemaining).toEqual(['device:update']);
+  });
+
+  it('is a no-op when no finalizer has been wired', async () => {
+    const svc = makeService();
+
+    await expect(
+      svc.runAsSystem('org-sys', async () => {
+        svc.requirePermission('ipam', 'create');
+        return 'ok';
+      }),
+    ).resolves.toBe('ok');
   });
 });

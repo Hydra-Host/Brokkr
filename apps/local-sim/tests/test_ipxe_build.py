@@ -29,6 +29,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(ib, "_STAMP_FILE", builds / ".chain-stamp.json")
     monkeypatch.setattr(ib, "get_settings", lambda: _StubSettings(spoke))
     monkeypatch.setattr(ib, "ensure_docker_running", lambda: None)
+    monkeypatch.setattr(ib, "ensure_docker_buildx", lambda: None)
 
     calls: list[list[str]] = []
 

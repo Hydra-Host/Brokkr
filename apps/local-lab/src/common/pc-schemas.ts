@@ -1,4 +1,4 @@
-import { BringupPhaseSchema, BringupStepSchema } from '@repo/local-lab-contract';
+import { BringupPhaseSchema, BringupStepSchema, FleetAccelSchema } from '@repo/local-lab-contract';
 import { z } from 'zod';
 
 // safeParse throwing `label: path: message` — a raw ZodError.message is a multi-line JSON blob that
@@ -24,6 +24,7 @@ export const PcProcessSchema = z
     restarts: z.number().nullish(),
     exit_code: z.number().nullish(),
     replica: z.number().nullish(),
+    has_ready_probe: z.boolean().nullish(), // whether "-" in is_ready means "no probe" or "not probed yet"
     cpu: z.number().nullish(), // percent, e.g. 0.24
     mem: z.number().nullish(), // resident bytes
     system_time: z.string().nullish(), // pre-formatted age, e.g. "2d5h"
@@ -78,6 +79,7 @@ const FleetEvalSchema = z
     nodes: z.record(FleetEvalNodeSchema).optional(),
     zones: z.record(FleetEvalZoneSchema).optional(),
     mode: z.string().optional(),
+    autoStart: z.boolean().optional(),
     baremetal: BaremetalEvalSchema.optional(),
   })
   .passthrough();
@@ -86,13 +88,60 @@ const PortGroupsEvalSchema = z
   .object({ editable: z.array(z.string()).optional(), readOnly: z.array(z.string()).optional() })
   .passthrough();
 
-const StackDefaultsEvalSchema = z
+/** One `config.knobCatalog` entry. Lists keyed by `path`, not attrsets — `devenv eval` cannot serialize
+ *  a dotted attr name. `default` is the option's own pre-override value, null where Nix declares none. */
+const KnobCatalogEntrySchema = z
   .object({
-    hub: z.record(z.string()).optional(),
-    spoke: z.record(z.string()).optional(),
-    hubKnobEnv: z.record(z.array(z.string())).optional(),
+    path: z.string(),
+    label: z.string(),
+    group: z.string(),
+    description: z.string(),
+    kind: z.enum(['bool', 'number', 'port', 'select', 'text']),
+    choices: z.array(z.string()).default([]),
+    bounds: z.object({ min: z.number().int(), max: z.number().int() }).nullish(),
+    default: z.union([z.string(), z.number(), z.boolean()]).nullish(),
+    editable: z.boolean().default(true),
+    danger: z.boolean().default(false),
+    secret: z.boolean().default(false),
+    alias: z.array(z.string()).default([]),
+    overrideFrom: z.string().nullish(),
   })
   .passthrough();
+export type KnobCatalogEntry = z.infer<typeof KnobCatalogEntrySchema>;
+
+const KnobProvenanceSchema = z
+  .object({
+    path: z.string(),
+    files: z.array(z.string()).default([]),
+    perKey: z.record(z.array(z.string())).default({}),
+  })
+  .passthrough();
+export type KnobProvenance = z.infer<typeof KnobProvenanceSchema>;
+
+/** `null` means declared-but-unset; an empty string would instead read as set-to-nothing. */
+const KnobValueSchema = z
+  .object({ path: z.string(), value: z.union([z.string(), z.number(), z.boolean()]).nullish() })
+  .passthrough();
+export type KnobValue = z.infer<typeof KnobValueSchema>;
+
+/** Nix maps catalog and values from one attrset, so total cover holds by construction; this guards a
+ *  stale cache, leaving the mirror unseeded rather than serving a default it could not read. */
+export const DevenvConfigModelSchema = z
+  .object({
+    catalog: z.array(KnobCatalogEntrySchema).default([]),
+    values: z.array(KnobValueSchema).default([]),
+    provenance: z.array(KnobProvenanceSchema).default([]),
+  })
+  .superRefine((model, ctx) => {
+    const have = new Set(model.values.map((v) => v.path));
+    const missing = model.catalog.map((e) => e.path).filter((path) => !have.has(path));
+    if (missing.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `configModel.values omits ${missing.length} catalogued path(s): ${missing.slice(0, 5).join(', ')}`,
+      });
+    }
+  });
 
 const LabBridgeEvalSchema = z
   .object({
@@ -113,7 +162,7 @@ export const DevenvSeedEvalSchema = z
       .object({ hub: z.record(z.string()).optional(), spoke: z.record(z.string()).optional() })
       .passthrough()
       .optional(),
-    stackDefaults: StackDefaultsEvalSchema.optional(),
+    configModel: DevenvConfigModelSchema.optional(),
     portGroups: PortGroupsEvalSchema.optional(),
     labBridges: z.array(LabBridgeEvalSchema).optional(),
     stackCounts: z.object({ hub: z.unknown().optional(), spoke: z.unknown().optional() }).passthrough().optional(),
@@ -136,6 +185,17 @@ export const DevenvSeedEvalSchema = z
     ports: z.record(z.unknown()).optional(),
     portDefaults: z.record(z.unknown()).optional(),
     fleet: FleetEvalSchema.optional(),
+    labFleetNodeFiles: z.record(z.string(), z.record(z.string(), z.array(z.string()))).optional(),
+    labZoneCapacity: z.number().int().optional(),
+    labZoneFiles: z.record(z.string(), z.array(z.string())).optional(),
+  })
+  .passthrough();
+
+/** `devenv eval envPins` — published by modules/env-pins.nix, which the control center reads on its own
+ *  so a checkout without that module still seeds. Path → the variable holding the value. */
+export const DevenvEnvPinsEvalSchema = z
+  .object({
+    envPins: z.array(z.object({ path: z.string(), var: z.string() }).passthrough()).optional(),
   })
   .passthrough();
 
@@ -154,6 +214,10 @@ export const FleetProgressSchema = z
     startedAt: z.number(), // epoch SECONDS
     updatedAt: z.number(),
     error: z.string().nullable(),
+    // nullish, not nullable: a parse failure discards the WHOLE record, so requiring these would
+    // blank every progress field for a fleet still running from before the engine wrote them.
+    accel: FleetAccelSchema.nullish(),
+    accelForced: z.boolean().nullish(),
   })
   .passthrough();
 export type FleetProgress = z.infer<typeof FleetProgressSchema>;

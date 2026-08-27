@@ -1,9 +1,10 @@
 import argparse
 import json
 
-from local import applied, apply_exec
+from local import applied, apply_exec, progress
 from local import fleet as fleetmod
 from local.apply_plan import NodeAction, PlanItem
+from local.progress import Step
 
 
 def _write_fleet(tmp_path, two=True):
@@ -105,7 +106,7 @@ def test_cmd_apply_data_loss_gate_blocks_without_flag(tmp_path, monkeypatch):
             items=[_disk_item()],
         )
 
-    monkeypatch.setattr(fleetmod, "preflight", lambda: None)
+    monkeypatch.setattr(fleetmod, "preflight", lambda *a, **k: None)
     monkeypatch.setattr(fleetmod, "ensure_sudo_cached", lambda: None)
     monkeypatch.setattr(fleetmod, "ensure_state_dirs", lambda: None)
     monkeypatch.setattr(fleetmod, "build_apply_plan", _fake_build_plan)
@@ -136,7 +137,7 @@ def test_cmd_apply_data_loss_gate_passes_with_flag(tmp_path, monkeypatch):
     def _fake_execute_item(fleet, item):
         executed.append(item.name)
 
-    monkeypatch.setattr(fleetmod, "preflight", lambda: None)
+    monkeypatch.setattr(fleetmod, "preflight", lambda *a, **k: None)
     monkeypatch.setattr(fleetmod, "ensure_sudo_cached", lambda: None)
     monkeypatch.setattr(fleetmod, "ensure_state_dirs", lambda: None)
     monkeypatch.setattr(fleetmod, "build_apply_plan", _fake_build_plan)
@@ -147,6 +148,35 @@ def test_cmd_apply_data_loss_gate_passes_with_flag(tmp_path, monkeypatch):
     rc = fleetmod.cmd_apply(argparse.Namespace(plan=False, source=None, allow_data_loss=True))
     assert rc == 0
     assert "cpu-1" in executed
+
+
+def test_cmd_apply_stamps_the_accelerator_on_its_first_record(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCAL_STATE", str(tmp_path))
+    fleet_path = _write_fleet(tmp_path)
+    monkeypatch.setenv("LOCAL_FLEET_PATH", str(fleet_path))
+
+    from local.apply_plan import ApplyPlan
+
+    calls: list[tuple[object, dict]] = []
+    monkeypatch.setattr(progress, "set", lambda step, **k: calls.append((step, k)))
+    monkeypatch.setattr(fleetmod, "detect_accel", lambda: "tcg")
+    monkeypatch.setattr(fleetmod, "accel_forced", lambda: False)
+    monkeypatch.setattr(fleetmod, "preflight", lambda *a, **k: None)
+    monkeypatch.setattr(fleetmod, "ensure_sudo_cached", lambda: None)
+    monkeypatch.setattr(fleetmod, "ensure_state_dirs", lambda: None)
+    monkeypatch.setattr(
+        fleetmod,
+        "build_apply_plan",
+        lambda diff, host_os: ApplyPlan(fallback_full_rebuild=False, reason="", data_loss=True, items=[_disk_item()]),
+    )
+    monkeypatch.setattr(fleetmod, "render_xmls", lambda: None)
+    monkeypatch.setattr(fleetmod, "_refresh_data_network_if_needed", lambda f, p: None)
+    monkeypatch.setattr(fleetmod, "_execute_item", lambda f, i: None)
+
+    assert fleetmod.cmd_apply(argparse.Namespace(plan=False, source=None, allow_data_loss=True)) == 0
+    assert calls[0][0] == Step.POWER_ON
+    assert calls[0][1]["accel"] == "tcg"
+    assert calls[0][1]["accel_forced"] is False
 
 
 def test_journal_not_cleared_when_write_fails(tmp_path, monkeypatch):
@@ -164,7 +194,7 @@ def test_journal_not_cleared_when_write_fails(tmp_path, monkeypatch):
             items=[_disk_item()],
         )
 
-    monkeypatch.setattr(fleetmod, "preflight", lambda: None)
+    monkeypatch.setattr(fleetmod, "preflight", lambda *a, **k: None)
     monkeypatch.setattr(fleetmod, "ensure_sudo_cached", lambda: None)
     monkeypatch.setattr(fleetmod, "ensure_state_dirs", lambda: None)
     monkeypatch.setattr(fleetmod, "build_apply_plan", _fake_build_plan)
@@ -198,7 +228,7 @@ def test_journal_cleared_when_write_succeeds(tmp_path, monkeypatch):
             items=[_disk_item()],
         )
 
-    monkeypatch.setattr(fleetmod, "preflight", lambda: None)
+    monkeypatch.setattr(fleetmod, "preflight", lambda *a, **k: None)
     monkeypatch.setattr(fleetmod, "ensure_sudo_cached", lambda: None)
     monkeypatch.setattr(fleetmod, "ensure_state_dirs", lambda: None)
     monkeypatch.setattr(fleetmod, "build_apply_plan", _fake_build_plan)
@@ -242,7 +272,7 @@ def test_all_noop_apply_clears_stale_journal(tmp_path, monkeypatch):
             network=NetworkDrift(),
         )
 
-    monkeypatch.setattr(fleetmod, "preflight", lambda: None)
+    monkeypatch.setattr(fleetmod, "preflight", lambda *a, **k: None)
     monkeypatch.setattr(fleetmod, "ensure_sudo_cached", lambda: None)
     monkeypatch.setattr(fleetmod, "ensure_state_dirs", lambda: None)
     monkeypatch.setattr(fleetmod, "build_apply_plan", _all_noop_plan)
@@ -296,7 +326,7 @@ def test_cmd_apply_noop_with_real_drift_does_not_clear_manifest(tmp_path, monkey
             network=NetworkDrift(),
         )
 
-    monkeypatch.setattr(fleetmod, "preflight", lambda: None)
+    monkeypatch.setattr(fleetmod, "preflight", lambda *a, **k: None)
     monkeypatch.setattr(fleetmod, "ensure_sudo_cached", lambda: None)
     monkeypatch.setattr(fleetmod, "ensure_state_dirs", lambda: None)
     monkeypatch.setattr(fleetmod, "build_apply_plan", _all_noop_plan)

@@ -2,22 +2,7 @@
 setup() {
   cd "$BATS_TEST_DIRNAME/../.."
   . devenv/lib/bats-helpers.bash
-  ROOT="$PWD"
-  RUNTIME="$BATS_TEST_TMPDIR/runtime"
-  LOCKS="$BATS_TEST_TMPDIR/locks"
-  CHECKOUT="$BATS_TEST_TMPDIR/checkout"
-  LOGS="$RUNTIME/processes/logs"
-  SOCK="$RUNTIME/pc.sock"
-  mkdir -p "$RUNTIME" "$LOCKS" "$CHECKOUT"
-}
-
-task_env() {
-  env -u PC_SOCKET_PATH DEVENV_RUNTIME="$RUNTIME" TMPDIR="$LOCKS" DEVENV_ROOT="$CHECKOUT" "$@"
-}
-
-task_log() { # <task> <body>
-  run task_env bash -c '. "$1/devenv/lib/with-task-log.sh"; begin_task_log "$2"; shift 2; eval "$@"' \
-    _ "$ROOT" "$@"
+  task_test_setup
 }
 
 line_count() { # <file> <n>
@@ -45,7 +30,7 @@ lock_path() { # <devenv-root> <cwd>
 @test "a failing task's exit code reaches the status file" {
   task_log demo 'printf "boom\n"; exit 7'
   [ "$status" -eq 7 ]
-  [ "$(cat "$LOGS/demo.status")" = 7 ]
+  [ "$(head -n 1 "$LOGS/demo.status")" = 7 ]
 }
 
 @test "a succeeding task records zero and replaces the previous result" {
@@ -53,7 +38,7 @@ lock_path() { # <devenv-root> <cwd>
   printf '9\n' > "$LOGS/demo.status"
   task_log demo 'printf "ok\n"'
   [ "$status" -eq 0 ]
-  [ "$(cat "$LOGS/demo.status")" = 0 ]
+  [ "$(head -n 1 "$LOGS/demo.status")" = 0 ]
 }
 
 @test "a concurrent stampede is serialized, not interleaved" {

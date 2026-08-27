@@ -10,6 +10,7 @@ export function StatusCard({
   title,
   ui,
   detail,
+  badge,
   failed,
   actions,
   children,
@@ -17,6 +18,8 @@ export function StatusCard({
   title: string;
   ui: HealthUi;
   detail?: string;
+  /** Sits beside the title, for a standing fact about the card that health does not encode. */
+  badge?: ReactNode;
   failed?: boolean;
   actions?: ReactNode;
   children?: ReactNode;
@@ -27,6 +30,7 @@ export function StatusCard({
         <span className="flex items-center gap-2">
           <StatusDot className={ui.dot} />
           <span className="text-text-primary font-medium">{title}</span>
+          {badge}
         </span>
         <span className={`text-[11px] ${ui.text}`}>{ui.note}</span>
       </div>

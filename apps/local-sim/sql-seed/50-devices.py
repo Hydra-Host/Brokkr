@@ -11,7 +11,14 @@ import ipaddress
 from local.config import get_settings
 from local.derived import effective_bmc_ip, effective_node_ip, node_serial, node_wwn, sim_device_uuid
 from local.schema import require_fleet
-from local.seed.interfaces import DATA_NIC, IPMI_NIC, emit_ip_on_interface
+from local.seed.interfaces import (
+    DATA_NIC,
+    IPMI_NIC,
+    emit_device_name_clear,
+    emit_device_zone_move_prep,
+    emit_ip_on_interface,
+    emit_role_trigger,
+)
 from local.seed.netplan import sim_dhcp_netplan, sim_static_netplan
 from local.seed.storage import build_storage_layouts
 from local.sqlemit import header, logs_to_stderr, q, qj
@@ -48,7 +55,7 @@ def generate() -> str:
     cpu_arch = "aarch64" if host_arch == "arm64" else "x86_64"
     cpu_model = "QEMU Virtual CPU" if host_arch != "arm64" else "QEMU Virtual aarch64 CPU"
 
-    out: list[str] = [header("50-devices.py"), "BEGIN;\n"]
+    out: list[str] = [header("50-devices.py"), "BEGIN;\n", emit_role_trigger(on=False)]
 
     for i, n in enumerate(fleet.nodes):
         if not n.seed_as_server:
@@ -84,6 +91,8 @@ def generate() -> str:
         out.append(
             f"-- {name} id={device_id} ipmi={ipmi} primary={primary} net={network_type} arch={host_arch} zone={zone_id}"
         )
+        out.append(emit_device_name_clear(device_id, zone_id, name, org))
+        out.append(emit_device_zone_move_prep(device_id, zone_id))
         out.append(
             f"""INSERT INTO "Device" (
     id, name, status, role, "deviceType",
@@ -106,7 +115,7 @@ ON CONFLICT (id) DO UPDATE SET
     "supplierId" = EXCLUDED."supplierId",
     "organizationId" = EXCLUDED."organizationId",
     architecture = EXCLUDED.architecture,
-    "updatedAt" = NOW();"""
+    "deletedAt" = NULL, "updatedAt" = NOW();"""
         )
         out.append(
             f"""INSERT INTO "Server" (id, "deviceId", "powerStatus", "createdAt", "updatedAt")
@@ -282,6 +291,7 @@ LIMIT 1;"""
             )
         out.append("")
 
+    out.append(emit_role_trigger(on=True))
     out.append("COMMIT;")
     return "\n".join(out) + "\n"
 

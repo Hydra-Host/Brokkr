@@ -4,27 +4,27 @@ import { blocksUnsavedNav, canSaveForm, shouldHydrateForm } from './unsaved-nav'
 
 describe('blocksUnsavedNav', () => {
   it('never blocks with nothing unsaved', () => {
-    expect(blocksUnsavedNav(false, '/settings', '/fleet')).toBe(false);
-    expect(blocksUnsavedNav(false, '/settings', '/settings')).toBe(false);
+    expect(blocksUnsavedNav(false, '/config/fleet', '/fleet')).toBe(false);
+    expect(blocksUnsavedNav(false, '/config/fleet', '/config/fleet')).toBe(false);
   });
 
   it('blocks a route change while dirty', () => {
-    expect(blocksUnsavedNav(true, '/settings', '/fleet')).toBe(true);
-    expect(blocksUnsavedNav(true, '/settings', '/settings/fleet')).toBe(true);
+    expect(blocksUnsavedNav(true, '/config/fleet', '/fleet')).toBe(true);
+    expect(blocksUnsavedNav(true, '/config/fleet', '/config/fleet/fleet')).toBe(true);
   });
 
   it('lets a re-navigation to the current route through', () => {
-    expect(blocksUnsavedNav(true, '/settings', '/settings')).toBe(false);
+    expect(blocksUnsavedNav(true, '/config/fleet', '/config/fleet')).toBe(false);
   });
 
   it('ignores a trailing-slash-only difference', () => {
-    expect(blocksUnsavedNav(true, '/settings', '/settings/')).toBe(false);
-    expect(blocksUnsavedNav(true, '/settings/', '/settings')).toBe(false);
+    expect(blocksUnsavedNav(true, '/config/fleet', '/config/fleet/')).toBe(false);
+    expect(blocksUnsavedNav(true, '/config/fleet/', '/config/fleet')).toBe(false);
     expect(blocksUnsavedNav(true, '/', '/')).toBe(false);
   });
 
   it('blocks navigation to the root from a nested route', () => {
-    expect(blocksUnsavedNav(true, '/settings', '/')).toBe(true);
+    expect(blocksUnsavedNav(true, '/config/fleet', '/')).toBe(true);
   });
 });
 

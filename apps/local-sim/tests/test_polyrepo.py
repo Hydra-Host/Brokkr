@@ -61,9 +61,18 @@ def test_taskfile_wires_gate_and_verbs():
 def test_taskfile_wires_stack_up():
     tf = _read(TASKFILE)
     nix = _read(DEVENV_NIX)
-    assert "- cmd: stack-up" in tf, "task up must invoke the stack-up script directly"
+    assert "stack-up || rc=$?" in tf, "task up must invoke the stack-up script directly"
     assert "scripts.stack-up" in nix, "stack-up script must be declared in devenv.nix"
     assert "devenv tasks run setup:preflight" in nix, "stack-up must run the preflight gate"
+
+
+def test_task_up_stops_at_the_relogin_checkpoint_without_failing():
+    tf = _read(TASKFILE)
+    block = tf[tf.index("stack-up || rc=$?") :]
+    assert block.index('"$rc" = 78') < block.index("✓ Stack reconciled."), (
+        "the re-login checkpoint must stop before the ready banner"
+    )
+    assert 'exit "$rc"' in block, "a real bring-up failure must still propagate"
 
 
 def test_stack_up_claims_slot_before_eval():
@@ -83,6 +92,50 @@ def test_datastore_wipe_guard_is_single_sourced():
     assert "scripts.stack-await-down" in nix, "the datastore-wipe gate must be its own script"
     assert nix.count("stack-await-down") >= 2, "stack-reset must call the gate, not carry its own poll loop"
     assert "daemon_down" not in nix, "the daemon-down poll must live only in stack-await-down"
+
+
+def test_stack_up_checks_host_access_before_the_claim():
+    nix = _read(DEVENV_NIX)
+    stack_up = nix[nix.index("scripts.stack-up") :]
+    assert "host-access-check.sh" in stack_up, "stack-up must run the host-access check"
+    assert stack_up.index("host-access-check.sh") < stack_up.index("stack-claim.sh"), (
+        "a refused bring-up must not claim a slot it will never use"
+    )
+
+
+def test_doctor_report_delegates_to_the_host_access_check():
+    nix = _read(POLYREPO_NIX)
+    assert "dockerCheck" not in nix and "groupCheck" not in nix, (
+        "the two Nix-string checks are retired — host-access-check.sh is the single authority"
+    )
+    assert "host-access-check.sh" in nix, "task doctor must call the host-access check"
+    assert "--report" in nix, "the doctor needs the report exit codes, not the bring-up gate behaviour"
+
+
+def test_doctor_passes_the_relogin_checkpoint_code_through():
+    nix = _read(POLYREPO_NIX)
+    assert "|| hostrc=$?" in nix, "a bare call aborts the whole verdict under the task runner's errexit"
+    assert "78) stale=1 ;;" in nix, "the doctor must recognise the host check's re-login code"
+    assert "exit 78" in nix, "the checkpoint code must reach setup:onboard's caller"
+    verdict = nix[nix.index("case $hostrc in") :]
+    assert verdict.index('[ "$fail" != 0 ]') < verdict.index('[ "$stale" != 0 ]'), (
+        "a real blocker must outrank the re-login checkpoint"
+    )
+
+
+def test_devenv_ships_buildx_and_keeps_the_qemu_pins_overridable():
+    nix = _read(DEVENV_NIX)
+    assert "pkgs.docker-buildx" in nix, "the buildx plugin must be on the Linux devenv profile"
+    for var in ("LOCAL_QEMU_EMULATOR", "LOCAL_EDK2_CODE_PATH", "LOCAL_EDK2_VARS_TEMPLATE_PATH"):
+        assert f"{var} = lib.mkOptionDefault" in nix, f"{var} must stay .env-overridable"
+
+
+def test_group_probe_stays_in_parity_with_the_installer():
+    installer = _read(REPO_ROOT / "install.sh")
+    check = _read(REPO_ROOT / "devenv" / "scripts" / "host-access-check.sh")
+    for form in ('id -nG "$', "id -nG "):
+        assert form in installer, f"install.sh lost the {form!r} form of the two-way group probe"
+        assert form in check, f"host-access-check.sh lost the {form!r} form of the two-way group probe"
 
 
 def test_taskfile_wires_sudo_teardown():

@@ -61,7 +61,7 @@ const Checkbox = React.forwardRef<HTMLButtonElement, CheckboxProps>(
               onCheckedChange={handleCheckedChange}
               indeterminate={isIndeterminate}
               className={cn(
-                'peer border-accent h-4 w-4 shrink-0 rounded-sm border',
+                'peer border-accent inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border',
                 'bg-transparent',
                 'focus-visible:ring-accent focus-visible:ring-offset-bg-primary focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
                 'disabled:cursor-not-allowed disabled:opacity-50',

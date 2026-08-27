@@ -42,6 +42,9 @@ tasks:
         sh: '[ -n "$DEVENV_ROOT" ]'
         msg: 'Not in the devenv shell. New machine? Run the one-time bootstrap "bash apps/local-sim/provisioning/bootstrap.sh", then "exec $SHELL" and cd back in. Already bootstrapped? Run "direnv allow" (or "devenv shell") to load it.'
     cmds:
+      # .envrc renders this under direnv; a plain `devenv shell` never sources .envrc, so render it
+      # here too — `stack-up` below re-evaluates devenv and picks the file up.
+      - cmd: bash "$DEVENV_ROOT/devenv/scripts/render-env-pins.sh"
       - cmd: |
           set -e
           BROKK_SETUP_QUIET=1 bash "$DEVENV_ROOT/apps/local-sim/provisioning/bootstrap.sh"
@@ -54,12 +57,22 @@ tasks:
       # `stack-up` script so the control center can run the same bring-up without the tty the steps
       # above need. The preflight lives there and only there: it must run after the slot claim or it
       # port-scans slot 0's ports.
-      - cmd: stack-up
+      # 78 = host-access-check.sh's re-login checkpoint; stop before the ready banner.
+      # The banner shares this block: go-task runs every cmd in its own shell.
       - cmd: |
+          rc=0
+          stack-up || rc=$?
+          if [ "$rc" = 78 ]; then
+            echo ""
+            echo "· stack not started — re-run 'task up' after the fresh login."
+            exit 0
+          fi
+          [ "$rc" = 0 ] || exit "$rc"
           echo ""
           echo "✓ Stack reconciled."
           echo "  control center http://localhost:5175 · hub :3000 · spoke :8000"
           echo "  watch: task logs (TUI) · task status     down: task down"
+        silent: true
 
   up:
     desc: 'Everything up from nothing: idempotent host bootstrap + passwordless sim sudo + devenv up -d. Re-run to reconcile.'
@@ -106,7 +119,7 @@ tasks:
       - nix build --print-out-paths "$DEVENV_ROOT/devenv#ciImage"
 
   local:doctor:
-    desc: 'Read-only onboarding report: checkouts, SSH key, Docker, group membership.'
+    desc: 'Read-only onboarding report: checkouts, SSH key, group membership, libvirt, docker, buildx, KVM.'
     aliases: [doctor]
     preconditions:
       - *devenv_guard
@@ -172,6 +185,13 @@ tasks:
     cmds:
       - stack-reslot
 
+  stack:release:
+    desc: 'DESTRUCTIVE: tear this stack down and return its slot to the host registry (down + fleet nuke + wipe + release). Another checkout can then claim it.'
+    preconditions:
+      - *devenv_guard
+    cmds:
+      - stack-release
+
   local:status:
     desc: 'One-shot health: process-compose processes + fleet status + overrides summary.'
     aliases: [status]
@@ -191,6 +211,14 @@ tasks:
     cmds:
       - python -m local.show_env {{.CLI_ARGS}}
       - python -m local.show_config {{.CLI_ARGS}}
+
+  docs:config:
+    desc: "Regenerate devenv/README.md's option + fleet-node reference tables from knobCatalog and schema.py."
+    cmds:
+      # the generator reads the apply-class + writability rules out of the built contract, so a
+      # stale dist would price the table against rules the lab no longer applies.
+      - pnpm --filter @repo/local-lab-contract build
+      - node scripts/gen-config-reference.mjs
 
   local:logs:
     desc: 'Attach the process-compose TUI (status/health + per-process logs; q detaches).'

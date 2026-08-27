@@ -2,7 +2,6 @@ import { initContract } from '@ts-rest/core';
 import { auditRoutes } from './contract/audit';
 import { buildRoutes } from './contract/build';
 import { datastoreRoutes } from './contract/datastore';
-import { docsRoutes } from './contract/docs';
 import { fleetRoutes } from './contract/fleet';
 import { hubRoutes } from './contract/hub';
 import { queuesRoutes } from './contract/queues';
@@ -15,6 +14,7 @@ import { statusRoutes } from './contract/status';
 import { storageRoutes } from './contract/storage';
 import { sudoRoutes } from './contract/sudo';
 import { testRoutes } from './contract/test';
+import { zonesRoutes } from './contract/zones';
 
 const c = initContract();
 
@@ -27,6 +27,7 @@ export const contract = c.router(
     ...stacksRoutes,
     ...servicesRoutes,
     ...fleetRoutes,
+    ...zonesRoutes,
     ...testRoutes,
     ...datastoreRoutes,
     ...queuesRoutes,
@@ -35,17 +36,17 @@ export const contract = c.router(
     ...buildRoutes,
     ...storageRoutes,
     ...sudoRoutes,
-    ...docsRoutes,
     ...auditRoutes,
   },
   { strictStatusCodes: true },
 );
 
+export * from './apply-action';
+export * from './apply-class';
 export * from './ipv4';
 export * from './schemas/audit';
 export * from './schemas/common';
 export * from './schemas/datastore';
-export * from './schemas/docs';
 export * from './schemas/fleet';
 export * from './schemas/hub';
 export * from './schemas/queues';
@@ -57,4 +58,6 @@ export * from './schemas/status';
 export * from './schemas/storage';
 export * from './schemas/sudo';
 export * from './schemas/test';
+export * from './schemas/zones';
 export * from './streams';
+export * from './writable';

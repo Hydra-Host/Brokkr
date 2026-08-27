@@ -27,6 +27,27 @@ describe('deriveFleetStatus', () => {
     expect(s.stepCount).toBe(9);
   });
 
+  it('degraded (not ready) when a spoke that serves the boot chain is down', () => {
+    const s = deriveFleetStatus(
+      proc({ is_ready: 'Ready' }),
+      prog({ step: 'ready', stepOrdinal: 8 }),
+      4,
+      4,
+      NOW,
+      undefined,
+      ['spoke'],
+    );
+    expect(s.health).toBe('degraded');
+    expect(s.detail).toContain('4/4 VMs running');
+    expect(s.detail).toContain('spoke down');
+    expect(s.machinesRunning).toBe(4);
+  });
+
+  it('leaves a fleet that is not itself ready alone — a down spoke does not mask coming-up', () => {
+    const s = deriveFleetStatus(proc({ is_ready: 'Not Ready' }), prog({}), 4, 0, NOW, undefined, ['spoke']);
+    expect(s.health).toBe('coming-up');
+  });
+
   it('coming-up with label/counts/elapsed', () => {
     const s = deriveFleetStatus(
       proc({ is_ready: 'Not Ready' }),
@@ -119,5 +140,29 @@ describe('deriveFleetStatus', () => {
     );
     expect(s.health).toBe('failed');
     expect(s.detail).toBe('fleet init failed: spoke could not serve …');
+  });
+
+  it('carries the accelerator and how it was chosen through to the card', () => {
+    const s = deriveFleetStatus(proc({ is_ready: 'Ready' }), prog({ accel: 'tcg', accelForced: true }), 4, 4, NOW);
+    expect(s.accel).toBe('tcg');
+    expect(s.accelForced).toBe(true);
+  });
+
+  it('carries the accelerator while the fleet is still coming up', () => {
+    const s = deriveFleetStatus(proc({ is_ready: 'Not Ready' }), prog({ accel: 'tcg', accelForced: false }), 4, 0, NOW);
+    expect(s.health).toBe('coming-up');
+    expect(s.accel).toBe('tcg');
+    expect(s.accelForced).toBe(false);
+  });
+
+  it('leaves the accelerator null when no progress record exists', () => {
+    const s = deriveFleetStatus(proc({ is_ready: 'Ready' }), null, 4, 4, NOW);
+    expect(s.accel).toBeNull();
+    expect(s.accelForced).toBeNull();
+  });
+
+  it('keeps fleet health ready under emulation — tcg is slow, not degraded', () => {
+    const s = deriveFleetStatus(proc({ is_ready: 'Ready' }), prog({ accel: 'tcg', accelForced: false }), 4, 4, NOW);
+    expect(s.health).toBe('ready');
   });
 });

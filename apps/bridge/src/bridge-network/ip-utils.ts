@@ -12,6 +12,14 @@ export function ipv4ToInt(addr: string): number | null {
   return value;
 }
 
+export function isValidIpv4Cidr(cidr: string): boolean {
+  const slash = cidr.indexOf('/');
+  if (slash === -1) return false;
+  const prefix = Number.parseInt(cidr.slice(slash + 1), 10);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
+  return isIPv4(cidr.slice(0, slash));
+}
+
 export function isRoutableUnicastIpv4(ip: string): boolean {
   if (!isIPv4(ip)) return false;
   const ipInt = ipv4ToInt(ip);

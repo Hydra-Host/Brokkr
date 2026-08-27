@@ -2,7 +2,7 @@ import { rm as fsRm, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { registerOperation } from '../../dispatch/registry';
 import { run } from '../../exec';
-import { assertTargetPathSafe } from './targetPath';
+import { assertTargetPathSafe } from './target-path';
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
 

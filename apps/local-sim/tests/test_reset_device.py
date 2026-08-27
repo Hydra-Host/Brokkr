@@ -111,7 +111,7 @@ def test_main_dispatches_to_vm_branch(monkeypatch):
 
 def test_main_requires_fleet(monkeypatch):
     monkeypatch.setattr(rd, "load_fleet", lambda: None)
-    with pytest.raises(SystemExit, match="no fleet.yml"):
+    with pytest.raises(SystemExit, match=r"no fleet\.yml"):
         rd.main(["bench-1"])
 
 

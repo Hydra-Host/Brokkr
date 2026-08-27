@@ -86,11 +86,32 @@ export function PrefixCombobox<T extends FieldValues>({
   );
 }
 
-export function VrfCombobox<T extends FieldValues>({ control, name, label = 'VRF' }: FkProps<T>) {
+export function VrfCombobox<T extends FieldValues>({
+  control,
+  name,
+  label = 'VRF',
+  placeholder,
+  noneLabel,
+  seedOption,
+}: SeedableFkProps<T> & { placeholder?: string; noneLabel?: string }) {
   const { data } = tsr.listVrfs.useQuery({ queryKey: ['vrfs', 'fk'], queryData: { query: {} } });
-  const options =
+  const loaded =
     data?.status === 200 ? data.body.map((v) => ({ value: v.id, label: v.rd ? `${v.name} (${v.rd})` : v.name })) : [];
-  return <FormCombobox control={control} name={name} label={label} options={options} placeholder="Select a VRF" />;
+  const withSeed =
+    seedOption && !loaded.some((option) => option.value === seedOption.value) ? [seedOption, ...loaded] : loaded;
+  const options = noneLabel
+    ? [{ value: '', label: noneLabel }, ...withSeed.filter((option) => option.value !== '')]
+    : withSeed;
+  return (
+    <FormCombobox
+      control={control}
+      name={name}
+      label={label}
+      options={options}
+      placeholder={placeholder ?? 'Select a VRF'}
+      searchPlaceholder="Search VRFs…"
+    />
+  );
 }
 
 export function BgpPeerGroupCombobox<T extends FieldValues>({ control, name, label = 'Peer group' }: FkProps<T>) {
@@ -117,7 +138,7 @@ export function DeviceCombobox<T extends FieldValues>({
 }: SeedableFkProps<T>) {
   const [search, setSearch] = useState('');
   const { data } = tsr.getServers.useQuery({
-    queryKey: ['devices', 'fk', search],
+    queryKey: ['servers-active', 'fk', search],
     queryData: { query: { search: search || undefined, pageSize: 50 } },
     placeholderData: keepPreviousData,
   });

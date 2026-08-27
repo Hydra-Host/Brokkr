@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { basename } from 'node:path';
 import type { Readable } from 'node:stream';
 
+import { getErrorMessage } from '@repo/utils';
 import { dispatchContext } from './dispatch/context';
 import { makeLogger, type Level } from './logger';
 const logger = makeLogger('exec');
@@ -305,7 +306,7 @@ export async function run(cmd: string, args: readonly string[] = [], opts: RunOp
     try {
       code = await awaitSettle(child);
     } catch (err) {
-      logger.error('exec spawn error', { cmd, args, message: err instanceof Error ? err.message : String(err) });
+      logger.error('exec spawn error', { cmd, args, message: getErrorMessage(err) });
       throw err;
     }
     return finalize(code, state, { cmd, args, opts, start, maxStdoutChars, maxStderrChars });

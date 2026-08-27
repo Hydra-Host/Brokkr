@@ -1,0 +1,148 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Guides/Getting Started" />
+
+# Getting Started
+
+`@repo/ui` is the shared Hydra design system: a source-style component library built on
+Tailwind CSS v4, [Base UI](https://base-ui.com), `class-variance-authority`, and the brokkr
+theme system. Apps consume it directly as TypeScript source through package subpath exports —
+there is no build step.
+
+## Installation
+
+Add the workspace dependency plus the Tailwind toolchain to your app:
+
+```jsonc
+// package.json
+{
+  "dependencies": {
+    "@repo/ui": "workspace:*",
+    "tailwindcss": "^4.1.18",
+    "@tailwindcss/vite": "^4.1.18",
+  },
+  "devDependencies": {
+    "tw-animate-css": "^1.4.0",
+  },
+}
+```
+
+Register the Tailwind Vite plugin:
+
+```ts
+// vite.config.ts
+import tailwindcss from '@tailwindcss/vite';
+import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+});
+```
+
+Wire the stylesheet — this is the complete CSS entry used by every Hydra app:
+
+```css
+/* src/index.css */
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@repo/ui/styles/brokkr.css';
+@source '../node_modules/@repo/ui';
+```
+
+The `@source` line makes Tailwind scan the library's own class names; the path is relative
+to the CSS file and points at your app's `node_modules/@repo/ui` symlink. Fonts (Inter and
+JetBrains Mono) load automatically through `brokkr.css`.
+
+## Theme setup
+
+Wrap your app in the `ThemeProvider`. It applies `data-theme` to `<html>`, persists the
+choice to `localStorage`, and follows the OS light/dark preference in `system` mode:
+
+```tsx
+import { ThemeProvider } from '@repo/ui/theme-provider';
+import { configureUiBrand } from '@repo/ui/lib/brand';
+
+configureUiBrand({ name: 'Hydra Commerce' });
+
+<ThemeProvider>
+  <App />
+</ThemeProvider>;
+```
+
+See the [Theming guide](?path=/docs/guides-theming--docs) for the full list of themes and
+design tokens.
+
+## Importing components
+
+The root `@repo/ui` barrel intentionally exports almost nothing — always deep-import from a
+subpath:
+
+{/* JSX table: remark-gfm is not installed, so markdown pipe tables don't render. */}
+
+<table>
+  <thead>
+    <tr>
+      <th style={{ textAlign: 'left', padding: '4px 16px 4px 0' }}>What</th>
+      <th style={{ textAlign: 'left', padding: '4px 0' }}>Import from</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style={{ padding: '4px 16px 4px 0' }}>Components</td>
+      <td>
+        <code>@repo/ui/components/button</code>, <code>.../card</code>, <code>.../dialog</code>
+      </td>
+    </tr>
+    <tr>
+      <td style={{ padding: '4px 16px 4px 0' }}>React Hook Form fields</td>
+      <td>
+        <code>@repo/ui/form/form-input</code>, <code>.../form-select</code>
+      </td>
+    </tr>
+    <tr>
+      <td style={{ padding: '4px 16px 4px 0' }}>Hooks</td>
+      <td>
+        <code>@repo/ui/hooks/use-mobile</code>, <code>@repo/ui/hooks/use-filters</code>
+      </td>
+    </tr>
+    <tr>
+      <td style={{ padding: '4px 16px 4px 0' }}>Theme system</td>
+      <td>
+        <code>@repo/ui/theme-provider</code>, <code>@repo/ui/theme-selector</code>
+      </td>
+    </tr>
+    <tr>
+      <td style={{ padding: '4px 16px 4px 0' }}>Utilities</td>
+      <td>
+        <code>@repo/ui/utils</code> (<code>cn</code>)
+      </td>
+    </tr>
+    <tr>
+      <td style={{ padding: '4px 16px 4px 0' }}>ASCII art data</td>
+      <td>
+        <code>@repo/ui/ascii-art</code>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+```tsx
+import { Button } from '@repo/ui/components/button';
+import { cn } from '@repo/ui/utils';
+
+<Button variant="outline" className={cn('w-full')}>
+  Provision
+</Button>;
+```
+
+## Optional peer dependencies
+
+Two component groups need extra peers in the consuming app:
+
+- **`react-hook-form` ^7** — everything under `@repo/ui/form/*` takes a `control` prop
+  from `useForm()`.
+- **`@tanstack/react-router` ^1** — `ButtonLink`, `useFilters`, and
+  `useNavigationShortcuts` need router context.
+
+Everything else works with just `react` and `react-dom`.

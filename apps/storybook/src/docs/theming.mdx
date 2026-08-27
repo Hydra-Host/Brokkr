@@ -1,0 +1,143 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Guides/Theming" />
+
+# Theming
+
+The design system ships nine themes defined in `@repo/ui/styles/brokkr.css`. Every theme is a
+`[data-theme='…']` block of CSS custom properties that overrides the base `@theme` tokens, and
+`ThemeProvider` decides which value lands on `<html data-theme="…">`.
+
+## The nine themes
+
+Each theme's representative swatch color (from `THEME_OPTIONS` in `@repo/ui/theme-provider`):
+
+### Dark
+
+<table>
+  <thead>
+    <tr>
+      <th style={{ textAlign: 'left' }}>data-theme</th>
+      <th style={{ textAlign: 'left' }}>Label</th>
+      <th style={{ textAlign: 'left' }}>Swatch</th>
+    </tr>
+  </thead>
+  <tbody>
+    {[
+      ['commerce-dark', 'Commerce', '#857CFF'],
+      ['hydra-dark', 'Violet', '#ECEAFF'],
+      ['yellow', 'Gold', '#FFDC75'],
+      ['blue', 'Blue', '#6BC1FF'],
+      ['green', 'Green', '#53FF99'],
+      ['pink', 'Pink', '#FFAAF1'],
+    ].map(([value, label, hex]) => (
+      <tr key={value}>
+        <td>
+          <code>{value}</code>
+        </td>
+        <td>{label}</td>
+        <td>
+          <span
+            style={{
+              display: 'inline-block',
+              width: 12,
+              height: 12,
+              marginRight: 8,
+              backgroundColor: hex,
+              border: '1px solid rgba(128,128,128,0.4)',
+              verticalAlign: 'middle',
+            }}
+          />
+          <code>{hex}</code>
+        </td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+### Light
+
+<table>
+  <thead>
+    <tr>
+      <th style={{ textAlign: 'left' }}>data-theme</th>
+      <th style={{ textAlign: 'left' }}>Label</th>
+      <th style={{ textAlign: 'left' }}>Swatch</th>
+    </tr>
+  </thead>
+  <tbody>
+    {[
+      ['commerce-light', 'Commerce', '#635BFF'],
+      ['hydra-light', 'Violet', '#5554FF'],
+      ['solarized-light', 'Solar', '#2AA198'],
+    ].map(([value, label, hex]) => (
+      <tr key={value}>
+        <td>
+          <code>{value}</code>
+        </td>
+        <td>{label}</td>
+        <td>
+          <span
+            style={{
+              display: 'inline-block',
+              width: 12,
+              height: 12,
+              marginRight: 8,
+              backgroundColor: hex,
+              border: '1px solid rgba(128,128,128,0.4)',
+              verticalAlign: 'middle',
+            }}
+          />
+          <code>{hex}</code>
+        </td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+See the live [Themes gallery](?path=/story/foundations-themes--gallery) and the resolved
+[token values](?path=/story/foundations-colors-tokens--default) for the active theme.
+
+## ThemeProvider
+
+`ThemeProvider` (`@repo/ui/theme-provider`) owns the `data-theme` attribute on `<html>` and
+persists three localStorage keys:
+
+- `brokkr-theme` — the current mode: a theme value or `system`.
+- `brokkr-preferred-dark` — which dark theme `system` mode resolves to.
+- `brokkr-preferred-light` — which light theme `system` mode resolves to.
+
+Calling `setTheme('green')` selects that theme directly and also records it as the preferred
+dark theme (likewise a light theme updates the preferred light). Calling `setSystemMode()`
+switches to `system`, which follows the OS `prefers-color-scheme` and picks the preferred
+dark or light theme accordingly — live, via a media-query listener.
+
+`ThemeSelector` (`@repo/ui/theme-selector`) is the ready-made dropdown over this context; in
+this Storybook the toolbar theme control drives the same provider.
+
+## What the commerce themes change
+
+`commerce-light` and `commerce-dark` restyle the terminal aesthetic into a payment-product
+look. Beyond colors they:
+
+- switch `--font-mono` from JetBrains Mono to **Inter**, so the whole UI renders in a
+  proportional face;
+- set real border radii (`--radius-sm` through `--radius-3xl`, which are all `0` in the
+  terminal themes);
+- hide the terminal corner-tick decorations on cards, inputs, tabs, and selects, replacing
+  them with plain rounded borders.
+
+## Forcing a theme on a subtree
+
+Because every theme block uses a bare `[data-theme='…']` selector, a nested element with a
+`data-theme` attribute re-scopes all custom properties for its subtree — no provider needed.
+Apps use this for hosted pages that must ignore the visitor's saved theme:
+
+```tsx
+<div data-theme="commerce-light" className="bg-bg-primary text-text-primary">
+  {/* everything in here renders in commerce-light */}
+</div>
+```
+
+The [Themes gallery](?path=/story/foundations-themes--gallery) story uses exactly this
+technique to render all nine themes side by side.

@@ -5,11 +5,23 @@
   "license": "Apache-2.0",
   "main": "./dist/index.js",
   "types": "./src/index.ts",
+  "typesVersions": {
+    "*": {
+      "nest": [
+        "src/nest.ts"
+      ]
+    }
+  },
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "require": "./dist/index.js",
       "import": "./dist/index.js"
+    },
+    "./nest": {
+      "types": "./src/nest.ts",
+      "require": "./dist/nest.js",
+      "import": "./dist/nest.js"
     }
   },
   "files": [
@@ -20,7 +32,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "vitest run"
   },
   "peerDependencies": {
     "@nestjs/common": ">=11",
@@ -44,6 +57,7 @@
     "@types/react": "^19.2.0",
     "react": "^19.2.0",
     "typescript": "^5.9.3",
+    "vitest": "^4.0.17",
     "zod": "^3.25.0"
   }
 }

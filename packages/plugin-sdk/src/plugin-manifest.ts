@@ -3,6 +3,7 @@ import type { AppRouter } from '@ts-rest/core';
 import type { z } from 'zod';
 
 import type { BrokkrGateName } from './gates';
+import type { PluginCspContribution } from './plugin-csp';
 
 export interface PluginManifest<TConfigSchema extends z.ZodTypeAny | undefined = z.ZodTypeAny | undefined> {
   id: string;
@@ -23,4 +24,7 @@ export interface PluginManifest<TConfigSchema extends z.ZodTypeAny | undefined =
   allowedGates?: readonly BrokkrGateName[];
 
   bridgeModule?: () => Promise<{ default: Type<unknown> } | Type<unknown>>;
+
+  /** Extra CSP sources merged into the hub policy when this plugin is enabled. Never plugin-id-branch in the host. */
+  csp?: PluginCspContribution;
 }

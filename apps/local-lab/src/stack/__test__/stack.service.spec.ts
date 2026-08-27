@@ -54,12 +54,13 @@ function makeService() {
     restart: vi.fn(() => Promise.resolve()),
     restartAndWait: vi.fn((_name: string): Promise<boolean> => Promise.resolve(true)),
     processInfo: vi.fn(
-      (): Promise<{ Environment: string[] }> => Promise.resolve({ Environment: ['BROKKR_HUB_PRIVATE_KEY=zone-key'] }),
+      (): Promise<{ environment: string[] }> => Promise.resolve({ environment: ['BROKKR_HUB_PRIVATE_KEY=zone-key'] }),
     ),
     ensureRunning: vi.fn(() => Promise.resolve()),
     ensureStopped: vi.fn(() => Promise.resolve()),
     stopAndWait: vi.fn((_name: string): Promise<boolean> => Promise.resolve(true)),
     listAll: vi.fn((): Promise<{ name: string; status: string; is_ready?: string }[]> => Promise.resolve([])),
+    list: vi.fn((): Promise<{ name: string; status: string }[]> => Promise.resolve([{ name: 'spoke', status: 'Running' }])),
     logFile: vi.fn((): string => '/dev/null'),
     followFile: vi.fn((): Observable<string> => of()),
   };
@@ -69,15 +70,18 @@ function makeService() {
     ['nginx', { namespace: 'datastore', label: 'Nginx', port: null, disabled: false }],
     ['thanos', { namespace: 'datastore', label: 'Thanos', port: null, disabled: false }],
     ['virtqemud', { namespace: 'fleet', label: 'libvirt daemon', port: null, disabled: false }],
+    ['spoke', { namespace: 'spoke', label: 'Bridge', port: 8000, disabled: false }],
   ]);
   const redeploy = {
     stopAll: vi.fn(),
-    control: vi.fn(),
+    control: vi.fn((_id: string, _a: string): Promise<{ ok: boolean; detail?: string }> => Promise.resolve({ ok: true })),
   };
   vi.mocked(swapDiffSet).mockReset().mockResolvedValue(['spoke', 'hub-api', 'fleet']);
   const overlay = {
+    labBridges: vi.fn((): { proc: string }[] => [{ proc: 'spoke' }]),
     fleetMode: vi.fn((): 'vm' | 'baremetal' => 'baremetal'),
     bmUplink: vi.fn((): { iface: string; ip: string } | null => ({ iface: 'eth0', ip: '10.0.0.5' })),
+    clearSatisfiedBy: vi.fn(),
   };
   const rendered = {
     dependsGraph: vi.fn(() => Promise.resolve({})),
@@ -542,7 +546,7 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
     overlay.fleetMode.mockReturnValue('baremetal');
     fleet.modeChangePending.mockReturnValue(false);
     pc.listAll.mockResolvedValue([{ name: 'spoke', status: 'Running', is_ready: 'Ready' }]);
-    pc.processInfo.mockResolvedValue({ Environment: [] });
+    pc.processInfo.mockResolvedValue({ environment: [] });
     spyNoopPlan(svc);
 
     svc.start('fleet-apply');
@@ -1291,7 +1295,10 @@ describe('StackService fleet-mode-apply — W2 forced render threaded end-to-end
 
     expect(rendered.buildRenderedConfig).toHaveBeenCalledWith({ refreshEvalCache: true });
     expect(rendered.refreshFleetYaml).toHaveBeenCalledWith('/nix/store/forced-cfg.yaml');
-    expect(rendered.applyOverlay).toHaveBeenCalledWith('/nix/store/forced-cfg.yaml');
+    expect(rendered.applyOverlay).toHaveBeenCalledWith('/nix/store/forced-cfg.yaml', {
+      kind: 'processes',
+      names: ['spoke', 'hub-api', 'fleet'],
+    });
   });
 
   it('aborts pre-mutation (exit 1, no swap) when the forced render fails', async () => {
@@ -1677,5 +1684,166 @@ describe('StackService fleet-mode-apply — D1.5 post-anchor post-condition', ()
     expect(runner.finalize.mock.calls[0][1]).toBe(0);
     const log = runner.emit.mock.calls.map((c) => c[1]).join('');
     expect(log).toMatch(/flip to vm complete/);
+  });
+});
+
+describe('StackService.zoneSeed — the order is the whole point', () => {
+  const tasksRun = (runner: { spawn: { mock: { calls: unknown[][] } } }) =>
+    runner.spawn.mock.calls.filter((c) => c[1] === 'devenv').map((c) => (c[2] as string[])[2]);
+  const devenvArgs = (runner: { spawn: { mock: { calls: unknown[][] } } }) =>
+    runner.spawn.mock.calls.filter((c) => c[1] === 'devenv').map((c) => c[2] as string[]);
+  const UP = [
+    { name: 'hub-api', status: 'Running', is_ready: 'Ready' },
+    { name: 'redis', status: 'Running' },
+    { name: 'postgres', status: 'Running' },
+    { name: 'spoke', status: 'Running', is_ready: 'Ready' },
+  ];
+  const makeZoneService = () => {
+    const ctx = makeService();
+    ctx.pc.listAll.mockResolvedValue(UP);
+    return ctx;
+  };
+
+  it('runs the three seed tasks in the order a rename needs', async () => {
+    const { svc, runner } = makeZoneService();
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(tasksRun(runner)).toEqual(['sim:seed', 'redis-acl:seed', 'zone-crypto:mint-tokens']);
+    expect(runner.finalize.mock.calls[0][1]).toBe(0);
+  });
+
+  it('runs devenv from the devenv root, not the engine root the runner defaults to', async () => {
+    const { svc, runner } = makeZoneService();
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    const call = runner.spawn.mock.calls.find((c) => c[1] === 'devenv');
+    expect((call?.[4] as { cwd?: string }).cwd).toBeTruthy();
+  });
+
+  it('stops at the first failure rather than running a task against a zone that is not there', async () => {
+    const { svc, runner } = makeZoneService();
+    runner.spawn.mockImplementation((_r, _cmd, args: string[]) =>
+      Promise.resolve(args[2] === 'redis-acl:seed' ? 1 : 0),
+    );
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(tasksRun(runner)).toEqual(['sim:seed', 'redis-acl:seed']);
+    expect(runner.finalize.mock.calls[0][1]).toBe(1);
+  });
+
+  it('clears the zone row only on success, and never the redeploy the bridges still need', async () => {
+    const { svc, runner, overlay } = makeZoneService();
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(overlay.clearSatisfiedBy).toHaveBeenCalledWith('zone-apply');
+  });
+
+  it('clears nothing when a task failed', async () => {
+    const { svc, runner, overlay } = makeZoneService();
+    runner.spawn.mockResolvedValue(1);
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(overlay.clearSatisfiedBy).not.toHaveBeenCalled();
+  });
+
+  it('restarts the bridges itself, so the operator is not left holding the last step', async () => {
+    const { svc, runner, redeploy, rendered } = makeZoneService();
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(rendered.applyOverlay).toHaveBeenCalled();
+    expect(redeploy.control).toHaveBeenCalledWith('spoke', 'restart');
+  });
+
+  it('scopes its overlay apply to the spoke namespace it is about to restart', async () => {
+    const { svc, runner, rendered } = makeZoneService();
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(rendered.applyOverlay).toHaveBeenCalledWith(undefined, { kind: 'namespaces', namespaces: ['spoke'] });
+  });
+
+  it('fails the run when a bridge does not come back, rather than reporting a clean seed', async () => {
+    const { svc, runner, redeploy, overlay } = makeZoneService();
+    redeploy.control.mockResolvedValue({ ok: false, detail: 'process-compose refused' });
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(runner.finalize.mock.calls[0][1]).toBe(1);
+    expect(overlay.clearSatisfiedBy).not.toHaveBeenCalled();
+  });
+
+  it('restarts no bridge when a seed task failed', async () => {
+    const { svc, runner, redeploy } = makeZoneService();
+    runner.spawn.mockResolvedValue(1);
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(redeploy.control).not.toHaveBeenCalled();
+  });
+  it('refuses a bridge the supervisor never booted with, naming the recreate that can start it', async () => {
+    const { svc, runner, overlay } = makeZoneService();
+    overlay.labBridges.mockReturnValue([{ proc: 'spoke' }, { proc: 'spoke-zone-1' }]);
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(runner.finalize.mock.calls[0][1]).toBe(1);
+    expect(devenvArgs(runner)).toEqual([]);
+    const said = runner.emit.mock.calls.map((c) => c[1]).join('');
+    expect(said).toContain('spoke-zone-1 is not supervised');
+    expect(said).toContain('task down');
+  });
+
+  it('runs each task alone, so the dependency closure cannot start a second redis and postgres', async () => {
+    const { svc, runner } = makeZoneService();
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    const calls = devenvArgs(runner);
+    expect(calls).toHaveLength(3);
+    for (const args of calls) expect(args.slice(-2)).toEqual(['--mode', 'single']);
+  });
+
+  it('refuses under the name of the process that is down, rather than timing out inside the seed', async () => {
+    const { svc, runner, pc } = makeZoneService();
+    pc.listAll.mockResolvedValue([
+      { name: 'redis', status: 'Running' },
+      { name: 'postgres', status: 'Running' },
+    ]);
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(runner.finalize.mock.calls[0][1]).toBe(1);
+    expect(devenvArgs(runner)).toEqual([]);
+    expect(runner.emit.mock.calls.map((c) => c[1]).join('')).toContain('hub-api is not up');
+  });
+
+  it('refuses rather than seeding blind when the process list cannot be read', async () => {
+    const { svc, runner, pc } = makeZoneService();
+    pc.listAll.mockRejectedValue(new Error('socket closed'));
+
+    svc.start('zone-seed');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(runner.finalize.mock.calls[0][1]).toBe(1);
+    expect(devenvArgs(runner)).toEqual([]);
+    expect(runner.emit.mock.calls.map((c) => c[1]).join('')).toContain('socket closed');
   });
 });

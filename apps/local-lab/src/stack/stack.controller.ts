@@ -5,6 +5,7 @@ import { map, Observable } from 'rxjs';
 import { getErrorMessage } from '../common/errors';
 import { LabRoute } from '../common/lab-route';
 import { contract } from '../contract';
+import { OverlayStoreService } from '../services/overlay-store';
 import { StackRestartService } from '../services/stack-restart.service';
 import { InitTasksService } from './init-tasks.service';
 import { ActiveSagaConflictException, StackService } from './stack.service';
@@ -15,6 +16,7 @@ export class StackController {
     private readonly stack: StackService,
     private readonly stackRestart: StackRestartService,
     private readonly initTasks: InitTasksService,
+    private readonly overlay: OverlayStoreService,
   ) {}
 
   @TsRestHandler(contract.listStackOps)
@@ -54,6 +56,14 @@ export class StackController {
     return tsRestHandler(contract.getRestartState, async () => ({
       status: 200 as const,
       body: this.stackRestart.restartState(),
+    }));
+  }
+
+  @TsRestHandler(contract.getStackPending)
+  stackPending() {
+    return tsRestHandler(contract.getStackPending, async () => ({
+      status: 200 as const,
+      body: this.overlay.stackPending(this.stackRestart.restartState()),
     }));
   }
 

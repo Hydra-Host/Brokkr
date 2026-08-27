@@ -1,9 +1,24 @@
 import { Injectable } from '@nestjs/common';
-import type { EventLog, Prisma } from '@repo/database';
+import { EventLogEntrySchema, type EventLogEntry } from '@repo/api-client';
+import { Prisma, type EventLog } from '@repo/database';
 import { paginateQuery, type PaginatedResult, type PaginationQuery } from '@repo/database/pagination';
+import { isRecord } from '@repo/utils';
 import { PrismaClient } from 'src/prisma/prisma.client';
+import { z } from 'zod';
+import type { EventKey } from './event-log-cursor';
+import { toEventLogSqlConditions, type EventLogFilter } from './event-log.filters';
 import { eventLogPaginationConfig } from './event-log.pagination';
 import type { EventLogWrite } from './event-log.types';
+
+// Derived from the contract schema so a new projected field is selected and validated automatically.
+const ENTRY_COLUMNS = Prisma.join(EventLogEntrySchema.keyof().options.map((field) => Prisma.raw(`"${field}"`)));
+
+/** jsonb admits scalars while the contract declares object-or-null, and one odd row must not fail a
+ *  whole export page. */
+function normalizeRow(row: unknown): unknown {
+  if (!isRecord(row)) return row;
+  return { ...row, metadata: isRecord(row.metadata) ? row.metadata : null };
+}
 
 @Injectable()
 export class EventLogRepository {
@@ -17,6 +32,58 @@ export class EventLogRepository {
   list(where: Prisma.EventLogWhereInput, query: PaginationQuery): Promise<PaginatedResult<EventLog>> {
     return paginateQuery<EventLog>(this.prisma.eventLog, query, eventLogPaginationConfig, { where });
   }
+
+  async findAfterKey(filter: EventLogFilter, after: EventKey, limit: number): Promise<EventLogEntry[]> {
+    const rows = await this.prisma.$queryRaw<unknown[]>(eventLogKeysetQuery(filter, after, limit));
+
+    return rows.map((row) => EventLogEntrySchema.parse(normalizeRow(row)));
+  }
+
+  /** Bounded probe: pass `limit + 1` and a larger result proves the cap truncated the export, so
+   *  exactly `limit` matching rows are never reported as truncated. */
+  async countAfterKey(filter: EventLogFilter, after: EventKey, limit: number): Promise<number> {
+    const rows = await this.prisma.$queryRaw<unknown[]>(Prisma.sql`
+      SELECT count(*)::int AS "count" FROM (
+        SELECT 1 FROM "EventLog"
+        WHERE ${keysetWhere(filter, after)}
+        ORDER BY "createdAt" ASC, "id" ASC
+        LIMIT ${limit}
+      ) AS bounded
+    `);
+
+    return z.array(z.object({ count: z.number().int() })).parse(rows)[0].count;
+  }
+
+  async findOldestKey(organizationId: string): Promise<EventKey | null> {
+    const row = await this.prisma.eventLog.findFirst({
+      where: { organizationId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, createdAt: true },
+    });
+
+    return row ? { createdAt: row.createdAt, id: row.id } : null;
+  }
+}
+
+/** Row-tuple keyset. Prisma's query builder cannot express `("createdAt", id) > (?, ?)`, and that
+ *  predicate is what lets EventLog_org_createdAt_id_asc_idx drive the scan instead of a sort. */
+export function eventLogKeysetQuery(filter: EventLogFilter, after: EventKey, limit: number): Prisma.Sql {
+  return Prisma.sql`
+    SELECT ${ENTRY_COLUMNS}
+    FROM "EventLog"
+    WHERE ${keysetWhere(filter, after)}
+    ORDER BY "createdAt" ASC, "id" ASC
+    LIMIT ${limit}
+  `;
+}
+
+function keysetWhere(filter: EventLogFilter, after: EventKey): Prisma.Sql {
+  const conditions = [
+    ...toEventLogSqlConditions(filter),
+    Prisma.sql`("createdAt", "id") > (${after.createdAt}, ${after.id})`,
+  ];
+
+  return Prisma.join(conditions, ' AND ');
 }
 
 function toCreateInput(write: EventLogWrite): Prisma.EventLogCreateInput {

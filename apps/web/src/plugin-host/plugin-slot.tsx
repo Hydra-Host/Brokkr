@@ -4,8 +4,10 @@ import type {
   InventoryItemCtaContribution,
   InventoryItemCtaDevice,
   InventoryPageExtrasContribution,
+  PublicNavbarContribution,
   ResolvedAddress,
   SidebarNavContribution,
+  SlotContributionMap,
 } from '@hydrahost/plugin-sdk';
 import {
   SidebarMenuButton,
@@ -14,10 +16,16 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from '@repo/ui/components/sidebar';
-import { Link, type LinkProps, useLocation } from '@tanstack/react-router';
+import { Link, type LinkProps, useLocation, useRouter } from '@tanstack/react-router';
 import { useMemo } from 'react';
 
-import { notifyNavPopupResult, openNavPopup, safeExternalHref, safeInternalPath } from '@/lib/nav';
+import {
+  followInternalNavClick,
+  notifyNavPopupResult,
+  openNavPopup,
+  safeExternalHref,
+  safeInternalPath,
+} from '~/lib/nav';
 
 import { PluginErrorBoundary } from './plugin-error-boundary';
 import { usePluginRegistry } from './plugin-registry-provider';
@@ -26,6 +34,7 @@ import type { SlotRegistryEntry } from './registry';
 type Props =
   | { name: 'sidebar-nav' }
   | { name: 'dashboard-widget' }
+  | { name: 'public-navbar'; variant: 'desktop' | 'mobile'; onNavigate?: () => void }
   | { name: 'address-autocomplete'; onResolved: (address: ResolvedAddress) => void }
   | {
       name: 'inventory-page-extras';
@@ -43,6 +52,10 @@ export function PluginSlot(props: Props) {
 
   if (props.name === 'sidebar-nav') {
     return <SidebarNavSlotRenderer entries={entries} />;
+  }
+
+  if (props.name === 'public-navbar') {
+    return <PublicNavbarSlotRenderer entries={entries} variant={props.variant} onNavigate={props.onNavigate} />;
   }
 
   if (props.name === 'address-autocomplete') {
@@ -308,5 +321,83 @@ function SidebarNavSubItem({
         )}
       </SidebarMenuSubButton>
     </SidebarMenuSubItem>
+  );
+}
+
+function isPublicNavbarContribution(
+  contribution: SlotContributionMap[keyof SlotContributionMap],
+): contribution is PublicNavbarContribution {
+  return (
+    'to' in contribution && 'label' in contribution && !('component' in contribution) && !('section' in contribution)
+  );
+}
+
+function PublicNavbarSlotRenderer({
+  entries,
+  variant,
+  onNavigate,
+}: {
+  entries: SlotRegistryEntry[];
+  variant: 'desktop' | 'mobile';
+  onNavigate?: () => void;
+}) {
+  const location = useLocation();
+  const router = useRouter();
+
+  return (
+    <>
+      {entries.map((entry) => {
+        if (!isPublicNavbarContribution(entry.contribution)) return null;
+        const { label, to, external } = entry.contribution;
+        const isCurrent = location.pathname === to || location.pathname.startsWith(`${to}/`);
+        const className =
+          variant === 'desktop'
+            ? [
+                isCurrent ? 'bg-primary/10 text-primary' : 'bg-transparent',
+                'rounded-md px-3 py-2 text-sm font-semibold',
+              ].join(' ')
+            : [
+                'block rounded-md px-3 py-2 text-base font-semibold transition-colors',
+                isCurrent ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-white',
+              ].join(' ');
+
+        if (external) {
+          const href = safeExternalHref(to);
+          if (!href) return null;
+          return (
+            <a
+              key={`${entry.pluginId}:${to}`}
+              href={href}
+              className={className}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-plugin-id={entry.pluginId}
+              onClick={onNavigate}
+            >
+              {label}
+            </a>
+          );
+        }
+
+        const href = safeInternalPath(to);
+        if (!href) return null;
+        return (
+          <a
+            key={`${entry.pluginId}:${to}`}
+            href={href}
+            className={className}
+            data-plugin-id={entry.pluginId}
+            onClick={(event) => {
+              followInternalNavClick(event, href, (next) => {
+                onNavigate?.();
+                router.history.push(next);
+              });
+            }}
+          >
+            {label}
+          </a>
+        );
+      })}
+    </>
   );
 }

@@ -14,11 +14,11 @@ const config = (over: Partial<StackConfig> = {}): StackConfig => ({
   knobs: { hub: [], spoke: [] },
   ports: { hub: [], spoke: [] },
   servicePorts: [
-    { key: 'postgres', label: 'Postgres', value: 5432 },
-    { key: 'grafana', label: 'Grafana', value: 3010, readOnly: true },
+    { key: 'postgres', path: 'ports.postgres', group: 'Datastores', label: 'Postgres', value: 5432 },
+    { key: 'grafana', path: 'ports.grafana', group: 'Observability', label: 'Grafana', value: 3010, readOnly: true },
   ],
   values: { hub: { LOG_LEVEL: 'debug' }, spoke: { LOG_LEVEL: 'info' } },
-  counts: { hub: 1, spoke: 2 },
+  topology: { zones: 1, bridges: 1 },
   slot: 0,
   identity: { pg: { user: 'brokkr', password: 'password', db: 'brokkr' }, orgId: 'org-1' },
   osLayerCache: { originHost: 'assets.local', resolvers: '1.1.1.1' },
@@ -48,7 +48,6 @@ describe('useStackConfigForm', () => {
 
     expect(result.current.valsOf('hub')).toEqual({ LOG_LEVEL: 'debug' });
     expect(result.current.valsOf('spoke')).toEqual({ LOG_LEVEL: 'info' });
-    expect(result.current.counts).toEqual({ hub: 1, spoke: 2 });
     expect(result.current.identity.orgId).toBe('org-1');
     expect(result.current.osLayer).toEqual({ originHost: 'assets.local', resolvers: '1.1.1.1' });
     expect(result.current.dirty).toBe(false);
@@ -62,7 +61,7 @@ describe('useStackConfigForm', () => {
 
   it('reports the catalog and load error from the query', () => {
     const { result } = renderHook(() => useStackConfigForm());
-    expect(result.current.catalog?.counts).toEqual({ hub: 1, spoke: 2 });
+    expect(result.current.catalog?.topology).toEqual({ zones: 1, bridges: 1 });
     expect(result.current.error).toBeNull();
 
     cleanup();
@@ -119,7 +118,6 @@ describe('useStackConfigForm', () => {
 
     act(() => {
       result.current.setVal('spoke', 'PORT', '8001');
-      result.current.setCount('spoke', 3);
       result.current.setPort('postgres', '6000');
       result.current.updateIdentity((s) => ({ ...s, orgId: 'org-2' }));
       result.current.updateOsLayer((s) => ({ ...s, resolvers: '8.8.8.8' }));
@@ -130,15 +128,15 @@ describe('useStackConfigForm', () => {
 
     expect(result.current.dirty).toBe(true);
     expect(result.current.saveBody()).toEqual({
-      hub: { LOG_LEVEL: 'debug' },
-      spoke: { LOG_LEVEL: 'info', PORT: '8001' },
-      counts: { hub: 1, spoke: 3 },
       slot: 0,
-      identity: { pg: { user: 'brokkr', password: 'password', db: 'brokkr' }, orgId: 'org-2' },
-      osLayerCache: { originHost: 'assets.local', resolvers: '8.8.8.8' },
-      ports: { postgres: 6000 },
-      lan: { expose: true },
-      telemetry: { enable: true },
+      entries: {
+        'stackDefaults.spoke.PORT': '8001',
+        'ports.postgres': '6000',
+        'identity.orgId': 'org-2',
+        'osLayerCache.resolvers': '8.8.8.8',
+        'lan.expose': 'true',
+        'telemetry.enable': 'true',
+      },
     });
   });
 
@@ -160,23 +158,14 @@ describe('useStackConfigForm', () => {
     expect(result.current.slot).toBe(0);
   });
 
-  it('clamps each instance count to its own maximum', () => {
-    const { result, rerender } = renderHook(() => useStackConfigForm());
+  it('offers no instance-count control at all, because nothing consumed the number', () => {
+    const { result } = renderHook(() => useStackConfigForm());
 
-    act(() => result.current.setCount('spoke', 0));
-    rerender();
-    expect(result.current.counts.spoke).toBe(1);
-
-    act(() => result.current.setCount('spoke', 99));
-    rerender();
-    expect(result.current.counts.spoke).toBe(8);
-
-    act(() => result.current.setCount('hub', 4));
-    rerender();
-    expect(result.current.counts.hub).toBe(1);
+    expect('setCount' in result.current).toBe(false);
+    expect('counts' in result.current).toBe(false);
   });
 
-  it('drops blank and out-of-range ports from the save body', () => {
+  it('sends every edited port and lets the server name the ones it refuses', () => {
     const { result, rerender } = renderHook(() => useStackConfigForm());
 
     act(() => {
@@ -186,7 +175,26 @@ describe('useStackConfigForm', () => {
     });
     rerender();
 
-    expect(result.current.saveBody().ports).toEqual({ nginx: 8080 });
+    expect(result.current.saveBody().entries).toEqual({
+      'ports.postgres': '',
+      'ports.redis': '70000',
+      'ports.nginx': '8080',
+    });
+  });
+
+  it('sends only the paths that differ from the body it was filled from', () => {
+    const { result, rerender } = renderHook(() => useStackConfigForm());
+
+    act(() => result.current.setVal('hub', 'LOG_LEVEL', 'warn'));
+    rerender();
+
+    expect(result.current.saveBody().entries).toEqual({ 'stackDefaults.hub.LOG_LEVEL': 'warn' });
+  });
+
+  it('sends nothing at all when the form matches what it loaded', () => {
+    const { result } = renderHook(() => useStackConfigForm());
+
+    expect(result.current.saveBody().entries).toEqual({});
   });
 
   it('polls for a live config only while the seed has failed', () => {

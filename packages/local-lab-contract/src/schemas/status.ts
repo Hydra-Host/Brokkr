@@ -14,7 +14,7 @@ export const StatusFleetNodeSchema = z.object({
   power: z.enum(['on', 'off', 'unknown']),
   lifecycleStatus: z.string().nullable().describe('Server.lifecycleStatus from the hub DB'),
   deviceId: z.string().nullable().describe('Index-derived hub Device.id'),
-  gpuModel: z.string().nullable().describe('Device.gpuModel (denormalized discovered model)'),
+  gpuModel: z.string().nullable().describe('Model of the lowest-indexed Gpu row for this device in the hub DB'),
 });
 export const HttpProbeResultSchema = z.discriminatedUnion('ok', [
   z.object({
@@ -62,6 +62,23 @@ export const InitStatusSchema = z.object({
 });
 export type InitStatus = z.infer<typeof InitStatusSchema>;
 
+export const HostAccessFindingSchema = z.object({
+  probe: z.enum(['groups', 'libvirt', 'docker', 'kvm']).describe('Which readiness probe produced this finding'),
+  severity: z.enum(['block', 'warn', 'skip']).describe('block = the host cannot run the stack as configured'),
+  title: z.string().describe('One-line statement of the problem'),
+  fix: z.string().describe('The exact command or action that repairs it'),
+});
+export type HostAccessFinding = z.infer<typeof HostAccessFindingSchema>;
+
+export const HostAccessSchema = z.object({
+  checkedAt: z.number().describe('When host-access-check.sh last ran, unix ms'),
+  hadTty: z.boolean().describe('False means blockers were downgraded and the bring-up proceeded anyway'),
+  blocked: z.number().describe('Count of block-severity findings'),
+  warned: z.number().describe('Count of warn-severity findings'),
+  findings: z.array(HostAccessFindingSchema).describe('Every finding, in probe order'),
+});
+export type HostAccess = z.infer<typeof HostAccessSchema>;
+
 export const StatusSchema = z.object({
   app: z.object({
     pid: z.number(),
@@ -79,7 +96,16 @@ export const StatusSchema = z.object({
     counts: StackCountsSchema,
     lifecycleWorkerConcurrency: z.number().describe('Spoke LIFECYCLE_WORKER_CONCURRENCY (override or default)'),
   }),
+  hostAccess: HostAccessSchema.optional().describe(
+    'Host readiness as of the last stack-up, from devenv/scripts/host-access-check.sh; absent when the marker is missing or unreadable. A blocked count above zero with hadTty false means the bring-up proceeded over a host that cannot work.',
+  ),
   fleet: z.array(StatusFleetNodeSchema),
+  fleetDbReadFailed: z
+    .boolean()
+    .optional()
+    .describe(
+      'The hub Device/Server read behind the fleet array failed, so lifecycleStatus, deviceId and gpuModel are blank on every node rather than measured',
+    ),
   fleetSummary: FleetSummarySchema.optional().describe(
     'Rollup of the fleet array above, for the dashboard landing view',
   ),

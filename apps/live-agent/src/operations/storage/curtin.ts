@@ -1,7 +1,7 @@
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { registerOperation } from '../../dispatch/registry';
 import { run } from '../../exec';
-import { assertTargetPathSafe } from '../deploy/targetPath';
+import { assertTargetPathSafe } from '../deploy/target-path';
 
 const STORAGE_CONFIG_PATH = '/tmp/storage-config.yaml';
 const FSTAB_PATH = '/tmp/fstab';

@@ -4,6 +4,7 @@ import { type GateView } from '@/components/console';
 import type { StackOp } from '@/contract';
 import { tsr } from '@/lib/api';
 import { bodyError, errorMessage, thrownBodyError } from '@/lib/errors';
+import { usePoll } from '@/lib/use-poll';
 import { clearRecreating, markRecreating, RECREATE_OP_IDS } from '@/lib/use-restart-state';
 
 export const OPS_POLL_MS = 30_000;
@@ -15,13 +16,13 @@ export function useOps(
 ) {
   // The registry is static, so this interval is purely a recovery poll: reinit/reset/purge take the
   // API down, and a failed fetch otherwise leaves every op section empty until the route remounts.
-  const ops = tsr.listStackOps.useQuery({ queryKey: ['stack-ops'], refetchInterval: OPS_POLL_MS });
+  const ops = tsr.listStackOps.useQuery({ queryKey: ['stack-ops'], refetchInterval: usePoll(OPS_POLL_MS) });
   const runs = tsr.listRuns.useQuery({
     queryKey: ['runs', 'stack'],
     queryData: { query: { section: 'stack', limit: 100 } },
-    refetchInterval: 2000,
+    refetchInterval: usePoll(2000),
   });
-  const sudo = tsr.getSudoStatus.useQuery({ queryKey: ['sudo'], refetchInterval: 30000 });
+  const sudo = tsr.getSudoStatus.useQuery({ queryKey: ['sudo'], refetchInterval: usePoll(30000) });
   const start = tsr.startStackRun.useMutation();
   const cancelMut = tsr.cancelRun.useMutation();
   const cacheSudo = tsr.cacheSudo.useMutation();

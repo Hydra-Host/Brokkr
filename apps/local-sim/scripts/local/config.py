@@ -218,6 +218,10 @@ class PathsSettings(BaseSettings):
     """Name of the Linux flat-L2 data-plane kernel bridge (created by fleet.py's
     ensure_data_plane_bridge; baked into each domain's <interface><source bridge=>)."""
 
+    accel: Annotated[Literal["auto", "kvm", "tcg", "hvf"], Field(default="auto")]
+    """Force one qemu accelerator, or auto-detect. Never a probing default_factory —
+    the probe reads get_settings(), which is lru_cached and not re-entrant."""
+
     ipmi_sim: Annotated[
         Path,
         Field(default=Path("/opt/openipmi/bin/ipmi_sim"), validation_alias="LOCAL_IPMI_SIM_BIN"),
@@ -322,10 +326,8 @@ class SimSettings(BaseSettings):
     netbox_location_id: Annotated[int, Field(default=1)]
 
     zone_count: Annotated[int, Field(default=1, ge=1, le=89)]
-    """Number of sim zones == spoke instances (``SIM_ZONE_COUNT``). Zone i is
-    derived (UUID/name/ports) by ``local.zones``; nodes round-robin onto zones by
-    fleet position. Default 1 keeps the historical single-zone behavior exactly
-    (zone 0 == the legacy ``...111111111111`` UUID on :8000/:9082)."""
+    """DEPRECATED (``SIM_ZONE_COUNT``): zone topology comes from ``Fleet.zones``, and this is kept
+    only so the env var still parses."""
 
     org_tenant_id: Annotated[str, Field(default="1")]
     """Tenant id on the Hydra Host org (``Organization.tenantId``)."""

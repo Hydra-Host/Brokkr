@@ -81,12 +81,6 @@
     "tsx": "^4.21.0",
     "zod": "^3.24.0"
   },
-  "optionalDependencies": {
-    "@hydrahost/plugin-device-monitoring": "workspace:*",
-    "@hydrahost/plugin-helpdesk-pylon": "workspace:*",
-    "@hydrahost/plugin-lender-device-associations": "workspace:*",
-    "@hydrahost/plugin-operator-bridge-requests": "workspace:*"
-  },
   "devDependencies": {
     "@anatine/zod-mock": "^3.14.0",
     "@nestjs/cli": "^11.0.14",

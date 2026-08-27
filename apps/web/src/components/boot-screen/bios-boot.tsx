@@ -1,6 +1,7 @@
-import { BRAND_NAME, COMPANY_NAME } from '@/lib/branding';
 import { ASCII_LOGOS } from '@repo/ui/ascii-art';
+import { cn } from '@repo/ui/utils';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { BRAND_NAME, COMPANY_NAME } from '~/lib/branding';
 
 const LOGO_COLORS = [
   'text-accent',
@@ -26,7 +27,7 @@ function withStatus(text: string, statusText: string, statusClass = 'text-status
   return (
     <div className="flex justify-between gap-4">
       <span>{text}</span>
-      <span className={`font-bold ${statusClass}`}>{statusText}</span>
+      <span className={cn('font-bold', statusClass)}>{statusText}</span>
     </div>
   );
 }

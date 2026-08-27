@@ -260,5 +260,5 @@ postinstall.mjs         npm postinstall — auto-installs tab completion
 ## Further reading
 
 - [`LLM_CLI_REFERENCE.md`](./LLM_CLI_REFERENCE.md) — full command reference and JSON output schemas.
-- [`CLAUDE.md`](./CLAUDE.md) — coding rules and conventions for this package.
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — layering, the TUI/CLI split, and where each surface lives.
 - [`README.npm.md`](./README.npm.md) — the end-user README published with the npm package.

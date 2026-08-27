@@ -1,6 +1,7 @@
 import { Badge } from '@repo/ui/components/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { THEME_CATEGORIES, useTheme } from '@repo/ui/theme-provider';
+import { cn } from '@repo/ui/utils';
 import { createFileRoute } from '@tanstack/react-router';
 import { Monitor } from 'lucide-react';
 
@@ -31,9 +32,10 @@ function ThemeSettings() {
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
                 <button
                   onClick={setSystemMode}
-                  className={`relative flex flex-col items-center gap-3 rounded-sm border p-6 transition-all ${
-                    mode === 'system' ? 'border-accent' : 'border-border hover:border-text-muted'
-                  }`}
+                  className={cn(
+                    'relative flex flex-col items-center gap-3 rounded-sm border p-6 transition-all',
+                    mode === 'system' ? 'border-accent' : 'border-border hover:border-text-muted',
+                  )}
                 >
                   <Monitor className="text-text-muted h-10 w-10" />
                   <span
@@ -60,9 +62,10 @@ function ThemeSettings() {
                       <button
                         key={option.value}
                         onClick={() => setTheme(option.value)}
-                        className={`relative flex flex-col items-center gap-3 rounded-sm border p-6 transition-all ${
-                          isActive ? 'border-accent' : 'border-border hover:border-text-muted'
-                        }`}
+                        className={cn(
+                          'relative flex flex-col items-center gap-3 rounded-sm border p-6 transition-all',
+                          isActive ? 'border-accent' : 'border-border hover:border-text-muted',
+                        )}
                         style={{
                           backgroundColor: isActive ? `${option.color}15` : undefined,
                         }}

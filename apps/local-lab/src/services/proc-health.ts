@@ -11,6 +11,7 @@ export interface PcProcess {
   restarts?: number | null;
   exit_code?: number | null;
   replica?: number | null;
+  has_ready_probe?: boolean | null;
   cpu?: number | null;
   mem?: number | null;
   system_time?: string | null;
@@ -44,6 +45,15 @@ export function procIsUp(p: PcProcess | undefined): boolean {
   const s = (p.status ?? '').toLowerCase();
   const r = (p.is_ready ?? '').toLowerCase();
   return s === 'running' && r !== 'not ready';
+}
+
+/** Stricter than `procIsUp`, and for one reason: a dependent (re)created while its dependency still
+ *  reports "-" is left Skipped for good. `dep_ready()` in stack-reconcile.sh is the bash half. */
+export function procIsDepReady(p: PcProcess | undefined): boolean {
+  if (!p) return false;
+  if ((p.status ?? '').toLowerCase() !== 'running') return false;
+  const r = (p.is_ready ?? '').toLowerCase();
+  return p.has_ready_probe ? r === 'ready' : r !== 'not ready';
 }
 
 export function depsReady(name: string, byName: Map<string, PcProcess>, graph: Record<string, string[]>): boolean {

@@ -9,12 +9,31 @@ const { AuditOutcomeSchema } = labContractPkg;
 export function registerStatusTools(server: McpServer, ctx: LabContext): void {
   server.tool(
     'lab_get_status',
-    'Whole-stack overview: running version, process/build freshness, repo checkouts, service + datastore health, and fleet node state. Call this first to orient before changing anything.',
+    'Read-only, no gate: whole-stack overview — running version, process/build freshness, repo checkouts, service + datastore health, fleet node state, and selfSlot, the instance slot of the stack answering. selfSlot is null when the serving slot could not be read (the stacks route is loopback-only, so a remote lab refuses it); call lab_list_stacks for the reason. labTarget reports which stack this server decided to talk to and why, so labTarget.slot disagreeing with selfSlot means the target is stale. Call this first to orient before changing anything.',
     {},
     () =>
       call(ctx, async (client) => {
         const res = await client.getStatus({});
         failOnError(res, 'getStatus');
+        // optional sub-request: the stacks route is loopback-only (403 remote) and absent on an older
+        // lab, so degrade selfSlot instead of failing the orienting call — anything else stays loud
+        const stacks = await client.listStacks({});
+        if (stacks.status !== 200 && stacks.status !== 403 && stacks.status !== 404) {
+          failOnError(stacks, 'listStacks');
+        }
+        const selfSlot = stacks.status === 200 ? stacks.body.selfSlot : null;
+        return { ...res.body, selfSlot, labTarget: ctx.targetInfo };
+      }),
+  );
+
+  server.tool(
+    'lab_list_stacks',
+    'Read-only, no gate: every stack registered on this host — slot, owning checkout, recorded state, probed liveness, hub/web/lab URLs, and a process rollup — plus selfSlot for the stack answering. Use it to tell this stack apart from a sibling before driving anything.',
+    {},
+    () =>
+      call(ctx, async (client) => {
+        const res = await client.listStacks({});
+        failOnError(res, 'listStacks');
         return res.body;
       }),
   );

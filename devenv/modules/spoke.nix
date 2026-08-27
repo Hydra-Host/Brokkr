@@ -19,7 +19,7 @@
 # queue → leader election + HA claim. A single default zone (sim-zone, index 0, 1 bridge) emits
 # exactly one process named `spoke` on :8000/:9082 — byte-identical to the pre-zones setup.
 let
-  inherit ((import ./lib.nix)) cdRepo;
+  inherit ((import ./lib.nix)) cdRepo envKnobMeta;
   P = (import ./ports.nix).fromConfig config; # effective port/route map (overridable via config.ports)
   Z = (import ./zones.nix) {
     inherit lib;
@@ -136,6 +136,125 @@ let
     BRIDGE_GRPC_DIALBACK_HOST = ifaceIp;
   };
 
+  # Control-center knobs, described from the code that consumes each one. No default is restated:
+  # modules/overrides.nix reads every one back out of stackDefaults.spoke below. The spoke has no
+  # knob-name -> env-key remap, so no knob here carries an alias.
+  spokeKnobs = {
+    LOG_LEVEL = {
+      label = "Log level";
+      group = "Logging";
+      kind = "select";
+      # `warning`, not `warn`: core/logging/bridge-logger.ts honours only debug/warning/error and
+      # silently reads everything else as info, so offering `warn` would hand back info-level logs.
+      choices = [
+        "debug"
+        "info"
+        "warning"
+        "error"
+      ];
+      description = "Bridge minimum log level and the `debug` flag on its ApplicationConfig; only debug/warning/error are recognised, anything else reads as info. Also stamped into the rendered agent.yaml and the discovery initrd, so it sets the device agent's verbosity too.";
+    };
+    LOG_FORMAT = {
+      label = "Log format";
+      group = "Logging";
+      kind = "select";
+      choices = [
+        "console"
+        "json"
+      ];
+      description = "Picks the stdout formatter: `console` gives the colourised human line, anything else emits one-line JSON records carrying app_name/job_id/log_level for the journald pipeline. Console in the sim, json in prod.";
+    };
+    MONITORING_LOGS_ENABLED = {
+      label = "Monitoring logs";
+      group = "Logging";
+      kind = "bool";
+      description = "Keeps HTTP access-log lines for /api/monitoring/ requests instead of dropping them. OFF silences that whole prefix; ON is for debugging the monitoring and metrics endpoints. Successful 200s are filtered out either way.";
+    };
+    TELEGRAF_ENABLED = {
+      label = "Telegraf telemetry";
+      group = "Monitoring";
+      kind = "bool";
+      description = "Per-bridge telegraf agent: scrapes device metrics (ICMP/IPMI/Redfish + PDU SNMP) via the bridge and remote_writes to the local Thanos. OFF removes the telegraf process and leaves the bridge config-writer inert.";
+    };
+    LIFECYCLE_WORKER_CONCURRENCY = {
+      label = "Lifecycle concurrency";
+      group = "Workers";
+      kind = "number";
+      description = "BullMQ concurrency of the lifecycle worker that runs saga.run / diagnostics.run / testing.run. Raising it lets one bridge drive more device sagas at once (more concurrent provisions, more Redis and BMC load); 1 serialises them.";
+    };
+    COLLECTION_WORKER_CONCURRENCY = {
+      label = "Collection concurrency";
+      group = "Workers";
+      kind = "number";
+      description = "BullMQ concurrency of the collection worker that runs the inventory collections auto-enqueued when an agent registers. 1 inventories one device at a time; raise it to collect several devices concurrently.";
+    };
+    OS_LAYER_URL = {
+      label = "OS layer URL";
+      group = "Boot/cache";
+      kind = "text";
+      description = "Base URL of the OS-layer blob store the bridge hands to the device agent: every deploy layer resolves as {OS_LAYER_URL}/sha256:<hash>. Pointing it at the local nginx cache is what lets repeat provisions skip the CDN re-pull.";
+    };
+    DISCOVERY_BASE_URL = {
+      label = "Discovery/ISO base URL";
+      group = "Boot/cache";
+      kind = "text";
+      description = "Root of the brokkr-live artifact tree the bridge syncs from: it fetches {base}/{version}/{arch}/manifest.json and every file that manifest lists (vmlinuz, initrd.img, the discovery ISO) into the dir the iPXE chain serves.";
+    };
+    BROKKR_LIVE_VERSION = {
+      label = "brokkr-live (ISO) version";
+      group = "Boot/cache";
+      kind = "text";
+      description = "Selects which brokkr-live discovery build the bridge syncs, interpolated into the manifest URL and reported to the hub in the leader-election entry. A `latest-*` alias resolves through the manifest's own version pointer and re-checks every boot.";
+    };
+    BRIDGE_SYNC_ENABLED = {
+      label = "Sync/update ISO on boot";
+      group = "ISO download";
+      kind = "bool";
+      description = "Gates the bridge_sync startup task, which downloads or refreshes the discovery images (kernel, initrd, ISO) for every arch at boot. OFF only asserts the images already on disk — a faster boot that serves whatever is there.";
+    };
+    HTTPS_DOWNLOAD_TIMEOUT = {
+      label = "Download timeout (s)";
+      group = "ISO download";
+      kind = "number";
+      description = "Whole-transfer deadline in seconds for each discovery image the sync client downloads; exceeding it aborts that file and burns a retry attempt. Lower it to fail fast on a stalled mirror — values under 30s are rejected as too low for multi-GB ISOs.";
+    };
+    HTTPS_RETRY_ATTEMPTS = {
+      label = "Retry attempts";
+      group = "ISO download";
+      kind = "number";
+      description = "Tries the sync client makes per manifest fetch and per file download (1-10). A retry resumes from the partial .tmp via a Range request, so raising it mostly buys tolerance of a flaky asset host at the cost of a longer failure path.";
+    };
+    HTTPS_RETRY_DELAY = {
+      label = "Retry delay (s)";
+      group = "ISO download";
+      kind = "number";
+      description = "Fixed sleep in seconds between discovery-sync retry attempts, with no backoff. 0 retries immediately; raise it to back off a rate-limiting or recovering asset host.";
+    };
+    HTTPS_VERIFY_SSL = {
+      label = "Verify SSL";
+      group = "ISO download";
+      kind = "bool";
+      danger = true;
+      description = "TLS verification for the discovery-sync HTTP client. OFF accepts a self-signed asset host but makes the manifest's own sha256sums attacker-controlled, and startup refuses it outside a simulated or local/dev environment. It does not affect Redfish/BMC TLS.";
+    };
+    # read-only until a reader exists: presenting an inert knob as editable is what made a save
+    # answer ok and change nothing.
+    AGENT_SSH_FORCE_REDEPLOY = {
+      label = "Force agent redeploy";
+      group = "Behavior";
+      kind = "bool";
+      editable = false;
+      description = "Declared for the bridge but read nowhere in apps/bridge or apps/live-agent, so flipping it has no runtime effect today.";
+    };
+    ANALYTICS_ENABLED = {
+      label = "Analytics";
+      group = "Behavior";
+      kind = "bool";
+      editable = false;
+      description = "Parsed into the bridge's ApplicationConfig, but nothing downstream reads that field — no analytics client is gated on it today, so flipping it changes only the config value.";
+    };
+  };
+
   # hub repo-path override flows to spoke too (monorepo: hub + bridge share the same checkout).
   hubRepoPath = lib.optionalAttrs (config.stackOverrides.hub ? HUB_REPO_PATH) {
     inherit (config.stackOverrides.hub) HUB_REPO_PATH;
@@ -186,11 +305,13 @@ let
   );
 
   # zones from the fleet topology, annotated with each zone's contiguous spoke-port base ordinal.
+  # A disabled zone starts no bridge, provisions no ACL user and mints no token — everything
+  # downstream of this list inherits the filter.
   annotatedZones = Z.withPortBlocks (
     lib.mapAttrsToList (name: z: {
       inherit name;
       inherit (z) index bridges;
-    }) config.fleet.zones
+    }) (lib.filterAttrs (_: z: z.enable) config.fleet.zones)
   );
 
   # The process name for bridge `b` of zone `z`. The primary (zone 0, bridge 0) keeps the bare name
@@ -447,6 +568,8 @@ in
   # hub's HUB_REPO_PATH passthrough may be folded in.
   stackDefaults.spoke = baseSpokeEnv;
 
+  knobMeta = envKnobMeta lib "spoke" { } spokeKnobs;
+
   # Public view of the roster: same tuples, minus the zone UUID (already on the hub's Zone rows).
   # Empty under remoteInfra for the same reason `processes` is — no local bridge exists to name.
   labBridges = lib.optionals (!config.remoteInfra.enable) (
@@ -490,7 +613,7 @@ in
             ''
           else
             # no watcher and no `node --watch`: a dist rewrite reloads nothing, so build both outright.
-            ''pnpm exec turbo run build --filter=bridge --filter=bridge-agent''
+            "pnpm exec turbo run build --filter=bridge --filter=bridge-agent"
         }
         # Build the native afpacket addon (BSD BPF/AF_PACKET) the DHCP server loads; `nest build` skips
         # it, so macOS DHCP silently falls back to the unusable dgram :67 path. pnpm exec keeps it hermetic.

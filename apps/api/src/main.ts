@@ -4,6 +4,7 @@ import 'dotenv/config';
 // Must init after dotenv (OTEL_* env) and before plugins-config/@nestjs/core — require-patch instrumentation only covers modules loaded after it; guarded by telemetry-import-order.spec.ts.
 import './telemetry/init';
 
+import { formatCspSources, mergePluginCsp } from '@hydrahost/plugin-sdk';
 import pluginsConfig from '@hydrahost/plugins-config';
 // Root import on purpose: apps/api's classic `node` module resolution ignores the package `exports` submap, so the `./server` subpath won't resolve.
 import {
@@ -91,21 +92,7 @@ async function bootstrap() {
       new HttpExceptionFilter(),
     );
 
-    const hubspotLeadsEnabled = pluginsConfig.some((entry) => entry.enabled && entry.plugin.id === 'hubspot-leads');
-    // The js.hs-scripts.com loader injects feature-dependent sub-scripts — omit any and e.g. the consent banner silently never renders.
-    const hubspotScriptSrc = hubspotLeadsEnabled
-      ? ' https://js.hs-scripts.com https://js.hs-analytics.net https://js.hscollectedforms.net' +
-        ' https://js.usemessages.com https://js.hs-banner.com https://js.hsadspixel.net' +
-        ' https://js.hsleadflows.net https://js.hubspot.com'
-      : '';
-    const hubspotImgSrc = hubspotLeadsEnabled ? ' https://track.hubspot.com' : '';
-    const hubspotConnectSrc = hubspotLeadsEnabled
-      ? ' https://api.hubspot.com https://track.hubspot.com https://forms.hubspot.com https://forms.hscollectedforms.net'
-      : '';
-
-    const webvmScriptSrc = webvmTerminalEnabled ? " https://cxrtnc.leaningtech.com 'wasm-unsafe-eval'" : '';
-    const webvmWorkerSrc = webvmTerminalEnabled ? ' blob:' : '';
-    const webvmConnectSrc = webvmTerminalEnabled ? ' data: wss://disks.webvm.io https://cxrtnc.leaningtech.com' : '';
+    const pluginCsp = mergePluginCsp(pluginsConfig.filter((entry) => entry.enabled).map((entry) => entry.plugin.csp));
 
     app.use((req: { path: string }, res: { setHeader: (k: string, v: string) => void }, next: () => void) => {
       if (req.path.startsWith('/api/redoc') || req.path.startsWith('/api/swagger')) {
@@ -115,12 +102,13 @@ async function bootstrap() {
         'Content-Security-Policy',
         [
           "default-src 'self'",
-          `script-src 'self'${webvmScriptSrc}${hubspotScriptSrc}`,
-          `worker-src 'self'${webvmWorkerSrc}`,
-          "style-src 'self' 'unsafe-inline'",
-          `img-src 'self' data: blob:${hubspotImgSrc}`,
-          "font-src 'self' data:",
-          `connect-src 'self'${webvmConnectSrc}${hubspotConnectSrc}`,
+          `script-src 'self'${formatCspSources(pluginCsp.scriptSrc)}`,
+          `worker-src 'self'${formatCspSources(pluginCsp.workerSrc)}`,
+          `style-src 'self' 'unsafe-inline'${formatCspSources(pluginCsp.styleSrc)}`,
+          `img-src 'self' data: blob:${formatCspSources(pluginCsp.imgSrc)}`,
+          `font-src 'self' data:${formatCspSources(pluginCsp.fontSrc)}`,
+          `connect-src 'self'${formatCspSources(pluginCsp.connectSrc)}`,
+          ...(pluginCsp.frameSrc.length > 0 ? [`frame-src${formatCspSources(pluginCsp.frameSrc)}`] : []),
           "frame-ancestors 'none'",
           "base-uri 'self'",
           "form-action 'self'",
@@ -162,6 +150,8 @@ async function bootstrap() {
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
+      // Without this the SPA cannot read the event-log export's truncation signal cross-origin.
+      exposedHeaders: ['Content-Disposition', 'X-Event-Log-Truncated'],
     });
     app.enableShutdownHooks();
 

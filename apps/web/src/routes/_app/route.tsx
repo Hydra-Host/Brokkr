@@ -39,7 +39,6 @@ import {
   Server,
   Settings2,
   Shapes,
-  ShoppingCart,
   SlidersHorizontal,
   Snowflake,
   SquareTerminal,
@@ -54,11 +53,10 @@ import {
   Zap,
 } from 'lucide-react';
 import * as React from 'react';
-import { useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 
 import { getDocsUrl } from '~/lib/runtime-config';
 
-import { getSectionForPathname, type NavSection } from '@/lib/nav';
 import type { SidebarNavContribution } from '@hydrahost/plugin-sdk';
 import { signOut, useSession } from '@repo/auth/client';
 import { ApiMonitorContext, BottomBar, useApiMonitorProvider } from '@repo/ui/bottom-bar';
@@ -78,16 +76,18 @@ import {
 import { SidebarInset, SidebarMenuButton, SidebarProvider, SidebarTrigger } from '@repo/ui/components/sidebar';
 import { ThemeSelector } from '@repo/ui/theme-selector';
 import { isRecord } from '@repo/utils';
+import { getSectionForPathname, getVisibleLeaves, mergeNavSections, type NavSection } from '~/lib/nav';
 import { AppSidebar } from './-components/app-sidebar';
 
 import { useNavigationShortcuts } from '@repo/ui/hooks/use-navigation-shortcuts';
+import { AppSearch, AppSearchProvider, AppSearchTrigger } from '~/components/app-search';
 import { NotFound } from '~/components/not-found';
 import { RouteError } from '~/components/route-error';
 import { tsr } from '~/lib/api';
 import { isLocalSimulationEnabled } from '~/lib/env';
 import { getLandingRoute } from '~/lib/landing-route';
 import { sanitizeRedirect } from '~/lib/safe-redirect';
-import { usePluginRegistry, wrapPluginIcon } from '~/plugin-host';
+import { publicRedirectFromPluginAppMount, usePluginRegistry, wrapPluginIcon } from '~/plugin-host';
 
 export const Route = createFileRoute('/_app')({
   component: AppLayout,
@@ -98,6 +98,7 @@ export const Route = createFileRoute('/_app')({
 function AppLayout() {
   const { data: session, isPending: sessionPending } = useSession();
   const location = useLocation();
+  const pluginRegistry = usePluginRegistry();
 
   const { data: organizations, isPending: organizationsPending } = tsr.listOrganizations.useQuery({
     queryKey: ['organizations'],
@@ -105,6 +106,23 @@ function AppLayout() {
   });
 
   const apiMonitor = useApiMonitorProvider();
+
+  const publicPluginHref = publicRedirectFromPluginAppMount(
+    location.pathname,
+    location.searchStr,
+    pluginRegistry.publicRoutes,
+  );
+  useLayoutEffect(() => {
+    if (!publicPluginHref) return;
+    window.location.replace(publicPluginHref);
+  }, [publicPluginHref]);
+  if (publicPluginHref) {
+    return (
+      <div className="flex min-h-svh flex-col items-center justify-center">
+        <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
+      </div>
+    );
+  }
 
   if (sessionPending) {
     return (
@@ -140,7 +158,9 @@ function AppLayout() {
   return (
     <ApiMonitorContext.Provider value={apiMonitor}>
       <SidebarProvider className="flex h-screen overflow-hidden">
-        <AppShellContent session={session} location={location} />
+        <AppSearchProvider>
+          <AppShellContent session={session} location={location} />
+        </AppSearchProvider>
       </SidebarProvider>
     </ApiMonitorContext.Provider>
   );
@@ -267,7 +287,6 @@ function AppShellContent({ session, location }: AppShellContentProps) {
     | 'dcim'
     | 'reservations'
     | 'rentals'
-    | 'inventory'
     | 'admin'
     | 'billing'
     | 'ipam'
@@ -300,8 +319,10 @@ function AppShellContent({ session, location }: AppShellContentProps) {
       location.pathname.startsWith('/dcim/cdus') ||
       location.pathname.startsWith('/dcim/test-runs'),
     reservations: location.pathname.startsWith('/admin/reservations/'),
-    rentals: location.pathname.startsWith('/deployments/') || location.pathname.startsWith('/rentals/'),
-    inventory: location.pathname.startsWith('/inventory/'),
+    rentals:
+      location.pathname.startsWith('/deployments/') ||
+      location.pathname.startsWith('/rentals/') ||
+      location.pathname.startsWith('/inventory/'),
     admin: location.pathname.startsWith('/admin/'),
     billing: location.pathname.startsWith('/admin/billing/'),
     ipam: location.pathname.startsWith('/ipam/'),
@@ -313,10 +334,7 @@ function AppShellContent({ session, location }: AppShellContentProps) {
       location.pathname.startsWith('/dcim/power-') ||
       location.pathname.startsWith('/dcim/front-') ||
       location.pathname.startsWith('/dcim/rear-'),
-    catalog:
-      location.pathname.startsWith('/device-models') ||
-      location.pathname.startsWith('/tags') ||
-      location.pathname.startsWith('/dcim/rack-roles'),
+    catalog: location.pathname.startsWith('/device-models') || location.pathname.startsWith('/tags'),
     circuits: location.pathname.startsWith('/circuits/'),
     bgp: location.pathname.startsWith('/bgp/'),
     documentation: location.pathname.startsWith('/docs/') || location.pathname === '/docs',
@@ -385,7 +403,6 @@ function AppShellContent({ session, location }: AppShellContentProps) {
         items: [
           { title: 'Device Models', url: '/device-models', icon: Cpu },
           { title: 'Tags', url: '/tags', icon: Tag },
-          { title: 'Rack Roles', url: '/dcim/rack-roles', icon: Shapes },
         ],
       },
       {
@@ -416,22 +433,16 @@ function AppShellContent({ session, location }: AppShellContentProps) {
     );
   }
 
-  platformNav.push(
-    {
-      title: 'My Rentals',
-      icon: Server,
-      isCollapsible: true,
-      stateKey: 'rentals',
-      items: [{ title: 'Deployments', url: '/deployments', icon: Rocket }],
-    },
-    {
-      title: 'Rent GPU Servers',
-      icon: ShoppingCart,
-      isCollapsible: true,
-      stateKey: 'inventory',
-      items: [{ title: 'Servers Available', url: '/inventory/categories', icon: Server }],
-    },
-  );
+  platformNav.push({
+    title: 'Rentals',
+    icon: Server,
+    isCollapsible: true,
+    stateKey: 'rentals',
+    items: [
+      { title: 'Deployments', url: '/deployments', icon: Rocket },
+      { title: 'Servers Available', url: '/inventory/categories', icon: Server },
+    ],
+  });
 
   platformNav.push({
     title: 'Documentation',
@@ -468,7 +479,6 @@ function AppShellContent({ session, location }: AppShellContentProps) {
           dcim: true,
           reservations: true,
           rentals: true,
-          inventory: true,
           admin: true,
           billing: true,
           ipam: true,
@@ -498,8 +508,8 @@ function AppShellContent({ session, location }: AppShellContentProps) {
   }, [menuStates]);
 
   const pluginRegistry = usePluginRegistry();
-  const sections: NavSection[] = [
-    ...platformNav
+  const sections: NavSection[] = mergeNavSections(
+    platformNav
       .filter((item) => item.items && item.items.length > 0)
       .map((item) => ({
         title: item.title,
@@ -514,13 +524,14 @@ function AppShellContent({ session, location }: AppShellContentProps) {
               : [],
         ),
       })),
-    ...buildPluginSections(pluginRegistry.slots.get('sidebar-nav') ?? []),
-  ];
+    buildPluginSections(pluginRegistry.slots.get('sidebar-nav') ?? []),
+  );
 
   return (
     <>
       <AppSidebar
         sections={sections}
+        search={<AppSearchTrigger />}
         orgSwitcher={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -731,6 +742,8 @@ function AppShellContent({ session, location }: AppShellContentProps) {
         </div>
       </SidebarInset>
 
+      <AppSearch leaves={getVisibleLeaves(sections)} />
+
       <BottomBar />
     </>
   );
@@ -764,7 +777,7 @@ function buildPluginSections(entries: ReadonlyArray<{ pluginId: string; contribu
 function nonNavSectionLabel(pathname: string): string | null {
   if (pathname.startsWith('/account')) return 'Account';
   if (pathname.startsWith('/admin/')) return 'Admin';
-  if (pathname.startsWith('/rentals/')) return 'My Rentals';
+  if (pathname.startsWith('/rentals/')) return 'Rentals';
   return null;
 }
 

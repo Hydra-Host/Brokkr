@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 const svcFor = (nodes: Record<string, Record<string, unknown>>) => {
-  const setFleetConfig = vi.fn();
+  const setFleetConfig = vi.fn().mockReturnValue([]);
   const overlay = {
     fleetConfig: () => ({
       network: { cidr: '192.168.201.0/24', bmc_cidr: '192.168.106.0/24' },
@@ -33,6 +33,7 @@ const svcFor = (nodes: Record<string, Record<string, unknown>>) => {
     setFleetConfig,
     baremetalConfig: () => null,
     fleetZones: () => ['sim-zone'],
+    fleetTombstones: () => [],
     fleetCustomized: () => true,
     fleetMode: () => 'vm',
   };

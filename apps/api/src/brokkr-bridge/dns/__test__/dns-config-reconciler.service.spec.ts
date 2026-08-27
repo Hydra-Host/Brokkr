@@ -34,6 +34,7 @@ function makePrefixAtom(overrides: Partial<DnsPrefixOverrideAtom> = {}): DnsPref
   return {
     serveDns: true,
     upstreamOverride: [],
+    cidr: '10.0.1.0/24',
     ...overrides,
   };
 }

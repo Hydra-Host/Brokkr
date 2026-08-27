@@ -132,6 +132,62 @@ describe('stack tools', () => {
     expect(result.content).toEqual([{ type: 'text', text: '{"runId":"r3"}' }]);
   });
 
+  it('lab_redeploy_stack refuses when the staged slot differs from the serving slot', async () => {
+    const calls: StubCall[] = [];
+    const { client } = await createTestServer(
+      stubApi(
+        {
+          'GET /api/stack/config': { status: 200, body: { seeded: true, slot: 2, values: { hub: {}, spoke: {} } } },
+          'GET /api/stacks': { status: 200, body: { stacks: [], selfSlot: 0 } },
+        },
+        calls,
+      ),
+    );
+    const result = await client.callTool({ name: 'lab_redeploy_stack', arguments: { wait: false } });
+    expect(result.isError).toBe(true);
+    const text = result.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
+    expect(text).toContain('slot 0 to slot 2');
+    expect(text).toContain('LAB_MCP_ALLOW_DESTRUCTIVE=1');
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'GET']);
+  });
+
+  it('lab_redeploy_stack refuses when the stack config eval is unseeded', async () => {
+    const { client } = await createTestServer(
+      stubApi({
+        'GET /api/stack/config': { status: 200, body: { seeded: false, slot: 0, values: { hub: {}, spoke: {} } } },
+        'GET /api/stacks': { status: 200, body: { stacks: [], selfSlot: 0 } },
+      }),
+    );
+    const result = await client.callTool({ name: 'lab_redeploy_stack', arguments: { wait: false } });
+    expect(result.isError).toBe(true);
+    const text = result.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
+    expect(text).toContain('unseeded');
+    expect(text).toContain('LAB_MCP_ALLOW_DESTRUCTIVE=1');
+  });
+
+  it('lab_redeploy_stack runs when the staged slot matches the serving slot', async () => {
+    const { client } = await createTestServer(
+      stubApi({
+        'GET /api/stack/config': { status: 200, body: { seeded: true, slot: 3, values: { hub: {}, spoke: {} } } },
+        'GET /api/stacks': { status: 200, body: { stacks: [], selfSlot: 3 } },
+        'POST /api/stack/redeploy': { status: 200, body: { runId: 'r4' } },
+      }),
+    );
+    const result = await client.callTool({ name: 'lab_redeploy_stack', arguments: { wait: false } });
+    expect(result.content).toEqual([{ type: 'text', text: '{"runId":"r4"}' }]);
+  });
+
+  it('lab_redeploy_stack skips the slot pre-flight when the destructive flag is set', async () => {
+    const calls: StubCall[] = [];
+    const { client } = await createTestServer(
+      stubApi({ 'POST /api/stack/redeploy': { status: 200, body: { runId: 'r5' } } }, calls),
+      { allowDestructive: true },
+    );
+    const result = await client.callTool({ name: 'lab_redeploy_stack', arguments: { wait: false } });
+    expect(result.content).toEqual([{ type: 'text', text: '{"runId":"r5"}' }]);
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST http://lab.test/api/stack/redeploy']);
+  });
+
   it('lab_control_service posts the action', async () => {
     const calls: StubCall[] = [];
     const { client } = await createTestServer(
@@ -141,15 +197,11 @@ describe('stack tools', () => {
     expect(calls[0]?.body).toEqual({ id: 'hub-api', action: 'restart' });
   });
 
-  it('lab_update_stack_config preserves current hub/spoke overrides when they are omitted', async () => {
+  it('lab_update_stack_config sends the paths it was given and reads nothing first', async () => {
     const calls: StubCall[] = [];
     const { client } = await createTestServer(
       stubApi(
         {
-          'GET /api/stack/config': {
-            status: 200,
-            body: { values: { hub: { LOG_LEVEL: 'debug' }, spoke: { SPOKE_FLAG: '1' } } },
-          },
           'PUT /api/stack/config': { status: 200, body: { ok: true, applied: ['telemetry.enable'], rejected: [] } },
         },
         calls,
@@ -158,17 +210,44 @@ describe('stack tools', () => {
     );
     const result = await client.callTool({
       name: 'lab_update_stack_config',
-      arguments: { telemetry: { enable: true } },
+      arguments: { entries: { 'telemetry.enable': 'true' } },
     });
     expect(result.isError).toBeUndefined();
-    expect(calls[1]?.method).toBe('PUT');
-    expect(calls[1]?.body).toEqual({
-      hub: { LOG_LEVEL: 'debug' },
-      spoke: { SPOKE_FLAG: '1' },
-      counts: undefined,
-      ports: undefined,
-      lan: undefined,
-      telemetry: { enable: true },
-    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('PUT');
+    expect(calls[0]?.body).toEqual({ entries: { 'telemetry.enable': 'true' } });
   });
+
+  it('lab_update_stack_config passes a null through as the revert verb', async () => {
+    const calls: StubCall[] = [];
+    const { client } = await createTestServer(
+      stubApi({ 'PUT /api/stack/config': { status: 200, body: { ok: true, applied: [], rejected: [] } } }, calls),
+      { allowDestructive: true },
+    );
+    await client.callTool({
+      name: 'lab_update_stack_config',
+      arguments: { entries: { 'ports.postgres': null } },
+    });
+    expect(calls[0]?.body).toEqual({ entries: { 'ports.postgres': null } });
+  });
+
+  it('lab_update_stack_config omits the slot entirely when none was asked for', async () => {
+    const calls: StubCall[] = [];
+    const { client } = await createTestServer(
+      stubApi({ 'PUT /api/stack/config': { status: 200, body: { ok: true, applied: [], rejected: [] } } }, calls),
+      { allowDestructive: true },
+    );
+    await client.callTool({ name: 'lab_update_stack_config', arguments: { entries: {} } });
+    expect(Object.hasOwn(calls[0]?.body as object, 'slot')).toBe(false);
+  });
+});
+
+it('lab_update_stack_config forwards a slot when one is given', async () => {
+  const calls: StubCall[] = [];
+  const { client } = await createTestServer(
+    stubApi({ 'PUT /api/stack/config': { status: 200, body: { ok: true, applied: [], rejected: [] } } }, calls),
+    { allowDestructive: true },
+  );
+  await client.callTool({ name: 'lab_update_stack_config', arguments: { entries: {}, slot: 3 } });
+  expect(calls[0]?.body).toEqual({ entries: {}, slot: 3 });
 });

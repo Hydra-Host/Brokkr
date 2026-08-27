@@ -13,6 +13,7 @@ import { ThemeSelector } from '@/components/ui/theme';
 import { ToastProvider } from '@/lib/toast';
 import { OPEN_SIDEBAR_EVENT, suspendActiveTourForNav } from '@/lib/tour';
 import { ApplyConfirmProvider } from '@/lib/use-apply-confirm';
+import { ApiDownProvider, apiIsDown } from '@/lib/use-poll';
 import { useApiHealth } from '@/lib/use-restart-state';
 
 function WikiButton() {
@@ -67,47 +68,49 @@ function BrokkrShell() {
     return () => window.removeEventListener(OPEN_SIDEBAR_EVENT, onOpenSidebar);
   }, []);
   return (
-    <div className="bg-bg-primary text-text-primary flex min-h-screen font-mono">
-      <AppSidebar open={open} setOpen={setOpen} />
-      <div className="content-plus-pattern flex min-w-0 flex-1 flex-col">
-        <header className="relative z-30 flex h-12 shrink-0 items-center gap-3 bg-transparent px-3">
-          <button
-            type="button"
-            data-tour="sidebar-toggle"
-            aria-label={open ? 'Collapse menu' : 'Expand menu'}
-            onClick={() => setOpen((o) => !o)}
-            className="text-text-muted hover:bg-hover-bg hover:text-accent flex size-8 shrink-0 items-center justify-center rounded-sm transition-colors"
-          >
-            <PanelLeft className="size-4" />
-          </button>
-          <div className="min-w-0 flex-1">
-            <AppBreadcrumb />
-          </div>
-          <div className="flex items-center gap-3">
-            <CcBuildChip />
-            <span className="text-text-dim hidden items-center gap-2 text-xs tracking-wide uppercase md:flex">
-              <ConnectivityDot link={health.link} />
-              testing control center
-            </span>
-            <GuideButton />
-            <WikiButton />
-            <span data-tour="tour-controls" className="flex items-center gap-3">
-              <TourButton />
-              <RestartTourButton />
-            </span>
-            <DeployTourButton />
-            <span data-tour="skin-picker" data-tour-interactive="">
-              <ThemeSelector />
-            </span>
-          </div>
-        </header>
-        <CcSkewBanner />
-        <RecreatingBanner banner={health.banner} />
-        <main className="min-w-0 flex-1 overflow-auto p-4 sm:p-6">
-          <Outlet />
-        </main>
+    <ApiDownProvider value={apiIsDown(health.banner)}>
+      <div className="bg-bg-primary text-text-primary flex min-h-screen font-mono">
+        <AppSidebar open={open} setOpen={setOpen} />
+        <div className="content-plus-pattern flex min-w-0 flex-1 flex-col">
+          <header className="relative z-30 flex h-12 shrink-0 items-center gap-3 bg-transparent px-3">
+            <button
+              type="button"
+              data-tour="sidebar-toggle"
+              aria-label={open ? 'Collapse menu' : 'Expand menu'}
+              onClick={() => setOpen((o) => !o)}
+              className="text-text-muted hover:bg-hover-bg hover:text-accent flex size-8 shrink-0 items-center justify-center rounded-sm transition-colors"
+            >
+              <PanelLeft className="size-4" />
+            </button>
+            <div className="min-w-0 flex-1">
+              <AppBreadcrumb />
+            </div>
+            <div className="flex items-center gap-3">
+              <CcBuildChip />
+              <span className="text-text-dim hidden items-center gap-2 text-xs tracking-wide uppercase md:flex">
+                <ConnectivityDot link={health.link} />
+                testing control center
+              </span>
+              <GuideButton />
+              <WikiButton />
+              <span data-tour="tour-controls" className="flex items-center gap-3">
+                <TourButton />
+                <RestartTourButton />
+              </span>
+              <DeployTourButton />
+              <span data-tour="skin-picker" data-tour-interactive="">
+                <ThemeSelector />
+              </span>
+            </div>
+          </header>
+          <CcSkewBanner />
+          <RecreatingBanner banner={health.banner} />
+          <main className="min-w-0 flex-1 overflow-auto p-4 sm:p-6">
+            <Outlet />
+          </main>
+        </div>
       </div>
-    </div>
+    </ApiDownProvider>
   );
 }
 

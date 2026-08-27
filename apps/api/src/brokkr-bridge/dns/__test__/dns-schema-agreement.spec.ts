@@ -82,6 +82,7 @@ const PREFIX_OVERRIDE_FIXTURES = [
     input: {
       serveDns: true,
       upstreamOverride: ['10.0.1.1', '10.0.1.2'],
+      cidr: '10.0.1.0/24',
     },
   },
   {
@@ -89,6 +90,7 @@ const PREFIX_OVERRIDE_FIXTURES = [
     input: {
       serveDns: null,
       upstreamOverride: null,
+      cidr: '10.0.2.0/24',
     },
   },
   {
@@ -96,6 +98,7 @@ const PREFIX_OVERRIDE_FIXTURES = [
     input: {
       serveDns: false,
       upstreamOverride: null,
+      cidr: '172.16.8.0/22',
     },
   },
 ];
@@ -177,5 +180,19 @@ describe('DNS prefix-override atom schema agreement (hub + bridge)', () => {
     const input = { ...PREFIX_OVERRIDE_FIXTURES[0].input, bogus: true };
     const bridgeResult = DnsPrefixOverrideAtomValueSchema.safeParse(input);
     expect(bridgeResult.success).toBe(true);
+  });
+
+  it('hub always writes cidr; bridge tolerates its absence (atoms from an older hub)', () => {
+    const withoutCidr = { serveDns: true, upstreamOverride: ['10.0.1.1', '10.0.1.2'] };
+    expect(DnsPrefixOverrideAtomSchema.safeParse(withoutCidr).success).toBe(false);
+    expect(DnsPrefixOverrideAtomValueSchema.safeParse(withoutCidr).success).toBe(true);
+  });
+
+  it('both schemas reject a non-IPv4 cidr', () => {
+    for (const cidr of ['not-a-cidr', '10.0.0.0', '10.0.0.0/33', '2001:db8::/64']) {
+      const input = { ...PREFIX_OVERRIDE_FIXTURES[0].input, cidr };
+      expect(DnsPrefixOverrideAtomSchema.safeParse(input).success).toBe(false);
+      expect(DnsPrefixOverrideAtomValueSchema.safeParse(input).success).toBe(false);
+    }
   });
 });

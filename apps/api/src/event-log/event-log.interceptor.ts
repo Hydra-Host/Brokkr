@@ -1,8 +1,8 @@
 import { type CallHandler, type ExecutionContext, Injectable, type NestInterceptor } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { MAIN_APP_PERMISSIONS, isMutatingPermission, permissionKey } from '@repo/auth/rbac';
 import { type Observable, catchError, tap, throwError } from 'rxjs';
-import { ContextService, type PermissionIntent } from 'src/common/context/context.service';
+import { ContextService } from 'src/common/context/context.service';
+import { resolveOutcome, selectIntents } from 'src/common/context/permission-intents';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { getErrorMessage } from 'src/common/error-utils';
 import { LoggerService } from 'src/logger/logger.service';
@@ -68,7 +68,7 @@ export class EventLogInterceptor implements NestInterceptor {
     const organizationId = this.contextService.organizationIdOrUndefined;
     if (!organizationId) return;
 
-    const intents = this.selectIntents(options);
+    const intents = selectIntents(this.contextService, options);
     if (intents.length === 0) return;
 
     const actor = this.contextService.resolveActor();
@@ -85,7 +85,7 @@ export class EventLogInterceptor implements NestInterceptor {
         actionKey: options?.actionKey ?? `${intent.resource}.${intent.action}`,
         ...actor,
         ...target,
-        outcome: this.resolveOutcome(intent, error),
+        outcome: resolveOutcome(intent, error),
         errorCode,
         requestId: this.contextService.requestId ?? null,
         method: request.method ?? null,
@@ -96,30 +96,6 @@ export class EventLogInterceptor implements NestInterceptor {
       };
       await this.eventLog.recordBestEffort(write);
     }
-  }
-
-  private selectIntents(options: AuditActionOptions | undefined): PermissionIntent[] {
-    // A tier 1 emit supersedes its gate's intent, so an empty drain here means the row is
-    // already written — minting a synthetic one would duplicate it.
-    const gated = this.contextService.hasRecordedIntents;
-    // Denied intents survive classification: a refused read is the security signal, and the
-    // caller never reaches the success-path logger that would otherwise record it.
-    const drained = this.contextService
-      .drainIntents()
-      .filter(
-        (intent) =>
-          intent.denied || isMutatingPermission(MAIN_APP_PERMISSIONS, permissionKey(intent.resource, intent.action)),
-      );
-    if (drained.length > 0 || gated || !options) return drained;
-
-    return [{ id: 'synthetic', resource: options.resource, action: options.action, denied: false, finalized: false }];
-  }
-
-  private resolveOutcome(intent: PermissionIntent, error: unknown): EventLogWrite['outcome'] {
-    if (intent.denied) return 'DENIED';
-    // Any handler error, including a business 403 thrown after the check passed.
-    if (error !== undefined) return 'FAILED';
-    return 'SUCCEEDED';
   }
 
   private resolveTarget(

@@ -515,6 +515,24 @@ hostpath-setup)
   "$CHOWN" "$SUDO_UID:$SUDO_GID" /opt/brokkr
   ;;
 
+dropin-current)
+  # The caller cannot stat /etc/sudoers.d where it is 0750 (Fedora, Arch), so answer as root.
+  # Exit 3, never 1: sudo also returns 1 refusing -n, and the caller must tell those apart.
+  [ $# -eq 2 ] || die "usage: dropin-current <name> <candidate>" 64
+  case "$1" in brokkr-sim*) ;; *) die "bad drop-in name: $1" 64 ;; esac
+  case "$1" in *[!A-Za-z0-9_-]* | "") die "bad drop-in name: $1" 64 ;; esac
+  cand=$(_resolve_file "$2")
+  # a legacy unhashed drop-in shadows every hashed one, and the caller's own check for it is
+  # blind wherever /etc/sudoers.d denies search
+  if [ -e /etc/sudoers.d/brokkr-sim ] && [ "$1" != brokkr-sim ]; then exit 3; fi
+  if [ ! -f "/etc/sudoers.d/$1" ]; then exit 3; fi
+  # $(<) is a bash builtin: diffutils is absent from a minimal Fedora, and this verb may not
+  # trust PATH. It strips trailing newlines on both sides, which one generator renders alike.
+  installed=$(<"/etc/sudoers.d/$1")
+  candidate=$(<"$cand")
+  if [ "$installed" != "$candidate" ]; then exit 3; fi
+  ;;
+
 *)
   die "unknown verb: '${verb:-}'" 64
   ;;

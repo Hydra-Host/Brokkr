@@ -7,6 +7,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
+import { FormPermissionSelector } from '@repo/domain-ui/form/form-permission-selector';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -26,8 +27,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@repo/ui/components/dialog';
-import { FormPermissionSelector } from '@repo/ui/form/form-permission-selector';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
+import { unwrapErrorMessage } from '@repo/utils';
 import { BootScreen } from '~/components/boot-screen';
 import { usePermissions } from '~/hooks/use-permissions';
 import { tsr } from '~/lib/api';
@@ -169,7 +170,7 @@ function EditRoleDialog() {
               setError('Failed to archive role');
             }
           } catch (err) {
-            const message = err instanceof Error ? err.message : 'Failed to archive role';
+            const message = unwrapErrorMessage(err, 'Failed to archive role');
             setError(message);
           }
         }}
@@ -194,11 +195,10 @@ function EditRoleDialog() {
         await queryClient.invalidateQueries({ queryKey: ['organization-role', roleId] });
         navigate({ to: '/organizations/roles' });
       } else {
-        const body = res.body as { message?: string };
-        setError(body?.message ?? 'Failed to update role');
+        setError(unwrapErrorMessage(res, 'Failed to update role'));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to update role';
+      const message = unwrapErrorMessage(err, 'Failed to update role');
       setError(message);
     }
   };

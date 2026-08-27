@@ -3,9 +3,15 @@
 # Base image with pnpm
 FROM node:24-slim AS base
 ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
+# pnpm 11 installs global bins into $PNPM_HOME/bin and refuses `add -g` unless that exact
+# directory is on PATH; pnpm 8 used $PNPM_HOME itself. Both are listed so either resolves.
+ENV PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"
 # Pin must match the workspace packageManager (package.json) and apps/bridge/Dockerfile.
-RUN corepack enable && corepack install -g pnpm@8.15.9
+RUN corepack enable && corepack install -g pnpm@11.21.0
+# pnpm 11 defaults verifyDepsBeforeRun to `install`, so `pnpm exec` / `pnpm run` fire an implicit
+# install mid-build that reaches the registry and prunes the layer below it. That layer is the
+# authority here; a build must never re-resolve dependencies.
+ENV pnpm_config_verify_deps_before_run=false
 
 # Stage 1: Prune the monorepo for api and web workspaces
 FROM base AS pruner
@@ -61,26 +67,11 @@ RUN --mount=type=secret,id=turbo_token --mount=type=secret,id=turbo_sig --mount=
 # stage and runner copies so both inherit the corrected manifests.
 RUN node -e "const fs=require('fs'); const targets=['./packages/database/package.json','./packages/auth/package.json','./packages/utils/package.json','./packages/active-record/package.json','./packages/crypto/package.json','./packages/lifecycle/package.json','./packages/telemetry/package.json']; for (const p of targets){const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.main='./dist/index.js'; pkg.types='./dist/index.d.ts'; if(pkg.exports && pkg.exports['.']){pkg.exports['.'].import='./dist/index.js'; pkg.exports['.'].require='./dist/index.js'; pkg.exports['.'].types='./dist/index.d.ts';} fs.writeFileSync(p, JSON.stringify(pkg, null, 2)+'\n');}"
 
-# Stage 3: Self-contained api runtime tree
-# Fresh stage rather than FROM installer: wiping the inherited hoisted
-# node_modules writes an overlayfs whiteout per file (~10 min on the arm64
-# runners). Starting clean needs no wipe; copying the pnpm store keeps the
-# isolated install offline (reused, downloaded 0).
-FROM base AS deployer
-WORKDIR /app
-COPY --from=installer /pnpm/store /pnpm/store
 # `pnpm deploy --prod` materializes apps/api + its full workspace dep graph into
 # /api-deploy, so new api deps land in the image automatically (a missed COPY once
-# shipped a boot-crashing image: MODULE_NOT_FOUND @repo/telemetry). Deploy is broken
-# under node-linker=hoisted (pnpm#6682, see apps/bridge/Dockerfile) — link isolated.
-# The workspace tree is staged via tar rather than COPY --exclude (hadolint v2.12
-# in CI/treefmt cannot parse that flag yet).
-RUN --mount=type=bind,from=installer,source=/app,target=/mnt/app \
-    tar -C /mnt/app --exclude=node_modules -cf /tmp/tree.tar . && \
-    tar -xf /tmp/tree.tar -C /app && \
-    rm /tmp/tree.tar && \
-    pnpm install --frozen-lockfile --config.node-linker=isolated && \
-    pnpm --config.node-linker=isolated --filter=api deploy --prod /api-deploy && \
+# shipped a boot-crashing image: MODULE_NOT_FOUND @repo/telemetry). injectWorkspacePackages picks
+# the lockfile-driven deploy; --legacy re-resolved every range from the registry instead.
+RUN pnpm --config.trustLockfile=true --filter=api deploy --prod /api-deploy && \
     test -f /api-deploy/dist/main.js && \
     test -d /api-deploy/node_modules/@repo/database/generated && \
     node -e "['@repo/lifecycle','@repo/telemetry','@repo/database','@repo/auth','@repo/active-record','@repo/crypto','@repo/utils','@repo/api-client','@hydrahost/plugins-config'].forEach(m=>{const r=require.resolve(m,{paths:['/api-deploy']}); if(!r.endsWith('.js')) throw new Error(m+' resolves to non-JS: '+r);})"
@@ -102,8 +93,8 @@ COPY --chmod=755 apps/api/docker-entrypoint.sh /app/docker-entrypoint.sh
 
 USER nestjs
 
-# The api and its full workspace-dependency forest, self-contained (see deployer).
-COPY --from=deployer --chown=nestjs:nodejs /api-deploy ./apps/api
+# The api and its full workspace-dependency forest, self-contained (see the deploy above).
+COPY --from=installer --chown=nestjs:nodejs /api-deploy ./apps/api
 COPY --from=installer --chown=nestjs:nodejs /app/apps/web/dist ./apps/web/dist
 
 # Copy workspace packages
