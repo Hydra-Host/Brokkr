@@ -245,7 +245,7 @@ def test_load_baremetal_nodes_ok(tmp_path):
 
 def test_load_baremetal_nodes_no_block(tmp_path):
     p = _write_fleet(tmp_path, {"network": {}, "nodes": []})
-    with pytest.raises(CommissionError, match="not in bare-metal mode"):
+    with pytest.raises(CommissionError, match="add a bare-metal machine on Fleet nodes and re-render"):
         ob.load_baremetal_nodes(fleet_path=p)
 
 

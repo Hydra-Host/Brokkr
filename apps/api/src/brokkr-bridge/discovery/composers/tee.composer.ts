@@ -11,13 +11,23 @@ import {
   TEE_FIRMWARE,
 } from '../../constants/discovery.constants';
 import type { CollectorContext, DeviceMutation } from '../collectors/collector.types';
+import { ghwBaseboardSchema } from '../collectors/ghw_baseboard/ghw_baseboard.schema';
 import { ghwBiosSchema } from '../collectors/ghw_bios/ghw_bios.schema';
+import { type GhwGpuInput, ghwGpuSchema } from '../collectors/ghw_gpu/ghw_gpu.schema';
 import { kernelParamsSchema } from '../collectors/kernel_params/kernel_params.schema';
 import { lscpuSchema } from '../collectors/lscpu/lscpu.schema';
 import { nvidiaSchema } from '../collectors/nvidia/nvidia.schema';
 import type { Composer } from './composer.types';
 
-// teeCapable: FALSE only when the CPU isn't TEE-capable, TRUE only on the full verification chain, else PATCH (UNVERIFIED never written here); a CPLD mismatch is deliberately always PATCH.
+const NVIDIA_CARD_PATTERN = /nvidia/i;
+
+function hasNvidiaCard(ghwGpu: GhwGpuInput): boolean {
+  return ghwGpu.gpu.cards.some((card) =>
+    NVIDIA_CARD_PATTERN.test(`${card.pci?.vendor?.name ?? ''} ${card.pci?.product?.name ?? ''}`),
+  );
+}
+
+// teeCapable: FALSE only when the CPU isn't TEE-capable; TRUE on the full vBIOS attestation chain, or on a GPU-less host (`nvidia` yields no GPU and a parsed `ghw_gpu` lists no NVIDIA card) once CPU, vendor and firmware pass; else PATCH (UNVERIFIED never written here); a CPLD mismatch is deliberately always PATCH.
 @Injectable()
 export class TeeComposer implements Composer {
   readonly name = 'tee';
@@ -38,45 +48,66 @@ export class TeeComposer implements Composer {
     }
 
     const ghwBios = ghwBiosSchema.safeParse(ctx.rawBundle.ghw_bios);
+    const ghwBaseboard = ghwBaseboardSchema.safeParse(ctx.rawBundle.ghw_baseboard);
     const kernelParams = kernelParamsSchema.safeParse(ctx.rawBundle.kernel_params);
     const biosVendor = ghwBios.success ? (ghwBios.data.bios.vendor ?? '').toLowerCase() : '';
+    // Supermicro boards report AMI as the BIOS vendor, so the baseboard is the typed source that names them.
+    const baseboardVendor = ghwBaseboard.success ? (ghwBaseboard.data.baseboard.vendor ?? '').toLowerCase() : '';
     const sysManufacturer = kernelParams.success
       ? String(kernelParams.data.hardware_analysis?.system_manufacturer ?? '').toLowerCase()
       : '';
 
+    const vendorSources = [biosVendor, baseboardVendor, sysManufacturer];
     const teeVendor =
-      Object.keys(TEE_FIRMWARE).find((vendor) => biosVendor.startsWith(vendor) || sysManufacturer.startsWith(vendor)) ??
-      '';
+      Object.keys(TEE_FIRMWARE).find((vendor) => vendorSources.some((source) => source.startsWith(vendor))) ?? '';
     if (!teeVendor) {
-      return { serverUpdate: { teeCapable: TeeCapability.PATCH } };
+      return this.patch(
+        ctx,
+        `no TEE vendor in bios="${biosVendor}" baseboard="${baseboardVendor}" system="${sysManufacturer}"`,
+      );
     }
 
     const vendorFirmware = TEE_FIRMWARE[teeVendor];
     const biosVersion = ghwBios.success ? ghwBios.data.bios.version : undefined;
     if (!biosVersion || !vendorFirmware.bios.includes(biosVersion)) {
-      return { serverUpdate: { teeCapable: TeeCapability.PATCH } };
+      return this.patch(ctx, `${teeVendor} bios "${biosVersion ?? ''}" not in [${vendorFirmware.bios.join(', ')}]`);
     }
 
     if (vendorFirmware.cpld) {
       const cpld = (ctx.rawBundle as Record<string, unknown>).cpld as { cpld?: { version?: string } } | undefined;
       const cpldVersion = cpld?.cpld?.version ?? '';
       if (!vendorFirmware.cpld.includes(cpldVersion)) {
-        return { serverUpdate: { teeCapable: TeeCapability.PATCH } };
+        return this.patch(ctx, `${teeVendor} cpld "${cpldVersion}" not in [${vendorFirmware.cpld.join(', ')}]`);
       }
     }
 
     const nvidia = nvidiaSchema.safeParse(ctx.rawBundle.nvidia);
-    // No vBIOS evidence (bad bundle or CC-mode hiding GPUs): preserve a prior TRUE — hidden GPUs never re-attest, so a downgrade would be permanent.
-    if (!nvidia.success || !('gpus' in nvidia.data)) {
+    const nvidiaGpus = nvidia.success && 'gpus' in nvidia.data ? nvidia.data.gpus : [];
+    if (nvidiaGpus.length === 0) {
+      const ghwGpu = ghwGpuSchema.safeParse(ctx.rawBundle.ghw_gpu);
+      if (ghwGpu.success && !hasNvidiaCard(ghwGpu.data)) {
+        // CPU-only Intel TDX host: the platform firmware is the whole attestation surface
+        return { serverUpdate: { teeCapable: TeeCapability.TRUE } };
+      }
+      // No vBIOS evidence (bad bundle or CC-mode hiding GPUs): preserve a prior TRUE — hidden GPUs never re-attest, so a downgrade would be permanent.
       const prior = ctx.device.server?.teeCapable;
-      return {
-        serverUpdate: { teeCapable: prior === TeeCapability.TRUE ? TeeCapability.TRUE : TeeCapability.PATCH },
-      };
+      if (prior === TeeCapability.TRUE) {
+        return { serverUpdate: { teeCapable: TeeCapability.TRUE } };
+      }
+      const nvidiaState =
+        ctx.rawBundle.nvidia === undefined ? 'absent' : nvidia.success ? 'reported no gpus' : 'unparseable';
+      const ghwGpuState = ctx.rawBundle.ghw_gpu === undefined ? 'absent' : 'unparseable';
+      return this.patch(
+        ctx,
+        ghwGpu.success
+          ? `nvidia card without vbios evidence (nvidia ${nvidiaState}) and prior capability is ${prior ?? 'unset'}`
+          : `no gpu evidence (nvidia ${nvidiaState}, ghw_gpu ${ghwGpuState}) and prior capability is ${prior ?? 'unset'}`,
+      );
     }
 
-    const vbiosVersions = [...new Set(nvidia.data.gpus.map((g) => g.vbios ?? ''))];
+    const vbiosVersions = [...new Set(nvidiaGpus.map((g) => g.vbios ?? ''))];
     if (vbiosVersions.length !== 1 || vbiosVersions[0] === '') {
-      return { serverUpdate: { teeCapable: TeeCapability.PATCH } };
+      return this.patch(ctx, `vbios versions not uniform: [${vbiosVersions.join(', ')}]`);
     }
 
     await this.refreshAttestation(ctx);
@@ -84,9 +115,15 @@ export class TeeComposer implements Composer {
     const vbios = vbiosVersions[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const vbiosPattern = new RegExp(`NV_GPU_VBIOS_[^_\\s]+_[^_\\s]+_[^_\\s]+_${vbios}`, 'i');
 
-    return {
-      serverUpdate: { teeCapable: vbiosPattern.test(attestationStr) ? TeeCapability.TRUE : TeeCapability.PATCH },
-    };
+    if (!vbiosPattern.test(attestationStr)) {
+      return this.patch(ctx, `vbios ${vbiosVersions[0]} not in NVIDIA attestation ids`);
+    }
+    return { serverUpdate: { teeCapable: TeeCapability.TRUE } };
+  }
+
+  private patch(ctx: CollectorContext, reason: string): DeviceMutation {
+    ctx.logger.log(`tee: PATCH — ${reason}`);
+    return { serverUpdate: { teeCapable: TeeCapability.PATCH } };
   }
 
   private async refreshAttestation(ctx: CollectorContext): Promise<void> {

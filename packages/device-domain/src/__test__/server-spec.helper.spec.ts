@@ -54,6 +54,14 @@ describe('ServerSpecHelper.isTeeCapable', () => {
       false,
     );
   });
+
+  it('is true for a GPU-less host when capability is TRUE', () => {
+    expect(ServerSpecHelper.isTeeCapable(input({ serverCapable: TeeCapability.TRUE }))).toBe(true);
+  });
+
+  it('is false for a GPU-less host when capability is PATCH', () => {
+    expect(ServerSpecHelper.isTeeCapable(input({ serverCapable: TeeCapability.PATCH }))).toBe(false);
+  });
 });
 
 

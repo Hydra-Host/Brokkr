@@ -12,7 +12,7 @@ import {
   bmDeviceUuid,
   ENROLLMENT_POLL_ATTEMPTS,
   parseBaremetalNodes,
-  parseFleetMode,
+  parseFleetPlanes,
   waitForEnrollment,
   type BmcCreds,
 } from './sim-bmc-seed.helpers';
@@ -57,15 +57,11 @@ async function main(): Promise<void> {
     throw new Error('LOCAL_FLEET_PATH (or LOCAL_FLEET_SOURCE) must point at the rendered fleet.yml.');
   }
   const fleetText = readFileSync(fleetPath, 'utf8');
-  const nodes = parseBaremetalNodes(fleetText);
-  if (nodes.length === 0) {
-    const msg =
-      parseFleetMode(fleetText) === 'baremetal'
-        ? 'baremetal mode but no baremetal.nodes — nothing to seal'
-        : 'not in baremetal mode — nothing to seal';
-    process.stderr.write(`[seed-bm-bmc] ${msg}.\n`);
+  if (!parseFleetPlanes(fleetText).baremetal) {
+    process.stderr.write('[seed-bm-bmc] the bare-metal plane is off (no baremetal.nodes) — nothing to seal.\n');
     return;
   }
+  const nodes = parseBaremetalNodes(fleetText);
 
   const stateDir = process.env.DEVENV_STATE;
   if (!stateDir) {

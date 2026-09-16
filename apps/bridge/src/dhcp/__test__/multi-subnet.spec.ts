@@ -424,6 +424,7 @@ describe('Multi-subnet hydrate distributes leases by containment', () => {
       put: async () => {},
       delete: async () => {},
       pruneExpired: async () => 0,
+      takeRevocations: async () => [],
     };
 
     const engine = DhcpEngine.fromSubnets(
@@ -457,6 +458,7 @@ describe('Multi-subnet hydrate distributes leases by containment', () => {
       put: async () => {},
       delete: async () => {},
       pruneExpired: async () => 0,
+      takeRevocations: async () => [],
     };
 
     const engine = DhcpEngine.fromSubnets(

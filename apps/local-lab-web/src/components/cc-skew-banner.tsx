@@ -15,7 +15,7 @@ export function CcSkewBanner() {
   const m = ccSkewBannerModel(ccBuild);
   if (!m) return null;
   return (
-    <div className="border-status-offline/30 bg-status-offline/10 text-status-offline mx-4 mt-2 rounded-md border px-3 py-2 font-mono text-xs sm:mx-6">
+    <div className="border-status-offline/30 bg-status-offline/10 text-status-offline mx-4 mt-2 shrink-0 rounded-md border px-3 py-2 font-mono text-xs sm:mx-6">
       {m.text}
     </div>
   );

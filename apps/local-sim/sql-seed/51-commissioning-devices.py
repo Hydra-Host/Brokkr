@@ -52,19 +52,19 @@ def generate() -> str:
             f"""INSERT INTO "Device" (
     id, name, status, role, "deviceType",
     "zoneId", "networkType",
-    "supplierId", "organizationId",
+    "supplierId",
     architecture, "netplanOverride", "updatedAt"
 ) VALUES (
     {q(device_id)}, {q(name)}, 'PLANNED'::"DeviceStatus", NULL, 'Baremetal'::"DeviceType",
     {q(zone_id)}, 'Public'::"DeviceNetworkType",
-    {org}, {org},
+    {org},
     {q(host_arch)}, NULL, NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, status = EXCLUDED.status, role = EXCLUDED.role,
     "deviceType" = EXCLUDED."deviceType",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
-    "supplierId" = EXCLUDED."supplierId", "organizationId" = EXCLUDED."organizationId",
+    "supplierId" = EXCLUDED."supplierId",
     architecture = EXCLUDED.architecture, "netplanOverride" = NULL,
     "deletedAt" = NULL, "updatedAt" = NOW();"""
         )

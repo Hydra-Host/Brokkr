@@ -1,11 +1,14 @@
+import { IpxeBuildTarget } from '@repo/database/enums';
 import { describe, expect, it } from 'vitest';
 import {
   CreateIpAddressRequestSchema,
   CreatePrefixRequestSchema,
   DhcpReservationSchema,
   IpAddressSchema,
-  IpxeBuildTargetSchema,
   MAX_DHCP_DNS_SERVERS,
+  PrefixBootReadinessFindingSchema,
+  PrefixBootReadinessQuerySchema,
+  PrefixBootReadinessSchema,
   PrefixDhcpServingSchema,
   PrefixSchema,
   UpdateIpAddressRequestSchema,
@@ -125,7 +128,7 @@ describe('DhcpReservationSchema', () => {
   });
 
   it('accepts every ipxeBuildTarget the canonical schema defines', () => {
-    for (const ipxeBuildTarget of IpxeBuildTargetSchema.options) {
+    for (const ipxeBuildTarget of Object.values(IpxeBuildTarget)) {
       expect(DhcpReservationSchema.safeParse({ ...valid, ipxeBuildTarget }).success).toBe(true);
     }
   });
@@ -210,6 +213,109 @@ describe('PrefixDhcpServingSchema', () => {
     expect(
       PrefixDhcpServingSchema.safeParse({ nextServer: '10.0.0.1', dnsServers: gen(MAX_DHCP_DNS_SERVERS + 1) }).success,
     ).toBe(false);
+  });
+});
+
+describe('PrefixBootReadinessFindingSchema', () => {
+  const valid = { code: 'PXE-102', severity: 'error', message: 'dhcpMode is OFF; set it to SERVER or PROXY.' };
+
+  it('accepts a well-formed finding', () => {
+    expect(PrefixBootReadinessFindingSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts two- and three-digit registered codes', () => {
+    expect(PrefixBootReadinessFindingSchema.safeParse({ ...valid, code: 'PXE-01' }).success).toBe(true);
+    expect(PrefixBootReadinessFindingSchema.safeParse({ ...valid, code: 'PXE-106' }).success).toBe(true);
+  });
+
+  it('rejects a well-formed code the registry does not name', () => {
+    expect(PrefixBootReadinessFindingSchema.safeParse({ ...valid, code: 'PXE-10' }).success).toBe(false);
+    expect(PrefixBootReadinessFindingSchema.safeParse({ ...valid, code: 'PXE-99' }).success).toBe(false);
+  });
+
+  it('rejects one- and four-digit codes', () => {
+    expect(PrefixBootReadinessFindingSchema.safeParse({ ...valid, code: 'PXE-1' }).success).toBe(false);
+    expect(PrefixBootReadinessFindingSchema.safeParse({ ...valid, code: 'PXE-1000' }).success).toBe(false);
+  });
+
+  it('rejects a code outside the PXE vocabulary (other prefix, lowercase, or a bare number)', () => {
+    expect(PrefixBootReadinessFindingSchema.safeParse({ ...valid, code: 'DHCP-102' }).success).toBe(false);
+    expect(PrefixBootReadinessFindingSchema.safeParse({ ...valid, code: 'pxe-102' }).success).toBe(false);
+    expect(PrefixBootReadinessFindingSchema.safeParse({ ...valid, code: '102' }).success).toBe(false);
+  });
+
+  it('accepts every severity the registry defines', () => {
+    for (const severity of ['error', 'warn', 'info']) {
+      expect(PrefixBootReadinessFindingSchema.safeParse({ ...valid, severity }).success).toBe(true);
+    }
+  });
+
+  it('rejects a severity outside the registry', () => {
+    expect(PrefixBootReadinessFindingSchema.safeParse({ ...valid, severity: 'fatal' }).success).toBe(false);
+  });
+
+  it('rejects an empty message', () => {
+    expect(PrefixBootReadinessFindingSchema.safeParse({ ...valid, message: '' }).success).toBe(false);
+  });
+});
+
+describe('PrefixBootReadinessQuerySchema', () => {
+  const valid = { mac: 'aa:bb:cc:dd:ee:ff', bmcAddress: '10.0.2.15' };
+
+  it('accepts a canonical MAC with a BMC address', () => {
+    expect(PrefixBootReadinessQuerySchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts a canonical MAC alone (the identity check is optional)', () => {
+    expect(PrefixBootReadinessQuerySchema.safeParse({ mac: valid.mac }).success).toBe(true);
+  });
+
+  it('requires mac', () => {
+    expect(PrefixBootReadinessQuerySchema.safeParse({ bmcAddress: valid.bmcAddress }).success).toBe(false);
+  });
+
+  it('rejects a non-canonical MAC (uppercase, hyphen-separated, or not 6 octets)', () => {
+    expect(PrefixBootReadinessQuerySchema.safeParse({ ...valid, mac: 'AA:BB:CC:DD:EE:FF' }).success).toBe(false);
+    expect(PrefixBootReadinessQuerySchema.safeParse({ ...valid, mac: 'aa-bb-cc-dd-ee-ff' }).success).toBe(false);
+    expect(PrefixBootReadinessQuerySchema.safeParse({ ...valid, mac: 'aa:bb:cc:dd:ee' }).success).toBe(false);
+    expect(PrefixBootReadinessQuerySchema.safeParse({ ...valid, mac: 'aa:bb:cc:dd:ee:ff:00' }).success).toBe(false);
+  });
+
+  it('rejects a bmcAddress that is not a strict IPv4 address', () => {
+    expect(PrefixBootReadinessQuerySchema.safeParse({ ...valid, bmcAddress: 'not-an-ip' }).success).toBe(false);
+    expect(PrefixBootReadinessQuerySchema.safeParse({ ...valid, bmcAddress: '10.0.2.256' }).success).toBe(false);
+    expect(PrefixBootReadinessQuerySchema.safeParse({ ...valid, bmcAddress: '010.0.2.15' }).success).toBe(false);
+    expect(PrefixBootReadinessQuerySchema.safeParse({ ...valid, bmcAddress: '::1' }).success).toBe(false);
+  });
+});
+
+describe('PrefixBootReadinessSchema', () => {
+  const report = {
+    findings: [
+      { code: 'PXE-102', severity: 'error', message: 'dhcpMode is OFF; set it to SERVER or PROXY.' },
+      { code: 'PXE-104', severity: 'error', message: 'No bootfile is set; pick an iPXE build target.' },
+      { code: 'PXE-106', severity: 'error', message: 'PXE MAC and BMC address belong to different devices.' },
+    ],
+  };
+
+  it('parses a full report and preserves the findings as given', () => {
+    const result = PrefixBootReadinessSchema.safeParse(report);
+
+    expect(result.success && result.data).toEqual(report);
+  });
+
+  it('accepts an empty findings list (nothing in hub data blocks the boot)', () => {
+    expect(PrefixBootReadinessSchema.safeParse({ findings: [] }).success).toBe(true);
+  });
+
+  it('rejects a report carrying a malformed finding', () => {
+    const malformed = { findings: [{ ...report.findings[0], code: 'PXE-1' }] };
+
+    expect(PrefixBootReadinessSchema.safeParse(malformed).success).toBe(false);
+  });
+
+  it('rejects a missing findings field', () => {
+    expect(PrefixBootReadinessSchema.safeParse({}).success).toBe(false);
   });
 });
 

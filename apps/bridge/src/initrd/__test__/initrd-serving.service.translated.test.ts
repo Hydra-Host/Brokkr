@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { NIL_DEVICE_ID } from '../../common/redis/redis-keys.js';
+import { resetSyncConfig } from '../../sync/sync.config.js';
 import type { InitrdServingDeps } from '../initrd-serving.service.js';
 import { createInitrdServingService, InitrdServingService } from '../initrd-serving.service.js';
 import { resetInitrdConfigForTests } from '../initrd.config.js';
@@ -253,6 +254,25 @@ describe('InitrdServingService.buildDeviceInitrdOnDemand — rescue caching gate
 
     expect(buildUbuntu).toHaveBeenCalledOnce();
     expect(cache.set).toHaveBeenCalledOnce();
+  });
+
+  it('keys the per-device initrd cache on the discovery version', async () => {
+    const previous = process.env.BROKKR_LIVE_VERSION;
+    process.env.BROKKR_LIVE_VERSION = '4.5.6';
+    resetSyncConfig();
+    try {
+      const builds = await mkTmpBuildsDir('rescue-cache-version');
+      const cache = rescueCacheWithKeys('ssh-ed25519 AAAA customer@host');
+      await runRescueBuild(cache, builds);
+
+      const versionedKey = `device:${deviceId}:initrd:ubuntu-rescue-os:4.5.6`;
+      expect(cache.get.mock.calls.map((call) => call[0])).toContain(versionedKey);
+      expect(cache.set.mock.calls[0]?.[0]).toBe(versionedKey);
+    } finally {
+      if (previous === undefined) delete process.env.BROKKR_LIVE_VERSION;
+      else process.env.BROKKR_LIVE_VERSION = previous;
+      resetSyncConfig();
+    }
   });
 });
 

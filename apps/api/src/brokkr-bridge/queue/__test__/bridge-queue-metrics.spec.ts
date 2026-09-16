@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { REDIS_CONFIG } from 'src/common/redis';
 import { SealedEnvelopeService } from 'src/crypto/sealed-envelope.service';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { JobLogWriterService } from '../../job-logs/job-log-writer.service';
 import { BridgeQueueService } from '../bridge-queue.service';
 
 const { gaugeCallbacks, getJobCounts } = vi.hoisted(() => ({
@@ -38,6 +39,7 @@ describe('BridgeQueueService — brokkr.queue.jobs gauge', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BridgeQueueService,
+        { provide: JobLogWriterService, useValue: { write: vi.fn() } },
         { provide: REDIS_CONFIG, useValue: { host: 'localhost', port: 6379 } },
         { provide: SealedEnvelopeService, useValue: { isZoneEnrolled: vi.fn().mockResolvedValue(false) } },
         {

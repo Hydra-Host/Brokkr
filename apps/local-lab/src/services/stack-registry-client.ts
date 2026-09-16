@@ -4,9 +4,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { Injectable, Logger } from '@nestjs/common';
+import { getErrorMessage } from '@repo/utils';
 import { z } from 'zod';
-
-import { getErrorMessage } from '../common/errors';
 
 const StackEntrySchema = z
   .object({

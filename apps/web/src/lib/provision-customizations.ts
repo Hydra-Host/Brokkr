@@ -1,4 +1,4 @@
-import { type CustomizationLayer, isIpxeCustomOs, OperatingSystemSlugSchema } from '@repo/api-client';
+import { isIpxeCustomOs, OperatingSystemSlugSchema } from '@repo/api-client';
 
 export const DEFAULT_OPERATING_SYSTEM = 'ubuntu-noble-vanilla';
 
@@ -7,16 +7,7 @@ export const TEE_CHECKBOX_DESCRIPTION = 'Enable the hardware Trusted Execution E
 
 export type CustomizationFormValues = Record<string, string | string[]>;
 
-/** Reset payload must cover every catalog group slug: a bare `{}` leaves prior picks registered under `customizations.<groupSlug>` intact. */
-export function emptyCustomizations(
-  availableComponentLayersByBase: Record<string, CustomizationLayer[]>,
-): CustomizationFormValues {
-  const empty: CustomizationFormValues = {};
-  for (const layers of Object.values(availableComponentLayersByBase)) {
-    for (const group of layers) empty[group.slug] = group.selectionType === 'MULTI_SELECT' ? [] : '';
-  }
-  return empty;
-}
+export { emptyCustomizations } from '@repo/utils';
 
 export function osCandidateForMode(baseLayers: ReadonlyArray<{ slug: string }>): string {
   return baseLayers[0]?.slug ?? '';

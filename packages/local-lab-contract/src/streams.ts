@@ -15,6 +15,10 @@ export const streamPaths = {
   fleetShell: (node: string) => `/api/fleet/shell?node=${encodeURIComponent(node)}`,
 } as const;
 
+/** WS auth for the paths above: a browser can set no header on an upgrade, so the token rides as the
+ *  subprotocol value offered right after this marker. The lab refuses `?token=` on an upgrade. */
+export const WS_TOKEN_PROTOCOL = 'lab.token';
+
 // binary downloads live outside the ts-rest router for the same reason as the SSE paths above — it models JSON bodies, not raw file streams.
 export const downloadPaths = {
   /** Raw text attachment (per-run log slice) of a test run. */

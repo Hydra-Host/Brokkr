@@ -1,5 +1,6 @@
-import { discoverIpv4Interfaces, ipInCidr } from '../bridge-network/bridge-ip-resolution.service';
-import { isValidIpv4Cidr } from '../bridge-network/ip-utils';
+import { ipInCidr, isValidIpv4Cidr } from '@repo/utils';
+
+import { discoverIpv4Interfaces } from '../bridge-network/bridge-ip-resolution.service';
 
 import type { DnsPrefixOverrideAtomValue } from './dns-atom-value.schema';
 import type { InterfaceIp } from './interfaces';
@@ -33,7 +34,7 @@ export function dnsServeInterfaceIps(
   const seen = new Set<string>();
   for (const iface of discover()) {
     if (seen.has(iface.ip)) continue;
-    const cidr = cidrs.find((candidate) => ipInCidr(candidate, iface.ip));
+    const cidr = cidrs.find((candidate) => ipInCidr(iface.ip, candidate));
     if (cidr === undefined) continue;
     seen.add(iface.ip);
     result.push({ interface: iface.name, ip: iface.ip, cidr });

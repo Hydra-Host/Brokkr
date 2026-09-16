@@ -6,6 +6,7 @@ const overlayStub = (over: Record<string, unknown> = {}) => ({
   zonesMeta: () => [{ name: 'sim-zone', index: 0, bridges: 1 }],
   labBridges: () => [{ proc: 'spoke', zone: 'sim-zone', replica: 0, port: 8000, grpc: 9082 }],
   fleetNodesByZone: () => ({ 'sim-zone': ['cpu-1'] }),
+  baremetalNodesByZone: () => ({ 'sim-zone': [] }),
   zoneFiles: () => ({ 'sim-zone': ['devenv/modules/fleet-topology.nix'] }),
   zoneCapacity: () => 25,
   isSeeded: () => true,
@@ -13,7 +14,10 @@ const overlayStub = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const registryStub = (zones: { id: string; name: string | null; deletedAt: boolean }[], readError: string | null = null) => ({
+const registryStub = (
+  zones: { id: string; name: string | null; deletedAt: boolean }[],
+  readError: string | null = null,
+) => ({
   readZones: () => Promise.resolve({ zones, readError }),
 });
 
@@ -59,6 +63,12 @@ describe('ZonesService.getConfig', () => {
     });
   });
 
+  it('counts saved bare-metal machines in the zone node count', async () => {
+    const overlay = overlayStub({ baremetalNodesByZone: () => ({ 'sim-zone': ['metal-1'] }) });
+
+    expect((await make(overlay).getConfig()).zones[0].derived.nodeCount).toBe(2);
+  });
+
   it('marks a zone another file declares, since removing it needs the tombstone', async () => {
     expect((await make().getConfig()).zones[0].baseDeclared).toBe(true);
   });
@@ -88,9 +98,7 @@ describe('ZonesService.getConfig', () => {
     ]);
     const cfg = await make(overlayStub(), registry).getConfig();
 
-    expect(cfg.reconcile).toEqual([
-      { name: 'sim-zone-maintenance', zoneId: 'zf', side: 'hub-only', fixture: true },
-    ]);
+    expect(cfg.reconcile).toEqual([{ name: 'sim-zone-maintenance', zoneId: 'zf', side: 'hub-only', fixture: true }]);
   });
 
   it('reports a genuine hub-only zone as not a fixture', async () => {
@@ -132,6 +140,40 @@ describe('ZonesService.putConfig', () => {
     expect(res.ok).toBe(true);
     expect(res.plan.steps.map((s) => s.id)).toEqual(['restart the bridges']);
     expect(overlay.setZonesConfig).toHaveBeenCalledOnce();
+  });
+
+  it('saves a second zone while a bare-metal machine occupies the first', async () => {
+    const overlay = overlayStub({ baremetalNodesByZone: () => ({ 'sim-zone': ['metal-1'] }) });
+    const registry = registryStub([{ id: 'z0', name: 'sim-zone', deletedAt: false }]);
+
+    await make(overlay, registry).putConfig({
+      zones: [
+        { name: 'sim-zone', index: 0, bridges: 1 },
+        { name: 'edge', index: 1, bridges: 1 },
+      ],
+      nodeZones: { 'cpu-1': 'sim-zone' },
+    });
+
+    expect(overlay.setZonesConfig).toHaveBeenCalledOnce();
+  });
+
+  it('refuses to remove a zone whose only occupants are bare-metal machines', async () => {
+    const overlay = overlayStub({
+      zonesMeta: () => [
+        { name: 'sim-zone', index: 0, bridges: 1 },
+        { name: 'edge', index: 1, bridges: 1 },
+      ],
+      baremetalNodesByZone: () => ({ edge: ['metal-1'] }),
+    });
+    const registry = registryStub([
+      { id: 'z0', name: 'sim-zone', deletedAt: false },
+      { id: 'z1', name: 'edge', deletedAt: false },
+    ]);
+
+    await expect(
+      make(overlay, registry).putConfig({ zones: [{ name: 'sim-zone', index: 0, bridges: 1 }] }),
+    ).rejects.toThrow(/zone edge still owns 1 node\(s\) \(metal-1\)/);
+    expect(overlay.setZonesConfig).not.toHaveBeenCalled();
   });
 
   it('refuses a set the rules reject and writes nothing', async () => {

@@ -12,7 +12,9 @@ const mocks = vi.hoisted(() => ({
   cancelMutate: vi.fn(),
   cacheSudoMutate: vi.fn(),
   refetch: vi.fn(),
+  prompt: vi.fn(),
 }));
+vi.mock('@/lib/use-apply-confirm', () => ({ useApplyPrompt: () => mocks.prompt }));
 vi.mock('@/lib/api', () => ({
   tsr: {
     listStackOps: { useQuery: mocks.opsQuery },
@@ -113,6 +115,7 @@ describe('useOps sudo gate', () => {
     mocks.cancelMutate.mockReset();
     mocks.cacheSudoMutate.mockReset();
     mocks.refetch.mockReset();
+    mocks.prompt.mockReset();
     mocks.opsQuery.mockReturnValue({
       data: { status: 200, body: [sudoOp, plainOp, reinitOp] },
       refetch: mocks.refetch,
@@ -184,7 +187,7 @@ describe('useOps sudo gate', () => {
     view.rerender();
 
     expect(mocks.startMutate).toHaveBeenCalledWith(
-      { body: { opId: 'fleet-up', allowDataLoss: false } },
+      { body: { opId: 'fleet-up', allowDataLoss: false, force: false } },
       expect.anything(),
     );
     expect(view.result.current.gate).toBeNull();
@@ -201,6 +204,7 @@ describe('useOps launch failures', () => {
     mocks.cancelMutate.mockReset();
     mocks.cacheSudoMutate.mockReset();
     mocks.refetch.mockReset();
+    mocks.prompt.mockReset();
     mocks.opsQuery.mockReturnValue({
       data: { status: 200, body: [sudoOp, plainOp, reinitOp] },
       refetch: mocks.refetch,
@@ -253,10 +257,43 @@ describe('useOps launch failures', () => {
     launchThroughSudoGate(reinitOp);
 
     expect(mocks.startMutate).toHaveBeenCalledWith(
-      { body: { opId: 'reinit', allowDataLoss: false } },
+      { body: { opId: 'reinit', allowDataLoss: false, force: false } },
       expect.anything(),
     );
     expect(peekRecreating()?.opId).toBe('reinit');
+  });
+
+  it('prompts to force the flip when a 409 names in-flight saga jobs, and relaunches with force on confirm', async () => {
+    mocks.prompt.mockResolvedValue(true);
+    const { onError } = launchPlainOp();
+
+    await act(async () => lastStartHandlers().onError({ status: 409, body: { error: 'blocked', activeJobs: 2 } }));
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(mocks.prompt).toHaveBeenCalledWith(expect.stringContaining('2 saga jobs'));
+    expect(mocks.startMutate).toHaveBeenLastCalledWith(
+      { body: { opId: 'reconcile', allowDataLoss: false, force: true } },
+      expect.anything(),
+    );
+  });
+
+  it('sends nothing when the force prompt is declined', async () => {
+    mocks.prompt.mockResolvedValue(false);
+    const { onError } = launchPlainOp();
+
+    await act(async () => lastStartHandlers().onError({ status: 409, body: { error: 'blocked', activeJobs: 1 } }));
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(mocks.startMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a 409 without activeJobs as an error and never prompts', () => {
+    const { onError } = launchPlainOp();
+
+    act(() => lastStartHandlers().onError({ status: 409, body: { error: 'a stack op is already running' } }));
+
+    expect(mocks.prompt).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith('a stack op is already running');
   });
 
   it('withdraws the stamp when the recreation was refused before it started', () => {

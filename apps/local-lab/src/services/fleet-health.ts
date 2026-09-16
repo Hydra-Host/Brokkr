@@ -1,7 +1,7 @@
 // Pure, dependency-free fleet bring-up classification — the fleet analogue of proc-health.ts.
 // Composes process-compose state + fleet-progress.json + machine counts into one FleetStatus. No I/O.
 import type { FleetProgress } from '../common/pc-schemas';
-import type { BringupPhase, BringupStep, FleetHealth, FleetStatus } from '../contract';
+import type { BringupPhase, BringupStep, FleetHealth, FleetPlanes, FleetStatus } from '../contract';
 import { isErrorExit, type PcProcess } from './proc-health';
 
 // Taxonomy is contract-owned (Bringup{Phase,Step}/FleetHealth/FleetStatus schemas, Python-parity with
@@ -24,6 +24,7 @@ export function deriveFleetStatus(
   nowMs: number,
   lastError?: string,
   spokesDown: readonly string[] = [],
+  opts: { planes?: FleetPlanes | null; unreachable?: number } = {},
 ): FleetStatus {
   const elapsedSec = prog?.startedAt != null ? Math.max(0, Math.round(nowMs / 1000 - prog.startedAt)) : null;
   const base = {
@@ -46,14 +47,19 @@ export function deriveFleetStatus(
   const ready = (p.is_ready ?? '').toLowerCase() === 'ready';
   if (s === 'disabled') return { ...base, health: 'disabled', detail: 'disabled — autoStart off' };
   if (s === 'running' && ready) {
-    const vms = `${machinesRunning}/${machinesExpected} VMs running`;
+    const noun = opts.planes?.baremetal ? 'machines' : 'VMs';
+    const unreachable = opts.unreachable ?? 0;
+    // an unreachable bmc reads as 'unknown', not 'off', so naming it keeps the running count honest
+    const counted =
+      `${machinesRunning}/${machinesExpected} ${noun} running` +
+      (unreachable > 0 ? ` · ${unreachable} unreachable` : '');
     if (spokesDown.length > 0)
       return {
         ...base,
         health: 'degraded',
-        detail: `${vms} · ${spokesDown.join(', ')} down — the VMs have no boot chain`,
+        detail: `${counted} · ${spokesDown.join(', ')} down — the ${noun} have no boot chain`,
       };
-    return { ...base, health: 'ready', detail: `ready · ${vms}` };
+    return { ...base, health: 'ready', detail: `ready · ${counted}` };
   }
   if (s === 'running' || s === 'pending') {
     const label = prog?.label ?? 'starting';

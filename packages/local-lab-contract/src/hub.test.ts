@@ -1,3 +1,4 @@
+import { LifecycleJobPhase as PrismaLifecycleJobPhase } from '@repo/database';
 import { isAppRoute } from '@ts-rest/core';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -143,6 +144,10 @@ describe('hub schemas', () => {
   it('rejects a phase outside the engine vocabulary', () => {
     expect(LifecycleJobPhaseSchema.safeParse('AWAITING_PHONE_HOME').success).toBe(true);
     expect(LifecycleJobPhaseSchema.safeParse('IN_PROGRESS').success).toBe(false);
+  });
+
+  it('keeps the phase vocabulary in lockstep with the prisma LifecycleJobPhase enum', () => {
+    expect([...LifecycleJobPhaseSchema.options].sort()).toEqual(Object.values(PrismaLifecycleJobPhase).sort());
   });
 
   it('reports the payload and the response body as cut against their own caps, not one shared flag', () => {

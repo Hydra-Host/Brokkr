@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from local.derived import bm_device_uuid
 from local.schema import require_fleet
+from local.seed.interfaces import emit_device_name_clear
 from local.sqlemit import header, logs_to_stderr, q
 from local.zones import zone_uuid
 
@@ -10,14 +11,14 @@ from local.zones import zone_uuid
 def generate() -> str:
     fleet = require_fleet()
 
-    if fleet.mode != "baremetal":
-        return header("52-baremetal-devices.py") + "-- mode != baremetal: no bare-metal devices to seed.\n"
+    if not fleet.has_bm:
+        return header("52-baremetal-devices.py") + "-- no bare-metal machines: no bare-metal devices to seed.\n"
 
     # Bare-metal devices land in zone 0 regardless of a node's declared zone (the zone-per-node
     # split is only wired for the VM roster).
     zone_id = zone_uuid(0)
     sup = f'(SELECT "organizationId" FROM "Zone" WHERE id = {q(zone_id)})'
-    org = f'(SELECT "organizationId" FROM "Zone" WHERE id = {q(zone_id)})'
+    org = sup
 
     out: list[str] = [header("52-baremetal-devices.py"), "BEGIN;\n"]
 
@@ -32,16 +33,17 @@ def generate() -> str:
         sol_port = "ttyAMA0" if arch == "arm64" else "ttyS0"
 
         out.append(f"-- {name} id={device_id} pxe={pxe_mac} bmc={bmc_ip} net={network_type} arch={arch} zone={zone_id}")
+        out.append(emit_device_name_clear(device_id, zone_id, name, org))
         out.append(
             f"""INSERT INTO "Device" (
     id, name, status, role, "deviceType",
     "zoneId", "networkType",
-    "supplierId", "organizationId",
+    "supplierId",
     architecture, "updatedAt"
 ) VALUES (
     {q(device_id)}, {q(name)}, 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
     {q(zone_id)}, {q(network_type)}::"DeviceNetworkType",
-    {sup}, {org},
+    {sup},
     {q(arch)}, NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
@@ -49,7 +51,6 @@ ON CONFLICT (id) DO UPDATE SET
     "deviceType" = EXCLUDED."deviceType",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",
-    "organizationId" = EXCLUDED."organizationId",
     architecture = EXCLUDED.architecture,
     "updatedAt" = NOW();"""
         )
@@ -69,14 +70,21 @@ ON CONFLICT ("deviceId") DO UPDATE SET
     "baudRate" = EXCLUDED."baudRate", "optimalPort" = EXCLUDED."optimalPort",
     "availablePorts" = EXCLUDED."availablePorts", "updatedAt" = NOW();"""
         )
+        # the data NIC is keyed on its MAC, not its name: discovery (or an operator) may rename the
+        # row, and no unique index on the MAC exists yet, so two statements stand in for an upsert.
+        pxe_row = f'"deviceId" = {q(device_id)} AND lower("macAddress") = {q(pxe_mac)} AND "deletedAt" IS NULL'
+        out.append(
+            f"""UPDATE "Interface" SET
+    type = 'ETHERNET_1G'::"InterfaceType", enabled = true, "mgmtOnly" = false,
+    description = 'Primary data NIC (PXE)', "updatedAt" = NOW()
+WHERE {pxe_row};"""
+        )
         out.append(
             f"""INSERT INTO "Interface"
     (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
-VALUES (gen_random_uuid(), 'eth0', 'ETHERNET_1G'::"InterfaceType", true,
-    {q(pxe_mac)}, false, {q(device_id)}, 'Primary data NIC (PXE)', NOW())
-ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
-    type = EXCLUDED.type, "macAddress" = EXCLUDED."macAddress",
-    "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();"""
+SELECT gen_random_uuid(), 'eth0', 'ETHERNET_1G'::"InterfaceType", true,
+    {q(pxe_mac)}, false, {q(device_id)}, 'Primary data NIC (PXE)', NOW()
+WHERE NOT EXISTS (SELECT 1 FROM "Interface" WHERE {pxe_row});"""
         )
         out.append(
             f"""INSERT INTO "Interface"

@@ -1,18 +1,31 @@
 import { z } from 'zod';
 
+// python int() parity, as bridge-network/network.config.ts declared this variable before the move
+const STRICT_INT_PATTERN = /^\s*[+-]?\d+(?:_\d+)*\s*$/;
+
+const portVar = z.string().regex(STRICT_INT_PATTERN, 'invalid integer').optional();
+
+// the pattern admits PEP-515 underscores that parseInt would truncate at the first one
+const parsePort = (value: string | undefined, fallback: number): number =>
+  value === undefined ? fallback : Number.parseInt(value.replace(/_/g, ''), 10);
+
 const envSchema = z.object({
   BROKKR_ENV: z.string().optional(),
   HH_ENV: z.string().optional(),
   ENVIRONMENT: z.string().optional(),
   LOCAL_SIMULATION_ENABLED: z.string().optional(),
-  SIM_REDFISH_PORT: z.string().optional(),
+  NETWORK_REDFISH_PORT: portVar,
+  SIM_REDFISH_PORT: portVar,
+  SIM_BMC_CIDR: z.string().optional(),
   REDFISH_TLS_VERIFY: z.string().optional(),
 });
 
 export interface RedfishConfig {
   brokkrEnv: string;
   localSimulationEnabled: boolean;
+  realRedfishPort: number;
   simRedfishPort: number;
+  simBmcCidr: string | null;
   tlsVerify: boolean;
 }
 
@@ -21,7 +34,9 @@ export function buildRedfishConfig(env: NodeJS.ProcessEnv = process.env): Redfis
   return {
     brokkrEnv: parsed.BROKKR_ENV ?? parsed.HH_ENV ?? parsed.ENVIRONMENT ?? '',
     localSimulationEnabled: (parsed.LOCAL_SIMULATION_ENABLED ?? 'false').toLowerCase() === 'true',
-    simRedfishPort: Number.parseInt(parsed.SIM_REDFISH_PORT ?? '8443', 10),
+    realRedfishPort: parsePort(parsed.NETWORK_REDFISH_PORT, 443),
+    simRedfishPort: parsePort(parsed.SIM_REDFISH_PORT, 8443),
+    simBmcCidr: parsed.SIM_BMC_CIDR ?? null,
     tlsVerify: (parsed.REDFISH_TLS_VERIFY ?? 'false').toLowerCase() === 'true',
   };
 }

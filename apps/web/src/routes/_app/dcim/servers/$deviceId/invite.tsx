@@ -148,15 +148,6 @@ function ServerInvitePage() {
   const isPending = createMutation.isPending || editMutation.isPending;
   const isError = createMutation.isError || editMutation.isError;
 
-  if (!isListingActive) {
-    return (
-      <div className="space-y-6">
-        <PageHeader title="Invite" onBack={handleCancel} />
-        <ServerBlockedMessage message='This server must be set to "listed" in the inventory in order to create an invitation.' />
-      </div>
-    );
-  }
-
   if (!isInventoryStatus) {
     return (
       <div className="space-y-6">
@@ -194,6 +185,10 @@ function ServerInvitePage() {
             </Button>
           )}
         </div>
+
+        {!isListingActive && (
+          <ServerBlockedMessage message="This server is not listed on the public marketplace. Creating this invite will not list it — only the invitee can provision." />
+        )}
 
         <DcimInviteForm
           mode={isEdit ? 'edit' : 'create'}

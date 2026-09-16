@@ -14,7 +14,7 @@ import {
 import { Button } from '@repo/ui/components/button';
 import { isPowerActionDisabled } from '@repo/utils';
 import { tsr } from '~/lib/api';
-import { DEPLOYMENT_PROJECTS_KEY } from '~/lib/query-keys';
+import { DEPLOYMENT_PROJECTS_KEY, LIFECYCLE_JOBS_KEY } from '~/lib/query-keys';
 
 const parentRoute = getRouteApi('/_app/deployments/$deploymentId');
 
@@ -66,6 +66,7 @@ function PowerCycleRoute() {
     });
     queryClient.removeQueries({ queryKey: ['deployment', deploymentId] });
     queryClient.removeQueries({ queryKey: DEPLOYMENT_PROJECTS_KEY });
+    void queryClient.invalidateQueries({ queryKey: LIFECYCLE_JOBS_KEY });
     await router.invalidate();
     close();
   };

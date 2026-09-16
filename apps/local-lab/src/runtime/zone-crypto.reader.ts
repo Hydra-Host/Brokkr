@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import type { ZoneCrypto } from '../contract';
 import { RedisConnectionsService } from '../datastore/redis-connections.service';
 import { bootstrapLockKey, zoneCryptoKey } from './runtime-keys';

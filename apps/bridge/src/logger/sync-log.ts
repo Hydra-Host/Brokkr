@@ -25,6 +25,10 @@ function emitSync(level: LogLevel, message: string, jobId: string, appClassName:
   });
 }
 
+export function syncLogDebug(message: string, jobId: string = '', appClassName: string = 'main'): void {
+  emitSync('debug', message, jobId, appClassName);
+}
+
 export function syncLogInfo(message: string, jobId: string = '', appClassName: string = 'main'): void {
   emitSync('info', message, jobId, appClassName);
 }

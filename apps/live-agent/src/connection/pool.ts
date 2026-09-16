@@ -99,3 +99,21 @@ export function createTransportPool(
     },
   };
 }
+
+/**
+ * Shares `primary`'s address set but mints its own transports, keeping log/trace RPCs off the
+ * OpenSession connection: a ReportLogs burst trips HTTP/2 flood protection, and the GOAWAY tears
+ * down every stream on that connection, including the session.
+ */
+export function createSiblingTransportPool(
+  primary: TransportPool,
+  config: AgentConfig,
+  transportFactory: TransportFactory = defaultTransportFactory,
+): TransportPool {
+  const own = createTransportPool(config, transportFactory);
+  return {
+    getClient: (bridgeAddress: string): AgentServiceClient => own.getClient(bridgeAddress),
+    removeBridge: (bridgeAddress: string): void => own.removeBridge(bridgeAddress),
+    listAddresses: (): string[] => primary.listAddresses(),
+  };
+}

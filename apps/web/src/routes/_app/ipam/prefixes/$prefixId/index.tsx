@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@repo/ui/components/ca
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { getIpamStatusBadgeVariant } from '@repo/utils';
 import { createFileRoute } from '@tanstack/react-router';
+import { PrefixBondParametersCard } from '~/components/prefix-bond-parameters-card';
 import { PrefixDhcpSummaryCard } from '~/components/prefix-dhcp-summary-card';
 import { PrefixVrrpSummaryCard } from '~/components/prefix-vrrp-summary-card';
 import { SummaryRow } from '~/components/summary-row';
@@ -122,6 +123,7 @@ function PrefixOverview() {
         </Card>
       </div>
 
+      <PrefixBondParametersCard prefixId={prefixId} bondParameters={prefix.bondParameters} />
       <PrefixVrrpSummaryCard prefixId={prefixId} vrrpVipId={prefix.vrrpVipId} zoneId={prefix.zoneId} />
       <PrefixDhcpSummaryCard prefixId={prefixId} />
     </div>

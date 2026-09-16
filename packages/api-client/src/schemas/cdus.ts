@@ -1,20 +1,14 @@
+import { Airflow, CduPowerStatus } from '@repo/database/enums';
 import { z } from 'zod';
 import { BooleanQueryParamSchema } from './common';
 import { PaginationQuerySchema, createPaginatedResponseSchema } from './pagination';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const CduPowerStatusSchema = z.enum(['On', 'Off']);
-export type CduPowerStatus = z.infer<typeof CduPowerStatusSchema>;
+export const CduPowerStatusSchema = zodEnumFromPrisma(CduPowerStatus);
+export type { CduPowerStatus };
 
-export const AirflowSchema = z.enum([
-  'FrontToRear',
-  'RearToFront',
-  'LeftToRight',
-  'RightToLeft',
-  'SideToRear',
-  'Passive',
-  'Mixed',
-]);
-export type Airflow = z.infer<typeof AirflowSchema>;
+export const AirflowSchema = zodEnumFromPrisma(Airflow);
+export type { Airflow };
 
 export const CduSchema = z.object({
   deviceId: z.string().uuid().describe('Device UUID — the identifier for the CDU-role device.'),

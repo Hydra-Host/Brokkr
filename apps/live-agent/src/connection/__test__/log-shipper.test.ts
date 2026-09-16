@@ -303,3 +303,88 @@ describe('LogShipper chunking', () => {
     shipper.stop();
   });
 });
+
+function makeErrorEntry(i: number): BufferedEntry {
+  return { ...makeEntry(i), log_level: 'error', message: `err-${i}` } as BufferedEntry;
+}
+
+describe('LogShipper eager warn/error flush throttle', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('coalesces a burst of error logs into a single eager flush', async () => {
+    vi.useFakeTimers();
+    const reportLogs = vi.fn().mockResolvedValue({});
+    const pool = makePool({ a: { reportLogs } });
+    const shipper = new LogShipper({ deviceId: 'd', pool, warnFlushMinIntervalMs: 1000, flushIntervalMs: 60_000 });
+    shipper.start();
+
+    for (let i = 0; i < 50; i++) shipper['push'](makeErrorEntry(i));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reportLogs).toHaveBeenCalledTimes(1);
+
+    for (let i = 50; i < 100; i++) shipper['push'](makeErrorEntry(i));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(reportLogs).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(600);
+    expect(reportLogs).toHaveBeenCalledTimes(2);
+    shipper.stop();
+  });
+
+  it('defers rather than drops entries logged during the cooldown', async () => {
+    vi.useFakeTimers();
+    const reportLogs = vi.fn().mockResolvedValue({});
+    const pool = makePool({ a: { reportLogs } });
+    const shipper = new LogShipper({ deviceId: 'd', pool, warnFlushMinIntervalMs: 1000, flushIntervalMs: 60_000 });
+    shipper.start();
+
+    shipper['push'](makeErrorEntry(0));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reportLogs).toHaveBeenCalledTimes(1);
+
+    shipper['push'](makeErrorEntry(1));
+    shipper['push'](makeErrorEntry(2));
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(reportLogs).toHaveBeenCalledTimes(2);
+    const second = reportLogs.mock.calls[1]?.[0] as { entries: { message: string }[] };
+    expect(second.entries.map((e) => e.message)).toEqual(['err-1', 'err-2']);
+    shipper.stop();
+  });
+
+  it('flushes immediately when the cooldown has already elapsed', async () => {
+    vi.useFakeTimers();
+    const reportLogs = vi.fn().mockResolvedValue({});
+    const pool = makePool({ a: { reportLogs } });
+    const shipper = new LogShipper({ deviceId: 'd', pool, warnFlushMinIntervalMs: 1000, flushIntervalMs: 60_000 });
+    shipper.start();
+
+    shipper['push'](makeErrorEntry(0));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reportLogs).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    shipper['push'](makeErrorEntry(1));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reportLogs).toHaveBeenCalledTimes(2);
+    shipper.stop();
+  });
+
+  it('stop() cancels a pending eager flush', async () => {
+    vi.useFakeTimers();
+    const reportLogs = vi.fn().mockResolvedValue({});
+    const pool = makePool({ a: { reportLogs } });
+    const shipper = new LogShipper({ deviceId: 'd', pool, warnFlushMinIntervalMs: 1000, flushIntervalMs: 60_000 });
+    shipper.start();
+
+    shipper['push'](makeErrorEntry(0));
+    await vi.advanceTimersByTimeAsync(0);
+    shipper['push'](makeErrorEntry(1));
+    shipper.stop();
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(reportLogs).toHaveBeenCalledTimes(1);
+  });
+});

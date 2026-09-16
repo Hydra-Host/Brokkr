@@ -35,7 +35,7 @@ const svcFor = (nodes: Record<string, Record<string, unknown>>) => {
     fleetZones: () => ['sim-zone'],
     fleetTombstones: () => [],
     fleetCustomized: () => true,
-    fleetMode: () => 'vm',
+    planes: () => ({ vm: true, baremetal: false }),
   };
   const rendered = { renderDesiredFleetYaml: () => Promise.resolve(null) };
   const svc = new FleetTopologyService({ repoRoot: '/repo' } as never, overlay as never, rendered as never);
@@ -59,7 +59,6 @@ const roundTrip = async (nodes: Record<string, Record<string, unknown>>) => {
   const { svc, setFleetConfig } = svcFor(nodes);
   const cfg = await svc.getConfig();
   svc.putConfig({
-    mode: cfg.mode,
     nodes: cfg.nodes.map(toWireNode),
     bmcDefaults: cfg.bmcDefaults,
     baremetal: {

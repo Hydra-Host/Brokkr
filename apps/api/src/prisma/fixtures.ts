@@ -198,7 +198,6 @@ export const mockDevice: Device & {
   ipmiBootDeviceOverride: null,
   ipxeBuildTarget: null,
   bootFilename: null,
-  organizationId: null,
   deletedAt: null,
   deployments: [mockDeployment],
   createdAt: new Date(),

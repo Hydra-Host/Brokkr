@@ -4,20 +4,24 @@ import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'n
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import type { ZoneApplyPlan, ZoneWrite } from '@repo/local-lab-contract';
+import type { FleetPlanes, ZoneApplyPlan, ZoneWrite } from '@repo/local-lab-contract';
 import {
   APPLY_ACTION,
   applyClassFor,
   applySatisfies,
+  isBindAddress,
+  isPublicHost,
+  LanModeSchema,
   strongestApplyClass,
   writableFor,
   type ApplyClass,
+  type LanMode,
   type RejectedEntry,
   type RestartState,
   type StackPending,
 } from '@repo/local-lab-contract';
-import { getErrorMessage } from '../common/errors';
-import { resolveIfaceIp } from '../common/net';
+import { getErrorMessage } from '@repo/utils';
+import { resolveIfaceCidr, resolveIfaceIp } from '../common/net';
 import type { KnobCatalogEntry, KnobProvenance, KnobValue } from '../common/pc-schemas';
 import { DevenvEnvPinsEvalSchema, DevenvSeedEvalSchema, parseBoundary } from '../common/pc-schemas';
 import { secretDigest } from '../common/redact';
@@ -61,14 +65,33 @@ const isDefaultSingleZoneSet = (zones: ZoneMeta[]): boolean =>
 export type LabBridge = { proc: string; zone: string; replica: number; port: number; grpc: number };
 
 /** Service identity overridable via stack.local.nix; the eval reports the effective values. */
-type IdentityCfg = { pg: { user: string; password: string; db: string }; orgId: string };
+type IdentityCfg = {
+  pg: { user: string; password: string; db: string };
+  orgId: string;
+  redis: { password: string };
+  mailpit: { password: string };
+};
 type OsLayerCfg = { originHost: string; resolvers: string };
-type LanCfg = { expose: boolean };
+/** `expose` is the deprecated boolean overrides.nix still aliases onto `mode`; it round-trips so an
+ *  overlay written before the mode existed keeps working. */
+type LanCfg = { mode: LanMode; bindAddress: string; publicHost: string; datastoreAuth: boolean; expose: boolean };
 type TelemetryCfg = { enable: boolean };
 
 /** What an unseeded mirror knows about the config: nothing. Blank beats a plausible-looking guess at
  *  Nix's defaults, and writes are refused until a seed succeeds anyway. */
-const UNSEEDED_IDENTITY: IdentityCfg = { pg: { user: '', password: '', db: '' }, orgId: '' };
+const UNSEEDED_IDENTITY: IdentityCfg = {
+  pg: { user: '', password: '', db: '' },
+  orgId: '',
+  redis: { password: '' },
+  mailpit: { password: '' },
+};
+const UNSEEDED_LAN: LanCfg = {
+  mode: 'loopback',
+  bindAddress: '',
+  publicHost: '',
+  datastoreAuth: true,
+  expose: false,
+};
 // ASSET_ORIGIN is the lab's own process env (modules/ports.nix mkLabPortEnv), not a copy of a Nix default.
 const UNSEEDED_OSLAYER: OsLayerCfg = { originHost: HOSTS.assetOrigin, resolvers: '' };
 
@@ -101,7 +124,6 @@ type FleetEval = {
   defaults?: Record<string, unknown>;
   nodes?: Record<string, FleetEvalNode>;
   zones?: Record<string, FleetEvalZone>;
-  mode?: string;
   baremetal?: FleetEvalBareMetal;
 };
 
@@ -150,7 +172,6 @@ type Mirror = {
   bridges: LabBridge[];
   fleet: FleetMirror | null;
   fleetOwned: boolean;
-  mode: 'vm' | 'baremetal';
   fleetAutoStart: boolean;
   baremetal: BareMetalMirror | null;
   baremetalOwned: boolean;
@@ -176,10 +197,16 @@ const clampCount = (v: unknown, max: number): number => {
 const isPortOverride = (key: string, value: number, defaults: Record<string, number>): boolean =>
   defaults[key] !== value;
 
+const maskSecret = (value: string): string => (value === '' ? '' : SECRET_MASK);
+
 /** An empty password stays empty: masking it would make "unset" and "hidden" read the same. The
  *  overlay keeps the real value, and setStackConfig reads SECRET_MASK back as "unchanged". */
-const maskIdentity = (identity: IdentityCfg): IdentityCfg =>
-  identity.pg.password === '' ? identity : { ...identity, pg: { ...identity.pg, password: SECRET_MASK } };
+const maskIdentity = (identity: IdentityCfg): IdentityCfg => ({
+  ...identity,
+  pg: { ...identity.pg, password: maskSecret(identity.pg.password) },
+  redis: { password: maskSecret(identity.redis.password) },
+  mailpit: { password: maskSecret(identity.mailpit.password) },
+});
 
 // ServiceSchema's port is a plain z.number(), which rejects NaN — never let one out of the eval boundary.
 const nonNegativeInt = (v: unknown): number => {
@@ -207,7 +234,12 @@ type Draft = {
 const draftFrom = (cur: Mirror): Draft => ({
   hub: { ...cur.hub },
   spoke: { ...cur.spoke },
-  identity: { pg: { ...cur.identity.pg }, orgId: cur.identity.orgId },
+  identity: {
+    pg: { ...cur.identity.pg },
+    orgId: cur.identity.orgId,
+    redis: { ...cur.identity.redis },
+    mailpit: { ...cur.identity.mailpit },
+  },
   osLayerCache: { ...cur.osLayerCache },
   lan: { ...cur.lan },
   telemetry: { ...cur.telemetry },
@@ -218,11 +250,14 @@ const draftFrom = (cur: Mirror): Draft => ({
 /** Types a submitted string against the kind and the range the catalog declares. Undefined means it
  *  does not coerce, which is a rejection rather than a silent zero or false. */
 export function coerceOption(
-  entry: Pick<KnobCatalogEntry, 'kind' | 'bounds'>,
+  entry: Pick<KnobCatalogEntry, 'kind' | 'bounds' | 'choices' | 'overrideFrom'>,
   raw: string,
 ): string | number | boolean | undefined {
-  const { kind, bounds } = entry;
+  const { kind, bounds, choices, overrideFrom } = entry;
   if (kind === 'bool') return raw === 'true' ? true : raw === 'false' ? false : undefined;
+  // a select on a real option is a Nix enum, and an unlisted value renders a line that fails
+  // evaluation. On an env attrset (overrideFrom) the choices are advisory: any string is legal there.
+  if (kind === 'select' && !overrideFrom) return choices.includes(raw) ? raw : undefined;
   if (kind === 'number' || kind === 'port') {
     // Number('') is 0, which clears the integer test and any bounds a knob declares
     if (raw === '') return undefined;
@@ -244,7 +279,7 @@ export const RESERVED_OPTION_PREFIXES: readonly string[] = [
   'ports.',
   'identity.',
   'osLayerCache.',
-  'lan.expose',
+  'lan.',
   'telemetry.enable',
   'stack.slot',
   'stackCounts.',
@@ -280,8 +315,14 @@ function draftValue(draft: Draft, path: string): string | null {
     'identity.pg.password': () => draft.identity.pg.password,
     'identity.pg.db': () => draft.identity.pg.db,
     'identity.orgId': () => draft.identity.orgId,
+    'identity.redis.password': () => draft.identity.redis.password,
+    'identity.mailpit.password': () => draft.identity.mailpit.password,
     'osLayerCache.originHost': () => draft.osLayerCache.originHost,
     'osLayerCache.resolvers': () => draft.osLayerCache.resolvers,
+    'lan.mode': () => draft.lan.mode,
+    'lan.bindAddress': () => draft.lan.bindAddress,
+    'lan.publicHost': () => draft.lan.publicHost,
+    'lan.datastoreAuth': () => String(draft.lan.datastoreAuth),
     'lan.expose': () => String(draft.lan.expose),
     'telemetry.enable': () => String(draft.telemetry.enable),
   };
@@ -330,11 +371,41 @@ function applyToDraft(
     'identity.pg.password': (v) => void (v === SECRET_MASK ? undefined : (draft.identity.pg.password = v)),
     'identity.pg.db': (v) => void (draft.identity.pg.db = v),
     'identity.orgId': (v) => void (draft.identity.orgId = v),
+    'identity.redis.password': (v) => void (v === SECRET_MASK ? undefined : (draft.identity.redis.password = v)),
+    'identity.mailpit.password': (v) => void (v === SECRET_MASK ? undefined : (draft.identity.mailpit.password = v)),
     'osLayerCache.originHost': (v) => void (draft.osLayerCache.originHost = v),
     'osLayerCache.resolvers': (v) => void (draft.osLayerCache.resolvers = v),
+    'lan.datastoreAuth': (v) => void (draft.lan.datastoreAuth = v === 'true'),
     'lan.expose': (v) => void (draft.lan.expose = v === 'true'),
     'telemetry.enable': (v) => void (draft.telemetry.enable = v === 'true'),
   };
+  // a revert to default skips coerceOption entirely, so the fallback is checked against the enum here
+  if (path === 'lan.mode') {
+    const parsed = LanModeSchema.safeParse(value === null ? fallback : asString(value));
+    if (!parsed.success) return false;
+    draft.lan.mode = parsed.data;
+    return true;
+  }
+  // Both reach shell exec strings, so an unvalidated string here is command execution as the stack
+  // owner; only the bind address reaches a socket, which is why it refuses a name.
+  if (path === 'lan.bindAddress') {
+    const next = value === null ? fallback : asString(value);
+    if (!isBindAddress(next)) return false;
+    draft.lan.bindAddress = next;
+    return true;
+  }
+  if (path === 'lan.publicHost') {
+    const next = value === null ? fallback : asString(value);
+    if (!isPublicHost(next)) return false;
+    draft.lan.publicHost = next;
+    return true;
+  }
+  // requirepass takes a whole redis.conf line, so a newline here appends a directive; whitespace
+  // splits the one it is on. Neither ever appears in a legitimate password.
+  if (SHAPED_SECRET_PATHS.has(path)) {
+    const next = value === null ? fallback : asString(value);
+    if (next !== SECRET_MASK && !isCredentialSafe(next)) return false;
+  }
   const write = typed[path];
   if (write) {
     write(value === null ? fallback : asString(value));
@@ -344,6 +415,25 @@ function applyToDraft(
   if (value === null) delete draft.options[path];
   else draft.options[path] = value;
   return true;
+}
+
+/** No control character or whitespace: those are the characters that turn a value spliced into a
+ *  config line or a shell word into a second instruction. */
+const isCredentialSafe = (v: string): boolean => !/[\s\p{Cc}]/u.test(v);
+
+/** Every secret ports.nix guards with `safeSecret`, so the write boundary refuses exactly what the
+ *  Nix layer would refuse rather than letting the operator save an overlay that cannot evaluate. */
+const SHAPED_SECRET_PATHS = new Set(['identity.pg.password', 'identity.redis.password', 'identity.mailpit.password']);
+
+/** Why the value is refused, or null when its shape is fine. Reported as the `not-coercible` detail,
+ *  so the operator reads the constraint rather than getting a stack that will not evaluate. */
+function shapeRefusal(path: string, value: string): string | null {
+  if (path === 'lan.bindAddress' && !isBindAddress(value)) return 'ip address';
+  if (path === 'lan.publicHost' && !isPublicHost(value)) return 'ip address or hostname';
+  if (SHAPED_SECRET_PATHS.has(path)) {
+    if (value !== SECRET_MASK && !isCredentialSafe(value)) return 'password without whitespace or control characters';
+  }
+  return null;
 }
 
 /** Comparison-only fingerprints, so an overridden secret is detectable without either value reaching
@@ -372,7 +462,7 @@ function emptyMirror(): Mirror {
     slotOwned: false,
     identity: UNSEEDED_IDENTITY,
     osLayerCache: UNSEEDED_OSLAYER,
-    lan: { expose: false },
+    lan: UNSEEDED_LAN,
     telemetry: { enable: false },
     catalog: [],
     provenance: [],
@@ -390,7 +480,6 @@ function emptyMirror(): Mirror {
     zoneTombstones: [],
     options: {},
     fleetOwned: false,
-    mode: 'vm',
     fleetAutoStart: true,
     baremetal: null,
     baremetalOwned: false,
@@ -515,11 +604,20 @@ export class OverlayStoreService implements OnModuleInit {
 
   /** Enabled node names per zone, from the mirror rather than a second flatten. */
   fleetNodesByZone(): Record<string, string[]> {
+    return this.nodesByZone(this.current().fleet?.nodes ?? {});
+  }
+
+  /** Saved bare-metal machines per zone, with the same first-zone default the vm roster gets. */
+  baremetalNodesByZone(): Record<string, string[]> {
+    return this.nodesByZone(this.current().baremetal?.nodes ?? {});
+  }
+
+  private nodesByZone(nodes: Record<string, Record<string, unknown>>): Record<string, string[]> {
     const cur = this.current();
     const firstZone = [...cur.zonesMeta].sort((a, b) => a.index - b.index)[0]?.name ?? 'sim-zone';
     const out: Record<string, string[]> = {};
     for (const zone of cur.zonesMeta) out[zone.name] = [];
-    for (const [name, spec] of Object.entries(cur.fleet?.nodes ?? {})) {
+    for (const [name, spec] of Object.entries(nodes)) {
       if (spec.enable === false) continue;
       const zone = typeof spec.zone === 'string' && spec.zone ? spec.zone : firstZone;
       out[zone] = [...(out[zone] ?? []), name];
@@ -602,12 +700,23 @@ export class OverlayStoreService implements OnModuleInit {
           db: j.identity?.pg?.db ?? '',
         },
         orgId: j.identity?.orgId ?? '',
+        redis: { password: j.identity?.redis?.password ?? '' },
+        mailpit: { password: j.identity?.mailpit?.password ?? '' },
       };
       const osLayerCache: OsLayerCfg = {
         originHost: j.osLayerCache?.originHost ?? HOSTS.assetOrigin,
         resolvers: j.osLayerCache?.resolvers ?? '',
       };
-      const lan: LanCfg = { expose: j.lan?.expose ?? false };
+      const expose = j.lan?.expose ?? false;
+      const lan: LanCfg = {
+        // an eval from a checkout predating lan.mode reports only the boolean, and overrides.nix
+        // aliases true onto "direct" — mirror that rather than reading such a stack as loopback
+        mode: LanModeSchema.safeParse(j.lan?.mode).data ?? (expose ? 'direct' : 'loopback'),
+        bindAddress: j.lan?.bindAddress ?? '',
+        publicHost: j.lan?.publicHost ?? '',
+        datastoreAuth: j.lan?.datastoreAuth ?? true,
+        expose,
+      };
       const telemetry: TelemetryCfg = { enable: j.telemetry?.enable ?? false };
       const catalog = j.configModel?.catalog ?? [];
       const provenance = j.configModel?.provenance ?? [];
@@ -637,7 +746,6 @@ export class OverlayStoreService implements OnModuleInit {
       const fleet: FleetMirror | null = j.fleet
         ? { network: j.fleet.network ?? {}, defaults: j.fleet.defaults ?? {}, nodes: flattenFleetNodes(j.fleet) }
         : null;
-      const mode: 'vm' | 'baremetal' = j.fleet?.mode === 'baremetal' ? 'baremetal' : 'vm';
       const fleetAutoStart = j.fleet?.autoStart ?? true;
       const bm = j.fleet?.baremetal;
       const baremetal: BareMetalMirror | null = bm
@@ -687,7 +795,6 @@ export class OverlayStoreService implements OnModuleInit {
         bridges,
         fleet,
         fleetOwned: this.overlayHasFleet(),
-        mode,
         fleetAutoStart,
         baremetal,
         baremetalOwned: this.overlayHasBaremetal(),
@@ -809,8 +916,8 @@ export class OverlayStoreService implements OnModuleInit {
     );
   }
 
-  /** Enumerates the topology keys rather than any `fleet.*`: a stale `fleet.mode` line (or a hand-written one)
-   *  is not a topology declaration, and matching it would let a plain stack save claim the committed base fleet. */
+  /** Enumerates the topology keys rather than any `fleet.*`: a hand-written `fleet.autoStart` line is not a
+   *  topology declaration, and matching it would let a plain stack save claim the committed base fleet. */
   private overlayHasFleet(): boolean {
     try {
       return (
@@ -848,8 +955,10 @@ export class OverlayStoreService implements OnModuleInit {
     return this.current().fleetOwned;
   }
 
-  fleetMode(): 'vm' | 'baremetal' {
-    return this.current().mode;
+  planes(): FleetPlanes {
+    const cur = this.current();
+    const vmNodes = Object.values(cur.fleet?.nodes ?? {}).filter((n) => n.enable !== false);
+    return { vm: vmNodes.length > 0, baremetal: Object.keys(cur.baremetal?.nodes ?? {}).length > 0 };
   }
 
   baremetalConfig(): BareMetalMirror | null {
@@ -928,7 +1037,7 @@ export class OverlayStoreService implements OnModuleInit {
     }
     if (path === envKnobPath('spoke', 'DISCOVERY_BASE_URL')) {
       const host = cur.osLayerCache.originHost;
-      return host ? `https://${host}/brokkr-live-light` : undefined;
+      return host ? `https://${host}/brokkr-live` : undefined;
     }
     return undefined;
   }
@@ -948,11 +1057,16 @@ export class OverlayStoreService implements OnModuleInit {
       ['identity.pg.password', cur.identity.pg.password],
       ['identity.pg.db', cur.identity.pg.db],
       ['identity.orgId', cur.identity.orgId],
+      ['identity.redis.password', cur.identity.redis.password],
+      ['identity.mailpit.password', cur.identity.mailpit.password],
       ['osLayerCache.originHost', cur.osLayerCache.originHost],
       ['osLayerCache.resolvers', cur.osLayerCache.resolvers],
+      ['lan.mode', cur.lan.mode],
+      ['lan.bindAddress', cur.lan.bindAddress],
+      ['lan.publicHost', cur.lan.publicHost],
+      ['lan.datastoreAuth', String(cur.lan.datastoreAuth)],
       ['lan.expose', String(cur.lan.expose)],
       ['telemetry.enable', String(cur.telemetry.enable)],
-      ['fleet.mode', cur.mode],
       ['fleet.autoStart', String(cur.fleetAutoStart)],
     ];
     for (const [key, value] of tracked) values.set(key, value);
@@ -1067,6 +1181,11 @@ export class OverlayStoreService implements OnModuleInit {
         reject(path, 'not-coercible', entry.kind);
         continue;
       }
+      const shape = coerced === null ? null : shapeRefusal(path, asString(coerced));
+      if (shape !== null) {
+        reject(path, 'not-coercible', shape);
+        continue;
+      }
       if (!applyToDraft(draft, path, coerced, cur, entry)) {
         reject(path, 'no-writer');
         continue;
@@ -1095,7 +1214,7 @@ export class OverlayStoreService implements OnModuleInit {
     this.writeOverlay();
     const portOverrides = Object.entries(draft.ports).filter(([k, v]) => isPortOverride(k, v, cur.portDefaults)).length;
     this.log.log(
-      `wrote stack.local.nix (${applied.length} applied, ${rejected.length} rejected; pg user=${draft.identity.pg.user}; port overrides=${portOverrides}; lan.expose=${draft.lan.expose}; telemetry.enable=${draft.telemetry.enable})`,
+      `wrote stack.local.nix (${applied.length} applied, ${rejected.length} rejected; pg user=${draft.identity.pg.user}; port overrides=${portOverrides}; lan.mode=${draft.lan.mode}; lan.bindAddress=${draft.lan.bindAddress || '(any)'}; lan.datastoreAuth=${draft.lan.datastoreAuth}; telemetry.enable=${draft.telemetry.enable})`,
     );
     if (telemetryChanged) {
       if (this.telemetryHook) this.telemetryHook();
@@ -1181,7 +1300,6 @@ export class OverlayStoreService implements OnModuleInit {
     defaults?: { cpus: number | null; memory_mb: number | null; disk_gb: number | null; arch: string | null };
     network?: Record<string, string | boolean>;
     prune?: string[];
-    mode?: 'vm' | 'baremetal';
     baremetal?: { nics: string[]; arch: string; nodes: { name: string; spec: Record<string, unknown> }[] };
   }): RejectedEntry[] {
     const rejected: RejectedEntry[] = [];
@@ -1229,20 +1347,11 @@ export class OverlayStoreService implements OnModuleInit {
       baremetal = { nics: input.baremetal.nics, arch: input.baremetal.arch, nodes: bmNodes };
       baremetalOwned = true;
     }
-    // an env pin outranks this overlay, so persisting a different mode would record a value the
-    // next eval discards. the stack writer refuses a pinned key the same way.
-    const modePin = cur.envPins?.['fleet.mode'];
-    const modePinned = modePin !== undefined;
-    if (modePinned && input.mode !== undefined && input.mode !== cur.mode) {
-      this.log.warn(`fleet.mode is pinned by ${modePin}; keeping ${cur.mode}`);
-      rejected.push({ path: 'fleet.mode', reason: 'pinned', detail: modePin });
-    }
-    const mode = modePinned ? cur.mode : (input.mode ?? cur.mode);
-    this.mirror = { ...cur, fleet, fleetOwned: true, mode, baremetal, baremetalOwned };
+    this.mirror = { ...cur, fleet, fleetOwned: true, baremetal, baremetalOwned };
     this.writeOverlay();
     const disabled = Object.values(nodes).filter((n) => n.enable === false).length;
     this.log.log(
-      `wrote stack.local.nix fleet (mode=${mode}, ${input.nodes.length} vm nodes${disabled ? `, ${disabled} disabled` : ''}${
+      `wrote stack.local.nix fleet (${input.nodes.length} vm nodes${disabled ? `, ${disabled} disabled` : ''}${
         input.baremetal ? `, ${input.baremetal.nodes.length} bare-metal nodes` : ''
       })`,
     );
@@ -1306,7 +1415,13 @@ export class OverlayStoreService implements OnModuleInit {
     scalar('identity.pg.password', m.identity.pg.password, nixStr(m.identity.pg.password));
     scalar('identity.pg.db', m.identity.pg.db, nixStr(m.identity.pg.db));
     scalar('identity.orgId', m.identity.orgId, nixStr(m.identity.orgId));
+    scalar('identity.redis.password', m.identity.redis.password, nixStr(m.identity.redis.password));
+    scalar('identity.mailpit.password', m.identity.mailpit.password, nixStr(m.identity.mailpit.password));
     scalar('osLayerCache.resolvers', m.osLayerCache.resolvers, nixStr(m.osLayerCache.resolvers));
+    scalar('lan.mode', m.lan.mode, nixStr(m.lan.mode));
+    scalar('lan.bindAddress', m.lan.bindAddress, nixStr(m.lan.bindAddress));
+    scalar('lan.publicHost', m.lan.publicHost, nixStr(m.lan.publicHost));
+    scalar('lan.datastoreAuth', String(m.lan.datastoreAuth), String(m.lan.datastoreAuth));
     scalar('lan.expose', String(m.lan.expose), String(m.lan.expose));
     scalar('telemetry.enable', String(m.telemetry.enable), String(m.telemetry.enable));
     // a plain line would outrank the claim script's mkOptionDefault stack.slot.nix — only pin a slot the CC set
@@ -1359,7 +1474,6 @@ export class OverlayStoreService implements OnModuleInit {
         });
       }
     }
-    if (m.fleetOwned && m.mode === 'baremetal') lines.push(`  fleet.mode = ${nixStr('baremetal')};`);
     if (m.baremetalOwned && m.baremetal) {
       const iface = m.baremetal.nics[0] ?? '';
       lines.push(`  fleet.baremetal.iface = ${nixStr(iface)};`);
@@ -1377,14 +1491,14 @@ export class OverlayStoreService implements OnModuleInit {
     return this.overrides().hub.HUB_REPO_PATH;
   }
 
-  bmUplink(): { iface: string; ip: string } | null {
-    if (this.fleetMode() !== 'baremetal') return null;
+  bmUplink(): { iface: string; ip: string; cidr: string | null } | null {
+    if (!this.planes().baremetal) return null;
     const bm = this.baremetalConfig();
     const iface = bm?.nics[0] ?? '';
     if (!iface) return null;
-    const ip = resolveIfaceIp(iface);
-    if (!ip) return null;
-    return { iface, ip };
+    const nic = resolveIfaceCidr(iface);
+    if (!nic?.ip) return null;
+    return { iface, ip: nic.ip, cidr: nic.cidr };
   }
 
   stackSummary(): { counts: { hub: number; spoke: number }; lifecycleWorkerConcurrency: number } {

@@ -17,7 +17,7 @@ function DocsPage() {
   const src = withLabToken(`${active.src}?theme=${encodeURIComponent(theme)}`);
 
   return (
-    <div className="flex flex-col" style={{ height: 'calc(100vh - 5rem)' }}>
+    <div className="flex h-full flex-col">
       <div className="border-border-dim flex shrink-0 items-center gap-1 border-b">
         {TABS.map((t) => (
           <button

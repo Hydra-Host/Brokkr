@@ -23,6 +23,18 @@ describe('placeholderIdFromBundle', () => {
     expect(b).toBe(c);
   });
 
+  it('feeds the hyphen-separated lowercase mac to the v5 hash so existing placeholder ids stay stable', () => {
+    const canonical = JSON.stringify({
+      mac: 'aa-bb-cc-dd-ee-ff',
+      ipmi_mac: null,
+      system_uuid: null,
+      serial: null,
+      chassis_serial: null,
+      board_serial: null,
+    });
+    expect(placeholderIdFromBundle({ mac: 'AA:BB:CC:DD:EE:FF' })).toBe(uuidv5(canonical, PLACEHOLDER_NAMESPACE_UUID));
+  });
+
   it('normalizes ipmi_mac the same way as mac', () => {
     const a = placeholderIdFromBundle({ ipmi_mac: 'AA:BB:CC:DD:EE:FF' });
     const b = placeholderIdFromBundle({ ipmi_mac: 'aa-bb-cc-dd-ee-ff' });

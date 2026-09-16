@@ -8,6 +8,9 @@ vi.mock('../chain-reachability-assert.js', () => ({
 vi.mock('../discovery-image-assert.js', () => ({
   assertDiscoveryImages: vi.fn(),
 }));
+vi.mock('../ipxe-build-assert.js', () => ({
+  assertIpxeBuilds: vi.fn(),
+}));
 
 vi.mock('../../ipxe/ipxe.config.js', () => ({
   getIpxeConfig: () => ({ bridgeUrl: 'https://brokkr.lan', finalBuildsDir: '/tmp/ipxe' }),
@@ -16,8 +19,14 @@ vi.mock('../listen-target.js', () => ({
   resolveListenHost: () => '0.0.0.0',
 }));
 
+import type { BootFinding } from '@repo/utils';
+import {
+  getBootReadinessFindings,
+  resetBootReadinessFindingsForTests,
+} from '../../composition/boot-readiness-holder.js';
 import { assertChainReachability } from '../chain-reachability-assert.js';
 import { assertDiscoveryImages } from '../discovery-image-assert.js';
+import { assertIpxeBuilds } from '../ipxe-build-assert.js';
 import { StartupOrchestrator } from '../orchestrator.js';
 import type { StartupLogger } from '../startup-deps.types.js';
 import type { BuildStartupOrchestratorArgs } from '../startup-services.js';
@@ -68,7 +77,10 @@ function minimalArgs(overrides: Partial<BuildStartupOrchestratorArgs> = {}): Bui
 }
 
 describe('registerStartupTasks', () => {
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.clearAllMocks();
+    resetBootReadinessFindingsForTests();
+  });
 
   it('passes dnsEnabled=false and dnsAdvertised=false to chain reachability regardless of config (atom-driven at runtime)', async () => {
     const args = minimalArgs({
@@ -201,6 +213,42 @@ describe('registerStartupTasks', () => {
     expect(lines.some((l) => l.msg === 'Bridge sync completed successfully')).toBe(true);
     expect(lines.some((l) => l.msg.startsWith('Bridge sync task failed'))).toBe(false);
     await args.orchestrator.stopAll('job-1');
+  });
+
+  it('records chain_reachability findings in the boot-readiness holder', async () => {
+    const findings: BootFinding[] = [{ code: 'PXE-07', severity: 'warn', message: 'brokkr.lan unresolvable' }];
+    vi.mocked(assertChainReachability).mockReturnValueOnce(findings);
+    const args = minimalArgs();
+
+    registerStartupTasks('job-1', args);
+    await args.orchestrator.runBlockingTasks('job-1');
+
+    expect(getBootReadinessFindings()).toEqual(findings);
+  });
+
+  it('records ipxe_builds findings in the boot-readiness holder', async () => {
+    const findings: BootFinding[] = [
+      { code: 'PXE-01', severity: 'error', message: 'amd64 builds missing' },
+      { code: 'PXE-01', severity: 'error', message: 'arm64 builds missing' },
+    ];
+    vi.mocked(assertIpxeBuilds).mockResolvedValueOnce(findings);
+    const args = minimalArgs();
+
+    registerStartupTasks('job-1', args);
+    await args.orchestrator.runBlockingTasks('job-1');
+
+    expect(getBootReadinessFindings()).toEqual(findings);
+  });
+
+  it('records discovery_images findings in the boot-readiness holder when sync is disabled', async () => {
+    const findings: BootFinding[] = [{ code: 'PXE-06', severity: 'error', message: 'amd64 discovery image missing' }];
+    vi.mocked(assertDiscoveryImages).mockResolvedValueOnce(findings);
+    const args = minimalArgs();
+
+    registerStartupTasks('job-1', args);
+    await args.orchestrator.runBlockingTasks('job-1');
+
+    expect(getBootReadinessFindings()).toEqual(findings);
   });
 });
 

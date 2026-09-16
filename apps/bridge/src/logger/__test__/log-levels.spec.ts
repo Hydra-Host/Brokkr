@@ -25,23 +25,35 @@ describe('NUMERIC_LEVELS', () => {
 });
 
 describe('resolveLogLevel', () => {
-  it('returns info regardless of LOG_LEVEL=debug', () => {
-    expect(resolveLogLevel({ LOG_LEVEL: 'debug' } as NodeJS.ProcessEnv)).toBe('info');
+  it('honors LOG_LEVEL=debug', () => {
+    expect(resolveLogLevel({ LOG_LEVEL: 'debug' })).toBe('debug');
   });
 
-  it('returns info regardless of LOG_LEVEL=warning', () => {
-    expect(resolveLogLevel({ LOG_LEVEL: 'warning' } as NodeJS.ProcessEnv)).toBe('info');
+  it('honors LOG_LEVEL=warning', () => {
+    expect(resolveLogLevel({ LOG_LEVEL: 'warning' })).toBe('warning');
   });
 
-  it('returns info regardless of LOG_LEVEL=error', () => {
-    expect(resolveLogLevel({ LOG_LEVEL: 'error' } as NodeJS.ProcessEnv)).toBe('info');
+  it('maps the warn alias to warning', () => {
+    expect(resolveLogLevel({ LOG_LEVEL: 'warn' })).toBe('warning');
+  });
+
+  it('honors LOG_LEVEL=error', () => {
+    expect(resolveLogLevel({ LOG_LEVEL: 'error' })).toBe('error');
+  });
+
+  it('normalizes case and whitespace', () => {
+    expect(resolveLogLevel({ LOG_LEVEL: ' DEBUG ' })).toBe('debug');
   });
 
   it('returns info on unknown level', () => {
-    expect(resolveLogLevel({ LOG_LEVEL: 'verbose' } as NodeJS.ProcessEnv)).toBe('info');
+    expect(resolveLogLevel({ LOG_LEVEL: 'verbose' })).toBe('info');
   });
 
   it('returns info when LOG_LEVEL is unset', () => {
-    expect(resolveLogLevel({} as NodeJS.ProcessEnv)).toBe('info');
+    expect(resolveLogLevel({})).toBe('info');
+  });
+
+  it('returns info when LOG_LEVEL is empty', () => {
+    expect(resolveLogLevel({ LOG_LEVEL: '' })).toBe('info');
   });
 });

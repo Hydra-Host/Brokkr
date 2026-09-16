@@ -42,8 +42,7 @@ const RULES: { prefix: string; area: ConfigArea; section: string }[] = [
   { prefix: 'zoneCrypto.', area: 'advanced', section: 'ZONE CRYPTO' },
   { prefix: 'polyrepo.', area: 'advanced', section: 'CHECKOUT' },
   { prefix: 'fleet.zones', area: 'zones', section: 'ZONES' },
-  { prefix: 'fleet.mode', area: 'fleet', section: 'MODE' },
-  { prefix: 'fleet.autoStart', area: 'fleet', section: 'MODE' },
+  { prefix: 'fleet.autoStart', area: 'fleet', section: 'NODES' },
   { prefix: 'fleet.network', area: 'fleet', section: 'NETWORK' },
   { prefix: 'fleet.defaults', area: 'fleet', section: 'DEFAULTS' },
   { prefix: 'fleet.', area: 'fleet', section: 'NODES' },
@@ -67,7 +66,7 @@ export function knobLocation(path: string): KnobLocation | null {
  *  when the last override in a section is reverted. */
 export const AREA_SECTIONS: Record<ConfigArea, string[]> = {
   stack: ['HUB', 'SPOKE', 'IDENTITY', 'PORTS', 'TOPOLOGY', 'STACK'],
-  fleet: ['MODE', 'NETWORK', 'DEFAULTS', 'NODES'],
+  fleet: ['NETWORK', 'DEFAULTS', 'NODES'],
   zones: ['ZONES', 'RECONCILE'],
   advanced: ['FORKS', 'ZONE CRYPTO', 'CHECKOUT', 'INERT', 'NOT YET EDITABLE'],
 };

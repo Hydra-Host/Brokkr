@@ -1,6 +1,6 @@
 import { Injectable, Logger, type OnApplicationShutdown } from '@nestjs/common';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { RunSectionSchema } from '../contract';
 import { AuditStore } from './audit-store';
 import { RunLogStore } from './run-log-store';

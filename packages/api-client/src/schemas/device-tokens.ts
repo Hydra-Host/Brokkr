@@ -1,16 +1,18 @@
+import { DeviceTokenContext, DeviceTokenRevocationReason, DeviceTokenStatus } from '@repo/database/enums';
 import { z } from 'zod';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const DeviceTokenContextSchema = z
-  .enum(['BROKKR_LIVE', 'DEPLOYMENT_OS'])
-  .describe('Operational context where the device token is valid.');
+export const DeviceTokenContextSchema = zodEnumFromPrisma(DeviceTokenContext).describe(
+  'Operational context where the device token is valid.',
+);
 
-export const DeviceTokenStatusSchema = z
-  .enum(['ACTIVE', 'REVOKED'])
-  .describe('Current lifecycle state of the device token.');
+export const DeviceTokenStatusSchema = zodEnumFromPrisma(DeviceTokenStatus).describe(
+  'Current lifecycle state of the device token.',
+);
 
-export const DeviceTokenRevocationReasonSchema = z
-  .enum(['DEPLOYMENT_ENDED', 'REPROVISION', 'MANUAL', 'ROTATION', 'SUSPECTED_LEAK'])
-  .describe('Reason an active device token was revoked.');
+export const DeviceTokenRevocationReasonSchema = zodEnumFromPrisma(DeviceTokenRevocationReason).describe(
+  'Reason an active device token was revoked.',
+);
 
 export const DeviceTokenSchema = z.object({
   id: z.string().uuid().describe('Device token UUID.'),
@@ -40,8 +42,6 @@ export const IssueBrokkrLiveDeviceTokenResponseSchema = z.object({
   plaintext: z.string().describe('Opaque token plaintext. Returned only once and never stored raw.'),
 });
 
-export type DeviceTokenContext = z.infer<typeof DeviceTokenContextSchema>;
-export type DeviceTokenStatus = z.infer<typeof DeviceTokenStatusSchema>;
-export type DeviceTokenRevocationReason = z.infer<typeof DeviceTokenRevocationReasonSchema>;
+export type { DeviceTokenContext, DeviceTokenRevocationReason, DeviceTokenStatus };
 export type DeviceToken = z.infer<typeof DeviceTokenSchema>;
 export type IssueBrokkrLiveDeviceTokenResponse = z.infer<typeof IssueBrokkrLiveDeviceTokenResponseSchema>;

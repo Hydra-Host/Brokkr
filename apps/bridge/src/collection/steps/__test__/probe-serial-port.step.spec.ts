@@ -60,6 +60,22 @@ describe('ProbeSerialPortStep.execute', () => {
     expect(results.enqueueDiscoveryComplete).not.toHaveBeenCalled();
   });
 
+  it('passes the collector success count from collect_hardware to discovery.complete', async () => {
+    withCreds(null);
+    const results = makeResults();
+    const step = new ProbeSerialPortStep({ create: async () => ({ probe: vi.fn() }) }, results, makeLogger());
+
+    await step.execute(
+      makeCtx({ collect_hardware: { collected: true, metadata: { collectors_successful: 4, collectors_failed: 1 } } }),
+    );
+
+    expect(results.enqueueDiscoveryComplete).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      jobId: 'job-1',
+      succeededSteps: 4,
+    });
+  });
+
   it('(b) merges a confirmed probe result and enqueues discovery.complete', async () => {
     withCreds(bmcCredentials('10.0.0.1', 'admin', 'secret'));
     const probe = vi.fn(async () => ({
@@ -87,7 +103,11 @@ describe('ProbeSerialPortStep.execute', () => {
       notes: ['matched token'],
       baud: 115200,
     });
-    expect(results.enqueueDiscoveryComplete).toHaveBeenCalledWith({ deviceId: 'device-1', jobId: 'job-1' });
+    expect(results.enqueueDiscoveryComplete).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      jobId: 'job-1',
+      succeededSteps: 0,
+    });
     expect(result).toEqual({ probed: true, confirmed: true, port: '/dev/ttyS1', source: 'probed' });
   });
 
@@ -128,7 +148,11 @@ describe('ProbeSerialPortStep.execute', () => {
     const result = await step.execute(makeCtx());
 
     expect(results.mergeResolvedIntoSerialPorts).not.toHaveBeenCalled();
-    expect(results.enqueueDiscoveryComplete).toHaveBeenCalledWith({ deviceId: 'device-1', jobId: 'job-1' });
+    expect(results.enqueueDiscoveryComplete).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      jobId: 'job-1',
+      succeededSteps: 0,
+    });
     expect(result).toEqual({ probed: true, confirmed: false, port: null, source: 'none' });
   });
 
@@ -142,7 +166,11 @@ describe('ProbeSerialPortStep.execute', () => {
 
     expect(create).not.toHaveBeenCalled();
     expect(results.mergeResolvedIntoSerialPorts).not.toHaveBeenCalled();
-    expect(results.enqueueDiscoveryComplete).toHaveBeenCalledWith({ deviceId: 'device-1', jobId: 'job-1' });
+    expect(results.enqueueDiscoveryComplete).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      jobId: 'job-1',
+      succeededSteps: 0,
+    });
     expect(result).toEqual({ probed: true, confirmed: false, port: null, source: 'none' });
   });
 
@@ -158,7 +186,11 @@ describe('ProbeSerialPortStep.execute', () => {
     const result = await step.execute(makeCtx());
 
     expect(results.mergeResolvedIntoSerialPorts).not.toHaveBeenCalled();
-    expect(results.enqueueDiscoveryComplete).toHaveBeenCalledWith({ deviceId: 'device-1', jobId: 'job-1' });
+    expect(results.enqueueDiscoveryComplete).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      jobId: 'job-1',
+      succeededSteps: 0,
+    });
     expect(logger.warning).toHaveBeenCalled();
     expect(result).toEqual({ probed: true, confirmed: false, port: null, source: 'none' });
   });

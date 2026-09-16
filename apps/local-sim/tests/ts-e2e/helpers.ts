@@ -37,8 +37,6 @@ const FleetNetworkSchema = z.object({
   bmc_cidr: z.string(),
 });
 
-// Mirrors scripts/local/schema.py BareMetalNode/BareMetal — the bare-metal roster the rendered
-// fleet.yaml carries INSTEAD of `nodes` (which is deliberately empty in baremetal mode).
 const BareMetalNodeSchema = z.object({
   name: z.string(),
   pxe_mac: z.string(),
@@ -56,17 +54,27 @@ const BareMetalSchema = z.object({
   nodes: z.array(BareMetalNodeSchema),
 });
 
-const FleetSchema = z.object({
-  mode: z.enum(['vm', 'baremetal']).default('vm'),
-  network: FleetNetworkSchema,
-  nodes: z.array(FleetNodeSchema),
-  baremetal: BareMetalSchema.nullable().default(null),
-});
+const FleetPlanesSchema = z.object({ vm: z.boolean(), baremetal: z.boolean() });
+
+const FleetSchema = z
+  .object({
+    network: FleetNetworkSchema,
+    nodes: z.array(FleetNodeSchema),
+    baremetal: BareMetalSchema.nullable().default(null),
+  })
+  .transform((fleet) => ({
+    ...fleet,
+    planes: FleetPlanesSchema.parse({
+      vm: fleet.nodes.length > 0,
+      baremetal: (fleet.baremetal?.nodes.length ?? 0) > 0,
+    }),
+  }));
 
 export type FleetNode = z.infer<typeof FleetNodeSchema>;
 export type FleetNetwork = z.infer<typeof FleetNetworkSchema>;
 export type BareMetalNode = z.infer<typeof BareMetalNodeSchema>;
 export type BareMetal = z.infer<typeof BareMetalSchema>;
+export type FleetPlanes = z.infer<typeof FleetPlanesSchema>;
 export type Fleet = z.infer<typeof FleetSchema>;
 
 export function loadFleet(): Fleet {

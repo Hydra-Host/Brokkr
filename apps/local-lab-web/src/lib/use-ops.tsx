@@ -3,7 +3,10 @@ import { useState } from 'react';
 import { type GateView } from '@/components/console';
 import type { StackOp } from '@/contract';
 import { tsr } from '@/lib/api';
-import { bodyError, errorMessage, thrownBodyError } from '@/lib/errors';
+import { forceFlipMessage } from '@/lib/apply-run';
+import { activeJobsFromBody, errorMessage, responseStatus, thrownBody, thrownBodyError } from '@/lib/errors';
+import { useApplyPrompt } from '@/lib/use-apply-confirm';
+import { useHostToken } from '@/lib/use-host-token';
 import { usePoll } from '@/lib/use-poll';
 import { clearRecreating, markRecreating, RECREATE_OP_IDS } from '@/lib/use-restart-state';
 
@@ -26,6 +29,8 @@ export function useOps(
   const start = tsr.startStackRun.useMutation();
   const cancelMut = tsr.cancelRun.useMutation();
   const cacheSudo = tsr.cacheSudo.useMutation();
+  const hostGate = useHostToken('Caching a sudo password');
+  const prompt = useApplyPrompt();
 
   const [activeOp, setActiveOp] = useState<string | null>(null);
   const [gateOp, setGateOp] = useState<StackOp | null>(null);
@@ -45,24 +50,30 @@ export function useOps(
 
   const recreates = (opId: string) => RECREATE_OP_IDS.includes(opId);
 
-  const launch = (opId: string, allowDataLoss = false) => {
+  const launch = (opId: string, allowDataLoss = false, force = false) => {
     setActiveOp(opId);
     // stamped before the request: these ops kill this API, so there may be no response to react to.
     if (recreates(opId)) markRecreating(opId);
     start.mutate(
-      { body: { opId, allowDataLoss } },
+      { body: { opId, allowDataLoss, force } },
       {
         onSuccess: (res) => {
-          if (res.status === 200) {
-            onRun(opId, res.body.runId);
-            void runs.refetch();
-          }
+          onRun(opId, res.body.runId);
+          void runs.refetch();
         },
         onError: (e) => {
           // a refused launch keeps neither the ring highlight nor the stamp; the server marker is
           // authoritative for a recreation that really is in flight, and it just answered us.
           setActiveOp(null);
           if (recreates(opId)) clearRecreating();
+          const activeJobs = responseStatus(e) === 409 ? activeJobsFromBody(thrownBody(e)) : 0;
+          if (activeJobs > 0) {
+            // only the fleet-planes flip answers 409 with activeJobs; every launcher gets the same gate
+            void prompt(forceFlipMessage(activeJobs)).then((ok) => {
+              if (ok) launch(opId, allowDataLoss, true);
+            });
+            return;
+          }
           const msg = thrownBodyError(e) ?? 'start failed';
           if (msg) onError?.(msg);
         },
@@ -74,10 +85,7 @@ export function useOps(
     cancelMut.mutate(
       { params: { runId }, body: {} },
       {
-        onSuccess: (res) => {
-          if (res.status !== 200) onError?.(bodyError(res.body) ?? `cancel failed (${res.status})`);
-          void runs.refetch();
-        },
+        onSuccess: () => void runs.refetch(),
         onError: (e) => onError?.(`cancel failed — ${errorMessage(e) ?? 'request failed'}`),
       },
     );
@@ -96,8 +104,13 @@ export function useOps(
   const confirmGate = () => {
     if (!gateOp) return;
     if (gateOp.needsSudo && !sudoReady) {
+      if (hostGate.blocked) {
+        hostGate.ask();
+        setGateOp(null);
+        return;
+      }
       cacheSudo.mutate(
-        { body: { password } },
+        { body: { password }, extraHeaders: { 'x-lab-token': hostGate.token } },
         {
           onSuccess: (res) => {
             if (res.status === 200 && res.body.ok) {
@@ -105,13 +118,22 @@ export function useOps(
               launch(gateOp.id, gateDataLoss);
               setGateOp(null);
               setPassword('');
+            } else if (hostGate.noteRefusal(res.status, res.body)) {
+              setGateOp(null);
             } else {
               setGateError('sudo password rejected');
             }
           },
           // the ts-rest client rejects every non-2xx, so a 401 rejection and a 429 throttle both land
           // here — surface the server's own message, which names the cooldown's seconds remaining.
-          onError: (err: unknown) => setGateError(thrownBodyError(err) ?? 'failed to validate sudo'),
+          onError: (err: unknown) => {
+            // the prompt replaces the gate: it renders outside the modal, which would cover it
+            if (hostGate.noteThrownRefusal(err)) {
+              setGateOp(null);
+              return;
+            }
+            setGateError(thrownBodyError(err) ?? 'failed to validate sudo');
+          },
         },
       );
     } else {
@@ -153,6 +175,7 @@ export function useOps(
     isPending: start.isPending,
     sudoReady,
     gate,
+    hostTokenDialog: hostGate.dialog,
     onOpClick,
     cancelRun,
   };

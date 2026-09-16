@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { FleetConfig, FleetNodeEffective } from '@/contract';
+import type { AppLink, BareMetalNode, FleetConfig, FleetNodeEffective, Machine, VerifyFinding } from '@/contract';
 
 const { lab } = vi.hoisted(() => ({
   lab: {
@@ -15,6 +15,14 @@ const { lab } = vi.hoisted(() => ({
     previewOpts: undefined as { onError?: (e: unknown) => void } | undefined,
     previewPending: false,
     toastErrors: [] as string[],
+    machines: new Array<Machine>(),
+    machinesEnabled: undefined as boolean | undefined,
+    hostOs: 'linux',
+    findings: new Array<VerifyFinding>(),
+    appLinks: new Array<AppLink>(),
+    startBody: undefined as unknown,
+    run: undefined as { status: number; body: unknown } | undefined,
+    readinessRefetches: 0,
   },
 }));
 
@@ -23,7 +31,7 @@ vi.mock('@/lib/api', () => ({
     getFleetConfig: { useQuery: () => ({ data: lab.cfg, dataUpdatedAt: 1, refetch: () => Promise.resolve() }) },
     getHost: {
       useQuery: () => ({
-        data: { status: 200, body: { os: 'linux', arch: 'amd64', passthroughSupported: true } },
+        data: { status: 200, body: { os: lab.hostOs, arch: 'amd64', passthroughSupported: true } },
       }),
     },
     listPci: { useQuery: () => ({ data: { status: 200, body: [] } }) },
@@ -31,7 +39,12 @@ vi.mock('@/lib/api', () => ({
       useQuery: () => ({ data: { status: 200, body: [{ name: 'eth9', ipv4: '198.51.100.31/24', up: true }] } }),
     },
     listStackRuns: { useQuery: () => ({ data: { status: 200, body: [] }, refetch: () => Promise.resolve() }) },
-    getRun: { useQuery: () => ({ data: undefined, dataUpdatedAt: 0 }) },
+    getRun: {
+      useQuery: (opts: { enabled?: boolean }) => ({
+        data: opts.enabled ? lab.run : undefined,
+        dataUpdatedAt: opts.enabled ? 5 : 0,
+      }),
+    },
     putFleetConfig: {
       useMutation: () => ({
         isPending: false,
@@ -53,8 +66,41 @@ vi.mock('@/lib/api', () => ({
         },
       }),
     },
-    startStackRun: { useMutation: () => ({ isPending: false, mutate: () => {} }) },
+    startStackRun: {
+      useMutation: () => ({
+        isPending: false,
+        mutate: (v: { body: unknown }, opts?: { onSuccess?: (r: { body: { runId: string } }) => void }) => {
+          lab.startBody = v.body;
+          opts?.onSuccess?.({ body: { runId: 'run-1' } });
+        },
+      }),
+    },
     baremetalPower: { useMutation: () => ({ isPending: false, mutate: () => {} }) },
+    listMachines: {
+      useQuery: (opts: { enabled?: boolean }) => {
+        lab.machinesEnabled = opts.enabled;
+        return { data: { status: 200, body: lab.machines } };
+      },
+    },
+    getMachineBootTrail: { useQuery: () => ({ data: undefined }) },
+    getFleetBootReadiness: {
+      useQuery: () => ({
+        data: {
+          status: 200,
+          body: {
+            status: 'findings',
+            planes: { vm: true, baremetal: true },
+            findings: lab.findings,
+            summary: { checked: 1, ok: 0, findings: lab.findings.length },
+          },
+        },
+        refetch: () => {
+          lab.readinessRefetches += 1;
+          return Promise.resolve();
+        },
+      }),
+    },
+    listAppLinks: { useQuery: () => ({ data: { status: 200, body: lab.appLinks } }) },
   },
 }));
 
@@ -87,7 +133,7 @@ import { ConfigFleetPage } from './fleet-page';
 function fleetConfig(): FleetConfig {
   return {
     source: 'local',
-    mode: 'vm',
+    planes: { vm: true, baremetal: false },
     baremetal: { nics: [], arch: 'amd64', nodes: [] },
     bakedChainUrl: null,
     nodes: [],
@@ -161,9 +207,18 @@ const savedBody = (): Record<string, unknown> => {
 
 function openBareMetal(): ReturnType<typeof render> {
   lab.cfg = { status: 200, body: fleetConfig() };
-  const view = render(<ConfigFleetPage />);
-  fireEvent.click(screen.getByText('Bare metal fleet'));
-  return view;
+  return render(<ConfigFleetPage />);
+}
+
+function bareMetalNode(name: string): BareMetalNode {
+  return {
+    name,
+    bmc_ip: '192.168.1.50',
+    bmc_mac: 'aa:bb:cc:dd:ee:01',
+    pxe_mac: 'aa:bb:cc:dd:ee:02',
+    arch: null,
+    system_id: null,
+  };
 }
 
 function serverRefetch(view: ReturnType<typeof render>): void {
@@ -180,7 +235,84 @@ beforeEach(() => {
   lab.previewOpts = undefined;
   lab.previewPending = false;
   lab.toastErrors = [];
+  lab.machines = [];
+  lab.machinesEnabled = undefined;
+  lab.hostOs = 'linux';
+  lab.findings = [];
+  lab.appLinks = [];
+  lab.startBody = undefined;
+  lab.run = undefined;
+  lab.readinessRefetches = 0;
   vi.spyOn(window, 'confirm').mockReturnValue(true);
+});
+
+describe('ConfigFleetPage — both planes on one page', () => {
+  it('renders both editors with no mode selector', () => {
+    openFleet({}, [vmNode('cpu-1', 'sim-zone')]);
+
+    expect(screen.queryByText('Fleet mode')).toBeNull();
+    expect(screen.queryByText('Bare metal fleet')).toBeNull();
+    expect(screen.getByDisplayValue('cpu-1')).toBeTruthy();
+    expect(screen.getByText('Uplink NIC')).toBeTruthy();
+  });
+
+  it('explains that bare-metal mode adds no process', () => {
+    openFleet({}, [vmNode('cpu-1', 'sim-zone')]);
+
+    expect(screen.getByText(/Bare-metal mode adds no process/)).toBeTruthy();
+  });
+
+  it('shows the Linux note in place of the bare-metal editor on macOS', () => {
+    lab.hostOs = 'darwin';
+    openFleet({}, [vmNode('cpu-1', 'sim-zone')]);
+
+    expect(screen.getByText('Bare-metal machines need a Linux host.')).toBeTruthy();
+    expect(screen.queryByText('Uplink NIC')).toBeNull();
+    expect(screen.getByDisplayValue('cpu-1')).toBeTruthy();
+  });
+
+  it('sends no mode in the PUT body', () => {
+    openFleet({}, [vmNode('cpu-1', 'sim-zone')]);
+    fireEvent.change(screen.getByDisplayValue('sim.local'), { target: { value: 'lab.local' } });
+
+    const body = savedBody();
+
+    expect(body).not.toHaveProperty('mode');
+    expect(body.baremetal).toMatchObject({ nodes: [] });
+  });
+
+  it('polls bare-metal status only while a machine is saved', () => {
+    openFleet({}, [vmNode('cpu-1', 'sim-zone')]);
+    expect(lab.machinesEnabled).toBe(false);
+    cleanup();
+
+    openFleet({ baremetal: { nics: ['eth9'], arch: 'amd64', nodes: [bareMetalNode('rack-7')] } });
+    expect(lab.machinesEnabled).toBe(true);
+  });
+
+  it('does not start polling for a row that is typed but not saved', () => {
+    openFleet({}, [vmNode('cpu-1', 'sim-zone')]);
+    fireEvent.click(screen.getByRole('button', { name: '+ Add server' }));
+
+    expect(lab.machinesEnabled).toBe(false);
+  });
+
+  it('refuses a bare-metal row without an uplink NIC', () => {
+    openFleet({}, [vmNode('cpu-1', 'sim-zone')]);
+    fireEvent.click(screen.getByRole('button', { name: '+ Add server' }));
+
+    fireEvent.click(screen.getByText('Save config'));
+
+    expect(screen.getByText('select an uplink NIC')).toBeTruthy();
+    expect(lab.put).toBeUndefined();
+  });
+
+  it('saves a vm roster with no machine rows without validating the bare-metal block', () => {
+    openFleet({}, [vmNode('cpu-1', 'sim-zone')]);
+    fireEvent.change(screen.getByDisplayValue('sim.local'), { target: { value: 'lab.local' } });
+
+    expect(savedBody().baremetal).toMatchObject({ nics: [], nodes: [] });
+  });
 });
 
 afterEach(() => {
@@ -452,7 +584,7 @@ describe('ConfigFleetPage — the arch default', () => {
 });
 
 describe('ConfigFleetPage — a fleet-config refetch while the operator edits', () => {
-  it('leaves the selected bare-metal mode in place', () => {
+  it('keeps the bare-metal editor in place', () => {
     const view = openBareMetal();
     expect(screen.getByText('Uplink NIC')).toBeTruthy();
 
@@ -481,10 +613,180 @@ describe('ConfigFleetPage — a fleet-config refetch while the operator edits', 
   });
 
   it('still hydrates from the server before any edit', () => {
-    lab.cfg = { status: 200, body: { ...fleetConfig(), mode: 'baremetal' } };
+    lab.cfg = { status: 200, body: fleetConfig() };
     render(<ConfigFleetPage />);
 
     expect(screen.getByText('Uplink NIC')).toBeTruthy();
+  });
+});
+
+describe('ConfigFleetPage — the baked iPXE chain URL', () => {
+  function openBaked(bakedChainUrl: string | null): void {
+    openFleet({ baremetal: { nics: ['eth9'], arch: 'amd64', nodes: [] }, bakedChainUrl });
+  }
+
+  it('says no bake has run at all, and names the remedy', () => {
+    openBaked(null);
+
+    expect(screen.getByText(/no iPXE bake yet/)).toBeTruthy();
+    expect(screen.getByText(/Build then iPXE/)).toBeTruthy();
+  });
+
+  it('shows the baked URL with no warning once it matches the selected NIC', () => {
+    openBaked('http://198.51.100.31:8080/boot.ipxe');
+
+    expect(screen.getByText(/baked chain URL: http:\/\/198\.51\.100\.31:8080\/boot\.ipxe/)).toBeTruthy();
+    expect(screen.queryByText(/no iPXE bake yet/)).toBeNull();
+    expect(screen.queryByText(/stale/)).toBeNull();
+  });
+
+  it('calls the bake stale when the server says so, not by its own comparison', () => {
+    openFleet({
+      baremetal: { nics: ['eth9'], arch: 'amd64', nodes: [] },
+      bakedChainUrl: 'http://198.51.100.9:8080',
+      pending: {
+        inSync: false,
+        severity: 'stale-bake',
+        desiredDigest: 'sha256:x',
+        appliedDigest: 'sha256:x',
+        appliedAt: 1,
+        summary: { added: 0, removed: 0, changed: 0, unchanged: 1 },
+        nodes: { added: [], removed: [], changed: [] },
+        network: { changed: false, fields: [] },
+        note: 'the iPXE bake names http://198.51.100.9:8080, but this stack serves http://198.51.100.31:8080',
+      },
+    });
+
+    expect(screen.getByText(/stale — re-bake via Build → iPXE/)).toBeTruthy();
+    expect(screen.queryByText(/no iPXE bake yet/)).toBeNull();
+  });
+
+  it('shows no stale chip for a bake the server considers current, whatever its host', () => {
+    openBaked('http://198.51.100.9:8080');
+
+    expect(screen.getByText(/baked chain URL: http:\/\/198\.51\.100\.9:8080/)).toBeTruthy();
+    expect(screen.queryByText(/stale/)).toBeNull();
+  });
+});
+
+describe('ConfigFleetPage — bare-metal node status', () => {
+  function bmNode(name: string): BareMetalNode {
+    return {
+      name,
+      bmc_ip: '192.168.1.50',
+      bmc_mac: 'aa:bb:cc:dd:ee:01',
+      pxe_mac: 'aa:bb:cc:dd:ee:02',
+      arch: null,
+      system_id: null,
+    };
+  }
+
+  function bmMachine(name: string): Machine {
+    return {
+      name,
+      kind: 'baremetal',
+      power: 'on',
+      configured: true,
+      deviceId: 'dev-1',
+      bmc: { reachable: 'ok', powerState: 'On' },
+    };
+  }
+
+  function openSavedNode(): void {
+    openFleet({ baremetal: { nics: ['eth9'], arch: 'amd64', nodes: [bmNode('rack-7')] } });
+  }
+
+  it('shows save to probe once the config has unsaved edits', () => {
+    lab.machines = [bmMachine('rack-7')];
+    openSavedNode();
+    expect(screen.queryByText('save to probe')).toBeNull();
+
+    fireEvent.change(screen.getByDisplayValue('rack-7'), { target: { value: 'rack-8' } });
+
+    expect(screen.getByText('save to probe')).toBeTruthy();
+    expect(screen.queryByText('dev-1')).toBeNull();
+  });
+
+  it('renders the probe strip for a saved node the fleet lists', () => {
+    lab.machines = [bmMachine('rack-7')];
+    openSavedNode();
+
+    expect(screen.getByText('on')).toBeTruthy();
+    expect(screen.getByText('dev-1')).toBeTruthy();
+    expect(screen.getByText('BMC answers Redfish with the saved credential')).toBeTruthy();
+  });
+
+  it('says a saved node is not probed yet when the fleet does not list it', () => {
+    openSavedNode();
+
+    expect(screen.getByText('not probed yet')).toBeTruthy();
+  });
+
+  it('asks for a bake on every node when no bake has run', () => {
+    lab.machines = [bmMachine('rack-7')];
+    openSavedNode();
+
+    expect(screen.getByText('Bake iPXE for this uplink (Build → iPXE)')).toBeTruthy();
+  });
+
+  it('links the prefix step into the hub prefix editor through the hub-web app link', () => {
+    lab.machines = [bmMachine('rack-7')];
+    lab.findings = [
+      {
+        node: 'rack-7',
+        kind: 'no-hub-device',
+        healable: false,
+        detail: 'PXE-104 (error): prefix is not in proxy mode',
+        code: 'PXE-104',
+        ref: 'p-1',
+      },
+    ];
+    lab.appLinks = [{ id: 'hub-web', label: 'Hub', port: 5173, path: '/', ready: true, loopback: false }];
+    openSavedNode();
+
+    const link = screen.getByRole('link', { name: /aa:bb:cc:dd:ee:02/ });
+    expect(link.getAttribute('href')).toBe('http://localhost:5173/ipam/prefixes/p-1/edit');
+  });
+
+  it('names the uplink cidr of the selected nic in the prefix step', () => {
+    lab.machines = [bmMachine('rack-7')];
+    openSavedNode();
+
+    expect(screen.getByText(/containing 198\.51\.100\.31\/24 to DHCP mode PROXY/)).toBeTruthy();
+  });
+
+  it('starts baremetal-uplink-prefix from the checklist and refetches readiness when the run ends', async () => {
+    lab.machines = [bmMachine('rack-7')];
+    lab.findings = [
+      {
+        node: 'rack-7',
+        kind: 'no-hub-device',
+        healable: false,
+        detail: 'PXE-102 (error): no prefix contains the uplink',
+        code: 'PXE-102',
+        ref: null,
+      },
+    ];
+    lab.run = {
+      status: 200,
+      body: {
+        runId: 'run-1',
+        section: 'stack',
+        opId: 'baremetal-uplink-prefix',
+        label: 'baremetal-uplink-prefix',
+        status: 'passed',
+        startedAt: 1,
+        exitCode: 0,
+      },
+    };
+    openSavedNode();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Configure in hub' }));
+    });
+
+    expect(lab.startBody).toEqual({ opId: 'baremetal-uplink-prefix' });
+    await vi.waitFor(() => expect(lab.readinessRefetches).toBe(1));
   });
 });
 
@@ -605,11 +907,11 @@ describe('ConfigFleetPage — a save the overlay only partly wrote', () => {
     });
   }
 
-  it('names a pinned fleet.mode rather than answering a bare ok', () => {
-    saveThenServerSays([{ path: 'fleet.mode', reason: 'pinned', detail: 'BROKKR_FLEET_MODE' }]);
+  it('names a pinned key rather than answering a bare ok', () => {
+    saveThenServerSays([{ path: 'fleet.autoStart', reason: 'pinned', detail: 'BROKKR_FLEET_AUTOSTART' }]);
 
     expect(screen.getByText('Not written:')).toBeTruthy();
-    expect(screen.getByText('fleet.mode — pinned (BROKKR_FLEET_MODE)')).toBeTruthy();
+    expect(screen.getByText('fleet.autoStart — pinned (BROKKR_FLEET_AUTOSTART)')).toBeTruthy();
   });
 
   it('names a removed node the overlay kept as a tombstone', () => {

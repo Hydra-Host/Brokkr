@@ -47,10 +47,22 @@ export function readBmc(raw: unknown, defaults: BmcCreds): BmcCreds {
   };
 }
 
-export function parseFleetMode(text: string): 'vm' | 'baremetal' {
+export interface FleetPlanes {
+  vm: boolean;
+  baremetal: boolean;
+}
+
+function hasEntries(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0;
+}
+
+export function parseFleetPlanes(text: string): FleetPlanes {
   const doc = load(text);
-  if (!isRecord(doc)) return 'vm';
-  return doc.mode === 'baremetal' ? 'baremetal' : 'vm';
+  if (!isRecord(doc)) {
+    throw new Error('fleet.yml did not parse to an object');
+  }
+  const baremetal = isRecord(doc.baremetal) ? doc.baremetal : {};
+  return { vm: hasEntries(doc.nodes), baremetal: hasEntries(baremetal.nodes) };
 }
 
 export function parseFleetYaml(text: string): SimNode[] {
@@ -86,9 +98,6 @@ export function parseBaremetalNodes(text: string): BaremetalNode[] {
   if (!isRecord(doc)) {
     throw new Error('fleet.yml did not parse to an object');
   }
-  const mode = typeof doc.mode === 'string' ? doc.mode : 'vm';
-  if (mode !== 'baremetal') return [];
-
   const baremetal = isRecord(doc.baremetal) ? doc.baremetal : {};
   const nodesRaw = baremetal.nodes;
   if (!Array.isArray(nodesRaw)) return [];

@@ -78,7 +78,6 @@ const FleetEvalSchema = z
     defaults: z.record(z.unknown()).optional(),
     nodes: z.record(FleetEvalNodeSchema).optional(),
     zones: z.record(FleetEvalZoneSchema).optional(),
-    mode: z.string().optional(),
     autoStart: z.boolean().optional(),
     baremetal: BaremetalEvalSchema.optional(),
   })
@@ -173,6 +172,8 @@ export const DevenvSeedEvalSchema = z
           .passthrough()
           .optional(),
         orgId: z.string().optional(),
+        redis: z.object({ password: z.string().optional() }).passthrough().optional(),
+        mailpit: z.object({ password: z.string().optional() }).passthrough().optional(),
       })
       .passthrough()
       .optional(),
@@ -180,7 +181,18 @@ export const DevenvSeedEvalSchema = z
       .object({ originHost: z.string().optional(), resolvers: z.string().optional() })
       .passthrough()
       .optional(),
-    lan: z.object({ expose: z.boolean().optional() }).passthrough().optional(),
+    // mode stays `unknown` here: an eval from a checkout predating the enum reports nothing, and
+    // seedMirror parses it through the contract's own LanModeSchema rather than trusting the shape.
+    lan: z
+      .object({
+        mode: z.unknown().optional(),
+        bindAddress: z.string().optional(),
+        publicHost: z.string().optional(),
+        datastoreAuth: z.boolean().optional(),
+        expose: z.boolean().optional(),
+      })
+      .passthrough()
+      .optional(),
     telemetry: z.object({ enable: z.boolean().optional() }).passthrough().optional(),
     ports: z.record(z.unknown()).optional(),
     portDefaults: z.record(z.unknown()).optional(),

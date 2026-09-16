@@ -104,14 +104,14 @@ describe('redfish-operations — wired service still works end-to-end (no regres
     expect(result).toBe(false);
   });
 
-  it('verifyTee returns a checked failure when the Redfish service throws', async () => {
+  it('verifyTee reports an unreachable bmc instead of a verified negative when the Redfish service throws', async () => {
     const service: RedfishTeeCapableService = {
       setTee: vi.fn(),
       verifyTee: vi.fn().mockRejectedValue(new Error('BMC unreachable')),
       reliableBoot: vi.fn(),
     };
     const result = await verifyTee(...ARGS, { createRedfishService: async () => service });
-    expect(result).toEqual({ ok: false, checked: true, missing: [] });
+    expect(result).toEqual({ ok: false, checked: false, missing: [], reason: 'bmc-unreachable' });
   });
 
   it('redfishStandardize re-throws when the wired discovery handler rejects', async () => {

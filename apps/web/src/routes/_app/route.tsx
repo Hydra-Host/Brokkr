@@ -83,11 +83,12 @@ import { useNavigationShortcuts } from '@repo/ui/hooks/use-navigation-shortcuts'
 import { AppSearch, AppSearchProvider, AppSearchTrigger } from '~/components/app-search';
 import { NotFound } from '~/components/not-found';
 import { RouteError } from '~/components/route-error';
+import { useActiveOrganizationId } from '~/hooks/use-active-organization-id';
 import { tsr } from '~/lib/api';
 import { isLocalSimulationEnabled } from '~/lib/env';
 import { getLandingRoute } from '~/lib/landing-route';
 import { sanitizeRedirect } from '~/lib/safe-redirect';
-import { publicRedirectFromPluginAppMount, usePluginRegistry, wrapPluginIcon } from '~/plugin-host';
+import { PluginSlot, publicRedirectFromPluginAppMount, usePluginRegistry, wrapPluginIcon } from '~/plugin-host';
 
 export const Route = createFileRoute('/_app')({
   component: AppLayout,
@@ -97,6 +98,7 @@ export const Route = createFileRoute('/_app')({
 
 function AppLayout() {
   const { data: session, isPending: sessionPending } = useSession();
+  const activeOrgId = useActiveOrganizationId();
   const location = useLocation();
   const pluginRegistry = usePluginRegistry();
 
@@ -149,7 +151,6 @@ function AppLayout() {
     );
   }
 
-  const activeOrgId = (session.session as { activeOrganizationId?: string }).activeOrganizationId;
   if (organizations && (organizations.body.data.length === 0 || !activeOrgId)) {
     const redirect = sanitizeRedirect(location.pathname);
     return <Navigate to="/onboarding/organization" search={redirect ? { redirect } : {}} />;
@@ -159,7 +160,7 @@ function AppLayout() {
     <ApiMonitorContext.Provider value={apiMonitor}>
       <SidebarProvider className="flex h-screen overflow-hidden">
         <AppSearchProvider>
-          <AppShellContent session={session} location={location} />
+          <AppShellContent session={session} location={location} activeOrgId={activeOrgId} />
         </AppSearchProvider>
       </SidebarProvider>
     </ApiMonitorContext.Provider>
@@ -169,9 +170,10 @@ function AppLayout() {
 interface AppShellContentProps {
   session: NonNullable<ReturnType<typeof useSession>['data']>;
   location: ReturnType<typeof useLocation>;
+  activeOrgId: string | undefined;
 }
 
-function AppShellContent({ session, location }: AppShellContentProps) {
+function AppShellContent({ session, location, activeOrgId }: AppShellContentProps) {
   const navigate = useNavigate();
   const queryClient = tsr.useQueryClient();
   const { refetch: refetchSession } = useSession();
@@ -207,8 +209,6 @@ function AppShellContent({ session, location }: AppShellContentProps) {
   const user = session.user as { id: string; name: string; email: string; firstName?: string; lastName?: string };
   const firstName = user.firstName || user.name?.split(' ')[0] || '';
   const lastName = user.lastName || user.name?.split(' ')[1] || '';
-
-  const activeOrgId = (session.session as { activeOrganizationId?: string }).activeOrganizationId;
 
   const orgs = organizations?.body?.data;
   React.useEffect(() => {
@@ -561,30 +561,32 @@ function AppShellContent({ session, location }: AppShellContentProps) {
               sideOffset={4}
             >
               <DropdownMenuLabel className="text-muted-foreground text-xs">Organizations</DropdownMenuLabel>
-              {organizations?.body?.data
-                ?.slice()
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map((org, index) => {
-                  const isCurrentOrg = org.id === activeOrgId;
-                  return (
-                    <DropdownMenuItem
-                      key={org.id}
-                      className="gap-2 p-2"
-                      disabled={isSwitchingOrg}
-                      onClick={() => handleOrgChange(org.id)}
-                    >
-                      <div className="flex size-6 items-center justify-center rounded-md border">
-                        {isCurrentOrg ? (
-                          <Check className="size-3.5 shrink-0" />
-                        ) : (
-                          <Building2 className="size-3.5 shrink-0" />
-                        )}
-                      </div>
-                      <span className={isCurrentOrg ? 'font-medium' : ''}>{org.name}</span>
-                      <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
-                    </DropdownMenuItem>
-                  );
-                })}
+              <DropdownMenuGroup className="max-h-72 overflow-y-auto overscroll-contain">
+                {organizations?.body?.data
+                  ?.slice()
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((org, index) => {
+                    const isCurrentOrg = org.id === activeOrgId;
+                    return (
+                      <DropdownMenuItem
+                        key={org.id}
+                        className="gap-2 p-2"
+                        disabled={isSwitchingOrg}
+                        onClick={() => handleOrgChange(org.id)}
+                      >
+                        <div className="flex size-6 items-center justify-center rounded-md border">
+                          {isCurrentOrg ? (
+                            <Check className="size-3.5 shrink-0" />
+                          ) : (
+                            <Building2 className="size-3.5 shrink-0" />
+                          )}
+                        </div>
+                        <span className={isCurrentOrg ? 'font-medium' : ''}>{org.name}</span>
+                        <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
+                      </DropdownMenuItem>
+                    );
+                  })}
+              </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild className="gap-2 p-2">
                 <Link to="/onboarding/organization" search={{ create: true }}>
@@ -737,6 +739,9 @@ function AppShellContent({ session, location }: AppShellContentProps) {
         </header>
         <div className="min-w-0 flex-1 overflow-hidden">
           <div className="h-full overflow-y-auto px-4 pb-14">
+            {activeOrgId !== undefined && (
+              <PluginSlot name="app-banner" pathname={location.pathname} organizationId={activeOrgId} />
+            )}
             <Outlet />
           </div>
         </div>

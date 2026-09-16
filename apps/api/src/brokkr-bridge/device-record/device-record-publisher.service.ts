@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { DeviceRole, Prisma, ZoneNetworkType } from '@repo/database';
+import { DeviceRole, Prisma, TagObjectType, ZoneNetworkType } from '@repo/database';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { getErrorMessage } from 'src/common/error-utils';
 import {
@@ -81,6 +81,13 @@ const deviceRecordSelect = {
 
 type DeviceRecordRow = Prisma.DeviceGetPayload<{ select: typeof deviceRecordSelect }>;
 
+// TagAssignment is polymorphic (objectType/objectId), so the device select cannot carry it — tags come from a second query.
+const deviceTagAssignmentSelect = { tag: { select: { slug: true } } } as const satisfies Prisma.TagAssignmentSelect;
+
+type TaggedDevice = {
+  tagAssignments: Array<Prisma.TagAssignmentGetPayload<{ select: typeof deviceTagAssignmentSelect }>>;
+};
+
 export const deviceDataSyncSelect = {
   id: true,
   role: true,
@@ -150,6 +157,7 @@ export class DeviceRecordPublisher {
     const locationNetworkType = await resolveLocationEastWestNetworkType(this.prisma, device.zoneId);
     const isVpc = device.zone?.networkType === ZoneNetworkType.VPC;
     const deploymentOs = await this.resolveDeploymentOs(device.id);
+    const tagAssignments = await this.loadDeviceTagAssignments(device.id);
     // The netplan YAML becomes kernel ip= options on the bridge; a render failure must not abort the boot-critical write — fall back to null (DHCP).
     const netplanEligible = isCommissioning || (device.role != null && NETPLAN_COMPUTED_ROLES.has(device.role));
     let netplan: string | null = null;
@@ -163,7 +171,13 @@ export class DeviceRecordPublisher {
         netplan = null;
       }
     }
-    const record: DeviceRecord = buildRecord(device, locationNetworkType, isVpc, deploymentOs, netplan);
+    const record: DeviceRecord = buildRecord(
+      { ...device, tagAssignments },
+      locationNetworkType,
+      isVpc,
+      deploymentOs,
+      netplan,
+    );
     const bundle = identifierBundleFor(device);
 
     const result = await this.write(device.zoneId, record, bundle, {
@@ -247,7 +261,7 @@ export class DeviceRecordPublisher {
       role: null,
       installed_os: null,
       rescue_os: null,
-      platform_tags: [],
+      platform_tags: platformTagsOf(null),
       device_type: null,
       netplan: null,
       serial_port_recommended: null,
@@ -400,10 +414,17 @@ export class DeviceRecordPublisher {
       rescue: deployment.rescueLayer?.slug ?? null,
     };
   }
+
+  private loadDeviceTagAssignments(deviceId: string): Promise<TaggedDevice['tagAssignments']> {
+    return this.prisma.tagAssignment.findMany({
+      where: { objectType: TagObjectType.DEVICE, objectId: deviceId },
+      select: deviceTagAssignmentSelect,
+    });
+  }
 }
 
 function buildRecord(
-  device: DeviceRecordRow,
+  device: DeviceRecordRow & TaggedDevice,
   locationNetworkType: string | null,
   isVpc: boolean,
   deploymentOs: { installed: string | null; rescue: string | null },
@@ -416,7 +437,7 @@ function buildRecord(
     role: deviceRoleToBootSlug(device.role),
     installed_os: deploymentOs.installed,
     rescue_os: deploymentOs.rescue,
-    platform_tags: [],
+    platform_tags: platformTagsOf(device),
     device_type: device.deviceModel?.slug ?? null,
     netplan,
     serial_port_recommended: device.solConfig?.resolvedPort ?? device.solConfig?.optimalPort ?? null,
@@ -426,6 +447,15 @@ function buildRecord(
     last_job_id: device.lastJobId ?? null,
     buildarch: null,
   };
+}
+
+function platformTagsOf(device: TaggedDevice | null): string[] {
+  if (!device) return [];
+  const slugs = new Set<string>();
+  for (const { tag } of device.tagAssignments) {
+    if (tag.slug) slugs.add(tag.slug.toLowerCase());
+  }
+  return [...slugs].sort();
 }
 
 function buildDeviceDataBlob(device: DeviceDataSyncRow): Record<string, unknown> {

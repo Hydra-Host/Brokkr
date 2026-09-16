@@ -321,11 +321,11 @@ export class InventoryRecord extends createActiveRecord(InventoryPersistenceSche
     }));
   }
 
+  /** DCIM invite-create predicate. Does not require `isListed`; marketplace `findListings` is the listed catalog. */
   private static availableForInviteWhere(): Prisma.DeviceWhereInput {
     return {
       server: {
         lifecycleStatus: ServerLifecycleStatus.INVENTORY,
-        isListed: true,
         deployments: { none: { endDate: null } },
         serversInReservation: {
           none: { reservation: { endDate: null } },

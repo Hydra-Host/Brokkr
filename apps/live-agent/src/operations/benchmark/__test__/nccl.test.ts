@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseNcclOutput, thresholdForGpuCount } from '.././nccl';
+import { interconnectFromNvlinkStatus, parseNcclOutput, thresholdForGpuCount } from '.././nccl';
 
 describe('thresholdForGpuCount', () => {
   it('returns exact threshold when count matches a key', () => {
@@ -88,5 +88,61 @@ describe('parseNcclOutput', () => {
     expect(out.avg_bus_bandwidth_gbs).toBeNull();
     expect(out.gpu_count).toBe(0);
     expect(out.results_by_size).toEqual([]);
+  });
+});
+
+describe('thresholdForGpuCount — PCIe family', () => {
+  it('uses the PCIe table when the fabric has no NVLink', () => {
+    expect(thresholdForGpuCount(1, 'pcie')).toBe(0);
+    expect(thresholdForGpuCount(2, 'pcie')).toBe(0.5);
+    expect(thresholdForGpuCount(4, 'pcie')).toBe(1);
+    expect(thresholdForGpuCount(8, 'pcie')).toBe(1.5);
+  });
+
+  it('falls back to the closest lower key within the PCIe table', () => {
+    expect(thresholdForGpuCount(6, 'pcie')).toBe(1);
+    expect(thresholdForGpuCount(16, 'pcie')).toBe(1.5);
+  });
+
+  it('defaults to the NVLink table when no interconnect is given', () => {
+    expect(thresholdForGpuCount(8)).toBe(40);
+  });
+
+  it('passes a healthy PCIe-only 8-GPU measurement that the NVLink table rejects', () => {
+    const measuredAvgBusbwGbs = 2.41962;
+    expect(measuredAvgBusbwGbs > thresholdForGpuCount(8, 'pcie')).toBe(true);
+    expect(measuredAvgBusbwGbs > thresholdForGpuCount(8, 'nvlink')).toBe(false);
+  });
+
+  it('still fails a PCIe fabric that is actually broken', () => {
+    expect(0.2 > thresholdForGpuCount(8, 'pcie')).toBe(false);
+  });
+});
+
+describe('interconnectFromNvlinkStatus', () => {
+  it('detects an active NVLink fabric', () => {
+    const out = [
+      'GPU 0: NVIDIA H100 80GB HBM3 (UUID: GPU-aaaa)',
+      '\t Link 0: 26.562 GB/s',
+      '\t Link 1: 26.562 GB/s',
+    ].join('\n');
+    expect(interconnectFromNvlinkStatus(out, 0)).toBe('nvlink');
+  });
+
+  it('reports pcie when the card does not support NVLink', () => {
+    const out = 'GPU 0: NVIDIA RTX PRO 6000 Blackwell (UUID: GPU-bbbb)\n\t This GPU does not support NVLink.';
+    expect(interconnectFromNvlinkStatus(out, 0)).toBe('pcie');
+  });
+
+  it('reports pcie on empty output', () => {
+    expect(interconnectFromNvlinkStatus('', 0)).toBe('pcie');
+  });
+
+  it('reports pcie when the probe exits non-zero', () => {
+    expect(interconnectFromNvlinkStatus('\t Link 0: 26.562 GB/s', 12)).toBe('pcie');
+  });
+
+  it('does not mistake an inactive link line for an active fabric', () => {
+    expect(interconnectFromNvlinkStatus('\t Link 0: <inactive>', 0)).toBe('pcie');
   });
 });

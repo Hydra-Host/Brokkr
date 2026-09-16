@@ -8,8 +8,14 @@ function makeService() {
     sealHubToBridge: vi.fn().mockResolvedValue({ envelope_v: 1, aad: {}, eph_pub: '', ciphertext: '', tag: '' }),
   };
   const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
-  const service = new BridgeQueueService(redisConfig as never, sealedEnvelope as never, logger as never);
-  return { service, sealedEnvelope };
+  const jobLogWriter = { write: vi.fn() };
+  const service = new BridgeQueueService(
+    redisConfig as never,
+    sealedEnvelope as never,
+    logger as never,
+    jobLogWriter as never,
+  );
+  return { service, sealedEnvelope, jobLogWriter };
 }
 
 function makeExistingJob(state: string, data: unknown = { plan_id: 'plan-1', saga_name: 'deprovision' }) {
@@ -19,6 +25,13 @@ function makeExistingJob(state: string, data: unknown = { plan_id: 'plan-1', sag
     getState: vi.fn().mockResolvedValue(state),
     remove: vi.fn().mockResolvedValue(undefined),
   };
+}
+
+function stubLifecycleQueue(service: BridgeQueueService) {
+  const add = vi.fn().mockResolvedValue({ id: 'added-job' });
+  const getJob = vi.fn();
+  vi.spyOn(service, 'getLifecycleQueue').mockReturnValue({ getJob, add } as never);
+  return { add, getJob };
 }
 
 describe('BridgeQueueService.enqueueSagaJob idempotency', () => {
@@ -32,9 +45,7 @@ describe('BridgeQueueService.enqueueSagaJob idempotency', () => {
 
   beforeEach(() => {
     ({ service, sealedEnvelope } = makeService());
-    add = vi.fn().mockResolvedValue({ id: 'added-job' });
-    getJob = vi.fn();
-    vi.spyOn(service, 'getLifecycleQueue').mockReturnValue({ getJob, add } as never);
+    ({ add, getJob } = stubLifecycleQueue(service));
   });
 
   it('idempotent: returns an existing completed job without remove + re-add', async () => {
@@ -151,5 +162,109 @@ describe('BridgeQueueService.enqueueSagaJob idempotency', () => {
     expect(result).toBe(existing);
     expect(existing.remove).not.toHaveBeenCalled();
     expect(add).not.toHaveBeenCalled();
+  });
+});
+
+describe('BridgeQueueService.hasActiveSagaJob', () => {
+  let service: BridgeQueueService;
+  let getJob: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    ({ service } = makeService());
+    ({ getJob } = stubLifecycleQueue(service));
+  });
+
+  it('is true when the job is active', async () => {
+    getJob.mockResolvedValue(makeExistingJob('active'));
+
+    await expect(service.hasActiveSagaJob('zone-1', 'inventory-cron-dev')).resolves.toBe(true);
+    expect(getJob).toHaveBeenCalledWith('inventory-cron-dev');
+  });
+
+  it('is false when the job exists but is not active', async () => {
+    getJob.mockResolvedValue(makeExistingJob('waiting'));
+
+    await expect(service.hasActiveSagaJob('zone-1', 'inventory-cron-dev')).resolves.toBe(false);
+  });
+
+  it('is false when the job is absent', async () => {
+    getJob.mockResolvedValue(undefined);
+
+    await expect(service.hasActiveSagaJob('zone-1', 'inventory-cron-dev')).resolves.toBe(false);
+  });
+});
+
+describe('BridgeQueueService.enqueueSagaJobOrCoalesce', () => {
+  let service: BridgeQueueService;
+  let jobLogWriter: { write: ReturnType<typeof vi.fn> };
+  let add: ReturnType<typeof vi.fn>;
+  let getJob: ReturnType<typeof vi.fn>;
+
+  const enqueue = (opts?: { idempotent?: boolean; coalesceKey?: string }) =>
+    service.enqueueSagaJobOrCoalesce('zone-1', 'inventory_collection', 'plan-1', { device_id: 1 }, 'dev', opts);
+
+  beforeEach(() => {
+    ({ service, jobLogWriter } = makeService());
+    ({ add, getJob } = stubLifecycleQueue(service));
+  });
+
+  it('reports coalesced when the existing job is active', async () => {
+    const existing = makeExistingJob('active');
+    getJob.mockResolvedValue(existing);
+
+    const result = await enqueue({ coalesceKey: 'inventory-cron-dev' });
+
+    expect(result).toEqual({ job: existing, coalesced: true });
+    expect(getJob).toHaveBeenCalledWith('inventory-cron-dev');
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it('reports coalesced when an idempotent enqueue returns the existing job', async () => {
+    const existing = makeExistingJob('waiting');
+    getJob.mockResolvedValue(existing);
+
+    const result = await enqueue({ idempotent: true });
+
+    expect(result).toEqual({ job: existing, coalesced: true });
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it('reports a fresh enqueue as not coalesced', async () => {
+    getJob.mockResolvedValue(undefined);
+
+    const result = await enqueue({ coalesceKey: 'inventory-cron-dev' });
+
+    expect(result).toEqual({ job: { id: 'added-job' }, coalesced: false });
+    expect(add).toHaveBeenCalledOnce();
+  });
+
+  it('hands the saga name to the job-log writer so suppression can key on it', async () => {
+    getJob.mockResolvedValue(undefined);
+
+    await enqueue({ coalesceKey: 'inventory-cron-dev' });
+
+    expect(jobLogWriter.write).toHaveBeenCalledExactlyOnceWith(
+      'zone-1',
+      'plan-1',
+      'info',
+      'Enqueued saga inventory_collection for device dev',
+      'BridgeQueueService',
+      'inventory_collection',
+    );
+  });
+
+  it('replaces a waiting job under the coalesce key and reports it as not coalesced', async () => {
+    const existing = makeExistingJob('waiting');
+    getJob.mockResolvedValue(existing);
+
+    const result = await enqueue({ coalesceKey: 'inventory-cron-dev' });
+
+    expect(result).toEqual({ job: { id: 'added-job' }, coalesced: false });
+    expect(existing.remove).toHaveBeenCalledOnce();
+    expect(add).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ jobId: 'inventory-cron-dev' }),
+    );
   });
 });

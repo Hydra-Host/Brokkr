@@ -33,7 +33,7 @@ These look like cleanup opportunities and are not. Each was added deliberately:
   `ip.vrfId ?? prefix.vrfId` and matches `gateway.vrfId` against it, so a NULL-VRF gateway on a
   VRF-attached prefix never matches and the device renders with no default route.
 - **`prefixContainsIpv4(cidr, host)` takes its arguments in the mirror order of the shared
-  `ipv4InCidr(ip, cidr)` it wraps.** Both spellings exist so a mis-transcribed call site fails to
+  `ipInCidr(ip, cidr)` it wraps.** Both spellings exist so a mis-transcribed call site fails to
   compile instead of silently resolving every prefix to nothing.
 - **`NetplanPhase` is declared on `netplan.service.ts`** and re-exported by the dispatcher.
   `common/redis/redis-keys.ts` keeps its own copy on purpose — it is a lower layer and must not

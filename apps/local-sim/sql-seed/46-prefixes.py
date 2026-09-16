@@ -192,8 +192,9 @@ def generate() -> str:
                 net = ipaddress.ip_network(cidr, strict=False)
                 fixture_ip_id = str(uuid.uuid5(LOCAL_NS, f"gateway-fixture-ip:{zid}"))
                 fixture_id = str(uuid.uuid5(LOCAL_NS, f"gateway-fixture:{zid}"))
+                # .1 is the reserved gateway hole; 45-zone puts bridge BMC hosts at .2-.9.
                 out.append(
-                    _gateway_ip_sql(fixture_ip_id, str(net.network_address + 2), net.prefixlen, zid),
+                    _gateway_ip_sql(fixture_ip_id, str(net.network_address + 1), net.prefixlen, zid),
                 )
                 out.append(_gateway_row_sql(fixture_id, fixture_ip_id, prefix_id))
     out.append("COMMIT;\n")

@@ -1,4 +1,4 @@
-import type { ZoneBridge } from '../contract';
+import type { BridgeHttpStatus, ZoneBridge } from '../contract';
 import type { PresenceRecord } from './leader.reader';
 import { epochMsFromFloatSeconds, isLeaderFlag, isPresenceFresh, parseInterfaces, parsePlugins } from './runtime-keys';
 
@@ -8,7 +8,12 @@ export interface ConfiguredBridge {
   grpcPort: number;
 }
 
-function fromPresence(record: PresenceRecord, configured: ConfiguredBridge | undefined, nowMs: number): ZoneBridge {
+function fromPresence(
+  record: PresenceRecord,
+  configured: ConfiguredBridge | undefined,
+  nowMs: number,
+  http: BridgeHttpStatus | null,
+): ZoneBridge {
   const registeredAtMs = epochMsFromFloatSeconds(record.hash.registered_at);
   return {
     instanceId: record.instanceId,
@@ -23,11 +28,12 @@ function fromPresence(record: PresenceRecord, configured: ConfiguredBridge | und
     plugins: parsePlugins(record.hash.active_plugins_json),
     port: configured?.port ?? null,
     grpcPort: configured?.grpcPort ?? null,
+    http,
     readError: null,
   };
 }
 
-function fromConfigOnly(configured: ConfiguredBridge): ZoneBridge {
+function fromConfigOnly(configured: ConfiguredBridge, http: BridgeHttpStatus | null): ZoneBridge {
   return {
     instanceId: configured.instanceId,
     expected: true,
@@ -41,6 +47,7 @@ function fromConfigOnly(configured: ConfiguredBridge): ZoneBridge {
     plugins: null,
     port: configured.port,
     grpcPort: configured.grpcPort,
+    http,
     readError: null,
   };
 }
@@ -51,12 +58,15 @@ export function buildBridgeInventory(
   presence: PresenceRecord[],
   configured: ConfiguredBridge[],
   nowMs: number,
+  http: ReadonlyMap<string, BridgeHttpStatus | null>,
 ): ZoneBridge[] {
   const byInstance = new Map(configured.map((bridge) => [bridge.instanceId, bridge]));
-  const rows = presence.map((record) => fromPresence(record, byInstance.get(record.instanceId), nowMs));
+  const rows = presence.map((record) =>
+    fromPresence(record, byInstance.get(record.instanceId), nowMs, http.get(record.instanceId) ?? null),
+  );
   const seen = new Set(rows.map((row) => row.instanceId));
   for (const bridge of configured) {
-    if (!seen.has(bridge.instanceId)) rows.push(fromConfigOnly(bridge));
+    if (!seen.has(bridge.instanceId)) rows.push(fromConfigOnly(bridge, http.get(bridge.instanceId) ?? null));
   }
   return rows.sort((a, b) => a.instanceId.localeCompare(b.instanceId));
 }

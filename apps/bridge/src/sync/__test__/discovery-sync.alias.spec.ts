@@ -4,12 +4,14 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { bridgeInstanceVersion } from '../../common/redis/redis-keys.js';
 import { resetLeaderConfigForTests } from '../../leader-election/leader-election.config.js';
 import type { DiscoveryImageSyncer, SyncVersionCache } from '../discovery-sync.js';
-import { resetDiscoverySyncQueueForTests, syncDiscoveryImages } from '../discovery-sync.js';
+import { discoverySyncVersionKey, resetDiscoverySyncQueueForTests, syncDiscoveryImages } from '../discovery-sync.js';
 import { resetPersistentStorageConfig, resetStorageConfig, resetSyncConfig } from '../sync.config.js';
 
-const VERSION_REDIS_KEY = 'bridge:bridge-test:version:brokkr-live-https';
+const ROOT_URL = 'https://assets.test/brokkr-live';
+const VERSION_REDIS_KEY = bridgeInstanceVersion('bridge-test', discoverySyncVersionKey('full', ROOT_URL));
 
 class FakeVersionCache implements SyncVersionCache {
   readonly store = new Map<string, string>();
@@ -49,6 +51,7 @@ describe('discovery sync aliases and serialization', () => {
     baseDir = await mkdtemp(join(tmpdir(), 'brokkr-discovery-sync-alias-'));
     process.env.PERSISTENT_STORAGE_PATH = baseDir;
     process.env.BRIDGE_HOSTNAME = 'bridge-test';
+    process.env.DISCOVERY_BASE_URL = ROOT_URL;
     resetPersistentStorageConfig();
     resetStorageConfig();
     resetSyncConfig();
@@ -59,6 +62,7 @@ describe('discovery sync aliases and serialization', () => {
     delete process.env.PERSISTENT_STORAGE_PATH;
     delete process.env.BRIDGE_HOSTNAME;
     delete process.env.BROKKR_LIVE_VERSION;
+    delete process.env.DISCOVERY_BASE_URL;
     resetPersistentStorageConfig();
     resetStorageConfig();
     resetSyncConfig();
@@ -73,7 +77,7 @@ describe('discovery sync aliases and serialization', () => {
   }
 
   async function addDiscoveryFile(): Promise<void> {
-    const directory = join(baseDir, 'brokkr-live', 'amd64');
+    const directory = join(baseDir, 'brokkr-live', 'full', 'amd64');
     await mkdir(directory, { recursive: true });
     await writeFile(join(directory, 'discovery.iso'), 'data');
   }

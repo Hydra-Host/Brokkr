@@ -61,7 +61,12 @@ async function runOp(
     iface,
     ...op,
   ];
-  return transportRun(argv, device.password, timeout, { jobId: device.jobId });
+  // privilege fallback off: an ADMINISTRATOR refusal is the symptom these probes look for, and a
+  // transparent OPERATOR retry would report lanplus healthy and skip the repair.
+  return transportRun(argv, device.password, timeout, {
+    jobId: device.jobId,
+    allowPrivilegeFallback: false,
+  });
 }
 
 function splitLines(s: string): string[] {

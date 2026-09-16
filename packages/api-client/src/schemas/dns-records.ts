@@ -1,20 +1,19 @@
+import { DnsDomainType, DnsRecordSource, DnsRecordType } from '@repo/database/enums';
 import { z } from 'zod';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const DnsDomainTypeSchema = z
-  .enum(['FORWARD', 'REVERSE'])
-  .describe('FORWARD for normal domains, REVERSE for in-addr.arpa');
+export const DnsDomainTypeSchema = zodEnumFromPrisma(DnsDomainType).describe(
+  'FORWARD for normal domains, REVERSE for in-addr.arpa',
+);
+export type { DnsDomainType };
 
-export type DnsDomainType = z.infer<typeof DnsDomainTypeSchema>;
+export const DnsRecordTypeSchema = zodEnumFromPrisma(DnsRecordType).describe('DNS resource record type');
+export type { DnsRecordType };
 
-export const DnsRecordTypeSchema = z.enum(['A', 'AAAA', 'PTR']).describe('DNS resource record type');
-
-export type DnsRecordType = z.infer<typeof DnsRecordTypeSchema>;
-
-export const DnsRecordSourceSchema = z
-  .enum(['MANUAL', 'AUTO'])
-  .describe('Whether the record was created manually or auto-derived from IPAM data');
-
-export type DnsRecordSource = z.infer<typeof DnsRecordSourceSchema>;
+export const DnsRecordSourceSchema = zodEnumFromPrisma(DnsRecordSource).describe(
+  'Whether the record was created manually or auto-derived from IPAM data',
+);
+export type { DnsRecordSource };
 
 /** RFC 952/1123 hostname labels separated by dots, optional trailing dot. Per-label max 63 chars (RFC 1035 s2.3.4). */
 export const DOMAIN_NAME_RE =

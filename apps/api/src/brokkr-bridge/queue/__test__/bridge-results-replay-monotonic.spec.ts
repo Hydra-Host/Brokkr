@@ -12,6 +12,7 @@ import { ZoneCryptoConfig } from 'src/zone-crypto/zone-crypto.config';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { DeviceRecordPublisher } from '../../device-record/device-record-publisher.service';
 import { DiscoveryIngressService } from '../../discovery/discovery-ingress.service';
+import { JobLogWriterService } from '../../job-logs/job-log-writer.service';
 import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../../lifecycle/qualify-orchestration.service';
 import { RenderRequestDispatcher } from '../../render-request/render-request-dispatcher.service';
@@ -40,7 +41,7 @@ describe('BridgeResultsConsumer — monotonic lifecycle application', () => {
   let consumer: BridgeResultsConsumer;
   let prisma: {
     device: { update: Mock; findUnique: Mock };
-    job: { findUnique: Mock };
+    job: { findUnique: Mock; updateMany: Mock };
     lifecycleJob: { findUnique: Mock };
     server: { findUnique: Mock; updateMany: Mock; count: Mock; createMany: Mock };
   };
@@ -53,14 +54,20 @@ describe('BridgeResultsConsumer — monotonic lifecycle application', () => {
     qualifyHandleFailure = vi.fn();
     prisma = {
       device: { update: vi.fn().mockResolvedValue({}), findUnique: vi.fn() },
-      job: { findUnique: vi.fn().mockResolvedValue(null) },
+      job: { findUnique: vi.fn().mockResolvedValue(null), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
       lifecycleJob: { findUnique: vi.fn().mockResolvedValue(null) },
-      server: { findUnique: vi.fn().mockResolvedValue(null), updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(1), createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      server: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        count: vi.fn().mockResolvedValue(1),
+        createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BridgeResultsConsumer,
+        { provide: JobLogWriterService, useValue: { write: vi.fn() } },
         {
           provide: SealedEnvelopeService,
           useValue: { isZoneEnrolled: vi.fn().mockResolvedValue(false), openBridgeToHub: vi.fn() },

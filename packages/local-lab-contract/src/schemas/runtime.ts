@@ -42,6 +42,29 @@ export const ZoneLeaderSchema = z.object({
 });
 export type ZoneLeader = z.infer<typeof ZoneLeaderSchema>;
 
+export const BridgeHttpStatusSchema = z.object({
+  answering: z
+    .boolean()
+    .nullable()
+    .describe(
+      'Whether the bridge reports itself answering DHCP (leader and hydrated). Null when its status route carried no standby-health block, which is not the same as false',
+    ),
+  pxePortBound: z
+    .boolean()
+    .nullable()
+    .describe(
+      'Whether the PXE boot-service socket is bound on the bridge. Null when the bridge did not report it, which is not the same as false',
+    ),
+  readinessErrorCount: z
+    .number()
+    .int()
+    .nullable()
+    .describe(
+      'Startup readiness errors the bridge counted. Null when the bridge did not report a count, which is not the same as zero',
+    ),
+});
+export type BridgeHttpStatus = z.infer<typeof BridgeHttpStatusSchema>;
+
 export const ZoneBridgeSchema = z.object({
   instanceId: z
     .string()
@@ -103,6 +126,9 @@ export const ZoneBridgeSchema = z.object({
     .int()
     .nullable()
     .describe('gRPC port agents dial back on. Null when the stack config does not declare it'),
+  http: BridgeHttpStatusSchema.nullable().describe(
+    'What the bridge reported over its own HTTP status route: DHCP answering, the PXE boot-service socket, and the startup readiness error count. Null when the route could not be read, which is not the same as false or zero',
+  ),
   readError: z
     .string()
     .nullable()

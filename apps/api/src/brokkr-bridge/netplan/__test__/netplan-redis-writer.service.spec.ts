@@ -68,6 +68,11 @@ describe('NetplanRedisWriterService', () => {
     expect(deleteKeys).toHaveBeenCalledWith('1-1-1', [netplanConfig(DEVICE_UUID, 'deploy')]);
   });
 
+  it('deletes the live netplan key via the atom writer', async () => {
+    await service.deleteLive('1-1-1', DEVICE_UUID);
+    expect(deleteKeys).toHaveBeenCalledWith('1-1-1', [netplanConfig(DEVICE_UUID, 'live')]);
+  });
+
   it('surfaces a contextual error when writeAtomJson rejects', async () => {
     writeAtomJson.mockRejectedValueOnce(new Error('redis down'));
     await expect(service.set('1-1-1', DEVICE_UUID, 'live', 'network:\n  version: 2\n')).rejects.toThrow('redis down');
@@ -76,6 +81,11 @@ describe('NetplanRedisWriterService', () => {
   it('surfaces a contextual error when deleteKeys rejects', async () => {
     deleteKeys.mockRejectedValueOnce(new Error('redis down'));
     await expect(service.deleteDeploy('1-1-1', DEVICE_UUID)).rejects.toThrow('redis down');
+  });
+
+  it('surfaces a contextual error when deleteKeys rejects for the live key', async () => {
+    deleteKeys.mockRejectedValueOnce(new Error('redis down'));
+    await expect(service.deleteLive('1-1-1', DEVICE_UUID)).rejects.toThrow('redis down');
   });
 
   it('surfaces the write result (no throw) when writeAtomJson reports a stale envelope', async () => {

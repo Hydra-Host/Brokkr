@@ -1,8 +1,10 @@
+import { RackFace } from '@repo/database/enums';
 import { z } from 'zod';
+import { zodEnumFromPrisma } from './prisma-enum';
 
 export const RackElevationUnitSchema = z.object({
   unit: z.number().describe('Rack unit number'),
-  face: z.enum(['FRONT', 'REAR']).describe('Rack face'),
+  face: zodEnumFromPrisma(RackFace).describe('Rack face'),
   occupied: z.boolean().describe('Whether this unit is occupied'),
   device: z
     .object({
@@ -17,6 +19,6 @@ export const RackElevationUnitSchema = z.object({
 export type RackElevationUnit = z.infer<typeof RackElevationUnitSchema>;
 
 export const RackElevationQuerySchema = z.object({
-  face: z.enum(['FRONT', 'REAR']).optional().describe('Filter by rack face'),
+  face: zodEnumFromPrisma(RackFace).optional().describe('Filter by rack face'),
 });
 export type RackElevationQuery = z.infer<typeof RackElevationQuerySchema>;

@@ -13,6 +13,7 @@ import { ZoneCryptoConfig } from 'src/zone-crypto/zone-crypto.config';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { DeviceRecordPublisher } from '../../device-record/device-record-publisher.service';
 import { DiscoveryIngressService } from '../../discovery/discovery-ingress.service';
+import { JobLogWriterService } from '../../job-logs/job-log-writer.service';
 import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../../lifecycle/qualify-orchestration.service';
 import { RenderRequestDispatcher } from '../../render-request/render-request-dispatcher.service';
@@ -69,6 +70,7 @@ describe('BridgeResultsConsumer — brokkr.bridge_results.processed outcomes', (
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         { provide: BridgeResultsConsumer, useClass: TestableConsumer },
+        { provide: JobLogWriterService, useValue: { write: vi.fn() } },
         {
           provide: SealedEnvelopeService,
           useValue: { isZoneEnrolled: vi.fn().mockResolvedValue(true), openBridgeToHub },
@@ -78,6 +80,7 @@ describe('BridgeResultsConsumer — brokkr.bridge_results.processed outcomes', (
           useValue: {
             device: { findUnique: deviceFindUnique, update: deviceUpdate },
             job: { findUnique: jobFindUnique },
+            lifecycleJob: { findUnique: vi.fn().mockResolvedValue(null) },
             server: {
               findUnique: serverFindUnique,
               updateMany: serverUpdateMany,

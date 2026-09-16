@@ -69,11 +69,11 @@ describe('HTTPS sync retry loop', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-retry', fetchFn);
-    const synced = await service.syncDiscoveryImages();
+    const synced = await service.syncDiscoveryImages('full');
 
     expect(synced).toBe(1);
     expect(manifestCalls).toBe(3);
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     expect(await readFile(join(archDir, 'f.iso'), 'utf-8')).toBe(isoContent);
   });
 
@@ -87,7 +87,7 @@ describe('HTTPS sync retry loop', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-retry', fetchFn);
-    const synced = await service.syncDiscoveryImages();
+    const synced = await service.syncDiscoveryImages('full');
 
     expect(synced).toBe(0);
     expect(manifestCalls).toBe(6);
@@ -103,7 +103,7 @@ describe('HTTPS sync retry loop', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-retry', fetchFn);
-    const synced = await service.syncDiscoveryImages();
+    const synced = await service.syncDiscoveryImages('full');
 
     expect(synced).toBe(0);
     expect(manifestCalls).toBe(6);
@@ -119,7 +119,7 @@ describe('HTTPS sync retry loop', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-retry', fetchFn);
-    await expect(service.syncDiscoveryImages()).rejects.toThrow(/not a JSON object/);
+    await expect(service.syncDiscoveryImages('full')).rejects.toThrow(/not a JSON object/);
 
     expect(manifestCalls).toBe(1);
   });
@@ -140,11 +140,11 @@ describe('HTTPS sync retry loop', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-retry', fetchFn);
-    const synced = await service.syncDiscoveryImages();
+    const synced = await service.syncDiscoveryImages('full');
 
     expect(synced).toBe(1);
     expect(downloadCalls).toBe(2);
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     expect(await readFile(join(archDir, 'f.iso'), 'utf-8')).toBe(isoContent);
   });
 
@@ -162,7 +162,7 @@ describe('HTTPS sync retry loop', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-retry', fetchFn);
-    await expect(service.syncDiscoveryImages()).rejects.toThrow('socket hang up');
+    await expect(service.syncDiscoveryImages('full')).rejects.toThrow('socket hang up');
 
     expect(downloadCalls).toBe(3);
   });
@@ -182,7 +182,7 @@ describe('HTTPS sync retry loop', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-retry', fetchFn);
-    await expect(service.syncDiscoveryImages()).rejects.toThrow(/expected_size must be a number/);
+    await expect(service.syncDiscoveryImages('full')).rejects.toThrow(/expected_size must be a number/);
 
     expect(downloadCalls).toBe(1);
   });
@@ -231,7 +231,7 @@ describe('HTTPS sync per-chunk read timeout', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-timeout', fetchFn);
-    await expect(service.syncDiscoveryImages()).resolves.toBe(0);
+    await expect(service.syncDiscoveryImages('full')).resolves.toBe(0);
 
     expect(cancelled).toBe(true);
     expect(cancelReason).toBeInstanceOf(Error);
@@ -307,7 +307,7 @@ describe('HTTPS sync download stall vs. overall timeout budgets', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-stall', fetchFn);
-    await expect(service.syncDiscoveryImages()).rejects.toThrow(/Read timeout after 0s/);
+    await expect(service.syncDiscoveryImages('full')).rejects.toThrow(/Read timeout after 0s/);
 
     expect(cancelled).toBe(true);
     expect((cancelReason as Error).message).toBe('read timeout');
@@ -326,7 +326,7 @@ describe('HTTPS sync download stall vs. overall timeout budgets', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-deadline', fetchFn);
-    await expect(service.syncDiscoveryImages()).rejects.toThrow(/Download timeout after 0s/);
+    await expect(service.syncDiscoveryImages('full')).rejects.toThrow(/Download timeout after 0s/);
   });
 
   it('completes a slow-but-steady download whose chunks each arrive within the stall budget', async () => {
@@ -343,10 +343,10 @@ describe('HTTPS sync download stall vs. overall timeout budgets', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-steady', fetchFn);
-    const synced = await service.syncDiscoveryImages();
+    const synced = await service.syncDiscoveryImages('full');
 
     expect(synced).toBe(1);
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     expect(await readFile(join(archDir, 'f.iso'), 'utf-8')).toBe(isoContent);
   });
 });

@@ -56,6 +56,10 @@ export class RedisService implements OnApplicationShutdown {
     return this.client.rpush(key, values, jobId);
   }
 
+  async xadd(key: string, fields: Record<string, string>, maxlen?: number, jobId?: string): Promise<string> {
+    return this.client.xadd(key, fields, maxlen, jobId);
+  }
+
   async lrange(key: string, start: number, stop: number, jobId?: string): Promise<string[]> {
     return this.client.lrange(key, start, stop, jobId);
   }

@@ -15,14 +15,14 @@ import { FleetVerifyService } from '../fleet-verify.service';
 
 const HEALTHY = JSON.stringify({
   status: 'healthy',
-  mode: 'vm',
+  planes: { vm: true, baremetal: false },
   findings: [],
   summary: { checked: 2, ok: 2, findings: 0 },
 });
 
 const FINDINGS = JSON.stringify({
   status: 'findings',
-  mode: 'vm',
+  planes: { vm: true, baremetal: false },
   findings: [{ node: 'cpu-1', kind: 'ipmi-sim-down', healable: true, detail: 'ipmi_sim (BMC) is down' }],
   summary: { checked: 2, ok: 1, findings: 1 },
 });
@@ -90,6 +90,48 @@ describe('FleetVerifyService.verify', () => {
     expect(execFileMock).toHaveBeenCalledTimes(1);
   });
 
+  it('joins concurrent verify calls onto one python spawn', async () => {
+    let pendingCb: ((e: unknown, r: unknown) => void) | null = null;
+    execFileMock.mockImplementation((_c: unknown, _a: unknown, _o: unknown, cb: (e: unknown, r: unknown) => void) => {
+      pendingCb = cb;
+    });
+    const svc = makeVerify(makeRunner());
+
+    const first = svc.verify();
+    const second = svc.verify();
+    await vi.waitFor(() => expect(pendingCb).not.toBeNull());
+    pendingCb!(null, { stdout: HEALTHY, stderr: '' });
+
+    const [a, b] = await Promise.all([first, second]);
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+    expect(a).toBe(b);
+  });
+
+  it('spawns python again for a call past the 5s TTL once the first run has resolved', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      execFileMock.mockImplementation((_c, _a, _o, cb) => cb(null, { stdout: HEALTHY, stderr: '' }));
+      const svc = makeVerify(makeRunner());
+      await svc.verify();
+      vi.setSystemTime(Date.now() + 5_001);
+      await svc.verify();
+      expect(execFileMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('hands the verifier the probe budget and gives the process longer than that to report', async () => {
+    execFileMock.mockImplementation((_c, _a, _o, cb) => cb(null, { stdout: HEALTHY, stderr: '' }));
+    await makeVerify(makeRunner()).verify();
+
+    const [, argv, opts] = execFileMock.mock.calls[0];
+    const budgetAt = argv.indexOf('--probe-budget-seconds');
+    expect(budgetAt).toBeGreaterThanOrEqual(0);
+    expect(argv[budgetAt + 1]).toBe('120');
+    expect(opts.timeout).toBeGreaterThan(120_000);
+  });
+
   it('throws when the engine emits malformed JSON', async () => {
     execFileMock.mockImplementation((_c, _a, _o, cb) => cb(null, { stdout: 'not json', stderr: '' }));
     await expect(makeVerify(makeRunner()).verify()).rejects.toThrow();
@@ -144,6 +186,20 @@ describe('FleetVerifyService.heal', () => {
 
     expect(report.status).toBe('healthy');
     expect(execFileMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('hands the healer the same probe budget as verify', async () => {
+    const runner = makeRunner();
+    const svc = makeVerify(runner);
+
+    svc.heal();
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(runner.spawnPty).toHaveBeenCalledWith(
+      expect.anything(),
+      'python',
+      expect.arrayContaining(['--probe-budget-seconds', '120']),
+    );
   });
 
   it('propagates a 409 when the fleet lease is already held', () => {

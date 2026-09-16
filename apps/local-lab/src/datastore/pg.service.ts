@@ -2,8 +2,9 @@ import { BadRequestException, Injectable, Logger, OnModuleDestroy } from '@nestj
 import { Pool, types } from 'pg';
 import type { z } from 'zod';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { type LenientRead, readRows } from '../common/lenient-rows';
+import { isSecretKey, maskEmbeddedDsns, REDACTED, redactPayload } from '../common/redact';
 import type { DbMigrationRow, PgColumn, PgResult, PgTable } from '../contract';
 import { resolvePgUrl } from '../ports';
 
@@ -18,6 +19,36 @@ export interface DeviceStatusRow {
 export interface DevicesStatusRead {
   byName: Map<string, DeviceStatusRow>;
   failed: boolean;
+}
+
+interface PgFieldMeta {
+  name: string;
+  dataTypeID: number;
+  tableID: number;
+  columnID: number;
+}
+
+/** Credentials the shared key heuristic cannot see because the column reads as ordinary — an api key
+ *  stored as `value`, a sealed envelope as `ciphertext`. Keyed by the name Postgres holds. */
+const SECRET_COLUMNS_BY_TABLE = new Map<string, ReadonlySet<string>>([
+  ['Account', new Set(['accessToken', 'refreshToken', 'idToken', 'password'])],
+  ['apikey', new Set(['key'])],
+  ['DeviceSecret', new Set(['ciphertext', 'ephPub', 'tag'])],
+  ['DeviceToken', new Set(['tokenHash'])],
+  ['OrganizationApiKey', new Set(['value'])],
+  ['Session', new Set(['token'])],
+  ['SshKeys', new Set(['key'])],
+  ['TwoFactor', new Set(['secret', 'backupCodes'])],
+  ['Verification', new Set(['value'])],
+  ['Webhook', new Set(['secret'])],
+  ['ZoneRedisCredential', new Set(['passwordHash'])],
+  ['ZoneRegistrationToken', new Set(['tokenHash'])],
+]);
+
+function isSecretColumn(table: string | undefined, column: string): boolean {
+  if (isSecretKey(column)) return true;
+  if (table === undefined) return false;
+  return SECRET_COLUMNS_BY_TABLE.get(table)?.has(column) === true;
 }
 
 // Prisma writes naive timestamp columns in UTC, but node-postgres parses them in the process's
@@ -52,10 +83,7 @@ export class PgService implements OnModuleDestroy {
 
   private async readTx<T>(
     fn: (
-      run: (
-        sql: string,
-        params?: unknown[],
-      ) => Promise<{ rows: Record<string, unknown>[]; fields: { name: string; dataTypeID: number }[] }>,
+      run: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[]; fields: PgFieldMeta[] }>,
     ) => Promise<T>,
   ): Promise<T> {
     const client = await this.getPool().connect();
@@ -64,7 +92,15 @@ export class PgService implements OnModuleDestroy {
       await client.query(`SET LOCAL statement_timeout = ${PgService.STATEMENT_TIMEOUT_MS}`);
       const run = async (sql: string, params?: unknown[]) => {
         const res = await client.query<Record<string, unknown>>({ text: sql, values: params });
-        return { rows: res.rows, fields: res.fields.map((f) => ({ name: f.name, dataTypeID: f.dataTypeID })) };
+        return {
+          rows: res.rows,
+          fields: res.fields.map((f) => ({
+            name: f.name,
+            dataTypeID: f.dataTypeID,
+            tableID: f.tableID,
+            columnID: f.columnID,
+          })),
+        };
       };
       const out = await fn(run);
       await client.query('ROLLBACK');
@@ -91,6 +127,39 @@ export class PgService implements OnModuleDestroy {
     const { rows } = await run('SELECT oid, format_type(oid, NULL) AS name FROM pg_type WHERE oid = ANY($1)', [uniq]);
     for (const r of rows) map.set(Number(r.oid), String(r.name));
     return map;
+  }
+
+  /** Which of these result columns must never leave the box. The pin is tested against the SOURCE
+   *  attribute pg names per field, never the output name — an alias must not walk a secret past it. */
+  private async secretFieldNames(
+    run: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>,
+    fields: PgFieldMeta[],
+  ): Promise<Set<string>> {
+    // 0 is pg's "computed, no source relation" — the output name is the only signal left there
+    const oids = [...new Set(fields.map((f) => f.tableID).filter((oid) => Number.isInteger(oid) && oid > 0))];
+    const relNames = new Map<number, string>();
+    const attNames = new Map<string, string>();
+    if (oids.length > 0) {
+      const { rows } = await run(
+        `SELECT c.oid AS reloid, c.relname, a.attnum, a.attname
+           FROM pg_class c
+           JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+          WHERE c.oid = ANY($1)`,
+        [oids],
+      );
+      for (const r of rows) {
+        const reloid = Number(r.reloid);
+        relNames.set(reloid, String(r.relname));
+        attNames.set(`${reloid}:${Number(r.attnum)}`, String(r.attname));
+      }
+    }
+    const secret = new Set<string>();
+    for (const f of fields) {
+      // an alias that itself reads as secret is masked too — over-masking is free, under-masking is not
+      const source = attNames.get(`${f.tableID}:${f.columnID}`) ?? f.name;
+      if (isSecretKey(f.name) || isSecretColumn(relNames.get(f.tableID), source)) secret.add(f.name);
+    }
+    return secret;
   }
 
   async listTables(): Promise<PgTable[]> {
@@ -181,9 +250,10 @@ export class PgService implements OnModuleDestroy {
         run,
         fields.map((f) => f.dataTypeID),
       );
+      const secret = await this.secretFieldNames(run, fields);
       return {
         columns: fields.map((f) => ({ name: f.name, type: typeNames.get(f.dataTypeID) ?? `oid:${f.dataTypeID}` })),
-        rows: page.map((r) => normalizeRow(r)),
+        rows: page.map((r) => normalizeRow(r, secret)),
         rowCount: page.length,
         truncated,
       };
@@ -255,7 +325,10 @@ export class PgService implements OnModuleDestroy {
     schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   ): Promise<LenientRead<T>> {
     const rows = await this.readTx(async (run) => (await run(sql, params)).rows);
-    return readRows(schema, rows.map(normalizeRow));
+    return readRows(
+      schema,
+      rows.map((r) => normalizeRow(r)),
+    );
   }
 
   async runQuery(sql: string): Promise<PgResult> {
@@ -266,9 +339,10 @@ export class PgService implements OnModuleDestroy {
         run,
         fields.map((f) => f.dataTypeID),
       );
+      const secret = await this.secretFieldNames(run, fields);
       return {
         columns: fields.map((f) => ({ name: f.name, type: typeNames.get(f.dataTypeID) ?? `oid:${f.dataTypeID}` })),
-        rows: rows.map((r) => normalizeRow(r)),
+        rows: rows.map((r) => normalizeRow(r, secret)),
         rowCount: rows.length,
         truncated: false,
       };
@@ -308,15 +382,34 @@ function toUnixMs(value: unknown): number | null {
 
 export class BadInput extends BadRequestException {}
 
-function normalizeRow(row: Record<string, unknown>): Record<string, unknown> {
+function normalizeRow(row: Record<string, unknown>, secret?: ReadonlySet<string>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
-    if (typeof v === 'bigint') out[k] = v.toString();
+    // NULL stays NULL: masking it would make "unset" and "hidden" read the same
+    if (secret?.has(k) && v !== null && v !== undefined) out[k] = REDACTED;
+    else if (typeof v === 'bigint') out[k] = v.toString();
     else if (Buffer.isBuffer(v)) out[k] = `\\x${v.toString('hex')}`;
+    else if (secret !== undefined) out[k] = maskCell(v);
     else out[k] = v;
   }
   return out;
 }
+
+/** A credential also rides in the VALUE under an ordinary column — a dsn in a config string, a token
+ *  under a secret-named key of a jsonb payload. Only the browser paths pass a mask. */
+function maskCell(value: unknown): unknown {
+  if (typeof value === 'string') return maskEmbeddedDsns(value);
+  // json/jsonb arrives as a plain value; a Date or any other class instance must pass through whole
+  if (Array.isArray(value) || (value !== null && typeof value === 'object' && hasPlainPrototype(value))) {
+    return redactPayload(value);
+  }
+  return value;
+}
+
+const hasPlainPrototype = (value: object): boolean => {
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
 
 export function assertReadOnlySql(raw: string): void {
   const noComments = raw.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');

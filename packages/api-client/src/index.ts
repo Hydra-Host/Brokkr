@@ -192,6 +192,15 @@ export {
 } from './schemas/inventory';
 
 export {
+  LifecycleJobKindSchema,
+  LifecycleJobPhaseSchema,
+  LifecycleJobSummarySchema,
+  ListLifecycleJobsQuerySchema,
+  type LifecycleJobSummary,
+  type ListLifecycleJobsQuery,
+} from './schemas/jobs';
+
+export {
   CreateInvitationRequestSchema,
   CreateOrganizationRequestSchema,
   InvitationIdParamsSchema,
@@ -255,12 +264,16 @@ export {
   CustomizationOptionRelationSchema,
   CustomizationOptionSchema,
   LAYER_DISPLAY_ORDER,
+  LayerRelationTypeSchema,
+  LayerSelectionTypeSchema,
   compareCustomizationLayers,
   type BaseLayer,
   type CustomizationLayer,
   type CustomizationOption,
   type CustomizationOptionAvailability,
   type CustomizationOptionRelation,
+  type LayerRelationType,
+  type LayerSelectionType,
 } from './schemas/customizations';
 
 export {
@@ -269,11 +282,13 @@ export {
   ExportLogsJobTypeSchema,
   GetLogsRequestSchema,
   InterruptibleClaimSchema,
+  InterruptibleClaimStatusSchema,
   PowerControlDeploymentRequestSchema,
   PowerCycleDeploymentRequestSchema,
   RebootDeploymentRequestSchema,
   ReprovisionDeploymentRequestSchema,
   ReprovisionDiskLayoutSchema,
+  RescueModeActionResponseSchema,
   SolLogEntrySchema,
   SolLogsResponseSchema,
   UpdateDeploymentRequestSchema,
@@ -282,11 +297,13 @@ export {
   type ExportLogsJobType,
   type GetLogsRequest,
   type InterruptibleClaim,
+  type InterruptibleClaimStatus,
   type PowerControlDeploymentRequest,
   type PowerCycleDeploymentRequest,
   type RebootDeploymentRequest,
   type ReprovisionDeploymentRequest,
   type ReprovisionDiskLayout,
+  type RescueModeActionResponse,
   type SolLogEntry,
   type SolLogsResponse,
   type UpdateDeploymentRequest,
@@ -302,6 +319,19 @@ export {
   type MoveDeploymentsToProjectRequest,
   type UpdateDeploymentProjectRequest,
 } from './schemas/deployments-projects';
+
+export {
+  DeviceJobSchema,
+  DeviceJobsResponseSchema,
+  JobLogEntrySchema,
+  JobLogsQuerySchema,
+  JobLogsResponseSchema,
+  type DeviceJob,
+  type DeviceJobsResponse,
+  type JobLogEntry,
+  type JobLogsQuery,
+  type JobLogsResponse,
+} from './schemas/job-logs';
 
 export {
   BillingFrequencySchema,
@@ -329,6 +359,7 @@ export {
   ZoneContactTypeSchema,
   ZoneDhcpPrefixSummarySchema,
   ZoneListItemSchema,
+  ZoneNetworkTypeSchema,
   ZoneRedisCredentialSchema,
   ZoneSchema,
   ZoneVrrpPrefixSummarySchema,
@@ -346,6 +377,7 @@ export {
   type ZoneContactType,
   type ZoneDhcpPrefixSummary,
   type ZoneListItem,
+  type ZoneNetworkType,
   type ZoneRedisCredential,
   type ZoneVrrpPrefixSummary,
 } from './schemas/zones';
@@ -362,6 +394,20 @@ export {
   type DcimDeviceTestRunsListResponse,
   type DcimDeviceTestRunsQuery,
 } from './schemas/dcim-test-runs';
+
+export {
+  DiscoveryIssuePhaseSchema,
+  DiscoveryIssueSeveritySchema,
+  DiscoveryRunIssueSchema,
+  DiscoveryRunSchema,
+  DiscoveryRunStatusSchema,
+  DiscoveryRunsListResponseSchema,
+  DiscoveryRunsQuerySchema,
+  type DiscoveryRun,
+  type DiscoveryRunIssue,
+  type DiscoveryRunsListResponse,
+  type DiscoveryRunsQuery,
+} from './schemas/discovery-runs';
 
 export {
   CommissionServerRequestSchema,
@@ -433,6 +479,7 @@ export {
   AllocateNextPrefixRequestSchema,
   AssignedObjectTypeSchema,
   BondParametersSchema,
+  BootReadinessSeveritySchema,
   CreateIpAddressRequestSchema,
   CreateIpRangeRequestSchema,
   CreatePrefixRequestSchema,
@@ -458,6 +505,9 @@ export {
   IpamRoleSchema,
   IpxeBuildTargetSchema,
   MAX_DHCP_DNS_SERVERS,
+  PrefixBootReadinessFindingSchema,
+  PrefixBootReadinessQuerySchema,
+  PrefixBootReadinessSchema,
   PrefixDhcpConfigSchema,
   PrefixDhcpServingSchema,
   PrefixListQuerySchema,
@@ -485,6 +535,7 @@ export {
   VrrpBindingSchema,
   type AllocateNextPrefixRequest,
   type AssignedObjectType,
+  type BootReadinessSeverity,
   type CreateIpAddressRequest,
   type CreateIpRangeRequest,
   type CreatePrefixRequest,
@@ -508,6 +559,9 @@ export {
   type Prefix as IpamPrefix,
   type IpamRole,
   type IpxeBuildTarget,
+  type PrefixBootReadiness,
+  type PrefixBootReadinessFinding,
+  type PrefixBootReadinessQuery,
   type PrefixDhcpConfig,
   type PrefixDhcpServing,
   type PrefixListQuery,

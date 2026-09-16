@@ -39,7 +39,9 @@ def test_cmd_init_records_typed_steps_in_order(monkeypatch):
         fleet,
         "load_fleet",
         lambda: types.SimpleNamespace(
-            mode="vm",
+            has_vm=True,
+            has_bm=False,
+            bm_node_names=frozenset(),
             nodes=[one],
             bm_nodes=[],
             zone_port_ordinal=lambda _z: 0,
@@ -70,7 +72,9 @@ def test_cmd_init_records_error_on_failure_then_reraises(monkeypatch):
         fleet,
         "load_fleet",
         lambda: types.SimpleNamespace(
-            mode="vm",
+            has_vm=True,
+            has_bm=False,
+            bm_node_names=frozenset(),
             nodes=[one],
             bm_nodes=[],
             zone_port_ordinal=lambda _z: 0,
@@ -146,7 +150,9 @@ def test_cmd_init_stamps_the_accelerator_on_its_first_record(monkeypatch):
         fleet,
         "load_fleet",
         lambda: types.SimpleNamespace(
-            mode="vm",
+            has_vm=True,
+            has_bm=False,
+            bm_node_names=frozenset(),
             nodes=[one],
             bm_nodes=[],
             zone_port_ordinal=lambda _z: 0,
@@ -182,7 +188,6 @@ def test_vm_ops_up_stamps_the_accelerator_on_its_first_record(monkeypatch):
     monkeypatch.setattr(fleet, "effective_bmc_ip", lambda *a, **k: "127.0.0.1", raising=False)
     one = types.SimpleNamespace(name="cpu-1", zone="sim-zone")
     target = types.SimpleNamespace(
-        mode="vm",
         nodes=[one],
         network=types.SimpleNamespace(dhcp=False, bmc_cidr="192.168.105.0/24"),
     )

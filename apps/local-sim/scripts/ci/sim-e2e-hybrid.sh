@@ -27,9 +27,8 @@ AT_REST="${BRIDGE_AT_REST_KEY:-I1GOxiD9hSt9QvHUdylUSXKW/WHM6PF2dUCovWeSTXg=}"
 HUB_PRIVATE_KEY="${SIM_HUB_PRIVATE_KEY:-CLgn641z7sEoBORwcShY+RdjAUnrluM/y+dzOa3oEko=}"
 # SSH key the bridge bakes into brokkr-live + the ts-e2e probe uses to reach the VM.
 SIM_SSH_KEY="${SIM_SSH_KEY:-${HOME}/.ssh/id_ed25519}"
-# Discovery-image sync source (provision mode only). The '-light' build is
-# arm64-only, so amd64 CI hosts must use the full 'brokkr-live' set; both are
-# published under brokkr.assets.hydra.host. Smoke mode never syncs.
+# Discovery-image sync source (provision mode only): the full 'brokkr-live' set;
+# both flavors are published per arch under brokkr.assets.hydra.host.
 LIVE_VERSION="${SIM_BROKKR_LIVE_VERSION:-1.1.8}"
 DISCOVERY_BASE_URL="${SIM_DISCOVERY_BASE_URL:-https://brokkr.assets.hydra.host/brokkr-live}"
 OS_LAYER_URL="${SIM_OS_LAYER_URL:-https://brokkr.assets.hydra.host/os-layers/blobs}"

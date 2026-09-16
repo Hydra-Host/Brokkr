@@ -10,7 +10,7 @@ export class StacksController {
   constructor(private readonly stacks: StacksService) {}
 
   @TsRestHandler(contract.listStacks)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'admin' })
   list() {
     return tsRestHandler(contract.listStacks, async () => ({
       status: 200 as const,

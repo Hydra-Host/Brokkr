@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   bootstrapLockKey,
+  dhcpPxeScanPattern,
+  discoveryPendingScanPattern,
   epochMsFromFloatSeconds,
   instanceIdFromKey,
   instanceScanPattern,
+  ipxeChainHitScanPattern,
   isLeaderFlag,
   isPresenceFresh,
   leaderKey,
@@ -12,6 +15,8 @@ import {
   parsePlugins,
   prefixIdFromVrrpKey,
   PRESENCE_FRESH_SECONDS,
+  PxeDecisionHashSchema,
+  syncVersionScanPattern,
   vrrpScanPattern,
   workDispatchPattern,
   workProgressPattern,
@@ -29,6 +34,23 @@ describe('key construction', () => {
     expect(bootstrapLockKey(ZONE)).toBe(`${ZONE}:lock:zone_crypto:bootstrap_lock`);
     expect(workDispatchPattern(ZONE)).toBe(`${ZONE}:work:dispatch:*`);
     expect(workProgressPattern(ZONE)).toBe(`${ZONE}:work:progress:*`);
+  });
+
+  it('matches a boot trail under any zone by the lowercase colon-separated mac', () => {
+    expect(dhcpPxeScanPattern('AA-BB-CC-DD-EE-01')).toBe('*:dhcp:pxe:aa:bb:cc:dd:ee:01');
+    expect(discoveryPendingScanPattern(' aa:bb:cc:dd:ee:01 ')).toBe('*:discovery:pending:aa:bb:cc:dd:ee:01');
+    expect(ipxeChainHitScanPattern('AA-BB-CC-DD-EE-01')).toBe('*:ipxe:chain:aa:bb:cc:dd:ee:01');
+  });
+
+  it('matches a spoke sync version key under any zone by its instance id', () => {
+    expect(syncVersionScanPattern('spoke-a')).toBe('*:bridge:spoke-a:version:brokkr-live-https*');
+  });
+
+  it('matches the legacy single key and the per-flavor keys', () => {
+    const glob = syncVersionScanPattern('spoke-a');
+    const re = new RegExp(`^${glob.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '.*')}$`);
+    expect(re.test('z1:bridge:spoke-a:version:brokkr-live-https')).toBe(true);
+    expect(re.test('z1:bridge:spoke-a:version:brokkr-live-https:light:0a1b2c3d')).toBe(true);
   });
 
   it('recovers the instance id from a presence key', () => {
@@ -103,5 +125,16 @@ describe('embedded json fields', () => {
   it('reports malformed json as undetermined rather than empty', () => {
     expect(parseInterfaces('{')).toBeNull();
     expect(parseInterfaces('[{"iface":"eth0"}]')).toBeNull();
+  });
+});
+
+describe('PxeDecisionHashSchema', () => {
+  it('accepts the outcome vocabulary and an epoch-ms string', () => {
+    expect(PxeDecisionHashSchema.parse({ outcome: 'no-subnet', at: '1700' })).toEqual({ outcome: 'no-subnet', at: '1700' });
+  });
+
+  it('rejects an unknown outcome or a time that is not an integer string', () => {
+    expect(PxeDecisionHashSchema.safeParse({ outcome: 'bogus', at: '1700' }).success).toBe(false);
+    expect(PxeDecisionHashSchema.safeParse({ outcome: 'offered', at: '17.5' }).success).toBe(false);
   });
 });

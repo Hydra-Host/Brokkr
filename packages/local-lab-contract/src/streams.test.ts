@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { LogLineEventSchema, parseSseEvent, StreamDoneEventSchema, streamPaths } from './streams';
+import { LogLineEventSchema, parseSseEvent, StreamDoneEventSchema, streamPaths, WS_TOKEN_PROTOCOL } from './streams';
 
 describe('streamPaths', () => {
   it('builds each SSE/WS path', () => {
@@ -17,6 +17,12 @@ describe('streamPaths', () => {
     expect(streamPaths.run('a/b')).toBe('/api/runs/a%2Fb/stream');
     expect(streamPaths.testEvents('a/b')).toBe('/api/tests/runs/a%2Fb/events/stream');
     expect(streamPaths.stackInitLog('../../etc/passwd')).toBe('/api/stack/init/..%2F..%2Fetc%2Fpasswd/log');
+  });
+});
+
+describe('WS_TOKEN_PROTOCOL', () => {
+  it('is the marker the lab and the browser both offer on a ws upgrade', () => {
+    expect(WS_TOKEN_PROTOCOL).toBe('lab.token');
   });
 });
 

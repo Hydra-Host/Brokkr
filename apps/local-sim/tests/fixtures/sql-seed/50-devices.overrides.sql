@@ -5,32 +5,38 @@
 BEGIN;
 
 ALTER TABLE "Device" DISABLE TRIGGER device_role_write_once;
+INSERT INTO "Tag" (id, name, slug, color, "organizationId", "updatedAt")
+VALUES ('a69af7e3-3690-5777-9f88-65b3ea6e0e5f', 'discovery-light', 'discovery-light', '#38bdf8',
+    '00000000-0000-0000-0000-000000000000', NOW())
+ON CONFLICT ("organizationId", name) DO UPDATE SET
+    slug = EXCLUDED.slug, color = EXCLUDED.color, "updatedAt" = NOW();
 -- cpu-1 id=00000000-0000-0000-0000-000000000001 ipmi=192.168.105.88 primary=192.168.200.77 net=NAT arch=amd64 zone=00000000-0000-0000-0000-111111111111
 UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()
 WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' AND name = 'cpu-1'
-  AND id <> '00000000-0000-0000-0000-000000000001' AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
+  AND id <> '00000000-0000-0000-0000-000000000001' AND "supplierId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
 DELETE FROM "DeviceSecret"
 WHERE "deviceId" = '00000000-0000-0000-0000-000000000001' AND "zoneId" <> '00000000-0000-0000-0000-111111111111';
 INSERT INTO "Device" (
     id, name, status, role, "deviceType",
-    "systemSerial", "chassisSerial",
+    serial, "systemSerial", "chassisSerial", "baseboardSerial",
     "zoneId", "networkType",
-    "supplierId", "organizationId",
+    "supplierId",
     architecture, "updatedAt"
 ) VALUES (
     '00000000-0000-0000-0000-000000000001', 'cpu-1', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
-    'SIM525400BC0001', 'SIM525400BC0001',
+    'SIM525400BC0001', 'SIM525400BC0001', 'SIM525400BC0001', 'SIM525400BC0001',
     '00000000-0000-0000-0000-111111111111', 'NAT'::"DeviceNetworkType",
-    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'), (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
+    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
     'amd64', NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, status = EXCLUDED.status, role = EXCLUDED.role,
     "deviceType" = EXCLUDED."deviceType",
+    serial = EXCLUDED.serial,
     "systemSerial" = EXCLUDED."systemSerial", "chassisSerial" = EXCLUDED."chassisSerial",
+    "baseboardSerial" = EXCLUDED."baseboardSerial",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",
-    "organizationId" = EXCLUDED."organizationId",
     architecture = EXCLUDED.architecture,
     "deletedAt" = NULL, "updatedAt" = NOW();
 INSERT INTO "Server" (id, "deviceId", "powerStatus", "createdAt", "updatedAt")
@@ -176,8 +182,14 @@ ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
     driver = EXCLUDED.driver, operstate = EXCLUDED.operstate,
     "linkOperUp" = EXCLUDED."linkOperUp", "linkPhysicalUp" = EXCLUDED."linkPhysicalUp",
     "markConnected" = EXCLUDED."markConnected", "updatedAt" = NOW();
+INSERT INTO "TagAssignment" ("tagId", "objectType", "objectId")
+VALUES ('a69af7e3-3690-5777-9f88-65b3ea6e0e5f', 'DEVICE'::"TagObjectType", '00000000-0000-0000-0000-000000000001')
+ON CONFLICT ("tagId", "objectType", "objectId") DO NOTHING;
 DELETE FROM "IpAddress" WHERE "interfaceId" IN
     (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000000001' AND name = 'IPMI' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.105.88'::inet AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111')
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
 INSERT INTO "IpAddress"
     (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
 SELECT gen_random_uuid(), '192.168.105.88'::inet, 'ACTIVE'::"IpStatus", (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
@@ -185,6 +197,9 @@ SELECT gen_random_uuid(), '192.168.105.88'::inet, 'ACTIVE'::"IpStatus", (SELECT 
 FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000000001' AND name = 'IPMI' AND "deletedAt" IS NULL;
 DELETE FROM "IpAddress" WHERE "interfaceId" IN
     (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000000001' AND name = 'eth0' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.200.77/24'::inet AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111')
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
 INSERT INTO "IpAddress"
     (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
 SELECT gen_random_uuid(), '192.168.200.77/24'::inet, 'ACTIVE'::"IpStatus", (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
@@ -202,29 +217,30 @@ LIMIT 1;
 -- cpu-2 id=00000000-0000-0000-0000-000000000002 ipmi=192.168.105.11 primary=192.168.200.11 net=Public arch=amd64 zone=00000000-0000-0000-0000-111111111111
 UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()
 WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' AND name = 'cpu-2'
-  AND id <> '00000000-0000-0000-0000-000000000002' AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
+  AND id <> '00000000-0000-0000-0000-000000000002' AND "supplierId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
 DELETE FROM "DeviceSecret"
 WHERE "deviceId" = '00000000-0000-0000-0000-000000000002' AND "zoneId" <> '00000000-0000-0000-0000-111111111111';
 INSERT INTO "Device" (
     id, name, status, role, "deviceType",
-    "systemSerial", "chassisSerial",
+    serial, "systemSerial", "chassisSerial", "baseboardSerial",
     "zoneId", "networkType",
-    "supplierId", "organizationId",
+    "supplierId",
     architecture, "updatedAt"
 ) VALUES (
     '00000000-0000-0000-0000-000000000002', 'cpu-2', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
-    'SIM525400BC0002', 'SIM525400BC0002',
+    'SIM525400BC0002', 'SIM525400BC0002', 'SIM525400BC0002', 'SIM525400BC0002',
     '00000000-0000-0000-0000-111111111111', 'Public'::"DeviceNetworkType",
-    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'), (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
+    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
     'amd64', NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, status = EXCLUDED.status, role = EXCLUDED.role,
     "deviceType" = EXCLUDED."deviceType",
+    serial = EXCLUDED.serial,
     "systemSerial" = EXCLUDED."systemSerial", "chassisSerial" = EXCLUDED."chassisSerial",
+    "baseboardSerial" = EXCLUDED."baseboardSerial",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",
-    "organizationId" = EXCLUDED."organizationId",
     architecture = EXCLUDED.architecture,
     "deletedAt" = NULL, "updatedAt" = NOW();
 INSERT INTO "Server" (id, "deviceId", "powerStatus", "createdAt", "updatedAt")
@@ -370,8 +386,14 @@ ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
     driver = EXCLUDED.driver, operstate = EXCLUDED.operstate,
     "linkOperUp" = EXCLUDED."linkOperUp", "linkPhysicalUp" = EXCLUDED."linkPhysicalUp",
     "markConnected" = EXCLUDED."markConnected", "updatedAt" = NOW();
+INSERT INTO "TagAssignment" ("tagId", "objectType", "objectId")
+VALUES ('a69af7e3-3690-5777-9f88-65b3ea6e0e5f', 'DEVICE'::"TagObjectType", '00000000-0000-0000-0000-000000000002')
+ON CONFLICT ("tagId", "objectType", "objectId") DO NOTHING;
 DELETE FROM "IpAddress" WHERE "interfaceId" IN
     (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000000002' AND name = 'IPMI' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.105.11'::inet AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111')
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
 INSERT INTO "IpAddress"
     (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
 SELECT gen_random_uuid(), '192.168.105.11'::inet, 'ACTIVE'::"IpStatus", (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
@@ -379,6 +401,9 @@ SELECT gen_random_uuid(), '192.168.105.11'::inet, 'ACTIVE'::"IpStatus", (SELECT 
 FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000000002' AND name = 'IPMI' AND "deletedAt" IS NULL;
 DELETE FROM "IpAddress" WHERE "interfaceId" IN
     (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000000002' AND name = 'eth0' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.200.11/24'::inet AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111')
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
 INSERT INTO "IpAddress"
     (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
 SELECT gen_random_uuid(), '192.168.200.11/24'::inet, 'ACTIVE'::"IpStatus", (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
@@ -390,29 +415,30 @@ WHERE address = '198.51.100.11/32'::inet AND "organizationId" = (SELECT "organiz
 -- cpu-4 id=00000000-0000-0000-0000-000000000004 ipmi=192.168.105.13 primary=192.168.200.13 net=Public arch=amd64 zone=00000000-0000-0000-0000-111111111111
 UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()
 WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' AND name = 'cpu-4'
-  AND id <> '00000000-0000-0000-0000-000000000004' AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
+  AND id <> '00000000-0000-0000-0000-000000000004' AND "supplierId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
 DELETE FROM "DeviceSecret"
 WHERE "deviceId" = '00000000-0000-0000-0000-000000000004' AND "zoneId" <> '00000000-0000-0000-0000-111111111111';
 INSERT INTO "Device" (
     id, name, status, role, "deviceType",
-    "systemSerial", "chassisSerial",
+    serial, "systemSerial", "chassisSerial", "baseboardSerial",
     "zoneId", "networkType",
-    "supplierId", "organizationId",
+    "supplierId",
     architecture, "updatedAt"
 ) VALUES (
     '00000000-0000-0000-0000-000000000004', 'cpu-4', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
-    'SIM525400BC0004', 'SIM525400BC0004',
+    'SIM525400BC0004', 'SIM525400BC0004', 'SIM525400BC0004', 'SIM525400BC0004',
     '00000000-0000-0000-0000-111111111111', 'Public'::"DeviceNetworkType",
-    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'), (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
+    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
     'amd64', NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, status = EXCLUDED.status, role = EXCLUDED.role,
     "deviceType" = EXCLUDED."deviceType",
+    serial = EXCLUDED.serial,
     "systemSerial" = EXCLUDED."systemSerial", "chassisSerial" = EXCLUDED."chassisSerial",
+    "baseboardSerial" = EXCLUDED."baseboardSerial",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",
-    "organizationId" = EXCLUDED."organizationId",
     architecture = EXCLUDED.architecture,
     "deletedAt" = NULL, "updatedAt" = NOW();
 INSERT INTO "Server" (id, "deviceId", "powerStatus", "createdAt", "updatedAt")
@@ -558,8 +584,14 @@ ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
     driver = EXCLUDED.driver, operstate = EXCLUDED.operstate,
     "linkOperUp" = EXCLUDED."linkOperUp", "linkPhysicalUp" = EXCLUDED."linkPhysicalUp",
     "markConnected" = EXCLUDED."markConnected", "updatedAt" = NOW();
+INSERT INTO "TagAssignment" ("tagId", "objectType", "objectId")
+VALUES ('a69af7e3-3690-5777-9f88-65b3ea6e0e5f', 'DEVICE'::"TagObjectType", '00000000-0000-0000-0000-000000000004')
+ON CONFLICT ("tagId", "objectType", "objectId") DO NOTHING;
 DELETE FROM "IpAddress" WHERE "interfaceId" IN
     (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000000004' AND name = 'IPMI' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.105.13'::inet AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111')
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
 INSERT INTO "IpAddress"
     (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
 SELECT gen_random_uuid(), '192.168.105.13'::inet, 'ACTIVE'::"IpStatus", (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
@@ -567,6 +599,9 @@ SELECT gen_random_uuid(), '192.168.105.13'::inet, 'ACTIVE'::"IpStatus", (SELECT 
 FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000000004' AND name = 'IPMI' AND "deletedAt" IS NULL;
 DELETE FROM "IpAddress" WHERE "interfaceId" IN
     (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000000004' AND name = 'eth0' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.200.13/24'::inet AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111')
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
 INSERT INTO "IpAddress"
     (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
 SELECT gen_random_uuid(), '192.168.200.13/24'::inet, 'ACTIVE'::"IpStatus", (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),

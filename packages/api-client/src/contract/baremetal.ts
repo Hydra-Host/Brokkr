@@ -5,6 +5,7 @@ import {
   CommissionServerRequestSchema,
   CreateReservationInviteRequestSchema,
   EditReservationInviteRequestSchema,
+  ProvisionBaremetalResponseSchema,
   ProvisionServerRequestSchema,
   ServerFilterOptionsQuerySchema,
   ServerFilterOptionsSchema,
@@ -218,7 +219,7 @@ export const baremetalRoutes = c.router({
     body: ProvisionServerRequestSchema,
     responses: {
       ...authedRoleGatedErrorResponses,
-      200: ServerUpdateResponseSchema,
+      200: ProvisionBaremetalResponseSchema,
       404: ErrorResponseSchema,
     },
     summary: 'Provision a baremetal device',

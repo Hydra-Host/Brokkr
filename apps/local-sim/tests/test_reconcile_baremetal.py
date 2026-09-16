@@ -100,7 +100,7 @@ def test_reconcile_revives_soft_deleted_canonical(monkeypatch):
     def fake_carrying(cur, org, zone, macs, include_deleted=False):
         return [(canonical, "Server")] if include_deleted else []
 
-    monkeypatch.setattr(rb, "_devices_carrying_mac", fake_carrying)
+    monkeypatch.setattr(rb, "devices_carrying_mac", fake_carrying)
     repaired: list[str] = []
     monkeypatch.setattr(rb, "_repair_canonical_role", lambda cur, org, zone, dev: repaired.append(dev))
 
@@ -116,7 +116,7 @@ def test_reconcile_no_canonical_row_does_not_repair(monkeypatch):
     node = BareMetalNode(name="bm-1", pxe_mac="00:00:5e:00:53:a1", bmc_ip="10.0.0.20", bmc_mac="00:00:5e:00:53:c1")
 
     # Neither scan surfaces the canonical → seed will INSERT it; no revive attempted.
-    monkeypatch.setattr(rb, "_devices_carrying_mac", lambda *a, **k: [])
+    monkeypatch.setattr(rb, "devices_carrying_mac", lambda *a, **k: [])
     repaired: list[str] = []
     monkeypatch.setattr(rb, "_repair_canonical_role", lambda cur, org, zone, dev: repaired.append(dev))
 

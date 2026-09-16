@@ -5,7 +5,7 @@ params
 param --header x-brokkr-job-id {{ job_id | default("") }}
 
 {% if grub_supported %}
-set bootload_url "{{ bridge_url }}/api/grub?platform={{ platform }}&arch={{ arch }}"
+set bootload_url {{ bridge_url }}/api/grub?platform={{ platform }}&arch={{ arch }}
 echo Chainloading bootloader URL: ${bootload_url}
 imgfree
 chain ${bootload_url}##params || goto sanboot

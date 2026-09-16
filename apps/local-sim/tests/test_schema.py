@@ -429,30 +429,62 @@ def test_console_port_override_resolves_and_validates():
 
 BM_NODE = {"name": "bm-1", "pxe_mac": "00:00:5e:00:53:a1", "bmc_ip": "10.0.0.20", "bmc_mac": "00:00:5e:00:53:c1"}
 VALID_BM = {
-    "mode": "baremetal",
     "network": VALID_FLEET["network"],
     "defaults": VALID_FLEET["defaults"],
     "nodes": [],
     "baremetal": {"iface": "eno1", "iface_ip": "10.0.0.5", "arch": "amd64", "nodes": [dict(BM_NODE)]},
 }
+VALID_BOTH = {**VALID_FLEET, "baremetal": VALID_BM["baremetal"]}
 
 
-def test_legacy_yaml_without_mode_defaults_to_vm():
+def test_vm_only_fleet_has_the_vm_plane_alone():
     fleet = Fleet.model_validate(VALID_FLEET)
-    assert fleet.mode == "vm"
+    assert fleet.has_vm is True
+    assert fleet.has_bm is False
     assert fleet.baremetal_raw is None
     assert fleet.bm_nodes == []
+    assert fleet.bm_node_names == frozenset()
 
 
-def test_vm_mode_forbids_baremetal_block():
-    data = {**VALID_FLEET, "baremetal": {"iface": "eno1", "iface_ip": "10.0.0.5", "nodes": [dict(BM_NODE)]}}
-    with pytest.raises(ValidationError, match="only allowed when mode"):
+def test_both_rosters_validate_as_two_planes():
+    fleet = Fleet.model_validate(VALID_BOTH)
+    assert fleet.has_vm is True
+    assert fleet.has_bm is True
+    assert [n.name for n in fleet.nodes] == ["gpu-1", "gpu-2"]
+    assert fleet.bm_node_names == frozenset({"bm-1"})
+
+
+def test_a_mode_key_in_the_input_is_ignored():
+    assert "mode" not in Fleet.model_fields
+    fleet = Fleet.model_validate({**VALID_BM, "mode": "baremetal"})
+    assert fleet.has_bm is True
+    assert not hasattr(fleet, "mode")
+
+
+def test_a_machine_named_like_a_vm_node_is_rejected():
+    machine = {**BM_NODE, "name": "gpu-1"}
+    data = {**VALID_FLEET, "baremetal": {**VALID_BM["baremetal"], "nodes": [machine]}}
+    with pytest.raises(ValidationError, match="name collides with VM node"):
         Fleet.model_validate(data)
 
 
-def test_baremetal_mode_parses_and_resolves_defaults():
+def test_a_machine_bmc_ip_colliding_with_a_vm_bmc_ip_is_rejected():
+    machine = {**BM_NODE, "bmc_ip": "192.168.105.10"}
+    data = {**VALID_FLEET, "baremetal": {**VALID_BM["baremetal"], "nodes": [machine]}}
+    with pytest.raises(ValidationError, match=r"bmc_ip 192\.168\.105\.10 collides with VM node 'gpu-1'"):
+        Fleet.model_validate(data)
+
+
+def test_cross_plane_checks_do_not_run_without_a_vm_node():
+    machine = {**BM_NODE, "name": "gpu-1", "bmc_ip": "192.168.105.10"}
+    data = {**VALID_BM, "baremetal": {**VALID_BM["baremetal"], "nodes": [machine]}}
+    assert Fleet.model_validate(data).bm_node_names == frozenset({"gpu-1"})
+
+
+def test_baremetal_only_fleet_parses_and_resolves_defaults():
     fleet = Fleet.model_validate(VALID_BM)
-    assert fleet.mode == "baremetal"
+    assert fleet.has_vm is False
+    assert fleet.has_bm is True
     assert len(fleet.nodes) == 0
     assert fleet.baremetal_raw.iface == "eno1"
     bm = fleet.bm_nodes
@@ -470,15 +502,12 @@ def test_baremetal_node_arch_override_wins():
     assert Fleet.model_validate(data).bm_nodes[0].arch == "arm64"
 
 
-def test_baremetal_mode_requires_baremetal_block():
-    with pytest.raises(ValidationError, match="requires a 'baremetal' block"):
-        Fleet.model_validate({"mode": "baremetal", "network": VALID_FLEET["network"], "nodes": []})
-
-
-def test_baremetal_mode_requires_at_least_one_node():
-    data = {**VALID_BM, "baremetal": {**VALID_BM["baremetal"], "nodes": []}}
-    with pytest.raises(ValidationError, match="at least one baremetal node"):
-        Fleet.model_validate(data)
+def test_a_baremetal_block_with_no_machines_is_a_plane_that_is_off():
+    data = {**VALID_FLEET, "baremetal": {**VALID_BM["baremetal"], "nodes": []}}
+    fleet = Fleet.model_validate(data)
+    assert fleet.has_vm is True
+    assert fleet.has_bm is False
+    assert fleet.bm_nodes == []
 
 
 def test_baremetal_bmc_mac_is_required():

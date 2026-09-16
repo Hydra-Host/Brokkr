@@ -13,6 +13,7 @@ export default defineConfig({
       'test/parity/**/*.spec.ts',
       'test/integration/**/*.spec.ts',
       'test/property/**/*.spec.ts',
+      'test/live/**/*.spec.ts',
     ],
     exclude: ['**/node_modules/**', '**/dist/**', 'src/_example/**'],
     coverage: {

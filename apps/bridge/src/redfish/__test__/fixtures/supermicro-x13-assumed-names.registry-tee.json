@@ -1,0 +1,136 @@
+{
+  "RegistryVersion": "1.0.0",
+  "RegistryEntries": {
+    "Attributes": [
+      {
+        "AttributeName": "LimitCPUPAto46Bits",
+        "CurrentValue": "Enabled",
+        "DefaultValue": "Enabled",
+        "DisplayName": "Limit CPU PA to 46 bits",
+        "Hidden": false,
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          { "ValueDisplayName": "Disabled", "ValueName": "0" },
+          { "ValueDisplayName": "Enabled", "ValueName": "1" }
+        ]
+      },
+      {
+        "AttributeName": "MemoryEncryption_TME_",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "Memory Encryption (TME)",
+        "Hidden": false,
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          { "ValueDisplayName": "Disabled", "ValueName": "0" },
+          { "ValueDisplayName": "Enabled", "ValueName": "1" }
+        ]
+      },
+      {
+        "AttributeName": "TotalMemoryEncryptionMulti_Tenant_TME_MT_",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "Total Memory Encryption Multi-Tenant(TME-MT)",
+        "Hidden": false,
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          { "ValueDisplayName": "Disabled", "ValueName": "0" },
+          { "ValueDisplayName": "Enabled", "ValueName": "1" }
+        ]
+      },
+      {
+        "AttributeName": "TotalMemoryEncryption_TME_Bypass",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "Total Memory Encryption (TME) Bypass",
+        "Hidden": false,
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          { "ValueDisplayName": "Disabled", "ValueName": "0" },
+          { "ValueDisplayName": "Enabled", "ValueName": "1" }
+        ]
+      },
+      {
+        "AttributeName": "TrustDomainExtension_TDX_",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "Trust Domain Extension (TDX)",
+        "Hidden": false,
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          { "ValueDisplayName": "Disabled", "ValueName": "0" },
+          { "ValueDisplayName": "Enabled", "ValueName": "1" }
+        ]
+      },
+      {
+        "AttributeName": "TDXSecureArbitrationModeLoader_SEAMLoader_",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "TDX Secure Arbitration Mode Loader (SEAM Loader)",
+        "Hidden": false,
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          { "ValueDisplayName": "Disabled", "ValueName": "0" },
+          { "ValueDisplayName": "Enabled", "ValueName": "1" }
+        ]
+      },
+      {
+        "AttributeName": "TME_MT_TDXKeySplit",
+        "CurrentValue": 1,
+        "DefaultValue": 1,
+        "DisplayName": "TME-MT/TDX Key Split",
+        "Hidden": false,
+        "LowerBound": 1,
+        "ReadOnly": false,
+        "ScalarIncrement": 1,
+        "Type": "Integer",
+        "UpperBound": 11
+      },
+      {
+        "AttributeName": "SWGuardExtensions_SGX_",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "SW Guard Extensions (SGX)",
+        "Hidden": false,
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          { "ValueDisplayName": "Disabled", "ValueName": "0" },
+          { "ValueDisplayName": "Enabled", "ValueName": "1" }
+        ]
+      },
+      {
+        "AttributeName": "SGXPackageInfoIn_BandAccess",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "SGX Package Info In-Band Access",
+        "Hidden": false,
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          { "ValueDisplayName": "Disabled", "ValueName": "0" },
+          { "ValueDisplayName": "Enabled", "ValueName": "1" }
+        ]
+      },
+      {
+        "AttributeName": "SGXFactoryReset",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "SGX Factory Reset",
+        "Hidden": false,
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          { "ValueDisplayName": "Disabled", "ValueName": "0" },
+          { "ValueDisplayName": "Enabled", "ValueName": "1" }
+        ]
+      }
+    ]
+  }
+}

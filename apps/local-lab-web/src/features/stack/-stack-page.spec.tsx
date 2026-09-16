@@ -97,7 +97,7 @@ const opsResult = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const setup = (over: { fleet?: FleetStatus | undefined; ops?: Record<string, unknown> } = {}) => {
+const setup = (over: { fleet?: FleetStatus | undefined; services?: Service[]; ops?: Record<string, unknown> } = {}) => {
   const hasFleet = 'fleet' in over ? over.fleet : fleet();
   mocks.stackState.mockReturnValue({
     data: {
@@ -106,7 +106,7 @@ const setup = (over: { fleet?: FleetStatus | undefined; ops?: Record<string, unk
     },
     refetch: vi.fn(),
   });
-  mocks.services.mockReturnValue({ data: { status: 200, body: [svc()] }, refetch: vi.fn() });
+  mocks.services.mockReturnValue({ data: { status: 200, body: over.services ?? [svc()] }, refetch: vi.fn() });
   mocks.initTasks.mockReturnValue({ data: { status: 200, body: [] }, refetch: vi.fn() });
   mocks.ops.mockReturnValue(opsResult(over.ops));
   return render(<StackPage />);
@@ -291,5 +291,34 @@ describe('StackPage deep-linked init log', () => {
     setup();
 
     expect(mocks.open).toHaveBeenCalledWith(streamPaths.stackInitLog('sim:seed'), { finite: false });
+  });
+});
+
+describe('StackPage service card badges', () => {
+  beforeEach(() => {
+    mocks.stackState.mockReset();
+    mocks.services.mockReset();
+    mocks.initTasks.mockReset();
+    mocks.ops.mockReset();
+    mocks.open.mockClear();
+    mocks.useSearch.mockReturnValue({ init: undefined });
+  });
+  afterEach(cleanup);
+
+  it('keeps the health note beside a card with two badges', () => {
+    setup({ services: [svc({ ready: true, features: ['TFTP', 'iPXE strict'] })] });
+
+    const tftp = screen.getByText('TFTP');
+    const strict = screen.getByText('iPXE strict');
+    const title = tftp.closest('button');
+    const note = title?.nextElementSibling;
+
+    expect(title?.className).toContain('min-w-0');
+    expect(title?.className).toContain('flex-wrap');
+    expect(title?.querySelector('span.font-medium')?.className).toContain('truncate');
+    expect(tftp.className).toContain('shrink-0');
+    expect(strict.className).toContain('shrink-0');
+    expect(note?.textContent).toBe('ready');
+    expect(note?.className).toContain('shrink-0');
   });
 });

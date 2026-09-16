@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { CollectorHandler, DeviceMutation, InterfaceUpsert } from '../collector.types';
+import { isUsbIpmiNicName, osInterfaceName } from '../interface-name';
 import { type IpAInput, ipASchema, ipInterfaceSchema } from './ip_a.schema';
 
 @Injectable()
@@ -25,7 +26,7 @@ export class IpAHandler implements CollectorHandler<IpAInput> {
 
     for (const ifc of parsed) {
       if (ifc.ifname === 'lo' || ifc.link_type === 'loopback') continue;
-      if (/^enx[0-9a-f]{12}$/i.test(ifc.ifname)) continue;
+      if (isUsbIpmiNicName(ifc.ifname)) continue;
       // a VLAN carries `link` (its parent device); a bond is named by `master`
       if (ifc.link || masters.has(ifc.ifname)) {
         skipped.push(ifc.ifname);
@@ -35,7 +36,7 @@ export class IpAHandler implements CollectorHandler<IpAInput> {
       const operstate = ifc.operstate ?? null;
       const hasNoCarrier = ifc.flags.includes('NO-CARRIER');
       interfaces.push({
-        name: ifc.ifname,
+        name: osInterfaceName(ifc.ifname, ifc.altnames),
         operstate,
         linkOperUp: operstate === 'UP',
         linkPhysicalUp: !hasNoCarrier,

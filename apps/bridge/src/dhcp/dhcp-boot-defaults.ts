@@ -20,6 +20,28 @@ const OPT93_ARCH_TO_DIR: ReadonlyMap<number, string> = new Map([
 
 const DEFAULT_ARCH_DIR = ARCH_AMD64;
 
+// Kept apart from OPT93_ARCH_TO_DIR on purpose: a legacy client is still offered the amd64 UEFI
+// stem, because the bridge ships no legacy build. PXE-101 names the NBP failure that follows.
+export const LEGACY_BIOS_OPT93: ReadonlySet<number> = new Set([0x0000, 0x0002]);
+
+export function isLegacyBiosArch(opt93: number): boolean {
+  return LEGACY_BIOS_OPT93.has(opt93);
+}
+
+export const LEGACY_BIOS_WARN_LIMIT = 512;
+
+// chaddr is unauthenticated and spoofable, so the per-mac latch is bounded: at the cap the oldest mac
+// is evicted and warns again, rather than letting a broadcast protocol grow this set without limit.
+export function latchMacWarning(warned: Set<string>, mac: string, cap = LEGACY_BIOS_WARN_LIMIT): boolean {
+  if (warned.has(mac)) return false;
+  if (warned.size >= cap) {
+    const oldest = warned.values().next().value;
+    if (oldest !== undefined) warned.delete(oldest);
+  }
+  warned.add(mac);
+  return true;
+}
+
 export function resolveIpxeTarget(target: 'IPXE' | 'SNP' | 'SNPONLY' | null | undefined): string {
   if (target === null || target === undefined) return DEFAULT_IPXE_TARGET;
   const map: Record<string, string> = { IPXE: 'ipxe', SNP: 'snp', SNPONLY: 'snponly' };

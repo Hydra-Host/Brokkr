@@ -20,7 +20,7 @@ export class IpAddressRepository extends BaseIpamRepository {
       where: {
         id: interfaceId,
         deletedAt: null,
-        device: { deletedAt: null, OR: [{ supplierId: org }, { organizationId: org }] },
+        device: { deletedAt: null, supplierId: org },
       },
       select: { id: true },
     });

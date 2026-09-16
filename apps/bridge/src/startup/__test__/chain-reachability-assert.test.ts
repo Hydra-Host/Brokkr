@@ -97,26 +97,26 @@ describe('evaluateChainReachability', () => {
     expect(findings.map((f) => f.code)).not.toContain('PXE-07');
   });
 
-  it('PXE-01/02: https chain + loopback bind + no TLS terminator is flagged', () => {
+  it('PXE-02: https chain + loopback bind + no TLS terminator is flagged', () => {
     const findings = evaluateChainReachability(healthyInput({ listenHost: '127.0.0.1', tlsTerminated: false }));
-    expect(findings.map((f) => f.code)).toContain('PXE-01/02');
+    expect(findings.map((f) => f.code)).toContain('PXE-02');
   });
 
-  it('PXE-01/02: a declared TLS terminator clears the https-vs-loopback mismatch', () => {
+  it('PXE-02: a declared TLS terminator clears the https-vs-loopback mismatch', () => {
     const findings = evaluateChainReachability(healthyInput({ listenHost: '127.0.0.1', tlsTerminated: true }));
-    expect(findings.map((f) => f.code)).not.toContain('PXE-01/02');
+    expect(findings.map((f) => f.code)).not.toContain('PXE-02');
   });
 
-  it('PXE-01/02: http BRIDGE_URL pointing at the real port is not flagged', () => {
+  it('PXE-02: http BRIDGE_URL pointing at the real port is not flagged', () => {
     const findings = evaluateChainReachability(
       healthyInput({ bridgeUrl: 'http://brokkr.lan:8080', listenHost: '127.0.0.1', tlsTerminated: false }),
     );
-    expect(findings.map((f) => f.code)).not.toContain('PXE-01/02');
+    expect(findings.map((f) => f.code)).not.toContain('PXE-02');
   });
 
-  it('malformed BRIDGE_URL surfaces a single PXE-01/02 finding', () => {
+  it('malformed BRIDGE_URL surfaces a single PXE-02 finding', () => {
     const findings = evaluateChainReachability(healthyInput({ bridgeUrl: 'not a url' }));
-    expect(findings.map((f) => f.code)).toEqual(['PXE-01/02']);
+    expect(findings.map((f) => f.code)).toEqual(['PXE-02']);
   });
 
 
@@ -128,13 +128,14 @@ describe('assertChainReachability', () => {
   it('logs findings at their severity level (loud, not silent)', () => {
     const { logger, errors, warns } = recordingLogger();
     assertChainReachability(healthyInput({ dnsEnabled: false, listenHost: '127.0.0.1', tlsTerminated: false }), logger);
-    expect(errors.some((e) => e.includes('PXE-01/02'))).toBe(true);
+    expect(errors.some((e) => e.includes('PXE-02'))).toBe(true);
     expect(warns.some((w) => w.includes('PXE-07'))).toBe(true);
   });
 
-  it('does not throw by default even with findings', () => {
+  it('returns the findings without throwing by default', () => {
     const { logger } = recordingLogger();
-    expect(() => assertChainReachability(healthyInput({ dnsEnabled: false }), logger)).not.toThrow();
+    const findings = assertChainReachability(healthyInput({ dnsEnabled: false }), logger);
+    expect(findings.map((f) => f.code)).toEqual(['PXE-07']);
   });
 
   it('throws under strict mode when there is an error-level finding', () => {
@@ -151,8 +152,8 @@ describe('assertChainReachability', () => {
     ).not.toThrow();
   });
 
-  it('does not throw under strict mode when healthy', () => {
+  it('returns no findings under strict mode when healthy', () => {
     const { logger } = recordingLogger();
-    expect(() => assertChainReachability(healthyInput(), logger, { strict: true })).not.toThrow();
+    expect(assertChainReachability(healthyInput(), logger, { strict: true })).toEqual([]);
   });
 });

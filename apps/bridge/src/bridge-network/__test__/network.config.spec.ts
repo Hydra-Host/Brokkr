@@ -7,10 +7,9 @@ describe('buildNetworkConfig — defaults', () => {
     const config = buildNetworkConfig({});
     expect(config.maxConcurrentScans).toBe(10);
     expect(config.defaultScanTimeout).toBe(60);
-    expect(config.ipmiTimeoutMs).toBe(100);
+    expect(config.ipmiTimeoutMs).toBe(750);
     expect(config.ipmiPort).toBe(623);
-    expect(config.redfishTimeoutMs).toBe(2000);
-    expect(config.redfishPort).toBe(443);
+    expect(config.redfishTimeoutMs).toBe(4000);
     expect(config.nmapMinParallelism).toBe(100);
     expect(config.nmapMinRate).toBe(256);
     expect(config.nmapMaxRetries).toBe(1);
@@ -38,8 +37,7 @@ describe('buildNetworkConfig — overrides', () => {
       NETWORK_DEFAULT_SCAN_TIMEOUT: '120',
       NETWORK_IPMI_TIMEOUT_MS: '250',
       NETWORK_IPMI_PORT: '6230',
-      NETWORK_REDFISH_TIMEOUT_MS: '5000',
-      NETWORK_REDFISH_PORT: '8443',
+      NETWORK_REDFISH_TIMEOUT_MS: '4000',
       NETWORK_NMAP_PARALLELISM: '200',
       NETWORK_NMAP_RATE: '512',
       NETWORK_NMAP_RETRIES: '3',
@@ -48,8 +46,7 @@ describe('buildNetworkConfig — overrides', () => {
     expect(config.defaultScanTimeout).toBe(120);
     expect(config.ipmiTimeoutMs).toBe(250);
     expect(config.ipmiPort).toBe(6230);
-    expect(config.redfishTimeoutMs).toBe(5000);
-    expect(config.redfishPort).toBe(8443);
+    expect(config.redfishTimeoutMs).toBe(4000);
     expect(config.nmapMinParallelism).toBe(200);
     expect(config.nmapMinRate).toBe(512);
     expect(config.nmapMaxRetries).toBe(3);

@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { labRunLogDir } from '../common/lab-state';
 import { isSafeRunId } from '../common/run-id';
 import { pastOrphanGrace } from './orphan-grace';

@@ -1,5 +1,6 @@
 import {
-  deepEqual,
+  asRecord,
+  biosValuesEqual,
   headerValue,
   isDigitString,
   isEmptyRecord,
@@ -44,6 +45,7 @@ export class RedfishBiosHandler extends RedfishDiscoveryHandler {
     }
 
     let biosAttr: JsonRecord = {};
+    let resolvedKey = key;
     const hasRegistry = !isEmptyRecord(this.device.registry);
     if (hasRegistry) {
       const exact = this.device.registry[key];
@@ -57,6 +59,7 @@ export class RedfishBiosHandler extends RedfishDiscoveryHandler {
             jobId: this.jobId,
             appClassName: APP_CLASS,
           });
+          resolvedKey = similarKey;
           biosAttr = this.device.registry[similarKey] ?? {};
         } else {
           logger.error(`bios parameter "${key}" not found in the registry`, {
@@ -200,9 +203,11 @@ export class RedfishBiosHandler extends RedfishDiscoveryHandler {
       newValue = value;
     }
 
-    const keyPath = parentKey ? `${parentKey}&&&${key}` : key;
+    const keyPath = parentKey ? `${parentKey}&&&${resolvedKey}` : resolvedKey;
 
-    if (this.extractNestedValue(this.device.biosPendingParams, keyPath, '&&&') !== null) {
+    // some BMCs echo the live attribute map as pending, so only an equal pending value counts as scheduled
+    const pendingValue = this.extractNestedValue(this.device.biosPendingParams, keyPath, '&&&');
+    if (pendingValue !== null && biosValuesEqual(pendingValue, newValue)) {
       logger.warning(`bios parameter "${key}" is already scheduled to be set to "${value}" at the next reboot`, {
         jobId: this.jobId,
         appClassName: APP_CLASS,
@@ -210,12 +215,7 @@ export class RedfishBiosHandler extends RedfishDiscoveryHandler {
       return true;
     }
     const currentValue = this.extractNestedValue(this.device.biosParams, keyPath, '&&&');
-    if (
-      currentValue === newValue ||
-      (typeof currentValue === 'boolean' && typeof newValue === 'number' && (currentValue ? 1 : 0) === newValue) ||
-      (typeof newValue === 'boolean' && typeof currentValue === 'number' && (newValue ? 1 : 0) === currentValue) ||
-      deepEqual(currentValue, newValue)
-    ) {
+    if (biosValuesEqual(currentValue, newValue)) {
       logger.info(`bios parameter "${key}" is already set to "${value}"`, {
         jobId: this.jobId,
         appClassName: APP_CLASS,
@@ -224,8 +224,8 @@ export class RedfishBiosHandler extends RedfishDiscoveryHandler {
     }
 
     const payload: JsonRecord = parentKey
-      ? { Attributes: { [parentKey]: { [key]: newValue } } }
-      : { Attributes: { [key]: newValue } };
+      ? { Attributes: { [parentKey]: { [resolvedKey]: newValue } } }
+      : { Attributes: { [resolvedKey]: newValue } };
 
     const patchHeaders: Record<string, string> = {};
     if (resolveVendorProfile(this.device.tag()).requiresEtag) {
@@ -268,61 +268,95 @@ export class RedfishBiosHandler extends RedfishDiscoveryHandler {
     messages = this.lastResponseMessages();
 
     if (messages.length === 0) {
-      return null;
+      if (!(await this.confirmMessagelessPatch(key, keyPath, newValue))) {
+        return null;
+      }
+    } else {
+      const firstMessage = messages[0];
+      if (typeof firstMessage !== 'string') {
+        throw new PropertyAccessError(`cannot read property 'toLowerCase' of ${typeof firstMessage}`);
+      }
+      const message = firstMessage.toLowerCase();
+      if (!message.includes('successfully completed') && !message.includes('completed successfully')) {
+        logger.error(`failed to set bios parameter ${key} to "${newValue}": ${message}`, {
+          jobId: this.jobId,
+          appClassName: APP_CLASS,
+        });
+        return null;
+      }
     }
-    const firstMessage = messages[0];
-    if (typeof firstMessage !== 'string') {
-      throw new PropertyAccessError(`cannot read property 'toLowerCase' of ${typeof firstMessage}`);
-    }
-    const message = firstMessage.toLowerCase();
 
-    if (message.includes('successfully completed') || message.includes('completed successfully')) {
-      logger.warning(`bios parameter ${key} has been set to "${newValue}"`, {
-        jobId: this.jobId,
-        appClassName: APP_CLASS,
-      });
-      if (hasRegistry) {
-        if (biosAttr['ResetRequired']) {
-          logger.info(`bios parameter ${key} is set to "${newValue}" but requires a reset to take effect`, {
-            jobId: this.jobId,
-            appClassName: APP_CLASS,
-          });
-          this.device.rebootNeeded = true;
-
-          if (parentKey) {
-            if (!(parentKey in this.device.biosPendingParams)) {
-              this.device.biosPendingParams[parentKey] = {};
-            }
-            (this.device.biosPendingParams[parentKey] as JsonRecord)[key] = newValue as never;
-          } else {
-            this.device.biosPendingParams[key] = newValue;
-          }
-        } else {
-          if (parentKey) {
-            if (!(parentKey in this.device.biosParams)) {
-              this.device.biosParams[parentKey] = {};
-            }
-            (this.device.biosParams[parentKey] as JsonRecord)[key] = newValue as never;
-          } else {
-            this.device.biosParams[key] = newValue;
-          }
-        }
-      } else {
-        logger.warning('no registry available, requesting a reboot to apply the setting', {
+    logger.warning(`bios parameter ${key} has been set to "${newValue}"`, {
+      jobId: this.jobId,
+      appClassName: APP_CLASS,
+    });
+    if (hasRegistry) {
+      if (biosAttr['ResetRequired']) {
+        logger.info(`bios parameter ${key} is set to "${newValue}" but requires a reset to take effect`, {
           jobId: this.jobId,
           appClassName: APP_CLASS,
         });
         this.device.rebootNeeded = true;
-      }
 
-      return true;
+        if (parentKey) {
+          if (!(parentKey in this.device.biosPendingParams)) {
+            this.device.biosPendingParams[parentKey] = {};
+          }
+          asRecord(this.device.biosPendingParams[parentKey])[resolvedKey] = newValue;
+        } else {
+          this.device.biosPendingParams[resolvedKey] = newValue;
+        }
+      } else {
+        if (parentKey) {
+          if (!(parentKey in this.device.biosParams)) {
+            this.device.biosParams[parentKey] = {};
+          }
+          asRecord(this.device.biosParams[parentKey])[resolvedKey] = newValue;
+        } else {
+          this.device.biosParams[resolvedKey] = newValue;
+        }
+      }
+    } else {
+      logger.warning('no registry available, requesting a reboot to apply the setting', {
+        jobId: this.jobId,
+        appClassName: APP_CLASS,
+      });
+      this.device.rebootNeeded = true;
     }
 
-    logger.error(`failed to set bios parameter ${key} to "${newValue}": ${message}`, {
+    return true;
+  }
+
+  // some BMCs answer a successful PATCH with a bare 2xx, so the pending object is the only evidence of the write
+  private async confirmMessagelessPatch(
+    key: string,
+    keyPath: string,
+    desired: BiosParamValue | null,
+  ): Promise<boolean> {
+    const patchStatus = this.device.callStack[this.device.callStack.length - 1]?.status ?? null;
+    if (patchStatus === null || patchStatus < 200 || patchStatus >= 300) {
+      logger.error(`failed to set bios parameter ${key}: HTTP ${patchStatus ?? 'unknown'} with no message body`, {
+        jobId: this.jobId,
+        appClassName: APP_CLASS,
+      });
+      return false;
+    }
+
+    const readback = await this.fetch('GET', this.device.biosPatchEndpoint, {});
+    const readbackValue = this.extractNestedValue(readback['Attributes'], keyPath, '&&&');
+    if (readbackValue === null || !biosValuesEqual(readbackValue, desired)) {
+      logger.error(
+        `failed to set bios parameter ${key} to "${desired}": pending object reads back ${JSON.stringify(readbackValue)}`,
+        { jobId: this.jobId, appClassName: APP_CLASS },
+      );
+      return false;
+    }
+
+    logger.info(`bios parameter ${key} write confirmed by reading back the pending object`, {
       jobId: this.jobId,
       appClassName: APP_CLASS,
     });
-    return null;
+    return true;
   }
 
   /** @internal Public so brand TEE profiles (vendor/<brand>/) can drive multi-attr apply. */

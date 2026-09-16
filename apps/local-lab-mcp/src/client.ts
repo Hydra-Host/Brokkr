@@ -1,5 +1,6 @@
 import { initClient } from '@ts-rest/core';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import labContractPkg from './lab-contract.js';
 import { findEntryByCheckout, hostStackCandidates, labPortOf, labUrlForPort } from './stack-registry.js';
 import { describeCandidates, describeTarget, RETARGET_HINT, slotTargetFromEnv, type LabTarget } from './target.js';
@@ -12,6 +13,7 @@ export type LabApiFetcher = ClientArgs['api'];
 export interface LabClientOptions {
   baseUrl?: string;
   token?: string;
+  hostToken?: string;
   api?: LabApiFetcher;
   registryDir?: string;
 }
@@ -76,8 +78,30 @@ export function resolveLabBaseUrl(explicit?: string, registryDir?: string): stri
   return resolveLabTarget(explicit, registryDir).baseUrl;
 }
 
+// the stack writes the token to a file and exports the pointer, so the value never sits in the
+// process table or in a shell history the way an inline export would.
+function tokenFromFile(variable: string): string {
+  const path = process.env[variable];
+  if (!path) return '';
+  try {
+    return readFileSync(path, 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+/** An exported-but-empty variable is not a token: the local profile defaults every secret to empty,
+ *  so an empty `LAB_API_TOKEN` must not shadow the file the stack actually wrote. */
 export function resolveLabToken(explicit?: string): string {
-  return explicit ?? process.env.LAB_API_TOKEN ?? '';
+  if (explicit !== undefined) return explicit;
+  return process.env.LAB_API_TOKEN || tokenFromFile('LAB_API_TOKEN_FILE');
+}
+
+/** The `host-exec` routes (pg query, machine exec) refuse the api token, whoever issued it. Falls back
+ *  to it anyway because on loopback the address grants the capability and nothing needs setting. */
+export function resolveHostToken(explicit?: string): string {
+  if (explicit !== undefined) return explicit;
+  return process.env.LAB_HOST_TOKEN || tokenFromFile('LAB_HOST_TOKEN_FILE') || resolveLabToken();
 }
 
 export function createLabClient(options: LabClientOptions = {}) {
@@ -101,6 +125,8 @@ export interface LabTargetInfo {
 
 export interface LabContext {
   client: LabClient;
+  /** Carries the host token; the only client the `host-exec` tools may use. */
+  hostClient: LabClient;
   baseUrl: string;
   target: LabTarget;
   targetInfo: LabTargetInfo | null;
@@ -108,6 +134,7 @@ export interface LabContext {
   setTarget: (target: LabTarget) => void;
   registryDir: string | undefined;
   token: string;
+  hostToken: string;
   fetchImpl: typeof fetch;
 }
 
@@ -115,10 +142,13 @@ export interface LabContext {
 // before the agent could bring the stack up, and recovering would need an MCP restart.
 export function createLabContext(options: LabClientOptions & { fetchImpl?: typeof fetch } = {}): LabContext {
   const token = resolveLabToken(options.token);
+  const hostToken = resolveHostToken(options.hostToken);
   let resolved: LabTarget | undefined;
   let override: LabTarget | undefined;
   let client: LabClient | undefined;
   let clientUrl: string | undefined;
+  let hostClient: LabClient | undefined;
+  let hostClientUrl: string | undefined;
   // the override outranks an explicit baseUrl on purpose: short-circuiting on the pin would make
   // lab_use_stack report success and change nothing, which is worse than the pin losing
   const target = () => override ?? (resolved ??= resolveLabTarget(options.baseUrl, options.registryDir));
@@ -131,6 +161,14 @@ export function createLabContext(options: LabClientOptions & { fetchImpl?: typeo
         clientUrl = url;
       }
       return client;
+    },
+    get hostClient() {
+      const url = target().baseUrl;
+      if (!hostClient || hostClientUrl !== url) {
+        hostClient = createLabClient({ ...options, baseUrl: url, token: hostToken });
+        hostClientUrl = url;
+      }
+      return hostClient;
     },
     get baseUrl() {
       return target().baseUrl;
@@ -165,6 +203,7 @@ export function createLabContext(options: LabClientOptions & { fetchImpl?: typeo
     },
     registryDir: options.registryDir,
     token,
+    hostToken,
     fetchImpl: options.fetchImpl ?? fetch,
   };
 }

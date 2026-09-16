@@ -6,6 +6,7 @@ import type {
   InterfaceUpsert,
   NatMappingUpsert,
 } from '../collectors/collector.types';
+import { isUsbIpmiNicName, osInterfaceName } from '../collectors/interface-name';
 import { ipASchema, ipInterfaceSchema } from '../collectors/ip_a/ip_a.schema';
 import { publicIpSchema } from '../collectors/public_ip/public_ip.schema';
 import { routeSchema } from '../collectors/route/route.schema';
@@ -37,7 +38,8 @@ export class NetworkIpComposer implements Composer {
     const interfaceUpserts: InterfaceUpsert[] = [];
     for (const iface of interfaces) {
       const ipAddresses = globalCidrs(iface);
-      if (ipAddresses.length) interfaceUpserts.push({ name: iface.ifname, ipAddresses });
+      const name = osInterfaceName(iface.ifname, iface.altnames);
+      if (ipAddresses.length) interfaceUpserts.push({ name, ipAddresses });
     }
 
     const natMappings = this.deriveNatMappings(interfaces, defaultIface4, publicIp);
@@ -73,7 +75,7 @@ export class NetworkIpComposer implements Composer {
 }
 
 function isExcluded(iface: IpIface): boolean {
-  return iface.ifname === 'lo' || iface.link_type === 'loopback' || /^enx[0-9a-f]{12}$/i.test(iface.ifname);
+  return iface.ifname === 'lo' || iface.link_type === 'loopback' || isUsbIpmiNicName(iface.ifname);
 }
 
 function globalCidrs(iface: IpIface): string[] {

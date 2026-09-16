@@ -17,6 +17,7 @@ const MANIFEST_EXPORTS: Record<string, string> = {
   '@hydrahost/plugin-bid-ask': 'bidAskManifest',
   '@hydrahost/plugin-email-mailgun': 'emailMailgunManifest',
   '@hydrahost/plugin-operator-hub': 'operatorHubManifest',
+  '@hydrahost/plugin-commerce': 'commerceManifest',
   '@hydrahost/plugin-google-maps-geocoding': 'googleMapsGeocodingManifest',
   '@hydrahost/plugin-radar-geocoding': 'radarGeocodingManifest',
   '@hydrahost/plugin-hubspot-leads': 'hubspotLeadsManifest',
@@ -33,6 +34,7 @@ const resolving =
   };
 
 const GEOCODING_ENV = { GOOGLE_MAPS_API_KEY: 'gmaps-key', RADAR_SECRET_KEY: 'radar-key' };
+const COMMERCE_ENV = { COMMERCE_API_BASE_URL: 'http://localhost:3003', COMMERCE_API_KEY: 'sk_test' };
 const LEADS_ENV = {
   HUBSPOT_ACCESS_TOKEN: 'token',
   HUBSPOT_PORTAL_ID: 'portal',
@@ -44,36 +46,37 @@ const LEADS_ENV = {
   SALESFORCE_CLIENT_SECRET: 'secret',
 };
 
-const enabledWith = async (env: Record<string, string>, specifiers: string[]): Promise<Map<string, boolean>> => {
-  const saved = process.env;
-  process.env = { ...saved, ...env };
-  vi.resetModules();
-  try {
-    const mod = await import('@hydrahost/plugins-config');
-    return new Map(mod.loadOptionalPluginEntries(resolving(specifiers)).map((e) => [e.plugin.id, e.enabled]));
-  } finally {
-    process.env = saved;
-  }
-};
+type OptionalPluginEntry = ReturnType<typeof loadOptionalPluginEntries>[number];
 
-const warningsWith = async (env: Record<string, string>, specifiers: string[]): Promise<string[]> => {
+const entriesWith = async (
+  env: Record<string, string>,
+  specifiers: string[],
+): Promise<{ entries: OptionalPluginEntry[]; warnings: string[] }> => {
   const saved = process.env;
   process.env = { ...saved, ...env };
   vi.resetModules();
-  const lines: string[] = [];
+  const warnings: string[] = [];
   const spy = vi.spyOn(Logger.prototype, 'warn').mockImplementation((message: unknown) => {
-    lines.push(String(message));
+    warnings.push(String(message));
   });
   try {
     const mod = await import('@hydrahost/plugins-config');
-    lines.length = 0;
-    mod.loadOptionalPluginEntries(resolving(specifiers));
-    return lines;
+    warnings.length = 0;
+    return { entries: mod.loadOptionalPluginEntries(resolving(specifiers)), warnings };
   } finally {
     spy.mockRestore();
     process.env = saved;
   }
 };
+
+const enabledWith = async (env: Record<string, string>, specifiers: string[]): Promise<Map<string, boolean>> =>
+  new Map((await entriesWith(env, specifiers)).entries.map((e) => [e.plugin.id, e.enabled]));
+
+const settingsWith = async (env: Record<string, string>, specifiers: string[]): Promise<Record<string, unknown>> =>
+  Object.fromEntries((await entriesWith(env, specifiers)).entries.map((e) => [e.plugin.id, e.settings]));
+
+const warningsWith = async (env: Record<string, string>, specifiers: string[]): Promise<string[]> =>
+  (await entriesWith(env, specifiers)).warnings;
 
 describe('loadOptionalPluginEntries', () => {
   it('returns no entries when every optional package is absent (public BOSS tree)', () => {
@@ -126,6 +129,52 @@ describe('loadOptionalPluginEntries', () => {
     it('leaves salesforce-leads enabled when hubspot-leads is configured but absent', async () => {
       const enabled = await enabledWith(LEADS_ENV, ['@hydrahost/plugin-salesforce-leads']);
       expect(enabled.get('salesforce-leads')).toBe(true);
+    });
+  });
+
+  describe('commerce enablement', () => {
+    it('enables commerce when both the origin and the API key are set', async () => {
+      const enabled = await enabledWith(
+        { COMMERCE_API_BASE_URL: 'http://localhost:3003', COMMERCE_API_KEY: 'sk_test' },
+        ['@hydrahost/plugin-commerce'],
+      );
+      expect(enabled.get('commerce')).toBe(true);
+    });
+
+    it('disables commerce when the API key is missing', async () => {
+      const enabled = await enabledWith({ COMMERCE_API_BASE_URL: 'http://localhost:3003', COMMERCE_API_KEY: '' }, [
+        '@hydrahost/plugin-commerce',
+      ]);
+      expect(enabled.get('commerce')).toBe(false);
+    });
+
+    it('disables commerce when the origin is missing', async () => {
+      const enabled = await enabledWith({ COMMERCE_API_BASE_URL: '', COMMERCE_API_KEY: 'sk_test' }, [
+        '@hydrahost/plugin-commerce',
+      ]);
+      expect(enabled.get('commerce')).toBe(false);
+    });
+
+    it('takes the public web origin from WEB_BASE_URL', async () => {
+      const settings = await settingsWith(
+        { ...COMMERCE_ENV, WEB_BASE_URL: 'https://boss.test', BASE_URL: 'https://fallback.test' },
+        ['@hydrahost/plugin-commerce'],
+      );
+      expect(settings.commerce).toMatchObject({ webBaseUrl: 'https://boss.test' });
+    });
+
+    it('falls back to BASE_URL when WEB_BASE_URL is unset', async () => {
+      const settings = await settingsWith({ ...COMMERCE_ENV, WEB_BASE_URL: '', BASE_URL: 'https://fallback.test' }, [
+        '@hydrahost/plugin-commerce',
+      ]);
+      expect(settings.commerce).toMatchObject({ webBaseUrl: 'https://fallback.test' });
+    });
+
+    it('omits the public web origin when neither variable is set', async () => {
+      const settings = await settingsWith({ ...COMMERCE_ENV, WEB_BASE_URL: '', BASE_URL: '' }, [
+        '@hydrahost/plugin-commerce',
+      ]);
+      expect(settings.commerce).not.toHaveProperty('webBaseUrl');
     });
   });
 

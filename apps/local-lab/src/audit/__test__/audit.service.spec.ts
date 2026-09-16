@@ -29,6 +29,7 @@ function auditRow(over: Partial<Omit<AuditEventRow, 'id'>> = {}): Omit<AuditEven
     origin_ip: '127.0.0.1',
     origin_loopback: 1,
     origin_token: 0,
+    origin_principal: null,
     params: '{"opId":"nuke"}',
     error: null,
     ...over,

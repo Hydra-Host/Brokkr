@@ -111,8 +111,8 @@ def load_baremetal_nodes(fleet_path: Path | None = None) -> list[BareMetalNode]:
     baremetal = raw.get("baremetal")
     if not isinstance(baremetal, dict):
         raise CommissionError(
-            f"fleet.yml at {path} has no 'baremetal' block — the fleet is not in bare-metal mode "
-            "(set fleet.mode = baremetal and re-render)"
+            f"fleet.yml at {path} has no 'baremetal' block — the bare-metal plane is off "
+            "(add a bare-metal machine on Fleet nodes and re-render)"
         )
     nodes_raw = baremetal.get("nodes")
     if not isinstance(nodes_raw, list) or not nodes_raw:

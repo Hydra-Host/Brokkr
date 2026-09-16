@@ -47,7 +47,6 @@ describe('active-record tenant scoping (integration, live DB)', () => {
       data: {
         name: `dev-${randomUUID().slice(0, 8)}`,
         supplierId,
-        organizationId: supplierId,
         role: DeviceRole.Server,
       },
     });

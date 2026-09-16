@@ -1,11 +1,13 @@
 import { Prisma } from '@repo/database';
+import { formatMacAddress } from '@repo/database/extensions/mac-address';
 import { sleep } from '@repo/utils';
+import { randomUUID } from 'node:crypto';
 import { getErrorMessage } from 'src/common/error-utils';
 import { ensureIpAddress } from 'src/common/ipam/ensure-ip-address';
 import { ensureNatMapping } from 'src/common/ipam/ensure-nat-mapping';
 import type { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
-import type { DeviceMutation, MutationUpserts } from './collectors/collector.types';
+import type { DeviceMutation, MutationUpserts, PciDeviceUpsert } from './collectors/collector.types';
 
 interface ApplyMutationsOptions {
   maxRetries?: number;
@@ -15,6 +17,9 @@ interface ApplyMutationsOptions {
 // Only deadlock (40P01) + serialization (40001) failures retry — Prisma surfaces them as P2034/P2024.
 const RETRYABLE_PRISMA_CODES = new Set(['P2034', 'P2024']);
 const RETRYABLE_PG_CODES = new Set(['40001', '40P01']);
+
+// 13 bind params per row; 500 rows is 6.5k, well inside Postgres's 65535 cap.
+const PCI_CHUNK = 500;
 
 export interface ApplyMutationsResult {
   deviceUpdateKeys: string[];
@@ -37,7 +42,7 @@ export async function applyMutations(
   while (true) {
     attempt += 1;
     try {
-      const result = await prisma.$transaction(async (tx) => runMutation(tx, deviceId, mutation), {
+      const result = await prisma.$transaction(async (tx) => runMutation(tx, deviceId, mutation, logger), {
         timeout: 30_000,
         maxWait: 10_000,
       });
@@ -59,6 +64,7 @@ async function runMutation(
   tx: Prisma.TransactionClient,
   deviceId: string,
   mutation: DeviceMutation,
+  logger: LoggerService,
 ): Promise<Omit<ApplyMutationsResult, 'attempts'>> {
   const upsertCounts: Record<string, number> = {};
 
@@ -74,7 +80,7 @@ async function runMutation(
     if (count === 0) upsertCounts['serverUpdate:skipped'] = 1;
   }
 
-  await upsertChildren(tx, deviceId, mutation.upserts, upsertCounts);
+  await upsertChildren(tx, deviceId, mutation.upserts, upsertCounts, mutation.pciDevicesPartial === true, logger);
 
   return {
     deviceUpdateKeys: Object.keys(mutation.deviceUpdate ?? {}),
@@ -87,6 +93,8 @@ async function upsertChildren(
   deviceId: string,
   upserts: MutationUpserts | undefined,
   counts: Record<string, number>,
+  pciDevicesPartial: boolean,
+  logger: LoggerService,
 ): Promise<void> {
   if (!upserts) return;
 
@@ -111,21 +119,16 @@ async function upsertChildren(
     }
     counts.gpus = upserts.gpus.length;
 
-    // sweeps GPUs this scan didn't report — a pulled or failed card. Same gate as
-    // the drive sweep below: `nvidia` enumerates every GPU, and an empty report
-    // (CC-mode / no driver) emits no upserts at all, so it sweeps nothing rather
-    // than dropping the count to zero. Without this, `projectHardwareSummary`
-    // keeps counting stale rows.
+    // Sweep GPUs this scan didn't report. Empty nvidia reports (CC-mode / no driver)
+    // emit no upserts, so skip rather than dropping the count to zero.
     const reportedIndexes = upserts.gpus.map((gpu) => gpu.index);
     const { count: removed } = await tx.gpu.deleteMany({
       where: { deviceId, index: { notIn: reportedIndexes } },
     });
     if (removed > 0) counts['gpus:removed'] = removed;
 
-    // NvlinkEdge stores endpoints as bare indices with only a Device FK, so dropping a Gpu row
-    // cascades nothing. Sweep edges whose either endpoint is gone, or the topology keeps pointing
-    // at a card that no longer exists — impossible before the sweep above, since Gpu rows were
-    // never deleted. The nvlink collector has no sweep of its own.
+    // NvlinkEdge endpoints are bare indices with only a Device FK — dropping a Gpu
+    // cascades nothing, so sweep edges whose either endpoint is gone.
     const { count: edgesRemoved } = await tx.nvlinkEdge.deleteMany({
       where: {
         deviceId,
@@ -145,11 +148,8 @@ async function upsertChildren(
     }
     counts.storageDrives = upserts.storageDrives.length;
 
-    // sweeps drives this scan didn't report — a pulled disk, or a synthesized row
-    // ("nvme0") the real lsblk name ("nvme0n1") can't collide with, so the upsert
-    // above can never reclaim it. Gated on a non-empty report: both storage
-    // collectors enumerate every disk, so a missing one must sweep nothing rather
-    // than wipe the inventory.
+    // Sweep drives this scan didn't report. Gated on a non-empty report so a missing
+    // collector doesn't wipe inventory.
     const reported = upserts.storageDrives.map((drive) => drive.name);
     const { count: removed } = await tx.storageDrive.deleteMany({
       where: { deviceId, name: { notIn: reported } },
@@ -171,49 +171,52 @@ async function upsertChildren(
     if (ipAddressOrgId !== undefined) return ipAddressOrgId;
     const device = await tx.device.findUnique({
       where: { id: deviceId },
-      select: { organizationId: true, supplierId: true, zone: { select: { organizationId: true } } },
+      select: { supplierId: true, zone: { select: { organizationId: true } } },
     });
     ipAddressOrgId = device?.supplierId ?? device?.zone?.organizationId ?? null;
     return ipAddressOrgId;
   };
 
   if (upserts.interfaces?.length) {
+    // Rows written earlier in this pass: a later interface reporting the same MAC must not take them over.
+    const writtenIds = new Set<string>();
     for (const upsert of upserts.interfaces) {
       const { ipAddresses, ...iface } = upsert;
+      const data = { ...iface };
 
-      let interfaceId: string | null = null;
-      if (iface.macAddress) {
-        const byName = await tx.interface.findFirst({
-          where: { deviceId, name: iface.name, deletedAt: null },
-          select: { id: true },
-        });
-        if (!byName) {
-          const enrichmentRow = await tx.interface.findFirst({
+      const byName = await tx.interface.findFirst({
+        where: { deviceId, name: data.name, deletedAt: null },
+        select: { id: true },
+      });
+      // Canonicalised like the write extension stores it, so a hyphen/uppercase report still finds its row.
+      const byMac = data.macAddress
+        ? await tx.interface.findFirst({
             where: {
               deviceId,
-              name: 'eth0',
               deletedAt: null,
-              macAddress: { equals: iface.macAddress, mode: 'insensitive' },
+              macAddress: { equals: formatMacAddress(data.macAddress), mode: 'insensitive' },
+              ...(byName ? { id: { not: byName.id } } : {}),
             },
-            select: { id: true },
-          });
-          if (enrichmentRow) {
-            await tx.interface.update({ where: { id: enrichmentRow.id }, data: iface, select: { id: true } });
-            interfaceId = enrichmentRow.id;
-          }
-        }
+            select: { id: true, name: true },
+          })
+        : null;
+
+      let target = byName;
+      if (byMac && !byName && !writtenIds.has(byMac.id)) {
+        target = byMac; // the NIC was renamed since the row was written: live name wins
+      } else if (byMac) {
+        // The partial unique index (deviceId, lower(macAddress)) would abort the whole transaction.
+        logger.warn(
+          `Interfaces ${byMac.name} and ${data.name} on device ${deviceId} both report MAC ${data.macAddress} — storing ${data.name} without one`,
+        );
+        data.macAddress = null;
       }
 
-      if (interfaceId === null) {
-        const existing = await tx.interface.findFirst({
-          where: { deviceId, name: iface.name, deletedAt: null },
-          select: { id: true },
-        });
-        const row = existing
-          ? await tx.interface.update({ where: { id: existing.id }, data: iface, select: { id: true } })
-          : await tx.interface.create({ data: { deviceId, ...iface }, select: { id: true } });
-        interfaceId = row.id;
-      }
+      const row = target
+        ? await tx.interface.update({ where: { id: target.id }, data, select: { id: true } })
+        : await tx.interface.create({ data: { deviceId, ...data }, select: { id: true } });
+      writtenIds.add(row.id);
+      const interfaceId = row.id;
 
       if (ipAddresses?.length) {
         const orgId = await resolveIpAddressOrgId();
@@ -257,14 +260,10 @@ async function upsertChildren(
   }
 
   if (upserts.pciDevices?.length) {
-    for (const pci of upserts.pciDevices) {
-      await tx.pciDevice.upsert({
-        where: { deviceId_address: { deviceId, address: pci.address } },
-        create: { deviceId, ...pci },
-        update: pci,
-      });
-    }
-    counts.pciDevices = upserts.pciDevices.length;
+    const { written, removed } = await upsertPciDevices(tx, deviceId, upserts.pciDevices, pciDevicesPartial);
+    counts.pciDevices = written;
+    if (removed > 0) counts['pciDevices:removed'] = removed;
+    if (pciDevicesPartial) counts['pciDevices:prune-skipped'] = 1;
   }
 
   if (upserts.uefiBootEntries?.length) {
@@ -305,6 +304,56 @@ async function upsertChildren(
     });
     counts.solConfig = 1;
   }
+}
+
+/** Batched PciDevice upsert via raw SQL. Write every EXCLUDED column; prune stale `updatedAt` only when `rows` is the whole bus. */
+async function upsertPciDevices(
+  tx: Prisma.TransactionClient,
+  deviceId: string,
+  rows: PciDeviceUpsert[],
+  partial: boolean,
+): Promise<{ written: number; removed: number }> {
+  // ON CONFLICT can't touch the same row twice in one statement; last wins.
+  const deduped = [...new Map(rows.map((pci) => [pci.address, pci])).values()];
+  const now = new Date();
+
+  for (let i = 0; i < deduped.length; i += PCI_CHUNK) {
+    const values = deduped.slice(i, i + PCI_CHUNK).map(
+      (pci) => Prisma.sql`(
+        ${randomUUID()}, ${deviceId}, ${pci.address}, ${pci.vendorId}, ${pci.vendorName ?? null},
+        ${pci.productId}, ${pci.productName ?? null}, ${pci.className ?? null}, ${pci.subclassName ?? null},
+        ${pci.driver ?? null}, ${pci.subsystemVendorId ?? null}, ${pci.subsystemProductId ?? null}, ${now}
+      )`,
+    );
+
+    await tx.$executeRaw`
+      INSERT INTO "PciDevice" (
+        "id", "deviceId", "address", "vendorId", "vendorName", "productId", "productName",
+        "className", "subclassName", "driver", "subsystemVendorId", "subsystemProductId", "updatedAt"
+      )
+      VALUES ${Prisma.join(values)}
+      ON CONFLICT ("deviceId", "address") DO UPDATE SET
+        "vendorId"           = EXCLUDED."vendorId",
+        "vendorName"         = EXCLUDED."vendorName",
+        "productId"          = EXCLUDED."productId",
+        "productName"        = EXCLUDED."productName",
+        "className"          = EXCLUDED."className",
+        "subclassName"       = EXCLUDED."subclassName",
+        "driver"             = EXCLUDED."driver",
+        "subsystemVendorId"  = EXCLUDED."subsystemVendorId",
+        "subsystemProductId" = EXCLUDED."subsystemProductId",
+        "updatedAt"          = EXCLUDED."updatedAt"
+    `;
+  }
+
+  if (partial) return { written: deduped.length, removed: 0 };
+
+  // devices that left the bus: card pulled, reseated, vfio renumbering
+  const { count: removed } = await tx.pciDevice.deleteMany({
+    where: { deviceId, updatedAt: { lt: now } },
+  });
+
+  return { written: deduped.length, removed };
 }
 
 function isRetryable(error: unknown): boolean {

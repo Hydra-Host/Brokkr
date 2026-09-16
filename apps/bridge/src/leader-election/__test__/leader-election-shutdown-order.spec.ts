@@ -33,6 +33,7 @@ function instrumentedRedis(): { factory: RedisDriverFactory; events: string[]; c
     },
     exists: async () => 0,
     rpush: async () => 0,
+    xadd: async () => '1-0',
     lrange: async () => [],
     expire: async () => 1,
     hset: async () => {

@@ -111,6 +111,18 @@ class IoredisDriver implements RedisDriver {
     return this.client.rpush(key, ...values);
   }
 
+  async xadd(key: string, fields: Record<string, string>, maxlen?: number): Promise<string> {
+    const args: string[] = [];
+    for (const [field, value] of Object.entries(fields)) {
+      args.push(field, value);
+    }
+    const id =
+      maxlen === undefined
+        ? await this.client.xadd(key, '*', ...args)
+        : await this.client.xadd(key, 'MAXLEN', '~', maxlen, '*', ...args);
+    return id ?? '';
+  }
+
   async lrange(key: string, start: number, stop: number): Promise<string[]> {
     return this.client.lrange(key, start, stop);
   }

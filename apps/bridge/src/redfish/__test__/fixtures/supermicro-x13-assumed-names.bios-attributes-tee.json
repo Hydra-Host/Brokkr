@@ -1,0 +1,12 @@
+{
+  "LimitCPUPAto46Bits": "Enabled",
+  "MemoryEncryption_TME_": "Disabled",
+  "TotalMemoryEncryptionMulti_Tenant_TME_MT_": "Disabled",
+  "TotalMemoryEncryption_TME_Bypass": "Disabled",
+  "TrustDomainExtension_TDX_": "Disabled",
+  "TDXSecureArbitrationModeLoader_SEAMLoader_": "Disabled",
+  "TME_MT_TDXKeySplit": 1,
+  "SWGuardExtensions_SGX_": "Disabled",
+  "SGXPackageInfoIn_BandAccess": "Disabled",
+  "SGXFactoryReset": "Disabled"
+}

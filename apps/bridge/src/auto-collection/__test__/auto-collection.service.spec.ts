@@ -86,7 +86,7 @@ describe('AutoCollectionService.maybeEnqueueCollectionOnRegister', () => {
       id: DEV,
       is_placeholder: true,
       status: null,
-      role: null,
+      role: 'marketplace-hosts',
       installed_os: null,
       rescue_os: null,
       platform_tags: [],
@@ -110,7 +110,7 @@ describe('AutoCollectionService.maybeEnqueueCollectionOnRegister', () => {
       id: DEV,
       is_placeholder: false,
       status: 'INVENTORY',
-      role: null,
+      role: 'marketplace-hosts',
       installed_os: null,
       rescue_os: null,
       platform_tags: [],
@@ -127,6 +127,29 @@ describe('AutoCollectionService.maybeEnqueueCollectionOnRegister', () => {
     expect(enqueueCollectionJob).toHaveBeenCalledTimes(1);
     const setNxArgs = (cache.setNxOwned as Mock<(...args: any[]) => any>).mock.calls[0];
     expect(setNxArgs[2]).toBe(COOLDOWN_REFRESH_S);
+  });
+
+  it('skips a commissioning device (role=null) instead of collecting on register', async () => {
+    const commissioning: DeviceRecord = {
+      id: DEV,
+      is_placeholder: false,
+      status: 'INVENTORY',
+      role: null,
+      installed_os: null,
+      rescue_os: null,
+      platform_tags: [],
+      device_type: null,
+      netplan: null,
+      serial_port_recommended: null,
+      location_network_type: null,
+      is_vpc: false,
+      last_job_id: null,
+      buildarch: null,
+    };
+    const { service, cache, enqueueCollectionJob } = buildHarness({ record: commissioning });
+    await service.maybeEnqueueCollectionOnRegister(DEV);
+    expect(enqueueCollectionJob).not.toHaveBeenCalled();
+    expect(cache.setNxOwned).not.toHaveBeenCalled();
   });
 
   it('swallows exceptions', async () => {

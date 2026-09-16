@@ -57,7 +57,7 @@ export abstract class BaseVendorProfile {
         appClassName: APP_CLASS,
       },
     );
-    return Promise.resolve({ ok: true, checked: false, missing: [] });
+    return Promise.resolve({ ok: true, checked: false, missing: [], reason: 'unmodeled' });
   }
 
   // ── boot ──────────────────────────────────────────────────────────────

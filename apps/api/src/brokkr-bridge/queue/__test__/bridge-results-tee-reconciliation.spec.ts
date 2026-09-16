@@ -11,8 +11,9 @@ import { ZoneCryptoConfig } from 'src/zone-crypto/zone-crypto.config';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { DeviceRecordPublisher } from '../../device-record/device-record-publisher.service';
 import { DiscoveryIngressService } from '../../discovery/discovery-ingress.service';
-import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
+import { JobLogWriterService } from '../../job-logs/job-log-writer.service';
 import { BridgeCommissioningService } from '../../lifecycle/commissioning.service';
+import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../../lifecycle/qualify-orchestration.service';
 import { RenderRequestDispatcher } from '../../render-request/render-request-dispatcher.service';
 import { BridgeResultsConsumer } from '../bridge-results.consumer';
@@ -54,7 +55,10 @@ describe('BridgeResultsConsumer — teeEnabled reconciliation', () => {
         update: vi.fn().mockResolvedValue({}),
         findUnique: vi.fn().mockResolvedValue({ id: DEVICE_UUID }),
       },
-      server: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      server: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
       job: { findUnique: vi.fn() },
       lifecycleJob: { findUnique: vi.fn() },
       operatingSystem: { findUnique: vi.fn() },
@@ -63,6 +67,7 @@ describe('BridgeResultsConsumer — teeEnabled reconciliation', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BridgeResultsConsumer,
+        { provide: JobLogWriterService, useValue: { write: vi.fn() } },
         {
           provide: SealedEnvelopeService,
           useValue: { isZoneEnrolled: vi.fn().mockResolvedValue(false), openBridgeToHub: vi.fn() },
@@ -127,6 +132,7 @@ describe('BridgeResultsConsumer — teeEnabled reconciliation', () => {
   describe('provision complete — reconcile teeEnabled', () => {
     it('sets teeEnabled=true when the provision requested TEE via the tee flag', async () => {
       prisma.lifecycleJob.findUnique.mockResolvedValue({
+        deviceId: DEVICE_UUID,
         payload: {
           operatingSystemSlug: 'ubuntu-noble-vanilla',
           request: { tee: true, operatingSystemSlug: 'ubuntu-noble-vanilla', customizations: null },
@@ -143,6 +149,7 @@ describe('BridgeResultsConsumer — teeEnabled reconciliation', () => {
 
     it('sets teeEnabled=true when the OS slug has a tee variant', async () => {
       prisma.lifecycleJob.findUnique.mockResolvedValue({
+        deviceId: DEVICE_UUID,
         payload: {
           operatingSystemSlug: 'ubuntu-noble-tee',
           request: { tee: false, operatingSystemSlug: 'ubuntu-noble-tee', customizations: null },
@@ -159,6 +166,7 @@ describe('BridgeResultsConsumer — teeEnabled reconciliation', () => {
 
     it('sets teeEnabled=true when customizations include tee-setup', async () => {
       prisma.lifecycleJob.findUnique.mockResolvedValue({
+        deviceId: DEVICE_UUID,
         payload: {
           operatingSystemSlug: 'ubuntu-noble-vanilla',
           request: {
@@ -179,6 +187,7 @@ describe('BridgeResultsConsumer — teeEnabled reconciliation', () => {
 
     it('sets teeEnabled=false when no TEE was requested', async () => {
       prisma.lifecycleJob.findUnique.mockResolvedValue({
+        deviceId: DEVICE_UUID,
         payload: {
           operatingSystemSlug: 'ubuntu-noble-vanilla',
           request: { tee: false, operatingSystemSlug: 'ubuntu-noble-vanilla', customizations: null },
@@ -223,6 +232,7 @@ describe('BridgeResultsConsumer — teeEnabled reconciliation', () => {
   describe('reprovision complete — reconcile teeEnabled from top-level payload', () => {
     it('sets teeEnabled=true when reprovision payload has tee=true at the top level', async () => {
       prisma.lifecycleJob.findUnique.mockResolvedValue({
+        deviceId: DEVICE_UUID,
         payload: {
           operatingSystemSlug: 'ubuntu-noble-vanilla',
           tee: true,
@@ -240,6 +250,7 @@ describe('BridgeResultsConsumer — teeEnabled reconciliation', () => {
 
     it('sets teeEnabled=true when reprovision payload has tee-setup in top-level customizations', async () => {
       prisma.lifecycleJob.findUnique.mockResolvedValue({
+        deviceId: DEVICE_UUID,
         payload: {
           operatingSystemSlug: 'ubuntu-noble-vanilla',
           tee: false,
@@ -257,6 +268,7 @@ describe('BridgeResultsConsumer — teeEnabled reconciliation', () => {
 
     it('sets teeEnabled=false when reprovision payload has no TEE indicators', async () => {
       prisma.lifecycleJob.findUnique.mockResolvedValue({
+        deviceId: DEVICE_UUID,
         payload: {
           operatingSystemSlug: 'ubuntu-noble-vanilla',
           tee: false,
@@ -274,6 +286,7 @@ describe('BridgeResultsConsumer — teeEnabled reconciliation', () => {
 
     it('sets teeEnabled=true when reprovision OS slug has a tee variant', async () => {
       prisma.lifecycleJob.findUnique.mockResolvedValue({
+        deviceId: DEVICE_UUID,
         payload: {
           operatingSystemSlug: 'ubuntu-noble-tee',
           tee: false,

@@ -79,8 +79,8 @@ async function makeController(opts: StubServiceOverrides): Promise<{
 
 async function writeAt(baseDir: string, arch: string, filename: string): Promise<void> {
   const { mkdir } = await import('node:fs/promises');
-  await mkdir(join(baseDir, arch), { recursive: true });
-  await writeFile(join(baseDir, arch, filename), Buffer.from('file content'));
+  await mkdir(join(baseDir, 'full', arch), { recursive: true });
+  await writeFile(join(baseDir, 'full', arch, filename), Buffer.from('file content'));
 }
 
 describe('routes/download — discovery (translated from discovery download tests)', () => {

@@ -1,9 +1,11 @@
+import { TenantType } from '@repo/database/enums';
 import { z } from 'zod';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const TenantTypeSchema = z
-  .enum(['DemandCustomer', 'SupplyCustomer'])
-  .describe('Type of tenant: demand-side or supply-side customer');
-export type TenantType = z.infer<typeof TenantTypeSchema>;
+export const TenantTypeSchema = zodEnumFromPrisma(TenantType).describe(
+  'Type of tenant: demand-side or supply-side customer',
+);
+export type { TenantType };
 
 export const OrganizationSchema = z.object({
   id: z.string().describe('Unique identifier for the organization'),

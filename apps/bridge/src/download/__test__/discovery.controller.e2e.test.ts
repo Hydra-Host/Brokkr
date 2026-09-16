@@ -8,6 +8,7 @@ import { Test } from '@nestjs/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { discoveryInventoryResponseSchema } from '../discovery-inventory.schema.js';
+import { resetDiscoveryFileConfig } from '../discovery.config.js';
 import { DiscoveryModule } from '../discovery.module.js';
 import { resetPersistentStorageConfig, resetStorageConfig } from '../storage.config.js';
 
@@ -21,13 +22,17 @@ describe('DiscoveryController (e2e)', () => {
   beforeAll(async () => {
     baseDir = await mkdtemp(join(tmpdir(), 'discovery-route-'));
     process.env.PERSISTENT_STORAGE_PATH = baseDir;
+    process.env.DISCOVERY_FLAVORS = 'light,full';
     resetPersistentStorageConfig();
     resetStorageConfig();
+    resetDiscoveryFileConfig();
 
     fileBytes = Buffer.alloc(FILE_SIZE);
     for (let i = 0; i < FILE_SIZE; i++) fileBytes[i] = i % 256;
-    await mkdir(join(baseDir, 'brokkr-live', 'amd64'), { recursive: true });
-    await writeFile(join(baseDir, 'brokkr-live', 'amd64', 'test.bin'), fileBytes);
+    await mkdir(join(baseDir, 'brokkr-live', 'full', 'amd64'), { recursive: true });
+    await writeFile(join(baseDir, 'brokkr-live', 'full', 'amd64', 'test.bin'), fileBytes);
+    await mkdir(join(baseDir, 'brokkr-live', 'light', 'amd64'), { recursive: true });
+    await writeFile(join(baseDir, 'brokkr-live', 'light', 'amd64', 'light.bin'), fileBytes.subarray(0, 10));
 
     const moduleRef = await Test.createTestingModule({ imports: [DiscoveryModule] }).compile();
     app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
@@ -38,8 +43,10 @@ describe('DiscoveryController (e2e)', () => {
   afterAll(async () => {
     await app.close();
     delete process.env.PERSISTENT_STORAGE_PATH;
+    delete process.env.DISCOVERY_FLAVORS;
     resetPersistentStorageConfig();
     resetStorageConfig();
+    resetDiscoveryFileConfig();
     await rm(baseDir, { recursive: true, force: true });
   });
 
@@ -53,10 +60,30 @@ describe('DiscoveryController (e2e)', () => {
     expect(res.rawPayload.equals(fileBytes)).toBe(true);
   });
 
-  it('serves the whole file via path parameters', async () => {
+  it('serves the two-segment path as the full flavor', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/discovery/amd64/test.bin' });
     expect(res.statusCode).toBe(200);
     expect(res.rawPayload.equals(fileBytes)).toBe(true);
+
+    const light = await app.inject({ method: 'GET', url: '/api/discovery/amd64/light.bin' });
+    expect(light.statusCode).toBe(404);
+  });
+
+  it('serves a file by flavor, arch and filename', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/discovery/light/amd64/light.bin' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-length']).toBe('10');
+    expect(res.rawPayload.equals(fileBytes.subarray(0, 10))).toBe(true);
+
+    const full = await app.inject({ method: 'GET', url: '/api/discovery/full/amd64/test.bin' });
+    expect(full.statusCode).toBe(200);
+    expect(full.rawPayload.equals(fileBytes)).toBe(true);
+  });
+
+  it('rejects a flavor that is not configured', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/discovery/fat/amd64/test.bin' });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: 'Invalid flavor. Supported: light, full' });
   });
 
   it('serves a byte range with 206 and Content-Range', async () => {
@@ -147,15 +174,25 @@ describe('DiscoveryController (e2e)', () => {
     expect(Object.keys(body)).toEqual(['error']);
   });
 
-  it('reports required-file presence per arch on GET /api/discovery/inventory', async () => {
-    await writeFile(join(baseDir, 'brokkr-live', 'amd64', 'vmlinuz'), fileBytes);
+  it('reports required-file presence per flavor and arch on GET /api/discovery/inventory', async () => {
+    await writeFile(join(baseDir, 'brokkr-live', 'full', 'amd64', 'vmlinuz'), fileBytes);
 
     const res = await app.inject({ method: 'GET', url: '/api/discovery/inventory' });
     expect(res.statusCode).toBe(200);
 
     const body = discoveryInventoryResponseSchema.parse(JSON.parse(res.body));
-    const amd64 = body.architectures.find((a) => a.arch === 'amd64');
+    expect(body.architectures.map((a) => [a.flavor, a.arch])).toEqual([
+      ['light', 'amd64'],
+      ['light', 'arm64'],
+      ['full', 'amd64'],
+      ['full', 'arm64'],
+    ]);
+    const amd64 = body.architectures.find((a) => a.flavor === 'full' && a.arch === 'amd64');
     expect(amd64).toBeDefined();
+    const lightVmlinuz = body.architectures
+      .find((a) => a.flavor === 'light' && a.arch === 'amd64')
+      ?.files.find((f) => f.name === 'vmlinuz');
+    expect(lightVmlinuz?.present).toBe(false);
 
     const present = amd64?.files.find((f) => f.name === 'vmlinuz');
     expect(present?.present).toBe(true);

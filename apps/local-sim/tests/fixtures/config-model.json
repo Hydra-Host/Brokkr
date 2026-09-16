@@ -1,960 +1,2235 @@
 {
+  "values": [
+    {
+      "value": true,
+      "path": "fleet.autoStart"
+    },
+    {
+      "value": "password",
+      "path": "identity.mailpit.password"
+    },
+    {
+      "value": "00000000-0000-0000-0000-000000000000",
+      "path": "identity.orgId"
+    },
+    {
+      "value": "brokkr",
+      "path": "identity.pg.db"
+    },
+    {
+      "value": "password",
+      "path": "identity.pg.password"
+    },
+    {
+      "value": "brokkr",
+      "path": "identity.pg.user"
+    },
+    {
+      "value": "password",
+      "path": "identity.redis.password"
+    },
+    {
+      "value": "",
+      "path": "lan.bindAddress"
+    },
+    {
+      "value": true,
+      "path": "lan.datastoreAuth"
+    },
+    {
+      "value": false,
+      "path": "lan.expose"
+    },
+    {
+      "value": "loopback",
+      "path": "lan.mode"
+    },
+    {
+      "value": "",
+      "path": "lan.publicHost"
+    },
+    {
+      "value": "brokkr.assets.hydra.host",
+      "path": "osLayerCache.originHost"
+    },
+    {
+      "value": "1.1.1.1 8.8.8.8",
+      "path": "osLayerCache.resolvers"
+    },
+    {
+      "value": "",
+      "path": "polyrepo.hub.path"
+    },
+    {
+      "value": "git@example.com:your-org/brokkr-app.git",
+      "path": "polyrepo.hub.url"
+    },
+    {
+      "value": 4300,
+      "path": "ports.grafana"
+    },
+    {
+      "value": 3001,
+      "path": "ports.hubAdmin.base"
+    },
+    {
+      "value": 3000,
+      "path": "ports.hubApi.base"
+    },
+    {
+      "value": 5173,
+      "path": "ports.hubWeb"
+    },
+    {
+      "value": 5174,
+      "path": "ports.hubWebAdmin"
+    },
+    {
+      "value": 3002,
+      "path": "ports.lab"
+    },
+    {
+      "value": 5175,
+      "path": "ports.labWeb"
+    },
+    {
+      "value": 4330,
+      "path": "ports.lokiGrpc"
+    },
+    {
+      "value": 3100,
+      "path": "ports.lokiHttp"
+    },
+    {
+      "value": 1025,
+      "path": "ports.mailpitSmtp"
+    },
+    {
+      "value": 8025,
+      "path": "ports.mailpitWeb"
+    },
+    {
+      "value": 8888,
+      "path": "ports.nginx"
+    },
+    {
+      "value": 4319,
+      "path": "ports.otelcolHealth"
+    },
+    {
+      "value": 4317,
+      "path": "ports.otlpGrpc"
+    },
+    {
+      "value": 4318,
+      "path": "ports.otlpHttp"
+    },
+    {
+      "value": 5432,
+      "path": "ports.postgres"
+    },
+    {
+      "value": 8443,
+      "path": "ports.redfish"
+    },
+    {
+      "value": 6379,
+      "path": "ports.redis"
+    },
+    {
+      "value": 8000,
+      "path": "ports.spoke.base"
+    },
+    {
+      "value": 9082,
+      "path": "ports.spokeGrpc.base"
+    },
+    {
+      "value": 4329,
+      "path": "ports.tempoGrpc"
+    },
+    {
+      "value": 3200,
+      "path": "ports.tempoHttp"
+    },
+    {
+      "value": 4327,
+      "path": "ports.tempoOtlpGrpc"
+    },
+    {
+      "value": 4328,
+      "path": "ports.tempoOtlpHttp"
+    },
+    {
+      "value": 19391,
+      "path": "ports.thanosCapnproto"
+    },
+    {
+      "value": 10901,
+      "path": "ports.thanosGrpc"
+    },
+    {
+      "value": 10902,
+      "path": "ports.thanosHttp"
+    },
+    {
+      "value": 10904,
+      "path": "ports.thanosQueryGrpc"
+    },
+    {
+      "value": 10903,
+      "path": "ports.thanosQueryHttp"
+    },
+    {
+      "value": 19291,
+      "path": "ports.thanosRemoteWrite"
+    },
+    {
+      "value": true,
+      "path": "redisAcl.enable"
+    },
+    {
+      "value": true,
+      "path": "spoke.watch"
+    },
+    {
+      "value": 4,
+      "path": "stack.fleetNodeCount"
+    },
+    {
+      "value": 0,
+      "path": "stack.slot"
+    },
+    {
+      "value": 1,
+      "path": "stackCounts.hub"
+    },
+    {
+      "value": 1,
+      "path": "stackCounts.spoke"
+    },
+    {
+      "value": "true",
+      "path": "stackDefaults.hub.AUTH_BYPASS_ENABLED"
+    },
+    {
+      "value": "http://localhost:3000",
+      "path": "stackDefaults.hub.BASE_URL"
+    },
+    {
+      "value": "postgresql://brokkr:password@127.0.0.1:5432/brokkr",
+      "path": "stackDefaults.hub.DATABASE_URL"
+    },
+    {
+      "value": null,
+      "path": "stackDefaults.hub.HUB_REPO_PATH"
+    },
+    {
+      "value": "debug",
+      "path": "stackDefaults.hub.LOG_LEVEL"
+    },
+    {
+      "value": "redis://127.0.0.1:6379",
+      "path": "stackDefaults.hub.REDIS_URL"
+    },
+    {
+      "value": "true",
+      "path": "stackDefaults.spoke.AGENT_SSH_FORCE_REDEPLOY"
+    },
+    {
+      "value": "false",
+      "path": "stackDefaults.spoke.ANALYTICS_ENABLED"
+    },
+    {
+      "value": "true",
+      "path": "stackDefaults.spoke.BRIDGE_SYNC_ENABLED"
+    },
+    {
+      "value": "1.1.8",
+      "path": "stackDefaults.spoke.BROKKR_LIVE_VERSION"
+    },
+    {
+      "value": "1",
+      "path": "stackDefaults.spoke.COLLECTION_WORKER_CONCURRENCY"
+    },
+    {
+      "value": "https://brokkr.assets.hydra.host/brokkr-live",
+      "path": "stackDefaults.spoke.DISCOVERY_BASE_URL"
+    },
+    {
+      "value": "3600",
+      "path": "stackDefaults.spoke.HTTPS_DOWNLOAD_TIMEOUT"
+    },
+    {
+      "value": "3",
+      "path": "stackDefaults.spoke.HTTPS_RETRY_ATTEMPTS"
+    },
+    {
+      "value": "5",
+      "path": "stackDefaults.spoke.HTTPS_RETRY_DELAY"
+    },
+    {
+      "value": "true",
+      "path": "stackDefaults.spoke.HTTPS_VERIFY_SSL"
+    },
+    {
+      "value": "10",
+      "path": "stackDefaults.spoke.LIFECYCLE_WORKER_CONCURRENCY"
+    },
+    {
+      "value": "console",
+      "path": "stackDefaults.spoke.LOG_FORMAT"
+    },
+    {
+      "value": "debug",
+      "path": "stackDefaults.spoke.LOG_LEVEL"
+    },
+    {
+      "value": "false",
+      "path": "stackDefaults.spoke.MONITORING_LOGS_ENABLED"
+    },
+    {
+      "value": "http://192.168.200.1:8888/assets",
+      "path": "stackDefaults.spoke.OS_LAYER_URL"
+    },
+    {
+      "value": "true",
+      "path": "stackDefaults.spoke.TELEGRAF_ENABLED"
+    },
+    {
+      "value": false,
+      "path": "telemetry.enable"
+    },
+    {
+      "value": false,
+      "path": "vrrpSim.enable"
+    },
+    {
+      "value": "I1GOxiD9hSt9QvHUdylUSXKW/WHM6PF2dUCovWeSTXg=",
+      "path": "zoneCrypto.bridgeAtRestKey"
+    },
+    {
+      "value": "CLgn641z7sEoBORwcShY+RdjAUnrluM/y+dzOa3oEko=",
+      "path": "zoneCrypto.hubPrivateKey"
+    }
+  ],
   "catalog": [
     {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": true,
-      "description": "Whether `devenv up` auto-starts the simulated fleet (build artifacts, power on the VMs). False brings up only the control plane; start the fleet on demand from the control center or with `devenv processes start fleet`.",
-      "editable": true,
-      "group": "Fleet",
-      "kind": "bool",
-      "label": "Auto-start fleet",
-      "overrideFrom": null,
+      "description": "Whether `devenv up` auto-starts the simulated fleet (build artifacts, power on the VMs). False brings up only the control plane; start the fleet on demand from the control center or with `process-compose -U -u $PC_SOCKET_PATH process start fleet`.",
       "path": "fleet.autoStart",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [
-        "vm",
-        "baremetal"
-      ],
-      "danger": false,
-      "default": "vm",
-      "description": "Fleet mode. 'vm' (default) = the simulated libvirt/qemu fleet \u2014 output is byte-identical to the pre-mode topology (no mode: / baremetal: keys). 'baremetal' = real hardware via the baremetal block.",
-      "editable": true,
-      "group": "Fleet",
-      "kind": "select",
-      "label": "Fleet mode",
-      "overrideFrom": null,
-      "path": "fleet.mode",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "00000000-0000-0000-0000-000000000000",
-      "description": "Instance-operator org UUID \u2014 hub BROKKR_ADMIN_ORG_ID + sim SIM_HYDRAHOST_ORG_ID derive from this single value. A change needs a reseed to reach the seeded org.",
-      "editable": true,
-      "group": "Identity",
-      "kind": "text",
-      "label": "Operator org id",
-      "overrideFrom": null,
-      "path": "identity.orgId",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "brokkr",
-      "description": "Postgres database name. Takes effect only on a fresh datadir.",
-      "editable": true,
-      "group": "Identity",
-      "kind": "text",
-      "label": "Postgres database",
-      "overrideFrom": null,
-      "path": "identity.pg.db",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "password",
-      "description": "Postgres password (local dev). Takes effect only on a fresh datadir.",
-      "editable": true,
-      "group": "Identity",
-      "kind": "text",
-      "label": "Postgres password",
-      "overrideFrom": null,
-      "path": "identity.pg.password",
-      "secret": true
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "brokkr",
-      "description": "Postgres role the hub + sim connect as (also the created role). Takes effect only on a fresh datadir.",
-      "editable": true,
-      "group": "Identity",
-      "kind": "text",
-      "label": "Postgres user",
-      "overrideFrom": null,
-      "path": "identity.pg.user",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": true,
-      "default": false,
-      "description": "Whether the loopback-only datastores/services bind 0.0.0.0 (LAN/Tailscale reach) instead of 127.0.0.1. Written by the control center into stack.local.nix.",
-      "editable": true,
-      "group": "Networking",
+      "default": true,
       "kind": "bool",
-      "label": "Expose on LAN",
-      "overrideFrom": null,
-      "path": "lan.expose",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "brokkr.assets.hydra.host",
-      "description": "CDN asset origin host the OS-layer cache proxies to. Also the origin the spoke's DISCOVERY_BASE_URL derives from, so repointing it moves both the layer cache and discovery-image sync.",
-      "editable": true,
-      "group": "Boot/cache",
-      "kind": "text",
-      "label": "Asset origin host",
-      "overrideFrom": null,
-      "path": "osLayerCache.originHost",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "1.1.1.1 8.8.8.8",
-      "description": "DNS resolvers nginx uses to re-resolve the rotating CDN origin IPs.",
-      "editable": true,
-      "group": "Boot/cache",
-      "kind": "text",
-      "label": "Cache DNS resolvers",
-      "overrideFrom": null,
-      "path": "osLayerCache.resolvers",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": 1025,
-      "description": "SMTP ingest of the local email catcher \u2014 the hub's SMTP_PORT derives from it, so moving it moves the hub's dialer with the listener.",
-      "editable": true,
-      "group": "Email",
-      "kind": "port",
-      "label": "Mailpit SMTP",
-      "overrideFrom": null,
-      "path": "ports.mailpitSmtp",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": 8025,
-      "description": "Web UI / API where captured local email is read.",
-      "editable": true,
-      "group": "Email",
-      "kind": "port",
-      "label": "Mailpit web UI",
-      "overrideFrom": null,
-      "path": "ports.mailpitWeb",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": 8888,
-      "description": "Listener for the local OS-layer cache; the device pulls layer blobs from it instead of re-hitting the CDN.",
-      "editable": true,
-      "group": "Boot/cache",
-      "kind": "port",
-      "label": "OS-layer cache (nginx)",
-      "overrideFrom": null,
-      "path": "ports.nginx",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": 5432,
-      "description": "Postgres listener. A change needs only a restart \u2014 the datadir persists.",
-      "editable": true,
-      "group": "Datastores",
-      "kind": "port",
-      "label": "Postgres",
-      "overrideFrom": null,
-      "path": "ports.postgres",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": 8443,
-      "description": "sushy-emulator listener (SIM_REDFISH_PORT). Read by the sim BMC daemons at startup, so a change applies on the next fleet rebuild, not a live restart.",
-      "editable": true,
       "group": "Fleet",
-      "kind": "port",
-      "label": "Redfish (sushy)",
-      "overrideFrom": null,
-      "path": "ports.redfish",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
+      "label": "Auto-start fleet",
       "danger": false,
-      "default": 6379,
-      "description": "Redis listener \u2014 the hub's BullMQ queues, config atoms and pub/sub, and every bridge, dial it.",
+      "choices": [],
       "editable": true,
-      "group": "Datastores",
-      "kind": "port",
-      "label": "Redis",
+      "secret": false,
+      "alias": [],
       "overrideFrom": null,
-      "path": "ports.redis",
-      "secret": false
+      "bounds": null,
+      "pinEnv": "BROKKR_PIN_FLEET_AUTOSTART"
     },
     {
-      "alias": [],
-      "choices": [],
+      "description": "Password for the Mailpit web UI and API, as HTTP basic auth for the user `brokkr`. Only used under lan.mode = \"direct\" with lan.datastoreAuth on \u2014 the catcher holds real password-reset mail, and its API returns message bodies.",
+      "path": "identity.mailpit.password",
+      "default": "password",
+      "kind": "text",
+      "group": "Identity",
+      "label": "Mailpit UI password",
       "danger": false,
-      "default": 10901,
-      "description": "Thanos receive store API \u2014 what the query frontend fans out to.",
+      "choices": [],
       "editable": true,
-      "group": "Observability",
-      "kind": "port",
-      "label": "Thanos gRPC",
+      "secret": true,
+      "alias": [],
       "overrideFrom": null,
-      "path": "ports.thanosGrpc",
-      "secret": false
+      "bounds": null,
+      "pinEnv": null
     },
     {
-      "alias": [],
-      "choices": [],
+      "description": "Instance-operator org UUID \u2014 hub BROKKR_ADMIN_ORG_ID + sim SIM_HYDRAHOST_ORG_ID derive from this single value. A change needs a reseed to reach the seeded org.",
+      "path": "identity.orgId",
+      "default": "00000000-0000-0000-0000-000000000000",
+      "kind": "text",
+      "group": "Identity",
+      "label": "Operator org id",
       "danger": false,
-      "default": 10902,
-      "description": "Thanos receive HTTP API.",
+      "choices": [],
       "editable": true,
-      "group": "Observability",
-      "kind": "port",
-      "label": "Thanos HTTP",
+      "secret": false,
+      "alias": [],
       "overrideFrom": null,
-      "path": "ports.thanosHttp",
-      "secret": false
+      "bounds": null,
+      "pinEnv": null
     },
     {
-      "alias": [],
-      "choices": [],
+      "description": "Postgres database name. Takes effect only on a fresh datadir.",
+      "path": "identity.pg.db",
+      "default": "brokkr",
+      "kind": "text",
+      "group": "Identity",
+      "label": "Postgres database",
       "danger": false,
-      "default": 19291,
-      "description": "Remote-write ingest each bridge's telegraf ships device metrics to.",
+      "choices": [],
       "editable": true,
-      "group": "Observability",
-      "kind": "port",
-      "label": "Thanos remote-write",
+      "secret": false,
+      "alias": [],
       "overrideFrom": null,
-      "path": "ports.thanosRemoteWrite",
-      "secret": false
+      "bounds": null,
+      "pinEnv": null
     },
     {
-      "alias": [],
-      "choices": [],
+      "description": "Postgres password (local dev). Takes effect only on a fresh datadir.",
+      "path": "identity.pg.password",
+      "default": "password",
+      "kind": "text",
+      "group": "Identity",
+      "label": "Postgres password",
       "danger": false,
-      "default": 0,
-      "description": "Multi-stack instance slot. 0 = legacy single-stack layout (byte-identical\nto pre-slot behavior). Slots >=1 derive disjoint ports (20000+500*S blocks),\nsubnets (192.168.(200+S)/(105+S)), MACs, node names, and state paths so\nmultiple worktrees can run concurrent stacks.\n",
+      "choices": [],
+      "editable": true,
+      "secret": true,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Postgres role the hub + sim connect as (also the created role). Takes effect only on a fresh datadir.",
+      "path": "identity.pg.user",
+      "default": "brokkr",
+      "kind": "text",
+      "group": "Identity",
+      "label": "Postgres user",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Password for the Redis `default` user, applied as requirepass and carried in every derived REDIS_URL. Only used under lan.mode = \"direct\" with lan.datastoreAuth on; keep it URL-safe, since it rides in the connection string's userinfo.",
+      "path": "identity.redis.password",
+      "default": "password",
+      "kind": "text",
+      "group": "Identity",
+      "label": "Redis password",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": true,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Single address the `direct` mode listeners bind, instead of every interface. An IPv4 or IPv6 literal only: this value reaches a socket, and a name resolves to several addresses and binds one of them twice. Put a name in lan.publicHost. Empty means 0.0.0.0 under `direct`, and nothing binds outward under `fronted` or `loopback`.",
+      "path": "lan.bindAddress",
+      "default": "",
+      "kind": "text",
+      "group": "Networking",
+      "label": "Bind address",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": "BROKKR_PIN_LAN_BIND_ADDRESS"
+    },
+    {
+      "description": "Require a credential from off-loopback datastore clients under `direct` mode: Postgres scram-sha-256 on the non-loopback pg_hba lines, a Redis requirepass on the default user, basic auth on the Mailpit UI, and Thanos receive pinned back to loopback (it has no authentication of its own). Only Postgres keeps loopback trust, because pg_hba is per-source. A Redis requirepass is connection-global and has no per-source form, so loopback tooling must present the password too, and the readiness probe carries REDISCLI_AUTH. Mailpit basic auth is global in the same way.",
+      "path": "lan.datastoreAuth",
+      "default": true,
+      "kind": "bool",
+      "group": "Networking",
+      "label": "Datastore credentials",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": "BROKKR_PIN_LAN_DATASTORE_AUTH"
+    },
+    {
+      "description": "Deprecated alias kept so an existing stack.local.nix still evaluates: true implies lan.mode = \"direct\". Set lan.mode instead \u2014 it also reaches the `fronted` posture this boolean cannot express.",
+      "path": "lan.expose",
+      "default": false,
+      "kind": "bool",
+      "group": "Networking",
+      "label": "Expose on LAN (deprecated)",
+      "danger": true,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": "BROKKR_PIN_LAN_EXPOSE"
+    },
+    {
+      "description": "How this stack is reached. `loopback` binds 127.0.0.1 and trusts loopback callers. `direct` binds the LAN (lan.bindAddress, else 0.0.0.0) in cleartext and makes off-loopback callers present a token. `fronted` keeps every listener on loopback for a TLS terminator you run yourself, and makes EVERY caller present a token \u2014 loopback included, because behind a front door a loopback peer is whoever the front door serves.",
+      "path": "lan.mode",
+      "default": "loopback",
+      "kind": "select",
+      "group": "Networking",
+      "label": "Network mode",
+      "danger": true,
+      "choices": [
+        "loopback",
+        "direct",
+        "fronted"
+      ],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": "BROKKR_PIN_LAN_MODE"
+    },
+    {
+      "description": "Host a browser reaches this stack at, under `direct` or `fronted`. Unlike lan.bindAddress it never reaches a socket, so it takes a name \u2014 the name a `fronted` terminator serves, or the name a `direct` LAN client types. It shapes the browser-facing URLs and the dev servers' Host allowlist. Empty falls back to lan.bindAddress, then to localhost.",
+      "path": "lan.publicHost",
+      "default": "",
+      "kind": "text",
+      "group": "Networking",
+      "label": "Public host",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": "BROKKR_PIN_LAN_PUBLIC_HOST"
+    },
+    {
+      "description": "CDN asset origin host the OS-layer cache proxies to. Also the origin the spoke's DISCOVERY_BASE_URL derives from, so repointing it moves both the layer cache and discovery-image sync.",
+      "path": "osLayerCache.originHost",
+      "default": "brokkr.assets.hydra.host",
+      "kind": "text",
+      "group": "Boot/cache",
+      "label": "Asset origin host",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "DNS resolvers nginx uses to re-resolve the rotating CDN origin IPs.",
+      "path": "osLayerCache.resolvers",
+      "default": "1.1.1.1 8.8.8.8",
+      "kind": "text",
+      "group": "Boot/cache",
+      "label": "Cache DNS resolvers",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Where the brokkr-app monorepo checkout lives \u2014 empty means this repo (devenv.nix resolves it to config.devenv.root). Override in devenv.local.nix or via HUB_REPO_PATH in .env/.envrc.local for a polyrepo layout.",
+      "path": "polyrepo.hub.path",
+      "default": "",
+      "kind": "text",
+      "group": "Location",
+      "label": "Hub checkout path",
+      "danger": false,
+      "choices": [],
       "editable": false,
-      "group": "Stack",
-      "kind": "number",
-      "label": "Stack slot",
+      "secret": false,
+      "alias": [],
       "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Clone URL `task setup` uses when the checkout is missing.",
+      "path": "polyrepo.hub.url",
+      "default": "git@example.com:your-org/brokkr-app.git",
+      "kind": "text",
+      "group": "Location",
+      "label": "Hub clone URL",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Grafana UI.",
+      "path": "ports.grafana",
+      "default": 4300,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Grafana UI",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Base of the admin API listener band, stepped per hub replica like the hub API.",
+      "path": "ports.hubAdmin.base",
+      "default": 3001,
+      "kind": "port",
+      "group": "Hub",
+      "label": "Admin API",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Base of the hub API listener band. Hub i binds base plus step times i, so a second hub never collides.",
+      "path": "ports.hubApi.base",
+      "default": 3000,
+      "kind": "port",
+      "group": "Hub",
+      "label": "Hub API",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Vite dev server for the hub SPA. Only the primary hub serves one.",
+      "path": "ports.hubWeb",
+      "default": 5173,
+      "kind": "port",
+      "group": "Hub",
+      "label": "Hub web SPA",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Vite dev server for the admin panel SPA.",
+      "path": "ports.hubWebAdmin",
+      "default": 5174,
+      "kind": "port",
+      "group": "Hub",
+      "label": "Admin web SPA",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Listener this control center itself serves; moving it moves the API you are reading this from.",
+      "path": "ports.lab",
+      "default": 3002,
+      "kind": "port",
+      "group": "Control center",
+      "label": "Control center API",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Vite dev server for the control center SPA, which proxies /api to the control center API.",
+      "path": "ports.labWeb",
+      "default": 5175,
+      "kind": "port",
+      "group": "Control center",
+      "label": "Control center web",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Loki internal server gRPC.",
+      "path": "ports.lokiGrpc",
+      "default": 4330,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Loki gRPC",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Loki query API and its native OTLP logs ingest.",
+      "path": "ports.lokiHttp",
+      "default": 3100,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Loki HTTP",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "SMTP ingest of the local email catcher \u2014 the hub's SMTP_PORT derives from it, so moving it moves the hub's dialer with the listener.",
+      "path": "ports.mailpitSmtp",
+      "default": 1025,
+      "kind": "port",
+      "group": "Email",
+      "label": "Mailpit SMTP",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Web UI / API where captured local email is read.",
+      "path": "ports.mailpitWeb",
+      "default": 8025,
+      "kind": "port",
+      "group": "Email",
+      "label": "Mailpit web UI",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Listener for the local OS-layer cache; the device pulls layer blobs from it instead of re-hitting the CDN.",
+      "path": "ports.nginx",
+      "default": 8888,
+      "kind": "port",
+      "group": "Boot/cache",
+      "label": "OS-layer cache (nginx)",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "otel-collector readiness endpoint.",
+      "path": "ports.otelcolHealth",
+      "default": 4319,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Collector health",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "otel-collector OTLP gRPC ingest.",
+      "path": "ports.otlpGrpc",
+      "default": 4317,
+      "kind": "port",
+      "group": "Observability",
+      "label": "OTLP gRPC (collector)",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "otel-collector OTLP HTTP ingest, and the endpoint the hub exporter targets.",
+      "path": "ports.otlpHttp",
+      "default": 4318,
+      "kind": "port",
+      "group": "Observability",
+      "label": "OTLP HTTP (collector)",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Postgres listener. A change needs only a restart \u2014 the datadir persists.",
+      "path": "ports.postgres",
+      "default": 5432,
+      "kind": "port",
+      "group": "Datastores",
+      "label": "Postgres",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": "BROKKR_PIN_PG_PORT"
+    },
+    {
+      "description": "sushy-emulator listener (SIM_REDFISH_PORT). Read by the sim BMC daemons at startup, so a change applies on the next fleet rebuild, not a live restart.",
+      "path": "ports.redfish",
+      "default": 8443,
+      "kind": "port",
+      "group": "Fleet",
+      "label": "Redfish (sushy)",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Redis listener \u2014 the hub's BullMQ queues, config atoms and pub/sub, and every bridge, dial it.",
+      "path": "ports.redis",
+      "default": 6379,
+      "kind": "port",
+      "group": "Datastores",
+      "label": "Redis",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": "BROKKR_PIN_REDIS_PORT"
+    },
+    {
+      "description": "Base of the bridge HTTP band. Bridge ordinal n binds base plus step times n, and zones take contiguous ordinal blocks in index order.",
+      "path": "ports.spoke.base",
+      "default": 8000,
+      "kind": "port",
+      "group": "Bridge",
+      "label": "Bridge HTTP",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Base of the bridge gRPC band, stepped by the same ordinal as the bridge HTTP port.",
+      "path": "ports.spokeGrpc.base",
+      "default": 9082,
+      "kind": "port",
+      "group": "Bridge",
+      "label": "Bridge gRPC",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Tempo internal server gRPC.",
+      "path": "ports.tempoGrpc",
+      "default": 4329,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Tempo gRPC",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Tempo query API, which Grafana reads as a datasource.",
+      "path": "ports.tempoHttp",
+      "default": 3200,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Tempo query",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "OTLP gRPC ingest the collector forwards traces to.",
+      "path": "ports.tempoOtlpGrpc",
+      "default": 4327,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Tempo OTLP gRPC",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "OTLP HTTP ingest the collector forwards traces to.",
+      "path": "ports.tempoOtlpHttp",
+      "default": 4328,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Tempo OTLP HTTP",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Thanos receive's cap'n proto server. It binds one whether or not the flag is given, and its own default is a fixed 0.0.0.0:19391, so naming it here is what keeps two stacks off each other and keeps the listener on loopback.",
+      "path": "ports.thanosCapnproto",
+      "default": 19391,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Thanos cap'n proto",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Thanos receive store API \u2014 what the query frontend fans out to.",
+      "path": "ports.thanosGrpc",
+      "default": 10901,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Thanos gRPC",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Thanos receive HTTP API.",
+      "path": "ports.thanosHttp",
+      "default": 10902,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Thanos HTTP",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Thanos query internal gRPC, how the frontend fans out to the store APIs.",
+      "path": "ports.thanosQueryGrpc",
+      "default": 10904,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Thanos query gRPC",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Thanos query frontend, serving the Prometheus HTTP API the dashboards read.",
+      "path": "ports.thanosQueryHttp",
+      "default": 10903,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Thanos query HTTP",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Remote-write ingest each bridge's telegraf ships device metrics to.",
+      "path": "ports.thanosRemoteWrite",
+      "default": 19291,
+      "kind": "port",
+      "group": "Observability",
+      "label": "Thanos remote-write",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 65535
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Enable per-zone Redis ACL management in the local sim: hub flag on,\nseeded zones get ACL users with deterministic sim passwords, spokes\nconnect as their zone-scoped user.\n",
+      "path": "redisAcl.enable",
+      "default": true,
+      "kind": "bool",
+      "group": "Security",
+      "label": "Per-zone Redis ACLs",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Run the spoke under dev hot-reload (node --watch plus the spoke-watch nest-build watcher). Set it false for automated, CI or concurrent sim: the decoupled build-watch, dist-rewrite and restart sequence races fleet:apply and flakes bring-up.",
+      "path": "spoke.watch",
+      "default": true,
+      "kind": "bool",
+      "group": "Behavior",
+      "label": "Spoke hot reload",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "How many nodes the generator produces for a slot at or above 1, where the node set is derived rather than the literal committed four. Slot 0 keeps its four literal nodes whatever this says, so changing it there does nothing.",
+      "path": "stack.fleetNodeCount",
+      "default": 4,
+      "kind": "number",
+      "group": "Scale",
+      "label": "Generated fleet nodes",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 4
+      },
+      "pinEnv": null
+    },
+    {
+      "description": "Multi-stack instance slot. 0 = legacy single-stack layout (byte-identical\nto pre-slot behavior). Slots >=1 derive disjoint ports (20000+500*S blocks),\nsubnets (192.168.(200+S)/(105+S)), MACs, node names, and state paths so\nmultiple worktrees can run concurrent stacks.\n",
       "path": "stack.slot",
-      "secret": false
+      "default": 0,
+      "kind": "number",
+      "group": "Stack",
+      "label": "Stack slot",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": {
+        "min": 0,
+        "max": 46
+      },
+      "pinEnv": null
     },
     {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": 1,
       "description": "Hub replica count.",
-      "editable": true,
-      "group": "Scale",
-      "kind": "number",
-      "label": "Hub replicas",
-      "overrideFrom": null,
       "path": "stackCounts.hub",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
       "default": 1,
-      "description": "Spoke replica count.",
-      "editable": true,
-      "group": "Scale",
       "kind": "number",
-      "label": "Spoke replicas",
+      "group": "Scale",
+      "label": "Hub replicas",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
       "overrideFrom": null,
-      "path": "stackCounts.spoke",
-      "secret": false
+      "bounds": null,
+      "pinEnv": null
     },
     {
+      "description": "Spoke replica count.",
+      "path": "stackCounts.spoke",
+      "default": 1,
+      "kind": "number",
+      "group": "Scale",
+      "label": "Spoke replicas",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Relaxes auth SSO + Entra link + CSRF/origin + password length + seeds the local brokkr Owner. ON in sim; toggle OFF to exercise the production auth path locally. Gated by HH_ENV \u2208 AUTH_BYPASS_ALLOWED_ENVS \u2014 never honored in prod.",
+      "path": "stackDefaults.hub.AUTH_BYPASS_ENABLED",
+      "default": "true",
+      "kind": "bool",
+      "group": "Security",
+      "label": "Auth bypass",
+      "danger": true,
+      "choices": [],
+      "editable": true,
+      "secret": false,
       "alias": [
         "LOCAL_SIMULATION_ENABLED",
         "VITE_LOCAL_SIMULATION_ENABLED"
       ],
-      "choices": [],
-      "danger": true,
-      "default": "true",
-      "description": "Relaxes auth SSO + Entra link + CSRF/origin + password length + seeds the local brokkr Owner. ON in sim; toggle OFF to exercise the production auth path locally. Gated by HH_ENV \u2208 AUTH_BYPASS_ALLOWED_ENVS \u2014 never honored in prod.",
-      "editable": true,
-      "group": "Security",
-      "kind": "bool",
-      "label": "Auth bypass",
       "overrideFrom": "stackOverrides.hub",
-      "path": "stackDefaults.hub.AUTH_BYPASS_ENABLED",
-      "secret": false
+      "bounds": null,
+      "pinEnv": "BROKKR_PIN_AUTH_BYPASS"
     },
     {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "http://localhost:3000",
       "description": "Public URL root of the hub: the allowed CORS origin, a better-auth trusted origin, and the link root for outbound email. Device phone-home uses it only as the fallback when PHONE_HOME_BASE_URL is unset.",
-      "editable": true,
-      "group": "URLs",
-      "kind": "text",
-      "label": "Base URL",
-      "overrideFrom": "stackOverrides.hub",
       "path": "stackDefaults.hub.BASE_URL",
-      "secret": false
+      "default": "http://localhost:3000",
+      "kind": "text",
+      "group": "URLs",
+      "label": "Base URL",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": "stackOverrides.hub",
+      "bounds": null,
+      "pinEnv": null
     },
     {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "postgresql://brokkr:password@127.0.0.1:5432/brokkr",
       "description": "Postgres connection string for the hub's Prisma client. Read with no fallback, so the hub cannot boot without it; the Prisma CLI reads the same var for migrations.",
-      "editable": true,
-      "group": "Datastores",
-      "kind": "text",
-      "label": "Postgres URL",
-      "overrideFrom": "stackOverrides.hub",
       "path": "stackDefaults.hub.DATABASE_URL",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": null,
-      "description": "Absolute path to the hub checkout on this host. The control center launches the hub (api/web) from here \u2014 required; the hub cannot start without a valid path.",
-      "editable": true,
-      "group": "Location",
+      "default": "postgresql://brokkr:password@127.0.0.1:5432/brokkr",
       "kind": "text",
-      "label": "Hub repo path",
+      "group": "Datastores",
+      "label": "Postgres URL",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
       "overrideFrom": "stackOverrides.hub",
-      "path": "stackDefaults.hub.HUB_REPO_PATH",
-      "secret": false
+      "bounds": null,
+      "pinEnv": null
     },
     {
+      "description": "Absolute path to the hub checkout on this host. The control center launches the hub (api/web) from here \u2014 required; the hub cannot start without a valid path.",
+      "path": "stackDefaults.hub.HUB_REPO_PATH",
+      "default": null,
+      "kind": "text",
+      "group": "Location",
+      "label": "Hub repo path",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
       "alias": [],
+      "overrideFrom": "stackOverrides.hub",
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Nest log floor: the named level and every level above it in verbose < debug < log < warn < error < fatal is emitted. `info` and `warning` are aliases for log and warn; an unknown value warns and falls back to log.",
+      "path": "stackDefaults.hub.LOG_LEVEL",
+      "default": "debug",
+      "kind": "select",
+      "group": "Logging",
+      "label": "Log level",
+      "danger": false,
       "choices": [
         "debug",
         "info",
         "warn",
         "error"
       ],
-      "danger": false,
-      "default": "debug",
-      "description": "Nest log floor: the named level and every level above it in verbose < debug < log < warn < error < fatal is emitted. `info` and `warning` are aliases for log and warn; an unknown value warns and falls back to log.",
       "editable": true,
-      "group": "Logging",
-      "kind": "select",
-      "label": "Log level",
+      "secret": false,
+      "alias": [],
       "overrideFrom": "stackOverrides.hub",
-      "path": "stackDefaults.hub.LOG_LEVEL",
-      "secret": false
+      "bounds": null,
+      "pinEnv": "BROKKR_PIN_HUB_LOG_LEVEL"
     },
     {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "redis://127.0.0.1:6379",
       "description": "The single Redis endpoint every hub consumer dials: the BullMQ queues, the shared client (zone ACLs, device secrets, config atoms), the Nest microservice transport, the SSE pub/sub pair and the better-auth session cache.",
-      "editable": true,
-      "group": "Datastores",
-      "kind": "text",
-      "label": "Redis URL",
-      "overrideFrom": "stackOverrides.hub",
       "path": "stackDefaults.hub.REDIS_URL",
-      "secret": false
+      "default": "redis://127.0.0.1:6379",
+      "kind": "text",
+      "group": "Datastores",
+      "label": "Redis URL",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": "stackOverrides.hub",
+      "bounds": null,
+      "pinEnv": null
     },
     {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "true",
       "description": "Declared for the bridge but read nowhere in apps/bridge or apps/live-agent, so flipping it has no runtime effect today.",
-      "editable": true,
-      "group": "Behavior",
-      "kind": "bool",
-      "label": "Force agent redeploy",
-      "overrideFrom": "stackOverrides.spoke",
       "path": "stackDefaults.spoke.AGENT_SSH_FORCE_REDEPLOY",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "false",
-      "description": "Parsed into the bridge's ApplicationConfig, but nothing downstream reads that field \u2014 no analytics client is gated on it today, so flipping it changes only the config value.",
-      "editable": true,
+      "default": "true",
+      "kind": "bool",
       "group": "Behavior",
-      "kind": "bool",
-      "label": "Analytics",
+      "label": "Force agent redeploy",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
       "overrideFrom": "stackOverrides.spoke",
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Parsed into the bridge's ApplicationConfig, but nothing downstream reads that field \u2014 no analytics client is gated on it today, so flipping it changes only the config value.",
       "path": "stackDefaults.spoke.ANALYTICS_ENABLED",
-      "secret": false
+      "default": "false",
+      "kind": "bool",
+      "group": "Behavior",
+      "label": "Analytics",
+      "danger": false,
+      "choices": [],
+      "editable": false,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": "stackOverrides.spoke",
+      "bounds": null,
+      "pinEnv": null
     },
     {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "true",
       "description": "Gates the bridge_sync startup task, which downloads or refreshes the discovery images (kernel, initrd, ISO) for every arch at boot. OFF only asserts the images already on disk \u2014 a faster boot that serves whatever is there.",
-      "editable": true,
-      "group": "ISO download",
-      "kind": "bool",
-      "label": "Sync/update ISO on boot",
-      "overrideFrom": "stackOverrides.spoke",
       "path": "stackDefaults.spoke.BRIDGE_SYNC_ENABLED",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "1.1.8",
-      "description": "Selects which brokkr-live discovery build the bridge syncs, interpolated into the manifest URL and reported to the hub in the leader-election entry. A `latest-*` alias resolves through the manifest's own version pointer and re-checks every boot.",
-      "editable": true,
-      "group": "Boot/cache",
-      "kind": "text",
-      "label": "brokkr-live (ISO) version",
-      "overrideFrom": "stackOverrides.spoke",
-      "path": "stackDefaults.spoke.BROKKR_LIVE_VERSION",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "1",
-      "description": "BullMQ concurrency of the collection worker that runs the inventory collections auto-enqueued when an agent registers. 1 inventories one device at a time; raise it to collect several devices concurrently.",
-      "editable": true,
-      "group": "Workers",
-      "kind": "number",
-      "label": "Collection concurrency",
-      "overrideFrom": "stackOverrides.spoke",
-      "path": "stackDefaults.spoke.COLLECTION_WORKER_CONCURRENCY",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "https://brokkr.assets.hydra.host/brokkr-live-light",
-      "description": "Root of the brokkr-live artifact tree the bridge syncs from: it fetches {base}/{version}/{arch}/manifest.json and every file that manifest lists (vmlinuz, initrd.img, the discovery ISO) into the dir the iPXE chain serves.",
-      "editable": true,
-      "group": "Boot/cache",
-      "kind": "text",
-      "label": "Discovery/ISO base URL",
-      "overrideFrom": "stackOverrides.spoke",
-      "path": "stackDefaults.spoke.DISCOVERY_BASE_URL",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "3600",
-      "description": "Whole-transfer deadline in seconds for each discovery image the sync client downloads; exceeding it aborts that file and burns a retry attempt. Lower it to fail fast on a stalled mirror \u2014 values under 30s are rejected as too low for multi-GB ISOs.",
-      "editable": true,
-      "group": "ISO download",
-      "kind": "number",
-      "label": "Download timeout (s)",
-      "overrideFrom": "stackOverrides.spoke",
-      "path": "stackDefaults.spoke.HTTPS_DOWNLOAD_TIMEOUT",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "3",
-      "description": "Tries the sync client makes per manifest fetch and per file download (1-10). A retry resumes from the partial .tmp via a Range request, so raising it mostly buys tolerance of a flaky asset host at the cost of a longer failure path.",
-      "editable": true,
-      "group": "ISO download",
-      "kind": "number",
-      "label": "Retry attempts",
-      "overrideFrom": "stackOverrides.spoke",
-      "path": "stackDefaults.spoke.HTTPS_RETRY_ATTEMPTS",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "5",
-      "description": "Fixed sleep in seconds between discovery-sync retry attempts, with no backoff. 0 retries immediately; raise it to back off a rate-limiting or recovering asset host.",
-      "editable": true,
-      "group": "ISO download",
-      "kind": "number",
-      "label": "Retry delay (s)",
-      "overrideFrom": "stackOverrides.spoke",
-      "path": "stackDefaults.spoke.HTTPS_RETRY_DELAY",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
-      "danger": true,
       "default": "true",
-      "description": "TLS verification for the discovery-sync HTTP client. OFF accepts a self-signed asset host but makes the manifest's own sha256sums attacker-controlled, and startup refuses it outside a simulated or local/dev environment. It does not affect Redfish/BMC TLS.",
-      "editable": true,
-      "group": "ISO download",
       "kind": "bool",
-      "label": "Verify SSL",
-      "overrideFrom": "stackOverrides.spoke",
-      "path": "stackDefaults.spoke.HTTPS_VERIFY_SSL",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
+      "group": "ISO download",
+      "label": "Sync/update ISO on boot",
       "danger": false,
-      "default": "10",
-      "description": "BullMQ concurrency of the lifecycle worker that runs saga.run / diagnostics.run / testing.run. Raising it lets one bridge drive more device sagas at once (more concurrent provisions, more Redis and BMC load); 1 serialises them.",
+      "choices": [],
       "editable": true,
-      "group": "Workers",
-      "kind": "number",
-      "label": "Lifecycle concurrency",
+      "secret": false,
+      "alias": [],
       "overrideFrom": "stackOverrides.spoke",
-      "path": "stackDefaults.spoke.LIFECYCLE_WORKER_CONCURRENCY",
-      "secret": false
+      "bounds": null,
+      "pinEnv": null
     },
     {
+      "description": "Selects which brokkr-live discovery build the bridge syncs, interpolated into the manifest URL and reported to the hub in the leader-election entry. A `latest-*` alias resolves through the manifest's own version pointer and re-checks every boot.",
+      "path": "stackDefaults.spoke.BROKKR_LIVE_VERSION",
+      "default": "1.1.8",
+      "kind": "text",
+      "group": "Boot/cache",
+      "label": "brokkr-live (ISO) version",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
       "alias": [],
+      "overrideFrom": "stackOverrides.spoke",
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "BullMQ concurrency of the collection worker that runs the inventory collections auto-enqueued when an agent registers. 1 inventories one device at a time; raise it to collect several devices concurrently.",
+      "path": "stackDefaults.spoke.COLLECTION_WORKER_CONCURRENCY",
+      "default": "1",
+      "kind": "number",
+      "group": "Workers",
+      "label": "Collection concurrency",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": "stackOverrides.spoke",
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Flavor-less root of the brokkr-live artifact tree the bridge syncs from. The full image a real machine boots lives at {base}/{version}/{arch}/ and the light image the simulated VMs boot at {base}-light/{version}/{arch}/; the bridge fetches each manifest.json and every file it lists (vmlinuz, initrd.img, the discovery ISO) into the dir the iPXE chain serves. Which flavors sync follows the planes (DISCOVERY_FLAVORS): light alone for the VM plane, light and full once the bare-metal plane is on.",
+      "path": "stackDefaults.spoke.DISCOVERY_BASE_URL",
+      "default": "https://brokkr.assets.hydra.host/brokkr-live",
+      "kind": "text",
+      "group": "Boot/cache",
+      "label": "Discovery/ISO base URL",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": "stackOverrides.spoke",
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Whole-transfer deadline in seconds for each discovery image the sync client downloads; exceeding it aborts that file and burns a retry attempt. Lower it to fail fast on a stalled mirror \u2014 values under 30s are rejected as too low for multi-GB ISOs.",
+      "path": "stackDefaults.spoke.HTTPS_DOWNLOAD_TIMEOUT",
+      "default": "3600",
+      "kind": "number",
+      "group": "ISO download",
+      "label": "Download timeout (s)",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": "stackOverrides.spoke",
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Tries the sync client makes per manifest fetch and per file download (1-10). A retry resumes from the partial .tmp via a Range request, so raising it mostly buys tolerance of a flaky asset host at the cost of a longer failure path.",
+      "path": "stackDefaults.spoke.HTTPS_RETRY_ATTEMPTS",
+      "default": "3",
+      "kind": "number",
+      "group": "ISO download",
+      "label": "Retry attempts",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": "stackOverrides.spoke",
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Fixed sleep in seconds between discovery-sync retry attempts, with no backoff. 0 retries immediately; raise it to back off a rate-limiting or recovering asset host.",
+      "path": "stackDefaults.spoke.HTTPS_RETRY_DELAY",
+      "default": "5",
+      "kind": "number",
+      "group": "ISO download",
+      "label": "Retry delay (s)",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": "stackOverrides.spoke",
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "TLS verification for the discovery-sync HTTP client. OFF accepts a self-signed asset host but makes the manifest's own sha256sums attacker-controlled, and startup refuses it outside a simulated or local/dev environment. It does not affect Redfish/BMC TLS.",
+      "path": "stackDefaults.spoke.HTTPS_VERIFY_SSL",
+      "default": "true",
+      "kind": "bool",
+      "group": "ISO download",
+      "label": "Verify SSL",
+      "danger": true,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": "stackOverrides.spoke",
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "BullMQ concurrency of the lifecycle worker that runs saga.run / diagnostics.run / testing.run. Raising it lets one bridge drive more device sagas at once (more concurrent provisions, more Redis and BMC load); 1 serialises them.",
+      "path": "stackDefaults.spoke.LIFECYCLE_WORKER_CONCURRENCY",
+      "default": "10",
+      "kind": "number",
+      "group": "Workers",
+      "label": "Lifecycle concurrency",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": "stackOverrides.spoke",
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Picks the stdout formatter: `console` gives the colourised human line, anything else emits one-line JSON records carrying app_name/job_id/log_level for the journald pipeline. Console in the sim, json in prod.",
+      "path": "stackDefaults.spoke.LOG_FORMAT",
+      "default": "console",
+      "kind": "select",
+      "group": "Logging",
+      "label": "Log format",
+      "danger": false,
       "choices": [
         "console",
         "json"
       ],
-      "danger": false,
-      "default": "console",
-      "description": "Picks the stdout formatter: `console` gives the colourised human line, anything else emits one-line JSON records carrying app_name/job_id/log_level for the journald pipeline. Console in the sim, json in prod.",
       "editable": true,
-      "group": "Logging",
-      "kind": "select",
-      "label": "Log format",
+      "secret": false,
+      "alias": [],
       "overrideFrom": "stackOverrides.spoke",
-      "path": "stackDefaults.spoke.LOG_FORMAT",
-      "secret": false
+      "bounds": null,
+      "pinEnv": null
     },
     {
-      "alias": [],
+      "description": "Bridge minimum log level and the `debug` flag on its ApplicationConfig; only debug/warning/error are recognised, anything else reads as info. Also stamped into the rendered agent.yaml and the discovery initrd, so it sets the device agent's verbosity too.",
+      "path": "stackDefaults.spoke.LOG_LEVEL",
+      "default": "debug",
+      "kind": "select",
+      "group": "Logging",
+      "label": "Log level",
+      "danger": false,
       "choices": [
         "debug",
         "info",
         "warning",
         "error"
       ],
-      "danger": false,
-      "default": "debug",
-      "description": "Bridge minimum log level and the `debug` flag on its ApplicationConfig; only debug/warning/error are recognised, anything else reads as info. Also stamped into the rendered agent.yaml and the discovery initrd, so it sets the device agent's verbosity too.",
       "editable": true,
-      "group": "Logging",
-      "kind": "select",
-      "label": "Log level",
+      "secret": false,
+      "alias": [],
       "overrideFrom": "stackOverrides.spoke",
-      "path": "stackDefaults.spoke.LOG_LEVEL",
-      "secret": false
+      "bounds": null,
+      "pinEnv": "BROKKR_PIN_SPOKE_LOG_LEVEL"
     },
     {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "false",
       "description": "Keeps HTTP access-log lines for /api/monitoring/ requests instead of dropping them. OFF silences that whole prefix; ON is for debugging the monitoring and metrics endpoints. Successful 200s are filtered out either way.",
-      "editable": true,
-      "group": "Logging",
-      "kind": "bool",
-      "label": "Monitoring logs",
-      "overrideFrom": "stackOverrides.spoke",
       "path": "stackDefaults.spoke.MONITORING_LOGS_ENABLED",
-      "secret": false
+      "default": "false",
+      "kind": "bool",
+      "group": "Logging",
+      "label": "Monitoring logs",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": "stackOverrides.spoke",
+      "bounds": null,
+      "pinEnv": null
     },
     {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": "http://192.168.200.1:8888/assets",
       "description": "Base URL of the OS-layer blob store the bridge hands to the device agent: every deploy layer resolves as {OS_LAYER_URL}/sha256:<hash>. Pointing it at the local nginx cache is what lets repeat provisions skip the CDN re-pull.",
-      "editable": true,
-      "group": "Boot/cache",
-      "kind": "text",
-      "label": "OS layer URL",
-      "overrideFrom": "stackOverrides.spoke",
       "path": "stackDefaults.spoke.OS_LAYER_URL",
-      "secret": false
-    },
-    {
-      "alias": [],
-      "choices": [],
+      "default": "http://192.168.200.1:8888/assets",
+      "kind": "text",
+      "group": "Boot/cache",
+      "label": "OS layer URL",
       "danger": false,
-      "default": "true",
-      "description": "Per-bridge telegraf agent: scrapes device metrics (ICMP/IPMI/Redfish + PDU SNMP) via the bridge and remote_writes to the local Thanos. OFF removes the telegraf process and leaves the bridge config-writer inert.",
+      "choices": [],
       "editable": true,
-      "group": "Monitoring",
-      "kind": "bool",
-      "label": "Telegraf telemetry",
+      "secret": false,
+      "alias": [],
       "overrideFrom": "stackOverrides.spoke",
-      "path": "stackDefaults.spoke.TELEGRAF_ENABLED",
-      "secret": false
+      "bounds": null,
+      "pinEnv": null
     },
     {
-      "alias": [],
-      "choices": [],
-      "danger": false,
-      "default": false,
-      "description": "Bring up the local telemetry sink (OTel collector -> Tempo traces + span-metrics -> Thanos, Grafana UI at the `grafana` port) and point the hub's OTLP exporter at it.",
-      "editable": true,
-      "group": "Observability",
+      "description": "Per-bridge telegraf agent: scrapes device metrics (ICMP/IPMI/Redfish + PDU SNMP) via the bridge and remote_writes to the local Thanos. OFF removes the telegraf process and leaves the bridge config-writer inert.",
+      "path": "stackDefaults.spoke.TELEGRAF_ENABLED",
+      "default": "true",
       "kind": "bool",
-      "label": "Telemetry sink",
-      "overrideFrom": null,
+      "group": "Monitoring",
+      "label": "Telegraf telemetry",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": "stackOverrides.spoke",
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Bring up the local telemetry sink (OTel collector -> Tempo traces + span-metrics -> Thanos, Grafana UI at the `grafana` port) and point the hub's OTLP exporter at it.",
       "path": "telemetry.enable",
-      "secret": false
+      "default": false,
+      "kind": "bool",
+      "group": "Observability",
+      "label": "Telemetry sink",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": "BROKKR_PIN_TELEMETRY"
+    },
+    {
+      "description": "Whether to enable VRRP VIP failover local e2e (sim ip/arping shim on the bridge PATH + VRRP env).",
+      "path": "vrrpSim.enable",
+      "default": false,
+      "kind": "bool",
+      "group": "Networking",
+      "label": "VRRP shims",
+      "danger": false,
+      "choices": [],
+      "editable": true,
+      "secret": false,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Bridge at-rest encryption key (32-byte base64) \u2192 the bridge's BRIDGE_AT_REST_KEY. The bridge\nrefuses to start without it in every environment. Defaults to a committed\nNON-SECRET local-dev constant so a fresh offline `task up` boots. MUST stay stable across\nrestarts \u2014 a changing key orphans every seeded DeviceSecret (re-enroll bumps\nZoneEnrollment.generation). Regenerate with `openssl rand -base64 32` only to rotate the\nlocal-dev key (which requires a datastore reset). Prod/stg/dev set this externally, out of repo.\n",
+      "path": "zoneCrypto.bridgeAtRestKey",
+      "default": "I1GOxiD9hSt9QvHUdylUSXKW/WHM6PF2dUCovWeSTXg=",
+      "kind": "text",
+      "group": "Security",
+      "label": "Bridge at-rest key",
+      "danger": true,
+      "choices": [],
+      "editable": false,
+      "secret": true,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
+    },
+    {
+      "description": "Hub private key (base64) \u2192 the hub's BROKKR_HUB_PRIVATE_KEY, and the master switch for the\nwhole subsystem. Defaults to a committed NON-SECRET local-dev key so a fresh\noffline `task up` keys the hub and the sim self-enrolls. Set to \"\" to go dormant (hub /enroll\nreturns 503; every bridge stays in the pre-S1 plaintext path with no BROKKR_HUB_URL). One key\nserves all zones. Regenerate with `pnpm --filter api key:generate-hub` in the hub repo (copy\nthe base64 stdout line) only if you rotate the local-dev key.\n",
+      "path": "zoneCrypto.hubPrivateKey",
+      "default": "CLgn641z7sEoBORwcShY+RdjAUnrluM/y+dzOa3oEko=",
+      "kind": "text",
+      "group": "Security",
+      "label": "Hub private key",
+      "danger": true,
+      "choices": [],
+      "editable": false,
+      "secret": true,
+      "alias": [],
+      "overrideFrom": null,
+      "bounds": null,
+      "pinEnv": null
     }
   ],
   "provenance": [
     {
-      "files": [
-        "devenv/modules/overrides.nix"
-      ],
       "path": "fleet.autoStart",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/fleet-topology.nix"
-      ],
-      "path": "fleet.mode",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
+      "path": "identity.mailpit.password",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
       "path": "identity.orgId",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
       "path": "identity.pg.db",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
       "path": "identity.pg.password",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
       "path": "identity.pg.user",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
+      "path": "identity.redis.password",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "lan.bindAddress",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "lan.datastoreAuth",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
       "path": "lan.expose",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
+      "path": "lan.mode",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "lan.publicHost",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
       "path": "osLayerCache.originHost",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
       "path": "osLayerCache.resolvers",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
+      "path": "polyrepo.hub.path",
+      "files": [
+        "devenv/modules/polyrepo.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "polyrepo.hub.url",
+      "files": [
+        "devenv/modules/polyrepo.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.grafana",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.hubAdmin.base",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.hubApi.base",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.hubWeb",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.hubWebAdmin",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.lab",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.labWeb",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.lokiGrpc",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.lokiHttp",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
       "path": "ports.mailpitSmtp",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
       "path": "ports.mailpitWeb",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
       "path": "ports.nginx",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.otelcolHealth",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.otlpGrpc",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.otlpHttp",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
       "path": "ports.postgres",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
       "path": "ports.redfish",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
       "path": "ports.redis",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.spoke.base",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.spokeGrpc.base",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.tempoGrpc",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.tempoHttp",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.tempoOtlpGrpc",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.tempoOtlpHttp",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.thanosCapnproto",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
       "path": "ports.thanosGrpc",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
       "path": "ports.thanosHttp",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.thanosQueryGrpc",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "ports.thanosQueryHttp",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
       "path": "ports.thanosRemoteWrite",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
+      "path": "redisAcl.enable",
+      "files": [
+        "devenv/modules/redis-acl.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "spoke.watch",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stack.fleetNodeCount",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
       "path": "stack.slot",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
       "path": "stackCounts.hub",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
+      "perKey": {}
+    },
+    {
       "path": "stackCounts.spoke",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/hub.nix"
-      ],
-      "path": "stackDefaults.hub.AUTH_BYPASS_ENABLED",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/hub.nix"
-      ],
-      "path": "stackDefaults.hub.BASE_URL",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/hub.nix"
-      ],
-      "path": "stackDefaults.hub.DATABASE_URL",
-      "perKey": {}
-    },
-    {
-      "files": [],
-      "path": "stackDefaults.hub.HUB_REPO_PATH",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/hub.nix"
-      ],
-      "path": "stackDefaults.hub.LOG_LEVEL",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/hub.nix"
-      ],
-      "path": "stackDefaults.hub.REDIS_URL",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.AGENT_SSH_FORCE_REDEPLOY",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.ANALYTICS_ENABLED",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.BRIDGE_SYNC_ENABLED",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.BROKKR_LIVE_VERSION",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.COLLECTION_WORKER_CONCURRENCY",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.DISCOVERY_BASE_URL",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.HTTPS_DOWNLOAD_TIMEOUT",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.HTTPS_RETRY_ATTEMPTS",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.HTTPS_RETRY_DELAY",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.HTTPS_VERIFY_SSL",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.LIFECYCLE_WORKER_CONCURRENCY",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.LOG_FORMAT",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.LOG_LEVEL",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.MONITORING_LOGS_ENABLED",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.OS_LAYER_URL",
-      "perKey": {}
-    },
-    {
-      "files": [
-        "devenv/modules/spoke.nix"
-      ],
-      "path": "stackDefaults.spoke.TELEGRAF_ENABLED",
-      "perKey": {}
-    },
-    {
       "files": [
         "devenv/modules/overrides.nix"
       ],
-      "path": "telemetry.enable",
       "perKey": {}
     },
     {
+      "path": "stackDefaults.hub.AUTH_BYPASS_ENABLED",
       "files": [
         "devenv/modules/hub.nix"
       ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.hub.BASE_URL",
+      "files": [
+        "devenv/modules/hub.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.hub.DATABASE_URL",
+      "files": [
+        "devenv/modules/hub.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.hub.HUB_REPO_PATH",
+      "files": [],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.hub.LOG_LEVEL",
+      "files": [
+        "devenv/modules/hub.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.hub.REDIS_URL",
+      "files": [
+        "devenv/modules/hub.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.AGENT_SSH_FORCE_REDEPLOY",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.ANALYTICS_ENABLED",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.BRIDGE_SYNC_ENABLED",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.BROKKR_LIVE_VERSION",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.COLLECTION_WORKER_CONCURRENCY",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.DISCOVERY_BASE_URL",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.HTTPS_DOWNLOAD_TIMEOUT",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.HTTPS_RETRY_ATTEMPTS",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.HTTPS_RETRY_DELAY",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.HTTPS_VERIFY_SSL",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.LIFECYCLE_WORKER_CONCURRENCY",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.LOG_FORMAT",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.LOG_LEVEL",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.MONITORING_LOGS_ENABLED",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.OS_LAYER_URL",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "stackDefaults.spoke.TELEGRAF_ENABLED",
+      "files": [
+        "devenv/modules/spoke.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "telemetry.enable",
+      "files": [
+        "devenv/modules/overrides.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "vrrpSim.enable",
+      "files": [
+        "devenv/modules/vrrp-sim.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "zoneCrypto.bridgeAtRestKey",
+      "files": [
+        "devenv/modules/zone-crypto.nix"
+      ],
+      "perKey": {}
+    },
+    {
+      "path": "zoneCrypto.hubPrivateKey",
+      "files": [
+        "devenv/modules/zone-crypto.nix"
+      ],
+      "perKey": {}
+    },
+    {
       "path": "stackDefaults.hub",
+      "files": [
+        "devenv/modules/hub.nix"
+      ],
       "perKey": {
-        "ADMIN_BASE_URL": [
-          "devenv/modules/hub.nix"
-        ],
-        "ADMIN_BETTER_AUTH_URL": [
-          "devenv/modules/hub.nix"
-        ],
         "ADMIN_OIDC_AUTHORITY": [
           "devenv/modules/hub.nix"
         ],
@@ -967,13 +2242,7 @@
         "ADMIN_OIDC_TENANT_ID": [
           "devenv/modules/hub.nix"
         ],
-        "BASE_URL": [
-          "devenv/modules/hub.nix"
-        ],
         "BETTER_AUTH_SECRET": [
-          "devenv/modules/hub.nix"
-        ],
-        "BETTER_AUTH_TRUSTED_ORIGINS": [
           "devenv/modules/hub.nix"
         ],
         "BROKKR_ADMIN_ORG_ID": [
@@ -997,28 +2266,10 @@
         "EMAIL_FROM": [
           "devenv/modules/hub.nix"
         ],
-        "EMAIL_LOCAL_DELIVERY": [
-          "devenv/modules/hub.nix"
-        ],
-        "ENABLE_BRIDGE_API_MTLS": [
-          "devenv/modules/hub.nix"
-        ],
         "GRAVWELL_API_TOKEN": [
           "devenv/modules/hub.nix"
         ],
         "GRAVWELL_BASE_URL": [
-          "devenv/modules/hub.nix"
-        ],
-        "HEARTBEAT_MONITOR_ENABLED": [
-          "devenv/modules/hub.nix"
-        ],
-        "HH_ENV": [
-          "devenv/modules/hub.nix"
-        ],
-        "HH_FORCE_BOSS": [
-          "devenv/modules/hub.nix"
-        ],
-        "HOST": [
           "devenv/modules/hub.nix"
         ],
         "HUBSPOT_ACCESS_TOKEN": [
@@ -1039,9 +2290,6 @@
         "HUBSPOT_TRACKER_PORTAL_ID": [
           "devenv/modules/hub.nix"
         ],
-        "HUB_API_URL": [
-          "devenv/modules/hub.nix"
-        ],
         "HUB_OPERATOR_API_KEY": [
           "devenv/modules/hub.nix"
         ],
@@ -1049,15 +2297,6 @@
           "devenv/modules/hub.nix"
         ],
         "HYPERVISOR_ROLE_ID": [
-          "devenv/modules/hub.nix"
-        ],
-        "IS_LOCAL": [
-          "devenv/modules/hub.nix"
-        ],
-        "LOCAL_SIMULATION_ENABLED": [
-          "devenv/modules/hub.nix"
-        ],
-        "LOG_LEVEL": [
           "devenv/modules/hub.nix"
         ],
         "MAILGUN_API_KEY": [
@@ -1070,12 +2309,6 @@
           "devenv/modules/hub.nix"
         ],
         "MAILGUN_FROM_ADDRESS": [
-          "devenv/modules/hub.nix"
-        ],
-        "NODE_TLS_REJECT_UNAUTHORIZED": [
-          "devenv/modules/hub.nix"
-        ],
-        "NOMAD_ADDR": [
           "devenv/modules/hub.nix"
         ],
         "OPENMETER_API_KEY": [
@@ -1102,16 +2335,10 @@
         "OTEL_EXPORTER_OTLP_TRACES_HEADERS": [
           "devenv/modules/hub.nix"
         ],
-        "OTEL_METRIC_EXPORT_INTERVAL": [
-          "devenv/modules/hub.nix"
-        ],
         "PGBOUNCER_CONNECTION_STRING": [
           "devenv/modules/hub.nix"
         ],
         "PG_TOKEN": [
-          "devenv/modules/hub.nix"
-        ],
-        "PHONE_HOME_BASE_URL": [
           "devenv/modules/hub.nix"
         ],
         "PYLON_ACCOUNT_ID": [
@@ -1195,88 +2422,169 @@
         "STRIPE_WEBHOOK_SECRET": [
           "devenv/modules/hub.nix"
         ],
-        "VITE_LOCAL_SIMULATION_ENABLED": [
-          "devenv/modules/hub.nix"
-        ],
         "VITE_STRIPE_PUBLISHABLE_KEY": [
           "devenv/modules/hub.nix"
         ],
         "WEBVM_TERMINAL_ENABLED": [
           "devenv/modules/hub.nix"
+        ],
+        "HH_ENV": [
+          "devenv/modules/hub.nix"
+        ],
+        "IS_LOCAL": [
+          "devenv/modules/hub.nix"
+        ],
+        "HH_FORCE_BOSS": [
+          "devenv/modules/hub.nix"
+        ],
+        "LOG_LEVEL": [
+          "devenv/modules/hub.nix"
+        ],
+        "HOST": [
+          "devenv/modules/hub.nix"
+        ],
+        "BASE_URL": [
+          "devenv/modules/hub.nix"
+        ],
+        "ADMIN_BASE_URL": [
+          "devenv/modules/hub.nix"
+        ],
+        "ADMIN_BETTER_AUTH_URL": [
+          "devenv/modules/hub.nix"
+        ],
+        "WEB_BASE_URL": [
+          "devenv/modules/hub.nix"
+        ],
+        "HUB_API_URL": [
+          "devenv/modules/hub.nix"
+        ],
+        "BETTER_AUTH_TRUSTED_ORIGINS": [
+          "devenv/modules/hub.nix"
+        ],
+        "ADMIN_BETTER_AUTH_TRUSTED_ORIGINS": [
+          "devenv/modules/hub.nix"
+        ],
+        "TRUST_PROXY": [
+          "devenv/modules/hub.nix"
+        ],
+        "ALLOWED_HOSTS": [
+          "devenv/modules/hub.nix"
+        ],
+        "PHONE_HOME_BASE_URL": [
+          "devenv/modules/hub.nix"
+        ],
+        "ENABLE_BRIDGE_API_MTLS": [
+          "devenv/modules/hub.nix"
+        ],
+        "HEARTBEAT_MONITOR_ENABLED": [
+          "devenv/modules/hub.nix"
+        ],
+        "EMAIL_LOCAL_DELIVERY": [
+          "devenv/modules/hub.nix"
+        ],
+        "NODE_TLS_REJECT_UNAUTHORIZED": [
+          "devenv/modules/hub.nix"
+        ],
+        "NOMAD_ADDR": [
+          "devenv/modules/hub.nix"
+        ],
+        "LOCAL_SIMULATION_ENABLED": [
+          "devenv/modules/hub.nix"
+        ],
+        "VITE_LOCAL_SIMULATION_ENABLED": [
+          "devenv/modules/hub.nix"
+        ],
+        "OTEL_METRIC_EXPORT_INTERVAL": [
+          "devenv/modules/hub.nix"
         ]
       }
     },
     {
+      "path": "stackOverrides.hub",
       "files": [
         "devenv/modules/overrides.nix"
       ],
-      "path": "stackOverrides.hub",
       "perKey": {}
     },
     {
+      "path": "stackDefaults.spoke",
       "files": [
         "devenv/modules/spoke.nix"
       ],
-      "path": "stackDefaults.spoke",
       "perKey": {
-        "AGENT_BUNDLE_PATH": [
-          "devenv/modules/spoke.nix"
-        ],
-        "AGENT_SSH_FORCE_REDEPLOY": [
-          "devenv/modules/spoke.nix"
-        ],
-        "AGENT_UNIT_PATH": [
-          "devenv/modules/spoke.nix"
-        ],
-        "ANALYTICS_ENABLED": [
-          "devenv/modules/spoke.nix"
-        ],
-        "ASYNCSSH_LOG_LEVEL": [
-          "devenv/modules/spoke.nix"
-        ],
-        "BRIDGE_API_VERSION": [
-          "devenv/modules/spoke.nix"
-        ],
-        "BRIDGE_AT_REST_KEY": [
-          "devenv/modules/spoke.nix"
-        ],
-        "BRIDGE_ORCHESTRATOR_ENABLED": [
-          "devenv/modules/spoke.nix"
-        ],
-        "BRIDGE_SSH_PRIVKEY_PATH": [
-          "devenv/modules/spoke.nix"
-        ],
-        "BRIDGE_SYNC_ENABLED": [
-          "devenv/modules/spoke.nix"
-        ],
-        "BROKKR_ENV": [
-          "devenv/modules/spoke.nix"
-        ],
-        "BROKKR_LIVE_VERSION": [
-          "devenv/modules/spoke.nix"
-        ],
-        "COLLECTION_WORKER_CONCURRENCY": [
-          "devenv/modules/spoke.nix"
-        ],
-        "DISCOVERY_ARCHITECTURES": [
-          "devenv/modules/spoke.nix"
-        ],
-        "DISCOVERY_BASE_URL": [
-          "devenv/modules/spoke.nix"
-        ],
-        "ENVIRONMENT": [
-          "devenv/modules/spoke.nix"
-        ],
-        "GRPC_INSECURE": [
-          "devenv/modules/spoke.nix"
-        ],
-        "GRPC_INTERNAL_HOST": [
+        "REDIS_URL": [
           "devenv/modules/spoke.nix"
         ],
         "HH_ENV": [
           "devenv/modules/spoke.nix"
         ],
+        "LOG_LEVEL": [
+          "devenv/modules/spoke.nix"
+        ],
         "HOST": [
+          "devenv/modules/spoke.nix"
+        ],
+        "LOCAL_SIMULATION_ENABLED": [
+          "devenv/modules/spoke.nix"
+        ],
+        "BROKKR_ENV": [
+          "devenv/modules/spoke.nix"
+        ],
+        "ENVIRONMENT": [
+          "devenv/modules/spoke.nix"
+        ],
+        "ANALYTICS_ENABLED": [
+          "devenv/modules/spoke.nix"
+        ],
+        "TFTP_ENABLED": [
+          "devenv/modules/spoke.nix"
+        ],
+        "ASYNCSSH_LOG_LEVEL": [
+          "devenv/modules/spoke.nix"
+        ],
+        "PERSISTENT_STORAGE_PATH": [
+          "devenv/modules/spoke.nix"
+        ],
+        "AGENT_BUNDLE_PATH": [
+          "devenv/modules/spoke.nix"
+        ],
+        "AGENT_UNIT_PATH": [
+          "devenv/modules/spoke.nix"
+        ],
+        "SSH_KEY_PATH": [
+          "devenv/modules/spoke.nix"
+        ],
+        "BRIDGE_SSH_PRIVKEY_PATH": [
+          "devenv/modules/spoke.nix"
+        ],
+        "BRIDGE_AT_REST_KEY": [
+          "devenv/modules/spoke.nix"
+        ],
+        "GRPC_INSECURE": [
+          "devenv/modules/spoke.nix"
+        ],
+        "BRIDGE_ORCHESTRATOR_ENABLED": [
+          "devenv/modules/spoke.nix"
+        ],
+        "BRIDGE_API_VERSION": [
+          "devenv/modules/spoke.nix"
+        ],
+        "BROKKR_LIVE_VERSION": [
+          "devenv/modules/spoke.nix"
+        ],
+        "DISCOVERY_BASE_URL": [
+          "devenv/modules/spoke.nix"
+        ],
+        "DISCOVERY_FLAVORS": [
+          "devenv/modules/spoke.nix"
+        ],
+        "OS_LAYER_URL": [
+          "devenv/modules/spoke.nix"
+        ],
+        "DISCOVERY_ARCHITECTURES": [
+          "devenv/modules/spoke.nix"
+        ],
+        "GRPC_INTERNAL_HOST": [
           "devenv/modules/spoke.nix"
         ],
         "HTTPS_DOWNLOAD_TIMEOUT": [
@@ -1291,237 +2599,47 @@
         "HTTPS_VERIFY_SSL": [
           "devenv/modules/spoke.nix"
         ],
-        "LIFECYCLE_WORKER_CONCURRENCY": [
-          "devenv/modules/spoke.nix"
-        ],
-        "LOCAL_SIMULATION_ENABLED": [
+        "AGENT_SSH_FORCE_REDEPLOY": [
           "devenv/modules/spoke.nix"
         ],
         "LOG_FORMAT": [
           "devenv/modules/spoke.nix"
         ],
-        "LOG_LEVEL": [
+        "BRIDGE_SYNC_ENABLED": [
           "devenv/modules/spoke.nix"
         ],
         "MONITORING_LOGS_ENABLED": [
           "devenv/modules/spoke.nix"
         ],
-        "NETWORK_REDFISH_PORT": [
+        "LIFECYCLE_WORKER_CONCURRENCY": [
           "devenv/modules/spoke.nix"
         ],
-        "OS_LAYER_URL": [
-          "devenv/modules/spoke.nix"
-        ],
-        "PERSISTENT_STORAGE_PATH": [
-          "devenv/modules/spoke.nix"
-        ],
-        "REDIS_URL": [
-          "devenv/modules/spoke.nix"
-        ],
-        "SIM_REDFISH_PORT": [
-          "devenv/modules/spoke.nix"
-        ],
-        "SSH_KEY_PATH": [
+        "COLLECTION_WORKER_CONCURRENCY": [
           "devenv/modules/spoke.nix"
         ],
         "TELEGRAF_ENABLED": [
           "devenv/modules/spoke.nix"
         ],
-        "TELEGRAF_HTTP_TIMEOUT": [
-          "devenv/modules/spoke.nix"
-        ],
         "TELEGRAF_POLL_INTERVAL": [
           "devenv/modules/spoke.nix"
         ],
-        "TFTP_ENABLED": [
+        "TELEGRAF_HTTP_TIMEOUT": [
+          "devenv/modules/spoke.nix"
+        ],
+        "SIM_REDFISH_PORT": [
+          "devenv/modules/spoke.nix"
+        ],
+        "NETWORK_REDFISH_PORT": [
           "devenv/modules/spoke.nix"
         ]
       }
     },
     {
+      "path": "stackOverrides.spoke",
       "files": [
         "devenv/modules/overrides.nix"
       ],
-      "path": "stackOverrides.spoke",
       "perKey": {}
-    }
-  ],
-  "values": [
-    {
-      "path": "fleet.autoStart",
-      "value": true
-    },
-    {
-      "path": "fleet.mode",
-      "value": "vm"
-    },
-    {
-      "path": "identity.orgId",
-      "value": "00000000-0000-0000-0000-000000000000"
-    },
-    {
-      "path": "identity.pg.db",
-      "value": "brokkr"
-    },
-    {
-      "path": "identity.pg.password",
-      "value": "password"
-    },
-    {
-      "path": "identity.pg.user",
-      "value": "brokkr"
-    },
-    {
-      "path": "lan.expose",
-      "value": false
-    },
-    {
-      "path": "osLayerCache.originHost",
-      "value": "brokkr.assets.hydra.host"
-    },
-    {
-      "path": "osLayerCache.resolvers",
-      "value": "1.1.1.1 8.8.8.8"
-    },
-    {
-      "path": "ports.mailpitSmtp",
-      "value": 1025
-    },
-    {
-      "path": "ports.mailpitWeb",
-      "value": 8025
-    },
-    {
-      "path": "ports.nginx",
-      "value": 8888
-    },
-    {
-      "path": "ports.postgres",
-      "value": 5432
-    },
-    {
-      "path": "ports.redfish",
-      "value": 8443
-    },
-    {
-      "path": "ports.redis",
-      "value": 6379
-    },
-    {
-      "path": "ports.thanosGrpc",
-      "value": 10901
-    },
-    {
-      "path": "ports.thanosHttp",
-      "value": 10902
-    },
-    {
-      "path": "ports.thanosRemoteWrite",
-      "value": 19291
-    },
-    {
-      "path": "stack.slot",
-      "value": 0
-    },
-    {
-      "path": "stackCounts.hub",
-      "value": 1
-    },
-    {
-      "path": "stackCounts.spoke",
-      "value": 1
-    },
-    {
-      "path": "stackDefaults.hub.AUTH_BYPASS_ENABLED",
-      "value": "true"
-    },
-    {
-      "path": "stackDefaults.hub.BASE_URL",
-      "value": "http://localhost:3000"
-    },
-    {
-      "path": "stackDefaults.hub.DATABASE_URL",
-      "value": "postgresql://brokkr:password@127.0.0.1:5432/brokkr"
-    },
-    {
-      "path": "stackDefaults.hub.HUB_REPO_PATH",
-      "value": null
-    },
-    {
-      "path": "stackDefaults.hub.LOG_LEVEL",
-      "value": "debug"
-    },
-    {
-      "path": "stackDefaults.hub.REDIS_URL",
-      "value": "redis://127.0.0.1:6379"
-    },
-    {
-      "path": "stackDefaults.spoke.AGENT_SSH_FORCE_REDEPLOY",
-      "value": "true"
-    },
-    {
-      "path": "stackDefaults.spoke.ANALYTICS_ENABLED",
-      "value": "false"
-    },
-    {
-      "path": "stackDefaults.spoke.BRIDGE_SYNC_ENABLED",
-      "value": "true"
-    },
-    {
-      "path": "stackDefaults.spoke.BROKKR_LIVE_VERSION",
-      "value": "1.1.8"
-    },
-    {
-      "path": "stackDefaults.spoke.COLLECTION_WORKER_CONCURRENCY",
-      "value": "1"
-    },
-    {
-      "path": "stackDefaults.spoke.DISCOVERY_BASE_URL",
-      "value": "https://brokkr.assets.hydra.host/brokkr-live-light"
-    },
-    {
-      "path": "stackDefaults.spoke.HTTPS_DOWNLOAD_TIMEOUT",
-      "value": "3600"
-    },
-    {
-      "path": "stackDefaults.spoke.HTTPS_RETRY_ATTEMPTS",
-      "value": "3"
-    },
-    {
-      "path": "stackDefaults.spoke.HTTPS_RETRY_DELAY",
-      "value": "5"
-    },
-    {
-      "path": "stackDefaults.spoke.HTTPS_VERIFY_SSL",
-      "value": "true"
-    },
-    {
-      "path": "stackDefaults.spoke.LIFECYCLE_WORKER_CONCURRENCY",
-      "value": "10"
-    },
-    {
-      "path": "stackDefaults.spoke.LOG_FORMAT",
-      "value": "console"
-    },
-    {
-      "path": "stackDefaults.spoke.LOG_LEVEL",
-      "value": "debug"
-    },
-    {
-      "path": "stackDefaults.spoke.MONITORING_LOGS_ENABLED",
-      "value": "false"
-    },
-    {
-      "path": "stackDefaults.spoke.OS_LAYER_URL",
-      "value": "http://192.168.200.1:8888/assets"
-    },
-    {
-      "path": "stackDefaults.spoke.TELEGRAF_ENABLED",
-      "value": "true"
-    },
-    {
-      "path": "telemetry.enable",
-      "value": false
     }
   ]
 }

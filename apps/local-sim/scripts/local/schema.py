@@ -373,7 +373,6 @@ class Fleet(BaseModel):
     # out of Fleet.model_validate errors (BmcConfig's own config applies only when validated directly)
     model_config = ConfigDict(hide_input_in_errors=True)
 
-    mode: Literal["vm", "baremetal"] = "vm"
     network: Network
     defaults: Defaults = Field(default_factory=Defaults)
     nodes_raw: list[NodeRaw] = Field(alias="nodes")
@@ -382,14 +381,6 @@ class Fleet(BaseModel):
 
     @model_validator(mode="after")
     def _check_unique(self) -> Self:
-        if self.mode == "baremetal":
-            if self.baremetal_raw is None:
-                raise ValueError("mode 'baremetal' requires a 'baremetal' block")
-            if not self.baremetal_raw.nodes:
-                raise ValueError("mode 'baremetal' requires at least one baremetal node")
-        elif self.baremetal_raw is not None:
-            raise ValueError("'baremetal' block is only allowed when mode == 'baremetal'")
-
         seen_names: set[str] = set()
         seen_macs: set[str] = set()
         seen_console: dict[int, str] = {}
@@ -457,6 +448,16 @@ class Fleet(BaseModel):
     def _check_bm(self) -> Self:
         if self.baremetal_raw is None:
             return self
+        if self.nodes_raw and self.baremetal_raw.nodes:
+            vm_names = {n.name for n in self.nodes_raw}
+            vm_bmc = {n.bmc_ip or bmc_ip(self.network.bmc_cidr, i): n.name for i, n in enumerate(self.nodes_raw)}
+            for n in self.baremetal_raw.nodes:
+                if n.name in vm_names:
+                    raise ValueError(f"baremetal node {n.name!r}: name collides with VM node {n.name!r}")
+                if n.bmc_ip in vm_bmc:
+                    raise ValueError(
+                        f"baremetal node {n.name!r}: bmc_ip {n.bmc_ip} collides with VM node {vm_bmc[n.bmc_ip]!r}"
+                    )
         seen_names: set[str] = set()
         seen_pxe: set[str] = set()
         seen_bmc_mac: set[str] = set()
@@ -605,6 +606,18 @@ class Fleet(BaseModel):
             )
             for n in bm.nodes
         ]
+
+    @property
+    def has_vm(self) -> bool:
+        return len(self.nodes_raw) > 0
+
+    @property
+    def has_bm(self) -> bool:
+        return bool(self.bm_nodes)
+
+    @cached_property
+    def bm_node_names(self) -> frozenset[str]:
+        return frozenset(n.name for n in self.bm_nodes)
 
 
 def load_fleet() -> Fleet | None:

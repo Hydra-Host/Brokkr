@@ -42,6 +42,7 @@ const bridge = (instanceId: string, isLeader: boolean | null) => ({
   plugins: null,
   port: null,
   grpcPort: null,
+  http: null,
   readError: null,
 });
 

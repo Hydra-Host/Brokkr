@@ -2,7 +2,7 @@ import { Controller, Param, Sse } from '@nestjs/common';
 import { TsRestHandler, tsRestHandler } from '@ts-rest/nest';
 import { map, Observable } from 'rxjs';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { LabRoute } from '../common/lab-route';
 import { contract } from '../contract';
 import { OverlayStoreService } from '../services/overlay-store';
@@ -25,7 +25,7 @@ export class StackController {
   }
 
   @TsRestHandler(contract.startStackRun)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'admin' })
   startRun() {
     return tsRestHandler(contract.startStackRun, async ({ body }) => {
       try {
@@ -68,7 +68,7 @@ export class StackController {
   }
 
   @TsRestHandler(contract.controlDatastore)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'admin' })
   controlDatastore() {
     return tsRestHandler(contract.controlDatastore, async ({ body }) => ({
       status: 200 as const,
@@ -85,11 +85,13 @@ export class StackController {
   }
 
   @Sse('api/stack/datastores/:id/log')
+  @LabRoute({ capability: 'admin' })
   datastoreLog(@Param('id') id: string): Observable<{ data: { line: string } }> {
     return this.stack.streamDatastoreLog(id).pipe(map((line) => ({ data: { line } })));
   }
 
   @Sse('api/stack/init/:name/log')
+  @LabRoute({ capability: 'admin' })
   initTaskLog(@Param('name') name: string): Observable<{ data: { line: string } }> {
     return this.initTasks.streamLog(name).pipe(map((line) => ({ data: { line } })));
   }

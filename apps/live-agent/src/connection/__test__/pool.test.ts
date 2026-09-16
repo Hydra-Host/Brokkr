@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentConfig } from '../../config';
-import { createTransportPool, type TransportFactory } from '../pool';
+import { createSiblingTransportPool, createTransportPool, type TransportFactory } from '../pool';
 
 function makeConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
   return {
@@ -85,5 +85,67 @@ describe('TransportPool', () => {
 
     expect(c1).not.toBe(c2);
     expect(factory).toHaveBeenCalledTimes(2);
+  });
+});
+
+// The sibling pool keeps log/trace RPCs off the connection carrying OpenSession:
+// a ReportLogs burst on the session connection trips HTTP/2 flood protection and
+// the resulting GOAWAY kills the session itself.
+describe('createSiblingTransportPool', () => {
+  let factory: TransportFactory;
+
+  beforeEach(() => {
+    factory = vi.fn().mockImplementation((baseUrl: string) => ({ baseUrl }));
+  });
+
+  it('mints its own transport for an address the primary already holds', () => {
+    const config = makeConfig();
+    const primary = createTransportPool(config, factory);
+    const sibling = createSiblingTransportPool(primary, config, factory);
+    const addr = 'https://bridge-a.example:443';
+
+    const primaryClient = primary.getClient(addr);
+    const siblingClient = sibling.getClient(addr);
+
+    expect(siblingClient).not.toBe(primaryClient);
+    expect(factory).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses its own transport across calls', () => {
+    const config = makeConfig();
+    const primary = createTransportPool(config, factory);
+    const sibling = createSiblingTransportPool(primary, config, factory);
+    const addr = 'https://bridge-a.example:443';
+
+    expect(sibling.getClient(addr)).toBe(sibling.getClient(addr));
+    expect(factory).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the primary address set, not its own', () => {
+    const config = makeConfig();
+    const primary = createTransportPool(config, factory);
+    const sibling = createSiblingTransportPool(primary, config, factory);
+
+    // Telemetry must ship to bridges the session loops know about even before it
+    // has opened a transport of its own to any of them.
+    primary.getClient('https://bridge-a.example:443');
+    expect(sibling.listAddresses()).toEqual(['https://bridge-a.example:443']);
+
+    sibling.getClient('https://bridge-b.example:443');
+    expect(sibling.listAddresses()).toEqual(['https://bridge-a.example:443']);
+  });
+
+  it('removeBridge drops only its own transport', () => {
+    const config = makeConfig();
+    const primary = createTransportPool(config, factory);
+    const sibling = createSiblingTransportPool(primary, config, factory);
+    const addr = 'https://bridge-a.example:443';
+
+    const primaryClient = primary.getClient(addr);
+    sibling.getClient(addr);
+    sibling.removeBridge(addr);
+
+    expect(primary.getClient(addr)).toBe(primaryClient);
+    expect(primary.listAddresses()).toEqual([addr]);
   });
 });

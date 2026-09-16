@@ -6,6 +6,9 @@ import {
   canTransition,
   IllegalPhaseTransitionError,
   nextPhaseForBridge,
+  SYSTEM_JOB_SAGAS,
+  SYSTEM_JOB_TYPES,
+  TERMINAL_PHASES,
 } from '../lifecycle-state.machine';
 
 const ALL_PHASES = Object.values(LifecycleJobPhase);
@@ -40,6 +43,10 @@ describe('lifecycle state machine', () => {
       for (const phase of TERMINAL) {
         expect(ALLOWED_TRANSITIONS[phase]).toEqual([]);
       }
+    });
+
+    it('pins TERMINAL_PHASES to exactly the terminal phases', () => {
+      expect([...TERMINAL_PHASES].sort()).toEqual([...TERMINAL].sort());
     });
 
     it('rejects an unset (undefined) starting phase', () => {
@@ -110,5 +117,33 @@ describe('lifecycle state machine', () => {
         nextPhaseForBridge(JobType.Deprovision, LifecycleJobPhase.REQUESTED, 'stage_changed', 'running'),
       ).toBeNull();
     });
+  });
+
+  describe('system job types', () => {
+    it('covers exactly the sagas the hub starts without an actor', () => {
+      expect([...SYSTEM_JOB_TYPES].sort()).toEqual([JobType.Benchmarks, JobType.InventoryCollection].sort());
+      expect(SYSTEM_JOB_TYPES.has(JobType.Provision)).toBe(false);
+      expect(SYSTEM_JOB_TYPES.has(JobType.Reboot)).toBe(false);
+    });
+
+    it('names the wire saga for each system job type', () => {
+      expect(SYSTEM_JOB_SAGAS[JobType.InventoryCollection]).toBe('inventory_collection');
+      expect(SYSTEM_JOB_SAGAS[JobType.Benchmarks]).toBe('benchmarks');
+    });
+
+    it.each([JobType.InventoryCollection, JobType.Benchmarks])(
+      'completes a %s job on saga completion without a phone-home wait',
+      (jobType) => {
+        expect(nextPhaseForBridge(jobType, LifecycleJobPhase.RUNNING, 'job_completed', 'complete')).toBe(
+          LifecycleJobPhase.COMPLETED,
+        );
+        expect(nextPhaseForBridge(jobType, LifecycleJobPhase.DISPATCHED, 'job_completed', 'complete')).toBe(
+          LifecycleJobPhase.COMPLETED,
+        );
+        expect(nextPhaseForBridge(jobType, LifecycleJobPhase.RUNNING, 'job_failed', 'failed')).toBe(
+          LifecycleJobPhase.FAILED,
+        );
+      },
+    );
   });
 });

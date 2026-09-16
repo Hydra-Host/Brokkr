@@ -2,8 +2,8 @@ import path from 'path';
 import swc from 'unplugin-swc';
 import { defineConfig } from 'vitest/config';
 
-// Live-sim verification specs: run against a running local sim (real Redis with
-// zone_crypto, compiled dist). No mock-redis setup file — these need real ioredis.
+// test/live specs drive the real saga steps and redfish operations over an in-process fake BMC;
+// they need neither the mock-redis setup file nor a running stack.
 export default defineConfig({
   test: {
     globals: true,

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { z } from 'zod';
@@ -86,30 +86,52 @@ export function pidAlive(pid: number | undefined): boolean {
   }
 }
 
-// the primary checkout and all of its worktrees share one --git-common-dir, so its parent is what
-// tells a sibling worktree apart from an unrelated clone. one subprocess, memoized.
+// primary checkout = parent of --git-common-dir (shared by every worktree). nested worktrees
+// sit under that root; sibling worktrees share the common dir without sharing a path prefix.
+const gitCommonDirByPath = new Map<string, string | null>();
 let repoRoot: string | null | undefined;
 
-export function repoRootOfCwd(): string | null {
-  if (repoRoot !== undefined) return repoRoot;
-  repoRoot = null;
+function canonicalize(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+function gitCommonDirOf(cwd: string): string | null {
+  const key = canonicalize(cwd);
+  const cached = gitCommonDirByPath.get(key);
+  if (cached !== undefined) return cached;
   try {
     const out = execFileSync('git', ['rev-parse', '--git-common-dir'], {
-      cwd: process.cwd(),
+      cwd: key,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
-    // git prints this relative to the working directory at the toplevel and absolute elsewhere
-    if (out) repoRoot = dirname(resolve(process.cwd(), out));
+    // git may print a realpath while we resolved a symlink (macOS /var → /private/var)
+    const common = out ? canonicalize(resolve(key, out)) : null;
+    gitCommonDirByPath.set(key, common);
+    return common;
   } catch {
-    // outside a checkout nothing counts as a sibling
+    gitCommonDirByPath.set(key, null);
+    return null;
   }
+}
+
+export function repoRootOfCwd(): string | null {
+  if (repoRoot !== undefined) return repoRoot;
+  const common = gitCommonDirOf(process.cwd());
+  repoRoot = common === null ? null : dirname(common);
   return repoRoot;
 }
 
 export function isSameRepoCheckout(checkout: string, root: string | null = repoRootOfCwd()): boolean {
   if (!root) return false;
-  return checkout === root || checkout.startsWith(`${root}${sep}`);
+  if (checkout === root || checkout.startsWith(`${root}${sep}`)) return true;
+  const checkoutCommon = gitCommonDirOf(checkout);
+  const rootCommon = gitCommonDirOf(root);
+  return checkoutCommon !== null && checkoutCommon === rootCommon;
 }
 
 export interface StackCandidate {

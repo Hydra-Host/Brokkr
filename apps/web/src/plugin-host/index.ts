@@ -3,5 +3,5 @@ export { PublicPluginRouteDispatcher } from './plugin-public-route-dispatcher';
 export { PluginRegistryProvider, usePluginRegistry } from './plugin-registry-provider';
 export { PluginRouteDispatcher } from './plugin-route-dispatcher';
 export { PluginSlot } from './plugin-slot';
-export { findPublicPluginRoute, publicRedirectFromPluginAppMount } from './public-routes';
+export { findPublicPluginRoute, isCoreHostRoute, publicRedirectFromPluginAppMount } from './public-routes';
 export { wrapPluginIcon } from './safe-plugin-icon';

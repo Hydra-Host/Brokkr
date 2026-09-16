@@ -1,6 +1,6 @@
+import { DhcpMode, IpamRole, ZoneNetworkType } from '@repo/database/enums';
 import { describe, expect, it } from 'vitest';
-import { DhcpModeSchema, IpamRoleSchema } from '../ipam';
-import { ZoneDhcpPrefixSummarySchema, ZoneVrrpPrefixSummarySchema } from '../zones';
+import { ZoneDhcpPrefixSummarySchema, ZoneNetworkTypeSchema, ZoneVrrpPrefixSummarySchema } from '../zones';
 
 describe('ZoneDhcpPrefixSummarySchema', () => {
   const validSummary = {
@@ -31,13 +31,13 @@ describe('ZoneDhcpPrefixSummarySchema', () => {
   });
 
   it('accepts every IpamRole the canonical schema defines', () => {
-    for (const role of IpamRoleSchema.options) {
+    for (const role of Object.values(IpamRole)) {
       expect(ZoneDhcpPrefixSummarySchema.parse({ ...validSummary, role }).role).toBe(role);
     }
   });
 
   it('accepts every DhcpMode the canonical schema defines', () => {
-    for (const dhcpMode of DhcpModeSchema.options) {
+    for (const dhcpMode of Object.values(DhcpMode)) {
       expect(ZoneDhcpPrefixSummarySchema.parse({ ...validSummary, dhcpMode }).dhcpMode).toBe(dhcpMode);
     }
   });
@@ -99,7 +99,7 @@ describe('ZoneVrrpPrefixSummarySchema', () => {
   });
 
   it('accepts every IpamRole the canonical schema defines', () => {
-    for (const role of IpamRoleSchema.options) {
+    for (const role of Object.values(IpamRole)) {
       expect(ZoneVrrpPrefixSummarySchema.parse({ ...validSummary, role }).role).toBe(role);
     }
   });
@@ -120,5 +120,15 @@ describe('ZoneVrrpPrefixSummarySchema', () => {
 
   it('rejects non-string values in ifaceByBridge', () => {
     expect(() => ZoneVrrpPrefixSummarySchema.parse({ ...validSummary, ifaceByBridge: { br0: 123 } })).toThrow();
+  });
+});
+
+describe('ZoneNetworkTypeSchema', () => {
+  it.each(Object.values(ZoneNetworkType))('accepts %s', (networkType) => {
+    expect(ZoneNetworkTypeSchema.parse(networkType)).toBe(networkType);
+  });
+
+  it('rejects an unknown value', () => {
+    expect(() => ZoneNetworkTypeSchema.parse('VLAN')).toThrow();
   });
 });

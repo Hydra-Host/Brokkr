@@ -92,6 +92,7 @@ export class ZonesService {
     const declared = this.overlay.zonesMeta();
     const bridges = this.overlay.labBridges();
     const nodesByZone = this.overlay.fleetNodesByZone();
+    const bmByZone = this.overlay.baremetalNodesByZone();
     const zoneFiles = this.overlay.zoneFiles();
     const { zones: hubZones, readError } = await this.zoneRegistry.readZones();
     const live = hubZones.filter((row) => !row.deletedAt);
@@ -110,7 +111,7 @@ export class ZonesService {
             uuid: zoneUuid(zone.index),
             ordinals: own.map((bridge) => bridge.replica),
             bridges: own.map((bridge) => ({ proc: bridge.proc, port: bridge.port, grpc: bridge.grpc })),
-            nodeCount: (nodesByZone[zone.name] ?? []).length,
+            nodeCount: (nodesByZone[zone.name] ?? []).length + (bmByZone[zone.name] ?? []).length,
           },
         };
       });
@@ -148,6 +149,7 @@ export class ZonesService {
   }): Promise<{ ok: boolean; plan: ZoneApplyPlan }> {
     const declared = this.overlay.zonesMeta();
     const nodesByZone = this.overlay.fleetNodesByZone();
+    const bmByZone = this.overlay.baremetalNodesByZone();
     const { zones: hubZones, readError } = await this.zoneRegistry.readZones();
     // an unreadable hub yields an empty name list, which would pass the rename clash check
     // vacuously — the one thing that check exists to catch
@@ -165,6 +167,7 @@ export class ZonesService {
       declared,
       nodeZones,
       nodesByZone,
+      occupancyByZone: occupancy(nodesByZone, bmByZone),
       rename: input.rename,
       capacity: this.overlay.zoneCapacity(),
       hubZoneNames: hubZones.filter((row) => !row.deletedAt && row.name !== null).map((row) => row.name as string),
@@ -205,6 +208,15 @@ const mintsZoneIdentity = (
     const was = indexByName.get(z.name);
     return was === undefined ? z.name !== rename?.to : was !== z.index;
   });
+};
+
+// removal refuses on every occupant, vm node or bare-metal machine; nodeZones stays vm-only because
+// it is the write path and a machine's zone lives in its own row
+const occupancy = (vm: Record<string, string[]>, bm: Record<string, string[]>): Record<string, string[]> => {
+  const out: Record<string, string[]> = {};
+  for (const [zone, names] of [...Object.entries(vm), ...Object.entries(bm)])
+    out[zone] = [...(out[zone] ?? []), ...names];
+  return out;
 };
 
 const renamed = (

@@ -1,21 +1,15 @@
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '../generated/client/index.js';
+import { Prisma, PrismaClient } from '../generated/js/client.js';
 
-export * from '../generated/client/index.js';
+export * from '../generated/js/client.js';
 export { PrismaPg };
-
-type PrismaConstructorOptions = NonNullable<ConstructorParameters<typeof PrismaClient>[0]>;
-type PrismaLogOptions = PrismaConstructorOptions['log'];
 
 export interface CreatePrismaClientOptions {
   connectionString: string;
-  log?: PrismaLogOptions;
+  log?: Prisma.PrismaClientOptions['log'];
 }
 
-export const createPrismaClientOptions = ({
-  connectionString,
-  log,
-}: CreatePrismaClientOptions): PrismaConstructorOptions => ({
+export const createPrismaClientOptions = ({ connectionString, log }: CreatePrismaClientOptions) => ({
   adapter: new PrismaPg({ connectionString }),
   ...(log ? { log } : {}),
 });

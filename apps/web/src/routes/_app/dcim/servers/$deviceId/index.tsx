@@ -1,11 +1,13 @@
-import { createFileRoute, getRouteApi } from '@tanstack/react-router';
+import { createFileRoute, getRouteApi, Link } from '@tanstack/react-router';
 import { Cpu, HardDrive, MemoryStick, Network, Server as ServerIcon, Zap } from 'lucide-react';
 
+import type { Server } from '@repo/api-client';
 import { Badge } from '@repo/ui/components/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Separator } from '@repo/ui/components/separator';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { formatSize, perDriveSizeGb } from '@repo/utils';
+import { Fragment, type ReactNode } from 'react';
 
 const parentRoute = getRouteApi('/_app/dcim/servers/$deviceId');
 
@@ -30,13 +32,87 @@ function formatStorage(count: number | null | undefined, size: number | null | u
   return `${count}x ${formatSize(perDrive, 'GB', 2) ?? `${perDrive} GB`} ${type}`;
 }
 
+type Specs = Server['specs'];
+
+export const isDiscovered = (specs: Specs): boolean =>
+  Boolean(specs.cpu.model || specs.gpu.model || specs.memory.total);
+
+export function ComputeCardBody({ specs, deviceId }: { specs: Specs; deviceId: string }) {
+  const { cpu, gpu, memory } = specs;
+
+  if (!isDiscovered(specs)) {
+    return (
+      <div className="text-muted-foreground space-y-2 text-sm">
+        <p>Hardware not discovered yet. This device has never reported a CPU, a GPU or memory.</p>
+        <p>
+          Start discovery with Collect in the header, then follow it under{' '}
+          <Link to="/dcim/servers/$deviceId/discovery-runs" params={{ deviceId }} className="underline">
+            Discovery runs
+          </Link>
+          .
+        </p>
+      </div>
+    );
+  }
+
+  const sections: ReactNode[] = [];
+  if (gpu.model) {
+    sections.push(
+      <>
+        <div className="flex items-center gap-2 pb-1">
+          <Zap className="text-muted-foreground h-3.5 w-3.5" />
+          <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">GPU</span>
+        </div>
+        <SpecRow label="Model" value={gpu.model} />
+        <SpecRow label="Count" value={gpu.count} />
+      </>,
+    );
+  }
+  if (cpu.model) {
+    sections.push(
+      <>
+        <div className="flex items-center gap-2 pb-1">
+          <Cpu className="text-muted-foreground h-3.5 w-3.5" />
+          <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">CPU</span>
+        </div>
+        <SpecRow label="Model" value={cpu.model} />
+        <SpecRow label="Physical CPUs" value={cpu.count} />
+        <SpecRow label="Total Cores" value={cpu.totalCores} />
+        <SpecRow label="Total Threads" value={cpu.totalThreads} />
+      </>,
+    );
+  }
+  if (memory.total) {
+    sections.push(
+      <>
+        <div className="flex items-center gap-2 pb-1">
+          <MemoryStick className="text-muted-foreground h-3.5 w-3.5" />
+          <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">Memory</span>
+        </div>
+        <SpecRow label="Total" value={formatSize(memory.total, 'GB', 2)} />
+      </>,
+    );
+  }
+
+  return (
+    <>
+      {sections.map((section, i) => (
+        <Fragment key={i}>
+          {i > 0 && <Separator className="bg-border-dim my-2" />}
+          {section}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 function ServerOverview() {
   const device = parentRoute.useLoaderData();
   const displayName = device.dcim?.nickname || device.name;
 
   useDocumentTitle(displayName);
 
-  const { cpu, gpu, memory, storage } = device.specs;
+  const { storage } = device.specs;
   const { networking } = device;
 
   const storageLines = [
@@ -57,35 +133,7 @@ function ServerOverview() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-1">
-          {gpu.model && (
-            <>
-              <div className="flex items-center gap-2 pb-1">
-                <Zap className="text-muted-foreground h-3.5 w-3.5" />
-                <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">GPU</span>
-              </div>
-              <SpecRow label="Model" value={gpu.model} />
-              <SpecRow label="Count" value={gpu.count} />
-              <Separator className="bg-border-dim my-2" />
-            </>
-          )}
-          <div className="flex items-center gap-2 pb-1">
-            <Cpu className="text-muted-foreground h-3.5 w-3.5" />
-            <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">CPU</span>
-          </div>
-          <SpecRow label="Model" value={cpu.model} />
-          <SpecRow label="Physical CPUs" value={cpu.count} />
-          <SpecRow label="Total Cores" value={cpu.totalCores} />
-          <SpecRow label="Total Threads" value={cpu.totalThreads} />
-          {memory.total && (
-            <>
-              <Separator className="bg-border-dim my-2" />
-              <div className="flex items-center gap-2 pb-1">
-                <MemoryStick className="text-muted-foreground h-3.5 w-3.5" />
-                <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">Memory</span>
-              </div>
-              <SpecRow label="Total" value={formatSize(memory.total, 'GB', 2)} />
-            </>
-          )}
+          <ComputeCardBody specs={device.specs} deviceId={device.id} />
         </CardContent>
       </Card>
 

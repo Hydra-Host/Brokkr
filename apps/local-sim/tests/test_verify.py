@@ -5,20 +5,32 @@ import types
 import pytest
 from local import fleet as fleet_mod
 from local import verify
-from local.applied import AppliedManifest, AppliedNode
+from local.applied import AppliedBmNode, AppliedManifest, AppliedNode
 from local.schema import Fleet
 
 _NETWORK = {"name": "brokkr-net", "cidr": "192.168.200.0/24", "domain": "sim.local", "bmc_cidr": "192.168.105.0/24"}
 
 
-def _manifest(nodes: list[AppliedNode], mode: str = "vm") -> AppliedManifest:
+def _manifest(nodes: list[AppliedNode], bm_nodes: list[AppliedBmNode] | None = None) -> AppliedManifest:
     return AppliedManifest(
         digest="sha256:x",
         applied_at=1.0,
         source="/x",
-        mode=mode,
         network={"cidr": "192.168.200.0/24", "bmc_cidr": "192.168.105.0/24", "dhcp": False},
         nodes=nodes,
+        bm_nodes=bm_nodes or [],
+    )
+
+
+def _bm_anode(name: str = "bm-1") -> AppliedBmNode:
+    return AppliedBmNode(
+        name=name,
+        zone="z",
+        pxe_mac="00:00:5e:00:53:a1",
+        bmc_ip="10.0.0.20",
+        bmc_mac="00:00:5e:00:53:c1",
+        arch="amd64",
+        fields={},
     )
 
 
@@ -131,21 +143,29 @@ def test_linux_skips_vmnet_and_bootptab_checks():
     assert report.findings == []
 
 
-def test_baremetal_mode_reports_healthy():
-    manifest = _manifest([], mode="baremetal")
-
-    report = verify.build_verify_report(manifest, None, "linux")
+def test_manifest_with_empty_rosters_reports_healthy_and_no_planes_on():
+    report = verify.build_verify_report(_manifest([]), None, "linux")
 
     assert report.status == verify.VerifyStatus.HEALTHY
-    assert report.mode == "baremetal"
+    assert report.planes == verify.VerifyPlanes(vm=False, baremetal=False)
     assert report.findings == []
     assert report.summary.checked == 0
+
+
+def test_report_planes_follow_the_manifest_rosters():
+    vm_only = verify.build_verify_report(_manifest([_anode("gpu-1")]), _live([_lnode("gpu-1")]), "linux")
+    assert vm_only.planes == verify.VerifyPlanes(vm=True, baremetal=False)
+
+    both = verify.build_verify_report(_manifest([_anode("gpu-1")], [_bm_anode()]), _live([_lnode("gpu-1")]), "linux")
+    assert both.planes == verify.VerifyPlanes(vm=True, baremetal=True)
+    assert both.model_dump_wire()["planes"] == {"vm": True, "baremetal": True}
 
 
 def test_no_manifest_reports_single_non_healable_finding():
     report = verify.build_verify_report(None, None, "linux")
 
     assert report.status == verify.VerifyStatus.NO_MANIFEST
+    assert report.planes is None
     assert _kinds(report) == [verify.FindingKind.NO_MANIFEST]
     assert report.findings[0].healable is False
     assert report.summary.checked == 0
@@ -210,7 +230,7 @@ def _finding(kind, node, healable=True) -> verify.VerifyFinding:
 def _report(findings) -> verify.VerifyReport:
     return verify.VerifyReport(
         status=verify.VerifyStatus.FINDINGS,
-        mode="vm",
+        planes=verify.VerifyPlanes(vm=True, baremetal=False),
         findings=findings,
         summary=verify.VerifySummary(checked=2, ok=0, findings=len(findings)),
     )

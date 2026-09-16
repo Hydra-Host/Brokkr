@@ -26,10 +26,10 @@ export function PendingBanner({
   const s = pending.summary;
   const netChanged = pending.network.changed;
   const count = pendingChangeCount(pending);
-  if (pending.severity === 'mode-change') {
+  if (pending.severity === 'planes-change') {
     return (
       <div className="border-status-warning/70 bg-status-warning/20 flex items-center gap-3 rounded-md border px-3 py-2">
-        <span className="text-status-warning text-sm font-medium">⚠ Fleet mode changed — not yet applied</span>
+        <span className="text-status-warning text-sm font-medium">⚠ Fleet planes changed — not yet applied</span>
         {onApply && (
           <button
             onClick={onApply}
@@ -37,7 +37,7 @@ export function PendingBanner({
             title={blocked ? blockedReason : undefined}
             className="bg-status-warning/35 text-status-warning hover:bg-status-warning/45 border-status-warning/70 ml-auto rounded-md border px-3 py-1 text-sm font-medium disabled:opacity-40"
           >
-            {busy ? 'Applying…' : 'Apply mode'}
+            {busy ? 'Applying…' : 'Apply planes'}
           </button>
         )}
       </div>

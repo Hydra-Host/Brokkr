@@ -27,7 +27,7 @@ def _prune_sql(org_id: str, node_count: int) -> str:
 UPDATE "Device"
 SET "deletedAt" = NOW(), "updatedAt" = NOW()
 WHERE "deletedAt" IS NULL
-  AND "organizationId" = {q(org_id)}
+  AND "supplierId" = {q(org_id)}
   AND id LIKE '00000000-0000-0000-0000-%'
   AND right(id, 12) ~ '^[0-9]{{12}}$'
   AND right(id, 12)::bigint > {node_count}

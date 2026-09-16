@@ -12,12 +12,10 @@ export async function assertParentDeviceReachable(deviceId: string, supplierId: 
   }
 }
 
-// Supplied (supplierId, servers) OR owned (organizationId, bridges — they carry no supplier). organizationId
-// is denormalized from the zone operator, never a renter, so the owner arm does not widen access to renters.
 export async function assertParentDeviceOwnedOrSupplied(deviceId: string, orgId: string): Promise<void> {
   const client = ActiveRecordRegistry.client;
   const device = await client.device.findUnique({
-    where: { id: deviceId, deletedAt: null, OR: [{ supplierId: orgId }, { organizationId: orgId }] },
+    where: { id: deviceId, deletedAt: null, supplierId: orgId },
     select: { id: true },
   });
   if (!device) {

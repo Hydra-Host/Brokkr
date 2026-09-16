@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const CLEAR = [
+  'HUB_PUBLIC_HOST',
+  'HUB_BROWSER_HOST',
+  'LOOPBACK_HOST',
   'LAB_PORT',
   'LAB_WEB_PORT',
   'NGINX_PORT',
@@ -132,5 +135,51 @@ describe('primeNixPorts', () => {
       adopted: 1,
       skipped: ['nginx', 'spoke'],
     });
+  });
+});
+
+describe('URLS — the three audiences', () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const freshUrls = async (env: Record<string, string> = {}) => {
+    vi.resetModules();
+    for (const k of CLEAR) vi.stubEnv(k, '');
+    for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
+    const mod = await import('../ports');
+    mod.primeNixPorts({ hubApi: { base: 3000, step: 2 }, hubWeb: 5173 });
+    return mod;
+  };
+
+  it('dials loopback, never the public host, so a bind-address move cannot break a hub call', async () => {
+    const { URLS } = await freshUrls({ HUB_BROWSER_HOST: '10.0.0.4' });
+
+    expect(URLS.dial.hubApi).toBe('http://127.0.0.1:3000');
+    expect(URLS.hubBase).toBe(URLS.dial.hubApi);
+  });
+
+  it('sends the browser audience to the host lan.bindAddress named', async () => {
+    const { URLS } = await freshUrls({ HUB_BROWSER_HOST: '10.0.0.4' });
+
+    expect(URLS.browser).toEqual({ hubApi: 'http://10.0.0.4:3000', hubWeb: 'http://10.0.0.4:5173' });
+  });
+
+  it('keeps the local audience on this box, so a developer url survives the host move', async () => {
+    const { URLS } = await freshUrls({ HUB_BROWSER_HOST: '10.0.0.4' });
+
+    expect(URLS.local.hubApi).toBe('http://localhost:3000');
+  });
+
+  it('falls back to the public host when only it declares a name', async () => {
+    const { URLS } = await freshUrls({ HUB_PUBLIC_HOST: '10.0.0.9' });
+
+    expect(URLS.browser.hubApi).toBe('http://10.0.0.9:3000');
+  });
+
+  it('falls back to localhost when neither host is declared', async () => {
+    const { URLS } = await freshUrls();
+
+    expect(URLS.browser.hubApi).toBe(URLS.local.hubApi);
   });
 });

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { currentOrigin, originColumns } from '../common/lab-context';
 import type { RunSink } from '../runner/run-sink';
 import type { RunState } from '../runner/runner.service';

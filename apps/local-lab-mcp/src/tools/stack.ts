@@ -18,7 +18,7 @@ export function registerStackTools(server: McpServer, ctx: LabContext, options: 
       force: z
         .boolean()
         .optional()
-        .describe('Override the active-saga guard on a fleet-mode-apply (409 while BullMQ jobs are in flight)'),
+        .describe('Override the active-saga guard on a fleet-planes-apply (409 while BullMQ jobs are in flight)'),
       ...waitShape,
     },
     (args) =>
@@ -140,7 +140,7 @@ export function registerStackTools(server: McpServer, ctx: LabContext, options: 
         entries: z
           .record(z.string(), z.string().nullable())
           .describe(
-            'Canonical path → value, e.g. {"stackDefaults.hub.LOG_LEVEL": "warn", "ports.postgres": "5442", "lan.expose": "true"}. Null reverts a path.',
+            'Canonical path → value, e.g. {"stackDefaults.hub.LOG_LEVEL": "warn", "ports.postgres": "5442", "lan.mode": "direct"}. Null reverts a path.',
           ),
         slot: z
           .number()

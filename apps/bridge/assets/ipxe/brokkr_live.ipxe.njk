@@ -5,7 +5,7 @@
 params
 param --header x-brokkr-job-id {{ job_id | default("") }}
 
-kernel {{ bridge_url }}/api/discovery/{{ arch }}/vmlinuz##params \
+kernel {{ bridge_url }}/api/discovery/{{ flavor }}/{{ arch }}/vmlinuz##params \
   health_check={{ bridge_url }}/api/health \
   initrd=initrd.img \
 {%- if platform_type == "rescue" %}
@@ -30,7 +30,7 @@ kernel {{ bridge_url }}/api/discovery/{{ arch }}/vmlinuz##params \
   BOOTIF=${netX/mac} \
   ip=dhcp \
 {%- endif %}
-  url={{ bridge_url }}/api/discovery/{{ arch }}/brokkr-discovery.iso \
+  url={{ bridge_url }}/api/discovery/{{ flavor }}/{{ arch }}/brokkr-discovery.iso \
   bdi.station_mac=${netX/mac} \
   bdi.station_arch={{ arch }} \
   bdi.station_mode={{ platform }} \
@@ -49,7 +49,7 @@ kernel {{ bridge_url }}/api/discovery/{{ arch }}/vmlinuz##params \
 {%- endif %}
   nomodeset
 
-initrd {{ bridge_url }}/api/discovery/{{ arch }}/initrd.img##params
+initrd {{ bridge_url }}/api/discovery/{{ flavor }}/{{ arch }}/initrd.img##params
 initrd {{ bridge_url }}/api/initrd/brokkr-live.img##params
 {%- if platform_type == "rescue" %}
 initrd {{ bridge_url }}/api/initrd/ubuntu-rescue-os-{{ device_id }}.img##params

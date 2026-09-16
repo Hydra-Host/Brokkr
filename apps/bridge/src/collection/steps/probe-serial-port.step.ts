@@ -24,7 +24,7 @@ interface ProbeServiceFactoryLike {
 
 interface ProbeResultsLike {
   mergeResolvedIntoSerialPorts(deviceId: string, resolved: Record<string, unknown>): Promise<boolean>;
-  enqueueDiscoveryComplete(args: { deviceId: string; jobId: string }): Promise<boolean>;
+  enqueueDiscoveryComplete(args: { deviceId: string; jobId: string; succeededSteps?: number }): Promise<boolean>;
 }
 
 interface LoggerLike {
@@ -53,6 +53,9 @@ export class ProbeSerialPortStep {
     if (!collected) {
       return { probed: false, reason: 'collection did not run' };
     }
+    const metadata = isRecord(collectHardware) ? collectHardware['metadata'] : undefined;
+    const successful = isRecord(metadata) ? metadata['collectors_successful'] : undefined;
+    const succeededSteps = typeof successful === 'number' ? successful : 0;
 
     let confirmed = false;
     let port: string | null = null;
@@ -96,7 +99,7 @@ export class ProbeSerialPortStep {
       await this.logger.warning(`Serial port probe failed (non-fatal): ${getErrorMessage(error)}`, { jobId });
     }
 
-    await this.results.enqueueDiscoveryComplete({ deviceId, jobId });
+    await this.results.enqueueDiscoveryComplete({ deviceId, jobId, succeededSteps });
     return { probed: true, confirmed, port, source };
   }
 }

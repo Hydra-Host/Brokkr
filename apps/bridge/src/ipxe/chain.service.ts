@@ -4,6 +4,7 @@ import { getApplicationConfig } from '../core/application.config';
 import type { DeviceRecord } from '../device-record/device-record.schema';
 import { DeviceRecordService, ResolveOutcome, type ResolveResult } from '../device-record/device-record.service';
 import { isHardwarePlaceholder, isLocallyAdministeredMac, MAC_KINDS } from '../device-record/identifier-kinds';
+import { getDiscoveryFileConfig } from '../download/discovery.config';
 import { logWarning } from '../logger/logger.service';
 
 import { renderForRecord } from './chain-decision';
@@ -111,6 +112,7 @@ export class ChainService {
       jobId,
       pendingRegistered,
       discoveryPlatformSlug: config.discoveryPlatformSlug,
+      discoveryFlavors: getDiscoveryFileConfig().flavors,
       renderer: this.renderer,
       ...(this.redisIpxeUrlLookup ? { redisIpxeUrlLookup: this.redisIpxeUrlLookup } : {}),
       ...(this.inventoryTrigger ? { triggerInventoryCollection: this.inventoryTrigger } : {}),

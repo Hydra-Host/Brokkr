@@ -65,7 +65,7 @@ export function ConfigAdvancedPage() {
   };
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:h-[calc(100dvh-7rem)] lg:grid-cols-[260px_1fr]">
+    <div className="grid grid-cols-1 gap-6 lg:h-full lg:grid-cols-[260px_1fr]">
       <UnsavedNavGate dirty={dirty > 0} what="advanced config" />
       <SectionRail items={rail} activeId={active} onSelect={select} />
 

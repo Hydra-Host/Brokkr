@@ -39,13 +39,29 @@ export function withTargetNotice<T extends ToolResult>(ctx: LabContext, result: 
   return { ...result, content: [{ type: 'text', text: notice }, ...result.content] };
 }
 
+async function callWith(
+  ctx: LabContext,
+  client: LabClient,
+  fn: (client: LabClient) => Promise<unknown>,
+): Promise<ToolResult | ToolError> {
+  try {
+    return withTargetNotice(ctx, ok(await fn(client)));
+  } catch (error) {
+    return withTargetNotice(ctx, err(error));
+  }
+}
+
 export async function call(
   ctx: LabContext,
   fn: (client: LabClient) => Promise<unknown>,
 ): Promise<ToolResult | ToolError> {
-  try {
-    return withTargetNotice(ctx, ok(await fn(ctx.client)));
-  } catch (error) {
-    return withTargetNotice(ctx, err(error));
-  }
+  return callWith(ctx, ctx.client, fn);
+}
+
+/** For the `host-exec` routes only: the api token cannot reach them, so these carry the host token. */
+export async function callHost(
+  ctx: LabContext,
+  fn: (client: LabClient) => Promise<unknown>,
+): Promise<ToolResult | ToolError> {
+  return callWith(ctx, ctx.hostClient, fn);
 }

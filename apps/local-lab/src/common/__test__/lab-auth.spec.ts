@@ -1,19 +1,17 @@
-import { afterEach, beforeEach } from 'vitest';
+import { afterEach } from 'vitest';
 
 import { labBindHost, labCorsOrigins } from '../lab-auth';
-import {
-  effectiveClientAddress,
-  extractToken,
-  isConnectionAuthorized,
-  isLoopbackAddress,
-  tokenMatches,
-} from '../lab-net';
-
+import { capabilityAllowed } from '../lab-capability';
+import { effectiveClientAddress, isLoopbackAddress, extractToken, resolvePrincipal } from '../lab-net';
 
 const ORIG = { ...process.env };
 afterEach(() => {
   process.env = { ...ORIG };
 });
+
+function readAllowed(peer: string | undefined, token?: string, forwardedFor?: string): boolean {
+  return capabilityAllowed('read', resolvePrincipal(token), peer, forwardedFor);
+}
 
 describe('isLoopbackAddress', () => {
   it('accepts the IPv4/IPv6 loopback range incl. IPv4-mapped IPv6', () => {
@@ -29,25 +27,6 @@ describe('isLoopbackAddress', () => {
   });
 });
 
-describe('tokenMatches', () => {
-  beforeEach(() => {
-    process.env.LAB_API_TOKEN = 'sekret-token';
-  });
-
-  it('matches only the exact configured token', () => {
-    expect(tokenMatches('sekret-token')).toBe(true);
-    expect(tokenMatches('sekret-toke')).toBe(false);
-    expect(tokenMatches('wrong-token!!')).toBe(false);
-    expect(tokenMatches(undefined)).toBe(false);
-  });
-
-  it('never matches when no token is configured (fail-closed)', () => {
-    delete process.env.LAB_API_TOKEN;
-    expect(tokenMatches('anything')).toBe(false);
-    expect(tokenMatches('')).toBe(false);
-  });
-});
-
 describe('extractToken', () => {
   it('prefers Bearer, then x-lab-token header, then query param', () => {
     expect(extractToken('Bearer abc', 'hdr', 'q')).toBe('abc');
@@ -56,45 +35,54 @@ describe('extractToken', () => {
     expect(extractToken(undefined, undefined, 'q')).toBe('q');
     expect(extractToken('Basic xyz', undefined, null)).toBeUndefined();
   });
+
+  it('reads a blank value as absent and falls through to the next source', () => {
+    expect(extractToken(undefined, '', 'q')).toBe('q');
+    expect(extractToken('Bearer ', 'hdr', 'q')).toBe('hdr');
+    expect(extractToken(undefined, ['   '], 'q')).toBe('q');
+    expect(extractToken(undefined, '   ', undefined)).toBeUndefined();
+    expect(extractToken(undefined, '', '')).toBeUndefined();
+    expect(extractToken('Bearer ', '', null)).toBeUndefined();
+  });
 });
 
-describe('isConnectionAuthorized', () => {
-  it('trusts loopback even with no token (the operator on the box / vite proxy)', () => {
+describe('the read capability as a connection gate', () => {
+  it('grants loopback with no token (the operator on the box / vite proxy)', () => {
     delete process.env.LAB_API_TOKEN;
-    expect(isConnectionAuthorized('127.0.0.1', undefined, undefined)).toBe(true);
+    expect(readAllowed('127.0.0.1')).toBe(true);
   });
 
   it('denies a non-loopback connection when no token is configured (fail-closed)', () => {
     delete process.env.LAB_API_TOKEN;
-    expect(isConnectionAuthorized('10.0.0.5', 'whatever', undefined)).toBe(false);
+    expect(readAllowed('10.0.0.5', 'whatever')).toBe(false);
   });
 
   it('gates a non-loopback connection on the shared token', () => {
     process.env.LAB_API_TOKEN = 'sekret-token';
-    expect(isConnectionAuthorized('10.0.0.5', 'sekret-token', undefined)).toBe(true);
-    expect(isConnectionAuthorized('10.0.0.5', 'nope', undefined)).toBe(false);
-    expect(isConnectionAuthorized('10.0.0.5', undefined, undefined)).toBe(false);
+    expect(readAllowed('10.0.0.5', 'sekret-token')).toBe(true);
+    expect(readAllowed('10.0.0.5', 'nope')).toBe(false);
+    expect(readAllowed('10.0.0.5')).toBe(false);
   });
 
-  it('resolves x-forwarded-for before deciding, so proxied lan ws upgrades are not loopback-trusted', () => {
+  it('denies a forwarded remote hop whether or not the proxy is trusted', () => {
     process.env.LAB_TRUST_PROXY = '1';
     delete process.env.LAB_API_TOKEN;
-    expect(isConnectionAuthorized('127.0.0.1', undefined, '10.0.0.5')).toBe(false);
+    expect(readAllowed('127.0.0.1', undefined, '10.0.0.5')).toBe(false);
     process.env.LAB_API_TOKEN = 'sekret-token';
-    expect(isConnectionAuthorized('127.0.0.1', 'sekret-token', '10.0.0.5')).toBe(true);
-    expect(isConnectionAuthorized('127.0.0.1', undefined, '127.0.0.1')).toBe(true);
+    expect(readAllowed('127.0.0.1', 'sekret-token', '10.0.0.5')).toBe(true);
+    expect(readAllowed('127.0.0.1', undefined, '127.0.0.1')).toBe(true);
     delete process.env.LAB_TRUST_PROXY;
-    expect(isConnectionAuthorized('127.0.0.1', undefined, '10.0.0.5')).toBe(true);
+    expect(readAllowed('127.0.0.1', undefined, '10.0.0.5')).toBe(false);
   });
 });
 
 describe('effectiveClientAddress / proxy trust matrix', () => {
-  it('(a) trust unset: ignores XFF and keeps the loopback peer (today-behavior, trusted)', () => {
+  it('(a) trust unset: ignores XFF for the recorded address, but the hop still denies the grant', () => {
     delete process.env.LAB_TRUST_PROXY;
     delete process.env.LAB_API_TOKEN;
     const addr = effectiveClientAddress('127.0.0.1', '10.0.0.5');
     expect(addr).toBe('127.0.0.1');
-    expect(isConnectionAuthorized(addr, undefined, undefined)).toBe(true);
+    expect(readAllowed('127.0.0.1', undefined, '10.0.0.5')).toBe(false);
   });
 
   it('(b) trust on + loopback peer + remote XFF: resolves to the LAN client, token required (fail-closed)', () => {
@@ -103,7 +91,7 @@ describe('effectiveClientAddress / proxy trust matrix', () => {
     const addr = effectiveClientAddress('127.0.0.1', '10.0.0.5');
     expect(addr).toBe('10.0.0.5');
     expect(isLoopbackAddress(addr)).toBe(false);
-    expect(isConnectionAuthorized(addr, undefined, undefined)).toBe(false);
+    expect(readAllowed(addr)).toBe(false);
   });
 
   it('(c) trust on + loopback peer + loopback XFF: still trusted', () => {
@@ -111,7 +99,7 @@ describe('effectiveClientAddress / proxy trust matrix', () => {
     delete process.env.LAB_API_TOKEN;
     const addr = effectiveClientAddress('127.0.0.1', '127.0.0.1');
     expect(addr).toBe('127.0.0.1');
-    expect(isConnectionAuthorized(addr, undefined, undefined)).toBe(true);
+    expect(readAllowed(addr, undefined, '127.0.0.1')).toBe(true);
   });
 
   it('(d) trust on + NON-loopback peer: header ignored, falls through to the token path', () => {
@@ -119,16 +107,16 @@ describe('effectiveClientAddress / proxy trust matrix', () => {
     const addr = effectiveClientAddress('10.0.0.5', '127.0.0.1');
     expect(addr).toBe('10.0.0.5');
     process.env.LAB_API_TOKEN = 'sekret-token';
-    expect(isConnectionAuthorized(addr, 'sekret-token', undefined)).toBe(true);
-    expect(isConnectionAuthorized(addr, undefined, undefined)).toBe(false);
+    expect(readAllowed(addr, 'sekret-token')).toBe(true);
+    expect(readAllowed(addr)).toBe(false);
   });
 
-  it('(e) trust on + forged multi-entry XFF: only the last (proxy-appended) hop governs', () => {
+  it('(e) trust on + forged multi-entry XFF: the recorded address takes the last hop, the grant every hop', () => {
     process.env.LAB_TRUST_PROXY = '1';
     delete process.env.LAB_API_TOKEN;
     const addr = effectiveClientAddress('127.0.0.1', 'evil, 127.0.0.1');
     expect(addr).toBe('127.0.0.1');
-    expect(isConnectionAuthorized(addr, undefined, undefined)).toBe(true);
+    expect(readAllowed('127.0.0.1', undefined, 'evil, 127.0.0.1')).toBe(false);
   });
 
   it('collapses a multi-header XFF array to its final hop', () => {

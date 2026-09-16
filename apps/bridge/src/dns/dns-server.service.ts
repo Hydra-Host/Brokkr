@@ -1,7 +1,8 @@
 import * as dgram from 'node:dgram';
 import * as net from 'node:net';
 
-import { ipInCidr } from '../bridge-network/bridge-ip-resolution.service.js';
+import { ipInCidr } from '@repo/utils';
+
 import { getErrorMessage } from '../common/error-utils.js';
 import { logDebug, logError, logInfo, logWarning } from '../logger/logger.service.js';
 import type { BackgroundService } from '../startup/orchestrator.js';
@@ -210,7 +211,7 @@ export async function resolveQuery(
   }
 
   if (sourceAddress !== undefined && !isPrivateIpv4(sourceAddress)) {
-    const servedSource = deps.servedCidrs?.().some((cidr) => ipInCidr(cidr, sourceAddress)) ?? false;
+    const servedSource = deps.servedCidrs?.().some((cidr) => ipInCidr(sourceAddress, cidr)) ?? false;
     if (!servedSource) {
       deps.logger.warn(`DNS dropping recursion for ${qname} from non-private, non-served source ${sourceAddress}`, {
         jobId: deps.jobId,

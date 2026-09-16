@@ -4,7 +4,7 @@ import { Checkbox } from '@repo/ui/components/checkbox';
 import { FormCheckbox } from '@repo/ui/form/form-checkbox';
 import { FormInput } from '@repo/ui/form/form-input';
 import { FormSelect } from '@repo/ui/form/form-select';
-import { formatSize } from '@repo/utils';
+import { DATA_SIZE_MIN_BYTES, formatSize, parseSize, ROOT_SIZE_MIN_BYTES } from '@repo/utils';
 import { useEffect, useMemo } from 'react';
 import {
   type Control,
@@ -14,6 +14,7 @@ import {
   type UseFormSetValue,
   useWatch,
 } from 'react-hook-form';
+import type { z } from 'zod';
 
 interface Disk {
   wwn?: string | null;
@@ -55,6 +56,7 @@ export interface DiskLayoutFormValues {
   mountpoint: string;
   diskType: string;
   disks: string[];
+  size: string;
   encrypt: boolean;
   wipe: boolean;
 }
@@ -112,9 +114,60 @@ export function getDefaultDiskLayouts(storageLayouts: StorageLayouts): DiskLayou
       mountpoint: defaults?.mountpoint || '',
       diskType: disk_type,
       disks: disks.map((d) => d.wwn || d.serial || d.name),
+      size: '',
       encrypt: false,
       wipe: true,
     };
+  });
+}
+
+export function diskLayoutSizeToBytes(size: string | undefined): number | undefined {
+  return parseSize(size) ?? undefined;
+}
+
+export function validateDiskLayoutSizeInputs(
+  diskLayouts: readonly { size?: string; encrypt?: boolean; wipe?: boolean; config?: string; mountpoint?: string }[],
+  ctx: z.RefinementCtx,
+): void {
+  const directIndex = diskLayouts.findIndex((layout) => layout.config === 'direct');
+  const effective =
+    directIndex >= 0
+      ? [{ layout: diskLayouts[directIndex], index: directIndex }]
+      : diskLayouts.map((layout, index) => ({ layout, index }));
+
+  effective.forEach(({ layout, index }) => {
+    if (!layout.size?.trim()) return;
+    const parsed = parseSize(layout.size);
+    if (parsed === null) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Enter a size like "500 GB" or "1.5 TB", or leave blank for the full disk',
+        path: ['diskLayouts', index, 'size'],
+      });
+      return;
+    }
+    const minimum = directIndex >= 0 || layout.mountpoint === '/' ? ROOT_SIZE_MIN_BYTES : DATA_SIZE_MIN_BYTES;
+    if (parsed < minimum) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `Size must be at least ${formatSize(minimum)}`,
+        path: ['diskLayouts', index, 'size'],
+      });
+    }
+    if (layout.encrypt === true) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Size cannot be combined with encryption',
+        path: ['diskLayouts', index, 'size'],
+      });
+    }
+    if (layout.wipe === false) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Size cannot be set on a preserved disk group',
+        path: ['diskLayouts', index, 'size'],
+      });
+    }
   });
 }
 
@@ -193,6 +246,7 @@ export function DiskLayoutSelector<T extends FieldValues = FieldValues>({
           const isDirectRow = index === directIndex;
           const isDimmedByDirect = directModeActive && !isDirectRow;
           const rowDisabled = disabled || isDimmedByDirect;
+          const parsedSize = parseSize(current?.size);
 
           return (
             <div
@@ -234,7 +288,7 @@ export function DiskLayoutSelector<T extends FieldValues = FieldValues>({
               </div>
 
               {!isPreserved ? (
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-4 gap-4">
                   <FormSelect
                     control={control}
                     name={`diskLayouts.${index}.config` as Path<T>}
@@ -281,6 +335,17 @@ export function DiskLayoutSelector<T extends FieldValues = FieldValues>({
                       />
                     )}
                   </div>
+
+                  <FormInput
+                    control={control}
+                    name={`diskLayouts.${index}.size` as Path<T>}
+                    label="Size"
+                    placeholder="Full disk"
+                    disabled={rowDisabled || current?.encrypt === true}
+                    description={
+                      parsedSize != null ? `Provisions ${formatSize(parsedSize)}` : 'Leave blank to use the full disk'
+                    }
+                  />
                 </div>
               ) : (
                 <div className="grid grid-cols-3 gap-4">
@@ -329,6 +394,7 @@ export function DiskLayoutSelector<T extends FieldValues = FieldValues>({
                         setVal(`diskLayouts.${index}.wipe`, !checked);
                         if (checked) {
                           setVal(`diskLayouts.${index}.encrypt`, false);
+                          setVal(`diskLayouts.${index}.size`, '');
                         }
                       }}
                       label="Preserve"
@@ -341,6 +407,11 @@ export function DiskLayoutSelector<T extends FieldValues = FieldValues>({
                       control={control}
                       name={`diskLayouts.${index}.encrypt` as Path<T>}
                       label="Encrypt"
+                      onCheckedChange={(checked) => {
+                        if (!checked) return;
+                        const setVal = setValue as UseFormSetValue<FieldValues>;
+                        setVal(`diskLayouts.${index}.size`, '');
+                      }}
                       tooltip={
                         encryptDisabled
                           ? `Encryption is not available for ${currentMountpoint}`

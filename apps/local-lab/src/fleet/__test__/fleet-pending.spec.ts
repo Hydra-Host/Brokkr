@@ -10,7 +10,11 @@ vi.mock('node:child_process', async (orig) => ({
   execFile: (...a: unknown[]) => execFileMock(...a),
 }));
 
+import type { FleetPlanes } from '@repo/local-lab-contract';
+
 import { FleetTopologyService } from '../fleet-topology.service';
+
+const VM_ONLY: FleetPlanes = { vm: true, baremetal: false };
 
 const IN_SYNC = JSON.stringify({
   inSync: true,
@@ -36,10 +40,11 @@ const DRIFT = JSON.stringify({
   note: null,
 });
 
-function svc(source: string | null = '/repo/fleet.yml', mode: 'vm' | 'baremetal' = 'vm') {
+function svc(source: string | null = '/repo/fleet.yml', planes: FleetPlanes = VM_ONLY) {
   const runner = { repoRoot: '/repo' };
   const overlay = {
-    fleetMode: vi.fn(() => mode),
+    planes: vi.fn(() => planes),
+    bmUplink: vi.fn(() => null),
   };
   const rendered = {
     renderDesiredFleetYaml: vi.fn(() => Promise.resolve(source)),
@@ -114,16 +119,22 @@ describe('FleetTopologyService.pending', () => {
     expect(execFileMock).toHaveBeenCalledTimes(2);
   });
 
-  it('overrides the engine severity with mode-change when desired mode != applied mode', async () => {
+  it('stamps planes-change when the saved planes differ from the applied ones', async () => {
     execFileMock.mockImplementation((_c, _a, _o, cb) => cb(null, { stdout: IN_SYNC, stderr: '' }));
-    const p = await svc('/repo/fleet.yml', 'baremetal').pending();
-    expect(p.severity).toBe('mode-change');
+    const p = await svc('/repo/fleet.yml', { vm: true, baremetal: true }).pending();
+    expect(p.severity).toBe('planes-change');
     expect(p.inSync).toBe(false);
   });
 
-  it('leaves the engine severity untouched when the mode matches (no flip pending)', async () => {
+  it('stamps planes-change when the last vm node goes with no manifest applied', async () => {
+    execFileMock.mockImplementation((_c, _a, _o, cb) => cb(null, { stdout: IN_SYNC, stderr: '' }));
+    const p = await svc('/repo/fleet.yml', { vm: false, baremetal: true }).pending();
+    expect(p.severity).toBe('planes-change');
+  });
+
+  it('leaves the engine severity untouched when the planes match (no flip pending)', async () => {
     execFileMock.mockImplementation((_c, _a, _o, cb) => cb(null, { stdout: DRIFT, stderr: '' }));
-    const p = await svc('/repo/fleet.yml', 'vm').pending();
+    const p = await svc('/repo/fleet.yml', VM_ONLY).pending();
     expect(p.severity).toBe('hot-appliable');
   });
 

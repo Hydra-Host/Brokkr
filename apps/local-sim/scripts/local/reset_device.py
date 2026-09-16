@@ -366,9 +366,9 @@ def main(argv: list[str]) -> None:
     fleet = load_fleet()
     if fleet is None:
         raise SystemExit("no fleet.yml found — run `task up` (or fleet:init) first")
-    # Self-detect bm mode so the lab keeps calling `local.reset_device <name>`
-    # unchanged (test.service.ts:764) across both modes.
-    if fleet.mode == "baremetal":
+    # route by the roster the name belongs to so the lab keeps calling `local.reset_device <name>`
+    # unchanged (test.service.ts:764) for either plane.
+    if argv[0] in fleet.bm_node_names:
         _main_baremetal(fleet, argv[0])
     else:
         _main_vm(fleet, argv[0])

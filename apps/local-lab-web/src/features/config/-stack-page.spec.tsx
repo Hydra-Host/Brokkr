@@ -98,9 +98,14 @@ const stackConfig = (over: Partial<StackConfig> = {}): StackConfig => ({
   servicePorts: [{ key: 'postgres', path: 'ports.postgres', group: 'Datastores', label: 'Postgres', value: 5432 }],
   values: { hub: {}, spoke: {} },
   topology: { zones: 1, bridges: 1 },
-  identity: { pg: { user: 'brokkr', password: 'password', db: 'brokkr' }, orgId: 'org' },
+  identity: {
+    pg: { user: 'brokkr', password: 'password', db: 'brokkr' },
+    orgId: 'org',
+    redis: { password: 'password' },
+    mailpit: { password: 'password' },
+  },
   osLayerCache: { originHost: 'assets.example.com', resolvers: '1.1.1.1' },
-  lan: { expose: false },
+  lan: { mode: 'loopback', bindAddress: '', publicHost: '', datastoreAuth: true, expose: false },
   telemetry: { enable: false },
   ...over,
 });

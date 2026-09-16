@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  buildRedfishConfig,
   isRedfishTlsVerificationEnabled,
   isTlsCertVerificationError,
   redfishRejectUnauthorized,
@@ -102,5 +103,33 @@ describe('warnRedfishTlsVerificationDisabledOnce', () => {
     expect(log).toHaveBeenCalledTimes(1);
     expect(log.mock.calls[0][0]).toContain('REDFISH_TLS_VERIFY=true');
     expect(log.mock.calls[0][0]).toContain('10.0.0.5:443');
+  });
+});
+
+describe('buildRedfishConfig NETWORK_REDFISH_PORT', () => {
+  it('defaults to 443 and reads a strict integer', () => {
+    expect(buildRedfishConfig({}).realRedfishPort).toBe(443);
+    expect(buildRedfishConfig({ NETWORK_REDFISH_PORT: '8443' }).realRedfishPort).toBe(8443);
+    expect(buildRedfishConfig({ NETWORK_REDFISH_PORT: '8_443' }).realRedfishPort).toBe(8443);
+  });
+
+  it('rejects a value that is not an integer instead of yielding NaN or a truncation', () => {
+    expect(() => buildRedfishConfig({ NETWORK_REDFISH_PORT: 'https' })).toThrow();
+    expect(() => buildRedfishConfig({ NETWORK_REDFISH_PORT: '443x' })).toThrow();
+    expect(() => buildRedfishConfig({ NETWORK_REDFISH_PORT: '' })).toThrow();
+  });
+});
+
+describe('buildRedfishConfig SIM_REDFISH_PORT', () => {
+  it('defaults to 8443 and reads a strict integer', () => {
+    expect(buildRedfishConfig({}).simRedfishPort).toBe(8443);
+    expect(buildRedfishConfig({ SIM_REDFISH_PORT: '9001' }).simRedfishPort).toBe(9001);
+    expect(buildRedfishConfig({ SIM_REDFISH_PORT: '9_001' }).simRedfishPort).toBe(9001);
+  });
+
+  it('rejects a value that is not an integer instead of yielding NaN or a truncation', () => {
+    expect(() => buildRedfishConfig({ SIM_REDFISH_PORT: 'sushy' })).toThrow();
+    expect(() => buildRedfishConfig({ SIM_REDFISH_PORT: '8443x' })).toThrow();
+    expect(() => buildRedfishConfig({ SIM_REDFISH_PORT: '' })).toThrow();
   });
 });

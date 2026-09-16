@@ -31,7 +31,8 @@ function ForgotPasswordPage() {
     mutationFn: async (data: ForgotPasswordFormData) => {
       const response = await requestPasswordReset({
         email: data.email,
-        redirectTo: '/auth/reset-password',
+        // Absolute on purpose: better-auth resolves a relative callback against the API origin, which serves no SPA route.
+        redirectTo: new URL('/auth/reset-password', window.location.origin).href,
       });
 
       if (response.error) {

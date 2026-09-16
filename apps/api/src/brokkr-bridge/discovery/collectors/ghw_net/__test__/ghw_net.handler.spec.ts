@@ -48,6 +48,32 @@ describe('GhwNetHandler', () => {
     expect(mutation.upserts).toBeUndefined();
   });
 
+  it('adopts the udev name ip_a resolved, so one NIC does not land two rows', async () => {
+    const parsed = handler.schema.parse({
+      network: { nics: [{ name: 'eth0', mac_address: 'aa:bb:cc:dd:ee:01', speed: '10000' }] },
+    });
+    const mutation = await handler.handle(parsed, fakeCtx({ ip_a: [{ ifname: 'eth0', altnames: ['enp34s0f0'] }] }));
+    expect(mutation.upserts?.interfaces?.[0]).toMatchObject({
+      name: 'enp34s0f0',
+      speed: 10000,
+      macAddress: 'aa:bb:cc:dd:ee:01',
+    });
+  });
+
+  it('skips USB-IPMI NICs so it agrees with ip_a', async () => {
+    const parsed = handler.schema.parse({
+      network: {
+        nics: [
+          { name: 'enx0ac97ac3f1d2', mac_address: '0a:c9:7a:c3:f1:d2' },
+          { name: 'enxA1B2C3D4E5F6' },
+          { name: 'eno1', speed: '10000' },
+        ],
+      },
+    });
+    const mutation = await handler.handle(parsed);
+    expect(mutation.upserts?.interfaces?.map((i) => i.name)).toEqual(['eno1']);
+  });
+
   it('prefers permaddr over the sysfs mac a bond rewrote onto its members', async () => {
     const parsed = handler.schema.parse({
       network: {

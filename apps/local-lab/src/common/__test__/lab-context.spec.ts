@@ -1,8 +1,15 @@
 import express from 'express';
 import type { AddressInfo } from 'node:net';
-import { afterEach, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { currentOrigin, type LabOrigin, labOriginMiddleware, type OriginRequest } from '../lab-context';
+import {
+  auditOriginColumns,
+  currentOrigin,
+  type LabOrigin,
+  labOriginMiddleware,
+  originColumns,
+  type OriginRequest,
+} from '../lab-context';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -38,6 +45,7 @@ describe('currentOrigin', () => {
       ip: '127.0.0.1',
       loopback: true,
       tokenAuth: false,
+      principal: null,
       method: 'POST',
       path: '/api/stack/ops',
     });
@@ -69,6 +77,16 @@ describe('tokenAuth', () => {
   it('stays false when no token is configured', () => {
     vi.stubEnv('LAB_API_TOKEN', undefined);
     expect(originOf({ headers: { authorization: 'Bearer anything' } }).tokenAuth).toBe(false);
+  });
+
+  it('names which token authenticated the request', () => {
+    vi.stubEnv('LAB_API_TOKEN', 'api-token');
+    vi.stubEnv('LAB_HOST_TOKEN', 'host-token');
+
+    expect(originOf({ headers: { authorization: 'Bearer api-token' } }).principal).toBe('api');
+    expect(originOf({ headers: { authorization: 'Bearer host-token' } }).principal).toBe('host');
+    expect(originOf({ headers: { authorization: 'Bearer nope' } }).principal).toBeNull();
+    expect(originOf({ socket: { remoteAddress: '127.0.0.1' } }).principal).toBeNull();
   });
 });
 
@@ -150,5 +168,38 @@ describe('over a real express request', () => {
     expect(captured?.tokenAuth).toBe(true);
     expect(captured?.loopback).toBe(true);
     expect(JSON.stringify(captured)).not.toContain('hunter2');
+  });
+});
+
+describe('origin column shapes', () => {
+  const origin: LabOrigin = {
+    ip: '10.0.0.4',
+    loopback: false,
+    tokenAuth: true,
+    principal: 'host',
+    method: 'POST',
+    path: '/api/datastore/pg/query',
+  };
+
+  it('keeps the runs shape at the three columns that table has', () => {
+    expect(Object.keys(originColumns(origin)).sort()).toEqual(['origin_ip', 'origin_loopback', 'origin_token']);
+  });
+
+  it('carries the principal only on the audit shape', () => {
+    expect(auditOriginColumns(origin)).toEqual({
+      origin_ip: '10.0.0.4',
+      origin_loopback: 0,
+      origin_token: 1,
+      origin_principal: 'host',
+    });
+  });
+
+  it('reports every column as null for a system write with no origin', () => {
+    expect(auditOriginColumns(undefined)).toEqual({
+      origin_ip: null,
+      origin_loopback: null,
+      origin_token: null,
+      origin_principal: null,
+    });
   });
 });

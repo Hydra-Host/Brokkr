@@ -37,7 +37,7 @@ describe('buildBullmqConfig lock policy', () => {
       lockWaitWarningSeconds: 60,
       lockWaitHardCapSeconds: 240,
       lockWaitRedisTtlSeconds: LOCK_WAIT_REDIS_TTL_DEFAULT_SECONDS,
-      deferredHandoffMaxAgeSeconds: 240,
+      agentWaitHardCapSeconds: 3_600,
       strandedPlanResumeIntervalSeconds: 30,
       strandedPlanGraceSeconds: 60,
       strandedPlanResumeBatchSize: 10,
@@ -97,10 +97,40 @@ describe('buildBullmqConfig lock policy', () => {
     );
   });
 
-  it('rejects a deferred handoff age at the envelope freshness window', () => {
-    expect(() => buildBullmqConfig({ DEFERRED_HANDOFF_MAX_AGE_SECONDS: '300' })).toThrow(
-      /DEFERRED_HANDOFF_MAX_AGE_SECONDS .* must be less than the envelope freshness window/,
+  it('rejects an agent-wait hard cap inside the brokkr-live boot window', () => {
+    expect(() => buildBullmqConfig({ AGENT_WAIT_HARD_CAP_SECONDS: '900' })).toThrow(
+      /AGENT_WAIT_HARD_CAP_SECONDS .* must exceed the brokkr-live boot window/,
     );
+  });
+
+  it('rejects an agent-wait hard cap at the boot-window boundary', () => {
+    expect(() => buildBullmqConfig({ AGENT_WAIT_HARD_CAP_SECONDS: '1890' })).toThrow(
+      /AGENT_WAIT_HARD_CAP_SECONDS .* must exceed the brokkr-live boot window/,
+    );
+  });
+
+  it('accepts an agent-wait hard cap just above the boot window', () => {
+    expect(buildBullmqConfig({ AGENT_WAIT_HARD_CAP_SECONDS: '1891' }).agentWaitHardCapSeconds).toBe(1_891);
+  });
+
+  it('accepts a zero agent-wait hard cap as disabled', () => {
+    expect(buildBullmqConfig({ AGENT_WAIT_HARD_CAP_SECONDS: '0' }).agentWaitHardCapSeconds).toBe(0);
+  });
+
+  it('rejects a negative agent-wait hard cap', () => {
+    expect(() => buildBullmqConfig({ AGENT_WAIT_HARD_CAP_SECONDS: '-1' })).toThrow(
+      /AGENT_WAIT_HARD_CAP_SECONDS .* must be non-negative/,
+    );
+  });
+
+  it('accepts an agent-wait hard cap above a shrunk boot window', () => {
+    const config = buildBullmqConfig({
+      AGENT_WAIT_HARD_CAP_SECONDS: '900',
+      BROKKR_LIVE_INITIAL_DELAY_SECONDS: '30',
+      BROKKR_LIVE_WAIT_SECONDS: '60',
+    });
+
+    expect(config.agentWaitHardCapSeconds).toBe(900);
   });
 
   it('rejects a derived lock-loss redelay beyond the envelope freshness window', () => {

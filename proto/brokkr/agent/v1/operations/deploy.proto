@@ -275,6 +275,16 @@ message DeployRoceVars {
   string doca_repo_url = 2;
 }
 
+// InfiniBand node_desc config, rendered by the agent as the
+// 03-brokkr-infiniband.cfg cloud.cfg.d fragment (write_files only).
+message DeployInfinibandVars {
+  // False when node_desc is absent or fails bridge-side validation.
+  bool enabled = 1;
+
+  // Written to /sys/class/infiniband/<dev>/node_desc as "<node_desc> <dev>". Empty when disabled.
+  string node_desc = 2;
+}
+
 // ---------------------------------------------------------------------------
 // Chroot primitives
 // ---------------------------------------------------------------------------
@@ -703,6 +713,9 @@ message DeployDeployOsInput {
   // Preserved volumes are excluded so a mixed new+preserved layout never
   // reformats preserved data.
   repeated DeployEncryptedVolumeConfig rekey_volumes = 20;
+
+  // Optional so payloads from bridges predating the field validate as disabled.
+  optional DeployInfinibandVars infiniband = 21;
 }
 
 message DeployDeployOsOutput {

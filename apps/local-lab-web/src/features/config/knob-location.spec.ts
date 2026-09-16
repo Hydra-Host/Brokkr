@@ -27,12 +27,18 @@ describe('knobLocation', () => {
 
   it('sends a zone path to the zones page rather than the fleet page', () => {
     expect(knobLocation('fleet.zones."sim-zone".bridges')?.area).toBe('zones');
-    expect(knobLocation('fleet.mode')?.area).toBe('fleet');
+    expect(knobLocation('fleet.autoStart')).toMatchObject({ area: 'fleet', section: 'NODES' });
   });
 
   it('returns null for a path no editor owns yet', () => {
     expect(knobLocation('remoteInfra.enable')).toBeNull();
     expect(knobLocation('somethingBrandNew.flag')).toBeNull();
+  });
+
+  it('keeps every network knob on the stack page beside the mode it qualifies', () => {
+    for (const path of ['lan.mode', 'lan.bindAddress', 'lan.datastoreAuth', 'lan.expose']) {
+      expect(knobLocation(path), path).toMatchObject({ area: 'stack', section: 'STACK' });
+    }
   });
 
   it('produces a fragment-safe anchor that survives dots and quotes', () => {
@@ -66,7 +72,7 @@ describe('areaIsBuilt', () => {
   });
 
   it('answers for every area the classifier can return', () => {
-    const areas = ['stackDefaults.hub.LOG_LEVEL', 'fleet.mode', 'fleet.zones.a.index', 'stackCounts.spoke']
+    const areas = ['stackDefaults.hub.LOG_LEVEL', 'fleet.autoStart', 'fleet.zones.a.index', 'stackCounts.spoke']
       .map((p) => knobLocation(p)?.area)
       .filter((a): a is NonNullable<typeof a> => a !== undefined);
     expect(areas.every((a) => typeof areaIsBuilt(a) === 'boolean')).toBe(true);
@@ -125,6 +131,11 @@ describe('knobLocation — completeness against the raw namespace', () => {
       'identity.orgId',
       'ports.postgres',
       'osLayerCache.resolvers',
+      'identity.redis.password',
+      'identity.mailpit.password',
+      'lan.mode',
+      'lan.bindAddress',
+      'lan.datastoreAuth',
       'lan.expose',
       'telemetry.enable',
       'stack.slot',
@@ -137,7 +148,6 @@ describe('knobLocation — completeness against the raw namespace', () => {
       'zoneCrypto.bridgeAtRestKey',
       'polyrepo.hub.path',
       'polyrepo.hub.url',
-      'fleet.mode',
       'fleet.autoStart',
       'fleet.zones."sim-zone".index',
     ];

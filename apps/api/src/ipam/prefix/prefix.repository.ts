@@ -23,6 +23,7 @@ import {
   ValidatePrefixGatewayResult,
 } from '@repo/api-client';
 import { Prisma } from '@repo/database';
+import { intToIpv4 } from '@repo/utils';
 import { ContextService } from 'src/common/context/context.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { z } from 'zod';
@@ -45,6 +46,12 @@ export interface GatewaySyncResult {
 }
 
 export type DhcpAutoEnableOutcome = 'enabled' | 'already-configured' | 'ineligible' | 'not-found';
+
+/** The devices a machine's PXE MAC and BMC address each resolve to; null where no device claims one. */
+export interface BootIdentity {
+  pxeDeviceId: string | null;
+  bmcDeviceId: string | null;
+}
 
 interface DhcpConfigRow {
   dhcpMode: DhcpMode | null;
@@ -340,7 +347,7 @@ export class PrefixRepository extends BaseIpamRepository {
         ON dev.id = iface."deviceId"
         AND dev."deletedAt" IS NULL
         AND dev.role = 'Bridge'
-        AND dev."organizationId" = ${this.contextService.organizationId}
+        AND dev."supplierId" = ${this.contextService.organizationId}
         AND dev."zoneId" = ${prefix.zoneId}
       WHERE ip.address <<= ${prefix.cidr}::cidr
         AND ip."organizationId" = ${this.contextService.organizationId}
@@ -472,6 +479,40 @@ export class PrefixRepository extends BaseIpamRepository {
       throw new NotFoundException('Prefix not found');
     }
     return rows[0].associatedPrefixId;
+  }
+
+  // Deliberately hub-wide, not prefix-scoped: a machine's BMC normally sits on a different prefix
+  // from the one it PXE-boots on, so scoping either half would report every wiring as split.
+  async resolveBootIdentity(mac: string, bmcAddress: string): Promise<BootIdentity> {
+    const rows = await this.queryRaw<BootIdentity[]>`
+      SELECT
+        (
+          SELECT i."deviceId"
+          FROM "Interface" i
+          JOIN "Device" d ON d.id = i."deviceId"
+          WHERE lower(i."macAddress") = ${mac}
+            AND i."deletedAt" IS NULL
+            AND d."deletedAt" IS NULL
+            AND d."supplierId" = ${this.contextService.organizationId}
+          ORDER BY d."createdAt" DESC
+          LIMIT 1
+        ) AS "pxeDeviceId",
+        (
+          SELECT i."deviceId"
+          FROM "IpAddress" ip
+          JOIN "Interface" i ON i.id = ip."interfaceId"
+          JOIN "Device" d ON d.id = i."deviceId"
+          WHERE ip.address = ${bmcAddress}::inet
+            AND ip."deletedAt" IS NULL
+            AND ip."organizationId" = ${this.contextService.organizationId}
+            AND i."deletedAt" IS NULL
+            AND d."deletedAt" IS NULL
+            AND d."supplierId" = ${this.contextService.organizationId}
+          ORDER BY d."createdAt" DESC
+          LIMIT 1
+        ) AS "bmcDeviceId"
+    `;
+    return rows[0] ?? { pxeDeviceId: null, bmcDeviceId: null };
   }
 
   async updateDhcpConfig(
@@ -621,11 +662,8 @@ export class PrefixRepository extends BaseIpamRepository {
     });
   }
 
-  // Role-driven auto-enable: flips an UNSET dhcpMode to AUTHORITATIVE and touches nothing else.
-  // The "dhcpMode" IS NULL guard enforces never-override atomically — a concurrent operator write
-  // wins ('already-configured'). Takes deleteZone's per-zone advisory lock like
-  // updateDhcpConfigUnderZoneLock; the Prefix_dhcp_requires_zone_check and relay CHECKs fail-close
-  // a racing eligibility change → 'ineligible'.
+  // Auto-enable: UNSET dhcpMode → AUTHORITATIVE only. NULL guard is never-override;
+  // concurrent operator write wins. Zone lock + CHECKs fail-close races.
   async autoEnableAuthoritativeDhcp(prefixId: string, zoneId: string): Promise<DhcpAutoEnableOutcome> {
     try {
       return await this.transaction(async (tx): Promise<DhcpAutoEnableOutcome> => {
@@ -1226,7 +1264,7 @@ export class PrefixRepository extends BaseIpamRepository {
           (range) => !(candidateRange.end < range.network || candidateRange.start > range.broadcast),
         );
         if (!overlaps) {
-          selectedPrefix = `${this.intToIpv4(candidateNetwork)}/${input.targetMask}`;
+          selectedPrefix = `${intToIpv4(candidateNetwork)}/${input.targetMask}`;
           break;
         }
         candidateNetwork += blockSize;

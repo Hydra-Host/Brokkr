@@ -13,8 +13,8 @@ describe('hardwareEligibleLayerSlugs', () => {
       expect(hardwareEligibleLayerSlugs(null, false)).toEqual(['mellanox-ofed', 'docker']);
     });
 
-    it('does not add tee-setup even when teeEnabled=true (CPU-only)', () => {
-      expect(hardwareEligibleLayerSlugs(null, true)).toEqual(['mellanox-ofed', 'docker']);
+    it('adds tee-setup when teeCapable=true (CPU-only Intel TDX host)', () => {
+      expect(hardwareEligibleLayerSlugs(null, true)).toEqual(['mellanox-ofed', 'docker', 'tee-setup']);
     });
   });
 
@@ -165,6 +165,11 @@ describe('hardwareEligibleLayerSlugs', () => {
 
     it('does not add tee-setup for A100 (not a TEE-capable GPU)', () => {
       const slugs = hardwareEligibleLayerSlugs('NVIDIA A100', true);
+      expect(slugs).not.toContain('tee-setup');
+    });
+
+    it('does not add tee-setup for a GPU-less host when teeCapable=false', () => {
+      const slugs = hardwareEligibleLayerSlugs(null, false);
       expect(slugs).not.toContain('tee-setup');
     });
   });

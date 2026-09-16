@@ -58,6 +58,12 @@ export const ServiceSchema = z.object({
     .string()
     .optional()
     .describe('human-readable process age from process-compose (e.g. 2d5h; absent when stopped)'),
+  features: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Feature flags the rendered environment turns on in this process (TFTP, iPXE strict) — bare-metal mode is delivered as these flags on the spoke, not as extra processes',
+    ),
 });
 export type Service = z.infer<typeof ServiceSchema>;
 
@@ -104,7 +110,7 @@ export const AppLinkSchema = z.object({
   loopback: z
     .boolean()
     .describe(
-      'True when the UI binds loopback-only (never the LAN, even under lan.expose) — the client must target localhost, not the LAN host',
+      'True when the UI binds loopback-only (never the LAN, whatever lan.mode is) — the client must target localhost, not the LAN host',
     ),
 });
 export type AppLink = z.infer<typeof AppLinkSchema>;

@@ -65,6 +65,12 @@ def test_zone_generator_emits_zone_and_bridge(fixture_fleet):
     assert "00000000-0000-0000-0000-000000008000" in sql
     assert "ON CONFLICT" in sql
     assert '"organizationId"' in sql
+    assert sql.count("'VIRTUAL'::\"InterfaceType\"") == 1
+    assert sql.count("'IPMI_BMC'::\"InterfaceType\"") == 1
+    assert "'vip0'" in sql
+    assert "192.168.200.2/24" in sql
+    assert "192.168.200.3/24" in sql
+    assert "192.168.105.2/24" in sql
 
 
 def test_operator_api_key_generator_emits_hashed_key(monkeypatch):
@@ -96,7 +102,8 @@ def test_devices_generator_emits_one_device_per_node_idempotently(fixture_fleet)
     assert "ON CONFLICT (id)" in sql
     assert sim_device_uuid(0) in sql
     assert "'Server'::\"DeviceRole\"" in sql
-    assert '"organizationId"' in sql
+    assert '"supplierId"' in sql
+    assert '"supplierId", "organizationId"' not in sql
     assert 'INSERT INTO "StorageDrive"' in sql
     assert sql.lstrip().startswith("-- GENERATED")
     assert sql.rstrip().endswith("COMMIT;")
@@ -127,6 +134,8 @@ def test_devices_generator_seeds_hardware_inventory(fixture_fleet):
     assert sql.count('INSERT INTO "DeviceFirmware"') == expected
     assert sql.count('INSERT INTO "Gpu"') == expected
     assert '"systemSerial"' in sql and '"chassisSerial"' in sql
+    assert "serial = EXCLUDED.serial" in sql
+    assert '"baseboardSerial" = EXCLUDED."baseboardSerial"' in sql
     assert "'NVIDIA GeForce RTX 4090'" in sql
     assert "'BIOS'::\"FirmwareType\"" in sql and "'BMC'::\"FirmwareType\"" in sql
     assert "'ib0'" in sql and "'INFINIBAND'::\"InterfaceLinkType\"" in sql
@@ -140,10 +149,39 @@ def test_devices_generator_serial_wwn_derive_from_ipmi_mac(fixture_fleet):
     assert "SIM_SSD_40GB" in sql
 
 
+def test_devices_generator_tags_every_vm_device_with_the_discovery_light_tag(fixture_fleet):
+    import yaml
+
+    fleet = yaml.safe_load(fixture_fleet.read_text())
+    sql = _load("50-devices.py").generate()
+    assert sql.count('INSERT INTO "Tag"') == 1
+    assert "'discovery-light', 'discovery-light'" in sql
+    assert sql.count('INSERT INTO "TagAssignment"') == len(fleet["nodes"])
+    assert sql.count("'DEVICE'::\"TagObjectType\"") == len(fleet["nodes"])
+    assert sql.index('INSERT INTO "Tag"') < sql.index('INSERT INTO "TagAssignment"')
+
+
 def test_devices_generator_attaches_reachable_ip_to_data_nic(fixture_fleet):
     sql = _load("50-devices.py").generate()
     assert "'192.168.200.10/24'::inet" in sql
     assert "name = 'eth0'" in sql
+
+
+def test_devices_generator_frees_the_address_before_reattaching_it(fixture_fleet):
+    sql = _load("50-devices.py").generate()
+    org = 'SELECT "organizationId" FROM "Zone"'
+    clear = [line for line in sql.splitlines() if line.startswith("WHERE address =") and org in line]
+    assert any("'192.168.200.10/24'::inet" in line for line in clear)
+    insert = sql.index("'192.168.200.10/24'::inet, 'ACTIVE'")
+    assert sql.index("""WHERE address = '192.168.200.10/24'::inet""") < insert
+
+
+def test_devices_generator_frees_only_the_key_the_constraint_uses(fixture_fleet):
+    from local.seed.interfaces import emit_ip_address_clear
+
+    stmt = emit_ip_address_clear("192.168.200.10/24", "'org'")
+    assert '"vrfId" IS NULL' in stmt
+    assert '"deletedAt" IS NULL' in stmt
 
 
 def test_devices_generator_netplan_carries_fleet_prefix_length(tmp_path, monkeypatch):
@@ -222,9 +260,19 @@ _BM_NET_DEFAULTS = (
     "defaults: {cpus: 2, memory_mb: 2048, disk_gb: 40, bmc: {username: a, password: a}}\n"
 )
 
-_BM_MODE_BLOCK = (
-    "mode: baremetal\n"
+_BM_ONLY_BLOCK = (
     "nodes: []\n"
+    "baremetal:\n"
+    "  iface: enp35s0\n"
+    "  iface_ip: 198.51.100.10\n"
+    "  arch: amd64\n"
+    "  nodes:\n"
+    '    - {name: bench-1, pxe_mac: "00:00:5e:00:53:b4", bmc_mac: "00:00:5e:00:53:b5", bmc_ip: 198.51.100.250}\n'
+)
+
+_TWO_PLANE_FLEET = (
+    _BM_NET_DEFAULTS + "nodes:\n"
+    '  - {name: cpu-1, ipmi_mac: "52:54:00:bc:00:01", data_mac: "52:54:00:da:00:01"}\n'
     "baremetal:\n"
     "  iface: enp35s0\n"
     "  iface_ip: 198.51.100.10\n"
@@ -235,22 +283,31 @@ _BM_MODE_BLOCK = (
 
 
 @pytest.mark.parametrize("gen_file", ["50-devices.py", "55-dcim.py"])
-def test_device_generators_noop_on_baremetal_empty_roster(gen_file, tmp_path, monkeypatch):
-    (tmp_path / "fleet.yml").write_text(_BM_NET_DEFAULTS + _BM_MODE_BLOCK)
+def test_device_generators_noop_on_an_empty_vm_roster_beside_a_machine(gen_file, tmp_path, monkeypatch):
+    (tmp_path / "fleet.yml").write_text(_BM_NET_DEFAULTS + _BM_ONLY_BLOCK)
     monkeypatch.setenv("LOCAL_FLEET_PATH", str(tmp_path / "fleet.yml"))
     cfg.get_settings.cache_clear()
     sql = _load(gen_file).generate()
-    assert "mode == baremetal" in sql
+    assert "no VM nodes" in sql
     assert "BEGIN;" not in sql
 
 
 @pytest.mark.parametrize("gen_file", ["50-devices.py", "55-dcim.py"])
-def test_device_generators_still_raise_on_vm_empty_roster(gen_file, tmp_path, monkeypatch):
+def test_device_generators_noop_when_no_plane_is_on(gen_file, tmp_path, monkeypatch):
     (tmp_path / "fleet.yml").write_text(_BM_NET_DEFAULTS + "nodes: []\n")
     monkeypatch.setenv("LOCAL_FLEET_PATH", str(tmp_path / "fleet.yml"))
     cfg.get_settings.cache_clear()
-    with pytest.raises(RuntimeError, match="no nodes"):
-        _load(gen_file).generate()
+    sql = _load(gen_file).generate()
+    assert "no VM nodes" in sql
+    assert "BEGIN;" not in sql
+
+
+def test_devices_generator_seeds_the_vm_roster_beside_a_machine(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _TWO_PLANE_FLEET)
+    sql = _load("50-devices.py").generate()
+    assert sql.count('INSERT INTO "Device"') == 1
+    assert "'cpu-1'" in sql
+    assert "bench-1" not in sql
 
 
 def test_devices_generator_defaults_all_flat(fixture_fleet):
@@ -337,6 +394,11 @@ def test_zone_generator_multi_zone_emits_n_zones_and_k_bridges(fixture_fleet_mul
         assert bridge_device_uuid(ordinal) in sql
     org = "00000000-0000-0000-0000-000000000000"
     assert org in sql
+    assert sql.count("'VIRTUAL'::\"InterfaceType\"") == 3
+    assert sql.count("'IPMI_BMC'::\"InterfaceType\"") == 3
+    assert "192.168.200.2/24" in sql
+    assert "192.168.200.6/24" in sql
+    assert "192.168.105.4/24" in sql
 
 
 def test_devices_generator_assigns_per_node_zone(fixture_fleet_multi):
@@ -687,6 +749,12 @@ def test_prefixes_generator_never_repeats_a_cidr_single_zone(fixture_fleet):
     assert len(cidrs) == len(set(cidrs))
 
 
+def test_prefixes_gateway_ips_do_not_collide_with_zone_bridge_ips(fixture_fleet_multi):
+    zone_ips = set(_inets(_load("45-zone.py").generate()))
+    prefix_ips = set(_inets(_load("46-prefixes.py").generate()))
+    assert not (zone_ips & prefix_ips), f"IpAddress_active_unique would reject these: {zone_ips & prefix_ips}"
+
+
 def test_vrfs_vlan_groups_generator_emits_vrf_and_zone_groups(fixture_fleet):
     sql = _load("47-vrfs-vlan-groups.py").generate()
     assert 'INSERT INTO "Vrf"' in sql
@@ -1014,7 +1082,6 @@ def test_os_catalog_degrades_to_system_layers_when_manifest_unreachable(monkeypa
 
 
 _BAREMETAL_FLEET = (
-    "mode: baremetal\n"
     "network: {name: t, cidr: 198.51.100.0/24, domain: t.local, bmc_cidr: 198.51.100.0/24}\n"
     "defaults: {cpus: 2, memory_mb: 2048, disk_gb: 40, bmc: {username: a, password: a}}\n"
     "nodes: []\n"
@@ -1070,7 +1137,7 @@ def test_prune_generator_scopes_to_the_sim_org(tmp_path, monkeypatch):
     _pin_fleet(tmp_path, monkeypatch, _SHRUNK_FLEET)
     sql = _load("49-device-prune.py").generate()
 
-    assert '"organizationId" = ' in sql
+    assert '"supplierId" = ' in sql
 
 
 def test_devices_generator_frees_the_name_a_shifted_id_needs(tmp_path, monkeypatch):
@@ -1097,6 +1164,27 @@ def test_device_name_clear_excludes_its_own_id_so_a_reseed_is_a_noop(tmp_path, m
         sql = _load(gen).generate()
         clears = sql.count('UPDATE "Device" SET "deletedAt" = NOW()')
         assert sql.count("AND id <> '") == clears, gen
+
+
+def test_baremetal_generator_frees_the_name_a_corrected_pxe_mac_needs(tmp_path, monkeypatch):
+    from local.derived import bm_device_uuid
+    from local.zones import zone_uuid
+
+    _pin_fleet(tmp_path, monkeypatch, _BAREMETAL_FLEET)
+    sql = _load("52-baremetal-devices.py").generate()
+
+    assert 'UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()' in sql
+    assert (
+        f'AND "zoneId" = {q(zone_uuid(0))} AND name = {q("bench-1")}\n'
+        f"  AND id <> {q(bm_device_uuid('00:00:5e:00:53:b4'))}"
+    ) in sql
+
+
+def test_baremetal_generator_clears_one_name_per_seeded_machine(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _BAREMETAL_FLEET)
+    sql = _load("52-baremetal-devices.py").generate()
+
+    assert sql.count('UPDATE "Device" SET "deletedAt" = NOW()') == sql.count('INSERT INTO "Device"')
 
 
 def test_devices_generator_frees_a_seal_bound_to_another_zone(tmp_path, monkeypatch):
@@ -1168,11 +1256,19 @@ def test_commissioning_generator_omits_the_bracket_with_no_commissioning_node(tm
     assert "device_role_write_once" not in sql
 
 
-def test_baremetal_generator_noop_in_vm_mode(fixture_fleet):
+def test_baremetal_generator_noop_without_a_machine(fixture_fleet):
     sql = _load("52-baremetal-devices.py").generate()
     assert sql.lstrip().startswith("-- GENERATED")
     assert 'INSERT INTO "Device"' not in sql
     assert "no bare-metal devices to seed" in sql
+
+
+def test_seeds_bare_metal_devices_whenever_the_roster_carries_a_machine(tmp_path, monkeypatch):
+    _pin_fleet(tmp_path, monkeypatch, _TWO_PLANE_FLEET)
+    sql = _load("52-baremetal-devices.py").generate()
+    assert sql.count('INSERT INTO "Device"') == 1
+    assert "'bench-1'" in sql
+    assert "cpu-1" not in sql
 
 
 def test_baremetal_generator_seeds_server_active_shape(tmp_path, monkeypatch):
@@ -1211,6 +1307,33 @@ def test_baremetal_generator_interfaces_and_ipmi_ip(tmp_path, monkeypatch):
     assert "'00:00:5e:00:53:b5'" in sql
     assert "'198.51.100.250'::inet" in sql
     assert "name = 'eth0'" not in sql
+
+
+def test_keeps_a_renamed_data_interface_and_inserts_eth0_only_when_no_row_carries_the_pxe_mac(tmp_path, monkeypatch):
+    from local.derived import bm_device_uuid
+
+    _pin_fleet(tmp_path, monkeypatch, _BAREMETAL_FLEET)
+    sql = _load("52-baremetal-devices.py").generate()
+    mac = "00:00:5e:00:53:b4"
+    pxe_row = f'"deviceId" = {q(bm_device_uuid(mac))} AND lower("macAddress") = {q(mac)} AND "deletedAt" IS NULL'
+
+    updates = re.findall(r'UPDATE "Interface" SET[^;]*;', sql)
+    assert len(updates) == 2
+    assert f"WHERE {pxe_row};" in updates[0]
+    assert "type = 'ETHERNET_1G'::\"InterfaceType\"" in updates[0]
+    assert "enabled = true" in updates[0]
+    assert '"mgmtOnly" = false' in updates[0]
+    assert "description = 'Primary data NIC (PXE)'" in updates[0]
+    assert '"updatedAt" = NOW()' in updates[0]
+    assert "name =" not in updates[0]
+    assert '"macAddress" =' not in updates[0]
+
+    eth0_inserts = re.findall(r'INSERT INTO "Interface"[^;]*\'eth0\'[^;]*;', sql)
+    assert len(eth0_inserts) == 2
+    assert f'WHERE NOT EXISTS (SELECT 1 FROM "Interface" WHERE {pxe_row});' in eth0_inserts[0]
+    assert "ON CONFLICT" not in eth0_inserts[0]
+    assert sql.index(updates[0]) < sql.index(eth0_inserts[0])
+    assert sql.count('ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET') == 2
 
 
 def test_baremetal_generator_omits_storage_and_netplan(tmp_path, monkeypatch):
@@ -1277,9 +1400,8 @@ def test_baremetal_generator_network_type_mapping(tmp_path, monkeypatch):
     assert "'Public'::\"DeviceNetworkType\"" in sql
 
 
-def test_baremetal_generator_requires_nonempty_nodes(tmp_path, monkeypatch):
+def test_baremetal_generator_noop_when_the_block_has_no_machines(tmp_path, monkeypatch):
     empty = (
-        "mode: baremetal\n"
         "network: {name: t, cidr: 198.51.100.0/24, domain: t.local, bmc_cidr: 198.51.100.0/24}\n"
         "defaults: {cpus: 2, memory_mb: 2048, disk_gb: 40, bmc: {username: a, password: a}}\n"
         "nodes: []\n"
@@ -1290,23 +1412,13 @@ def test_baremetal_generator_requires_nonempty_nodes(tmp_path, monkeypatch):
         "  nodes: []\n"
     )
     _pin_fleet(tmp_path, monkeypatch, empty)
-    with pytest.raises(ValidationError, match="at least one baremetal node"):
-        _load("52-baremetal-devices.py").generate()
-
-    missing = (
-        "mode: baremetal\n"
-        "network: {name: t, cidr: 198.51.100.0/24, domain: t.local, bmc_cidr: 198.51.100.0/24}\n"
-        "defaults: {cpus: 2, memory_mb: 2048, disk_gb: 40, bmc: {username: a, password: a}}\n"
-        "nodes: []\n"
-    )
-    _pin_fleet(tmp_path, monkeypatch, missing)
-    with pytest.raises(ValidationError, match="requires a 'baremetal' block"):
-        _load("52-baremetal-devices.py").generate()
+    sql = _load("52-baremetal-devices.py").generate()
+    assert "no bare-metal devices to seed" in sql
+    assert "BEGIN;" not in sql
 
 
 def test_baremetal_generator_rejects_duplicate_pxe_mac(tmp_path, monkeypatch):
     dup = (
-        "mode: baremetal\n"
         "network: {name: t, cidr: 198.51.100.0/24, domain: t.local, bmc_cidr: 198.51.100.0/24}\n"
         "defaults: {cpus: 2, memory_mb: 2048, disk_gb: 40, bmc: {username: a, password: a}}\n"
         "nodes: []\n"
@@ -1332,12 +1444,12 @@ def test_baremetal_generator_output_is_stable(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("gen", ["50-devices.py", "55-dcim.py"])
-def test_vm_generators_noop_in_baremetal_mode(tmp_path, monkeypatch, gen):
+def test_vm_generators_noop_without_a_vm_node(tmp_path, monkeypatch, gen):
     _pin_fleet(tmp_path, monkeypatch, _BAREMETAL_FLEET)
     sql = _load(gen).generate()
     assert sql.lstrip().startswith("-- GENERATED")
     assert 'INSERT INTO "Device"' not in sql
-    assert "baremetal" in sql
+    assert "no VM nodes" in sql
 
 
 @pytest.fixture
@@ -1391,7 +1503,7 @@ def test_prefixes_generator_dhcp_off_leaves_primary_plain_and_seeds_gateway_fixt
     assert 'INSERT INTO "IpRange"' not in sql
     assert sql.count('INSERT INTO "Gateway"') == 1
     assert f"VALUES ('{gateway_id}', 100, NULL, '{fixture_ip_id}', '{prefix_id}', NOW(), NOW())" in sql
-    assert f"'{fixture_ip_id}'," in sql and "'192.168.105.2/24'::inet" in sql
+    assert f"'{fixture_ip_id}'," in sql and "'192.168.105.1/24'::inet" in sql
     assert "192.168.200.1/24" not in sql
     assert '"dhcpMode" = EXCLUDED."dhcpMode"' in sql
 
@@ -1400,7 +1512,7 @@ def test_prefixes_generator_dhcp_on_configures_primary_and_seeds_management_gate
     sql = _load("46-prefixes.py").generate()
     assert sql.count("'AUTHORITATIVE'::\"DhcpMode\"") == 1
     assert sql.count("'192.168.200.1/24'::inet") == 1
-    assert sql.count("'192.168.105.2/24'::inet") == 1
+    assert sql.count("'192.168.105.1/24'::inet") == 1
     assert sql.count('INSERT INTO "Gateway"') == 1
     assert 'INSERT INTO "IpRange"' in sql
     assert "'192.168.200.200'::inet" in sql and "'192.168.200.250'::inet" in sql
@@ -1562,14 +1674,20 @@ def test_ip_delete_emitter_scopes_to_the_live_interface_by_name():
     )
 
 
-def test_ip_emitter_pairs_a_delete_with_an_insert_and_inlines_the_org():
-    from local.seed.interfaces import DATA_NIC, emit_ip_delete, emit_ip_on_interface
+def test_ip_emitter_clears_the_nic_and_the_address_before_it_inserts():
+    from local.seed.interfaces import (
+        DATA_NIC,
+        emit_ip_address_clear,
+        emit_ip_delete,
+        emit_ip_on_interface,
+    )
 
     org = '(SELECT "organizationId" FROM "Zone" WHERE id = \'z\')'
     statements = emit_ip_on_interface("dev-1", DATA_NIC, "192.168.200.10/24", org)
-    assert len(statements) == 2
+    assert len(statements) == 3
     assert statements[0] == emit_ip_delete("dev-1", DATA_NIC)
-    assert statements[1] == (
+    assert statements[1] == emit_ip_address_clear("192.168.200.10/24", org)
+    assert statements[2] == (
         'INSERT INTO "IpAddress"\n'
         '    (id, address, status, "organizationId", "interfaceId", "assignedObjectType",'
         ' "assignedObjectId", "updatedAt")\n'
@@ -1736,6 +1854,10 @@ _OVERRIDES_FLEET = (
 # (org, vrfId, prefix) and Vlan_active_unique_vid is (org, vrfId, vid), both org-and-VRF-wide.
 def _cidrs(sql: str) -> list[str]:
     return re.findall(r"'([0-9./]+)'::cidr", sql)
+
+
+def _inets(sql: str) -> list[str]:
+    return re.findall(r"'([0-9.]+/[0-9]+)'::inet", sql)
 
 
 def _prefix_ids(sql: str) -> list[str]:

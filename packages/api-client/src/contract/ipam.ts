@@ -18,6 +18,9 @@ import {
   IpRangeListQuerySchema,
   IpRangeOverlapResultSchema,
   IpRangeSchema,
+  Ipv4Schema,
+  PrefixBootReadinessQuerySchema,
+  PrefixBootReadinessSchema,
   PrefixDhcpConfigSchema,
   PrefixDhcpServingSchema,
   PrefixListQuerySchema,
@@ -533,6 +536,35 @@ export const ipamRoutes = c.router({
       'from the shared lease store. Empty when the prefix has no zone or the bridge has issued no leases.',
     metadata: { visibility: 'public' } satisfies RouteMetadata,
   },
+  getZoneDhcpLeases: {
+    method: 'GET',
+    path: '/zones/:zoneId/dhcp/leases',
+    pathParams: z.object({ zoneId: z.string() }),
+    responses: { ...authedErrorResponses, 200: z.array(DhcpLeaseSchema), 404: ErrorResponseSchema },
+    summary: 'List active DHCP leases for a zone',
+    description:
+      "Returns every currently-held DHCP lease the zone's bridge has issued, read live from the shared " +
+      'lease store — the same records getPrefixDhcpLeases returns, without the per-prefix CIDR filter. ' +
+      'For callers that know the zone but not which prefixes it contains.',
+    metadata: { visibility: 'public' } satisfies RouteMetadata,
+  },
+  revokeZoneDhcpLease: {
+    method: 'DELETE',
+    path: '/zones/:zoneId/dhcp/leases/:ip',
+    pathParams: z.object({
+      zoneId: z.string(),
+      ip: Ipv4Schema,
+    }),
+    body: z.void(),
+    responses: { ...authedErrorResponses, 200: DhcpLeaseSchema, 404: ErrorResponseSchema },
+    summary: 'Revoke a DHCP lease',
+    description:
+      'Drops the lease on this address: removes it from the shared lease store and queues a ' +
+      'revocation the bridge applies on its next reconcile, so a running DHCP server also ' +
+      'releases it from memory. Returns the lease that was removed, or 404 if the address was ' +
+      'not leased. A client that later requests the address is treated as new and re-allocated.',
+    metadata: { visibility: 'public' } satisfies RouteMetadata,
+  },
   getPrefixDhcpReservations: {
     method: 'GET',
     path: '/ipam/prefixes/:id/dhcp/reservations',
@@ -555,6 +587,20 @@ export const ipamRoutes = c.router({
       'Returns the read-only next-server and DNS server addresses the bridge will use when serving DHCP ' +
       'for this prefix, derived from the VRRP VIP (if assigned) or the bridge NIC IPs within the prefix. ' +
       'Computed on demand — never stored or editable here.',
+    metadata: { visibility: 'public' } satisfies RouteMetadata,
+  },
+  getPrefixBootReadiness: {
+    method: 'GET',
+    path: '/ipam/prefixes/:id/boot-readiness',
+    pathParams: IdParamSchema,
+    query: PrefixBootReadinessQuerySchema,
+    responses: { ...authedErrorResponses, 200: PrefixBootReadinessSchema, 404: ErrorResponseSchema },
+    summary: 'Check whether hub data lets a machine network-boot on this prefix',
+    description:
+      'Answers the boot-readiness checks the hub can settle from its own records — a DHCP mode that builds a ' +
+      'subnet, an iPXE build target, a proxy allowlist that admits the MAC, and one device owning both the PXE ' +
+      'MAC and the BMC address — and returns one finding per failed check, using the same PXE-nnn codes the ' +
+      'bridge reports. An empty list means hub data blocks nothing; it is not a statement about the bridge.',
     metadata: { visibility: 'public' } satisfies RouteMetadata,
   },
 });

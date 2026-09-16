@@ -404,16 +404,19 @@ export function SvcBtn({
   onClick,
   disabled,
   danger,
+  title,
 }: {
   label: string;
   onClick: () => void;
   disabled?: boolean;
   danger?: boolean;
+  title?: string;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={[
         'rounded border px-2 py-1 transition disabled:cursor-not-allowed disabled:opacity-50',
         danger

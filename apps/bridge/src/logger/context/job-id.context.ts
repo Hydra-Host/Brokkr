@@ -28,3 +28,9 @@ export function setJobIdInCurrentContext(jobId: string): void {
 export function shouldPropagateJobId(jobId: string): boolean {
   return jobId !== '' && jobId !== NIL_JOB_ID;
 }
+
+const PLAN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export function isPlanShapedJobId(jobId: string): boolean {
+  return PLAN_ID_PATTERN.test(jobId);
+}

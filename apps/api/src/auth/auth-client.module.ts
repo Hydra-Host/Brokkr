@@ -11,20 +11,35 @@ import { createRedisSecondaryStorage, type RedisSecondaryStorageHandle } from '.
 
 const AUTH_SESSION_CACHE_HANDLE = 'AUTH_SESSION_CACHE_HANDLE';
 
-function deriveTrustedOrigins(): string[] {
+// BASE_URL is the API origin, so better-auth roots the emailed link and its relative callback there; WEB_BASE_URL is where a person can actually open them.
+export function toWebOriginResetLink(url: string, env: NodeJS.ProcessEnv = process.env): string {
+  const webBaseUrl = env.WEB_BASE_URL?.trim();
+  if (!webBaseUrl) return url;
+  try {
+    const webOrigin = new URL(webBaseUrl).origin;
+    const link = new URL(url);
+    const callbackUrl = link.searchParams.get('callbackURL');
+    if (callbackUrl) link.searchParams.set('callbackURL', new URL(callbackUrl, webOrigin).href);
+    return new URL(`${link.pathname}${link.search}${link.hash}`, webOrigin).href;
+  } catch {
+    return url;
+  }
+}
+
+export function deriveTrustedOrigins(env: NodeJS.ProcessEnv = process.env): string[] {
   const origins: string[] = [];
 
-  const baseUrl = process.env.BASE_URL?.trim();
-  if (baseUrl) {
+  for (const candidate of [env.BASE_URL?.trim(), env.WEB_BASE_URL?.trim()]) {
+    if (!candidate) continue;
     try {
-      origins.push(new URL(baseUrl).origin);
+      origins.push(new URL(candidate).origin);
     } catch {
-      origins.push(baseUrl);
+      origins.push(candidate);
     }
   }
 
   origins.push(
-    ...(process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? '')
+    ...(env.BETTER_AUTH_TRUSTED_ORIGINS ?? '')
       .split(',')
       .map((origin) => origin.trim())
       .filter(Boolean),
@@ -64,7 +79,7 @@ function deriveTrustedOrigins(): string[] {
             await emailService.send.passwordReset({
               email: user.email,
               firstName,
-              url,
+              url: toWebOriginResetLink(url),
             });
           },
         });

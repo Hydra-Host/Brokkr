@@ -5,10 +5,12 @@ import {
   DeploymentSchema,
   GetLogsRequestSchema,
   InterruptibleClaimSchema,
+  InterruptibleClaimStatusSchema,
   PowerControlDeploymentRequestSchema,
   PowerCycleDeploymentRequestSchema,
   RebootDeploymentRequestSchema,
   ReprovisionDeploymentRequestSchema,
+  RescueModeActionResponseSchema,
   SolLogsResponseSchema,
   UpdateDeploymentRequestSchema,
 } from '../schemas/deployments';
@@ -149,7 +151,7 @@ export const deploymentsRoutes = c.router({
     body: z.object({}),
     responses: {
       ...authedErrorResponses,
-      200: DeploymentActionResponseSchema,
+      200: RescueModeActionResponseSchema,
       400: ErrorResponseSchema,
       404: ErrorResponseSchema,
     },
@@ -166,7 +168,7 @@ export const deploymentsRoutes = c.router({
     body: z.object({}),
     responses: {
       ...authedErrorResponses,
-      200: DeploymentActionResponseSchema,
+      200: RescueModeActionResponseSchema,
       400: ErrorResponseSchema,
       404: ErrorResponseSchema,
     },
@@ -211,7 +213,7 @@ export const deploymentsRoutes = c.router({
   getInterruptibleClaims: {
     method: 'GET',
     path: '/deployments/interruptible-claims',
-    query: PaginationQuerySchema.extend({ status: z.enum(['Pending', 'Complete']).optional() }),
+    query: PaginationQuerySchema.extend({ status: InterruptibleClaimStatusSchema.optional() }),
     responses: {
       ...authedErrorResponses,
       200: createPaginatedResponseSchema(InterruptibleClaimSchema),

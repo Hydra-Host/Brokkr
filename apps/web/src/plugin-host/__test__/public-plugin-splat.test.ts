@@ -1,6 +1,8 @@
 import { createMemoryHistory, createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 import { describe, expect, it } from 'vitest';
 
+import { isCoreHostRoute } from '../public-routes';
+
 describe('public navbar splat vs authenticated routes', () => {
   it('matches a plugin-declared public path on the navbar splat instead of the app catch-all', async () => {
     const root = createRootRoute({});
@@ -36,5 +38,21 @@ describe('public navbar splat vs authenticated routes', () => {
     await router.load();
 
     expect(router.state.matches.map((match) => match.routeId)).toEqual(['__root__', '/_app', '/_app/deployments']);
+  });
+
+  it('distinguishes static and parameterized core paths from public catch-all paths', () => {
+    const root = createRootRoute({});
+    const navbar = createRoute({ id: '/_navbar-layout', getParentRoute: () => root });
+    const publicSplat = createRoute({ path: '/$', getParentRoute: () => navbar });
+    const app = createRoute({ id: '/_app', getParentRoute: () => root });
+    const inventory = createRoute({ path: '/inventory', getParentRoute: () => app });
+    const organization = createRoute({ path: '/organizations/$organizationId', getParentRoute: () => app });
+    const router = createRouter({
+      routeTree: root.addChildren([app.addChildren([inventory, organization]), navbar.addChildren([publicSplat])]),
+    });
+
+    expect(isCoreHostRoute(router.matchRoutes('/inventory'))).toBe(true);
+    expect(isCoreHostRoute(router.matchRoutes('/organizations/acme'))).toBe(true);
+    expect(isCoreHostRoute(router.matchRoutes('/foo/bar'))).toBe(false);
   });
 });

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AppModule } from '../app.module.js';
 import { AccessLogMiddleware } from '../common/middleware/access-log.middleware.js';
+import { ClientIpMiddleware } from '../common/middleware/client-ip.middleware.js';
 import { JobIdMiddleware } from '../common/middleware/job-id.middleware.js';
 import { ResponseTimingMiddleware } from '../common/middleware/response-timing.middleware.js';
 
@@ -14,7 +15,7 @@ describe('AppModule', () => {
     await moduleRef.close();
   });
 
-  it('registers the three middlewares against every route in order', async () => {
+  it('registers the middlewares against every route in order', async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     const app = moduleRef.get(AppModule);
 
@@ -43,7 +44,12 @@ describe('AppModule', () => {
 
     app.configure(consumer);
 
-    expect(recorded.classes).toEqual([JobIdMiddleware, ResponseTimingMiddleware, AccessLogMiddleware]);
+    expect(recorded.classes).toEqual([
+      JobIdMiddleware,
+      ClientIpMiddleware,
+      ResponseTimingMiddleware,
+      AccessLogMiddleware,
+    ]);
     expect(recorded.routes).toEqual([{ path: '*', method: RequestMethod.ALL }]);
 
     await moduleRef.close();

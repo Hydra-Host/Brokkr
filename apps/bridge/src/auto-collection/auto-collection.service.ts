@@ -66,6 +66,14 @@ export class AutoCollectionService {
       const record = await this.readAtom<DeviceRecord>(this.cache, deviceRecord(deviceId), deviceRecordSchema, {
         jobId,
       });
+
+      // no auto-collection during commissioning
+      if (record !== null && record.role == null) {
+        await this.logger.debug(`auto-collection skipped: device ${deviceId} is still commissioning (role=null)`, {
+          jobId,
+        });
+        return;
+      }
       const cooldownS =
         record !== null && !record.is_placeholder && record.status ? COOLDOWN_REFRESH_S : COOLDOWN_BOOTSTRAP_S;
       // setNxOwned with a per-call token (not strict setNx): a reconnect retry with a lost reply must not see its own just-set cooldown as "active"; a concurrent register's different token still loses.

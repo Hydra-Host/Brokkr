@@ -17,9 +17,20 @@ const { lab } = vi.hoisted(() => ({
 vi.mock('@tanstack/react-router', () => ({
   useBlocker: () => ({ status: 'idle', proceed: () => {}, reset: () => {} }),
   useNavigate: () => () => {},
-  Link: ({ children, ...rest }: { children?: unknown; [key: string]: unknown }) => {
+  Link: ({
+    children,
+    to,
+    hash,
+    ...rest
+  }: {
+    children?: unknown;
+    to?: unknown;
+    hash?: unknown;
+    [key: string]: unknown;
+  }) => {
     const label = typeof rest.title === 'string' ? rest.title : undefined;
-    return createElement('a', { title: label }, children as never);
+    const href = `${typeof to === 'string' ? to : ''}${typeof hash === 'string' ? `#${hash}` : ''}`;
+    return createElement('a', { href, title: label }, children as never);
   },
 }));
 vi.mock('@/lib/api', () => ({
@@ -282,6 +293,38 @@ describe('ConfigZonesPage — the zone says which nodes it holds', () => {
             effective_disk_gb: 40,
           },
         ],
+        baremetal: { nics: [], arch: 'amd64', nodes: [] },
+      },
+    };
+  };
+
+  const linkFor = (name: string) =>
+    screen
+      .getAllByText(name)
+      .map((el) => el.closest('a'))
+      .find((a) => a !== null) ?? null;
+
+  const withBareMetal = () => {
+    lab.fleet = {
+      status: 200,
+      body: {
+        nodes: [],
+        baremetal: {
+          nics: ['enp0'],
+          arch: 'amd64',
+          nodes: [
+            {
+              name: 'metal-1',
+              bmc_ip: '192.168.1.50',
+              bmc_mac: '3c:ec:ef:00:00:01',
+              pxe_mac: '3c:ec:ef:00:00:02',
+              arch: null,
+              zone: 'sim-zone',
+              system_id: null,
+              network_type: null,
+            },
+          ],
+        },
       },
     };
   };
@@ -297,6 +340,15 @@ describe('ConfigZonesPage — the zone says which nodes it holds', () => {
     open();
 
     expect(screen.getAllByText('cpu-1').length).toBeGreaterThan(0);
+    expect(linkFor('cpu-1')?.getAttribute('href')).toBe('/config/fleet#node-cpu-1');
+  });
+
+  it("names a saved bare-metal machine among the zone's nodes and links it to the bare-metal section", () => {
+    withBareMetal();
+    open();
+
+    expect(screen.getAllByText('metal-1').length).toBeGreaterThan(0);
+    expect(linkFor('metal-1')?.getAttribute('href')).toBe('/config/fleet#BAREMETAL');
   });
 
   it('offers a path from the zone to adding a node already in it', () => {

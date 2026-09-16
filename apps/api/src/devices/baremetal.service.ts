@@ -292,6 +292,7 @@ export class BaremetalService {
     if (body.diskLayouts) {
       this.provisionValidator.validateDiskLayouts(body.diskLayouts, 'provision');
       this.provisionValidator.validateDiskGroupHomogeneity(body.diskLayouts, record.data.storageDrives ?? []);
+      this.provisionValidator.validateDiskGroupSizeLimits(body.diskLayouts, record.data.storageDrives ?? []);
     }
     if (body.operatingSystem) {
       this.provisionValidator.validateIpxeRequirements(body.operatingSystem, body.ipxeUrl);

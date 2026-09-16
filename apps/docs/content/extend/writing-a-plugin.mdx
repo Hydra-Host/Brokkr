@@ -184,6 +184,8 @@ export default defineFrontendModule({
 
 The `sidebar-nav` entry appears in the host sidebar, and the root route mounts at its URL.
 
+Public-only frontends declare `publicRoutes` instead of `rootRoute`. A public route may use any absolute product URL. Unlike authenticated plugin pages (mounted at `/plugins/{id}`), public routes are not required to live under `/market` (the bid-ask marketplace) or a plugin-id prefix. Query strings and fragments belong in navigation, not the declaration. The host disables plugins whose paths collide with another enabled plugin or a concrete host route; unaffected plugins continue loading.
+
 <Note>
   The `dashboard-widget` slot is declared in the SDK, but no host page renders it yet. Host support is in development.
   The contribution registers, but nothing displays.

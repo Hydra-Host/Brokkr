@@ -1,19 +1,30 @@
+import type { z } from 'zod';
+
+import { getBootReadinessFindings } from '../composition/boot-readiness-holder.js';
 import { getDhcpStandbyHealth } from '../composition/dhcp-standby-health-holder.js';
+import { getDiscoverySyncRecord } from '../composition/discovery-sync-holder.js';
+import { countBootFindings } from '../diagnostics/boot-readiness.js';
 import { getLeaderService } from '../leader-election/leader-election.service.js';
 import { logDebug, logError, logInfo } from '../logger/logger.service.js';
 
 import { getBridgeSshConfig } from './bridge-ssh.config.js';
+import type {
+  bridgeStatusResponseSchema,
+  dhcpPrimaryInterfaceSchema,
+  dhcpStandbyHealthSchema,
+  discoverySyncStatusSchema,
+} from './bridge-status.schema.js';
 import { getBridgeVersion } from './bridge.config.js';
 
 const APP_CLASS_NAME = 'services-bridge-status';
 
-// /api/status is unauthenticated: a raw Redis error (may embed hostnames/ports) must not leak.
-const CLAIM_ERROR_MAX_LEN = 120;
+// /api/status is unauthenticated: a raw Redis or transport error (may embed hostnames/ports) must not leak.
+const STATUS_ERROR_MAX_LEN = 120;
 
-function sanitizeClaimError(raw: string | null): string | null {
+function sanitizeStatusError(raw: string | null): string | null {
   if (raw === null) return null;
   const collapsed = raw.replace(/\s+/g, ' ').trim();
-  return collapsed.length > CLAIM_ERROR_MAX_LEN ? `${collapsed.slice(0, CLAIM_ERROR_MAX_LEN)}…` : collapsed;
+  return collapsed.length > STATUS_ERROR_MAX_LEN ? `${collapsed.slice(0, STATUS_ERROR_MAX_LEN)}…` : collapsed;
 }
 
 export class BridgeStatusServiceError extends Error {
@@ -23,22 +34,11 @@ export class BridgeStatusServiceError extends Error {
   }
 }
 
-export interface DhcpStandbyHealthPayload {
-  is_leader: boolean;
-  hydrated: boolean;
-  answering: boolean;
-  claim_failure_count: number;
-  last_claim_error: string | null;
-  hydrate_stalled_since: number | null;
-}
+export type DhcpStandbyHealthPayload = z.infer<typeof dhcpStandbyHealthSchema>;
+export type DiscoverySyncStatusPayload = z.infer<typeof discoverySyncStatusSchema>;
+export type DhcpPrimaryInterfacePayload = z.infer<typeof dhcpPrimaryInterfaceSchema>;
 
-export interface BridgeStatusPayload {
-  bridge_pubkeys: string[];
-  bridge_url: string;
-  version: string;
-  leader_election?: Record<string, unknown>;
-  dhcp_standby_health?: DhcpStandbyHealthPayload;
-}
+export type BridgeStatusPayload = z.infer<typeof bridgeStatusResponseSchema>;
 
 // Preserves the "always a string, never null" wire contract; NOT a real key — must never appear in bridge_pubkeys.
 export const PUBKEY_UNAVAILABLE = 'Not available';
@@ -75,6 +75,9 @@ export class BridgeStatusService {
         bridge_pubkeys: pubkeys,
         bridge_url: currentBridgeUrl,
         version: getBridgeVersion(),
+        readiness_error_count: countBootFindings(getBootReadinessFindings()).error,
+        leader_election: null,
+        primary_interface: null,
       };
 
       try {
@@ -99,10 +102,12 @@ export class BridgeStatusService {
             is_leader: standby.isLeader,
             hydrated: standby.hydrated,
             answering: standby.answering,
+            pxe_port_bound: standby.pxePortBound,
             claim_failure_count: standby.claimFailureCount,
-            last_claim_error: sanitizeClaimError(standby.lastClaimError),
+            last_claim_error: sanitizeStatusError(standby.lastClaimError),
             hydrate_stalled_since: standby.hydrateStalledSince,
           };
+          payload.primary_interface = standby.primaryInterface;
         }
       } catch (error) {
         if (!quiet) {
@@ -111,6 +116,18 @@ export class BridgeStatusService {
             appClassName: APP_CLASS_NAME,
           });
         }
+      }
+
+      const discoverySync = getDiscoverySyncRecord();
+      if (discoverySync !== null) {
+        payload.discovery_sync = {
+          at: discoverySync.at,
+          outcome: discoverySync.outcome,
+          error: sanitizeStatusError(discoverySync.error),
+          base_url: discoverySync.baseUrl,
+          version: discoverySync.version,
+          flavors: [...discoverySync.flavors],
+        };
       }
 
       if (!quiet) {

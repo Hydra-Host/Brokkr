@@ -37,6 +37,7 @@ import type { DhcpMode, DhcpOptionSpec } from '../dhcp.config.js';
 import type { LeaseRecord } from '../lease-store/lease-record.js';
 import type { LeaseStore } from '../lease-store/lease-store.js';
 import { type DhcpMessage, parsePacket } from '../protocol.js';
+import type { PxeDecision } from '../pxe-decision.js';
 import type { SubnetConfig } from '../subnet.js';
 import { request } from './test-factories.js';
 
@@ -184,6 +185,7 @@ describe('DhcpEngine DISCOVER/REQUEST', () => {
       put: async () => {},
       delete: async () => {},
       pruneExpired: async () => 0,
+      takeRevocations: async () => [],
     };
     const engine = buildEngine({ excludeIps: ['10.0.0.10'] }, undefined, store);
     await engine.hydrate();
@@ -201,6 +203,7 @@ describe('DhcpEngine DISCOVER/REQUEST', () => {
       put: async () => {},
       delete: async () => {},
       pruneExpired: async () => 0,
+      takeRevocations: async () => [],
     };
     const engine = buildEngine({}, undefined, store);
     await engine.hydrate();
@@ -895,6 +898,7 @@ describe('DhcpEngine RENEWING/REBINDING (ciaddr)', () => {
       put: async () => {},
       delete: async () => {},
       pruneExpired: async () => 0,
+      takeRevocations: async () => [],
     };
     const engine = buildEngine({}, undefined, store);
     await engine.hydrate();
@@ -1154,6 +1158,7 @@ describe('DhcpEngine persists the granted lease time (#28)', () => {
       },
       delete: async () => {},
       pruneExpired: async () => 0,
+      takeRevocations: async () => [],
     };
     const engine = buildEngine({ leaseTtlSeconds: 3600 }, () => now, store);
 
@@ -1179,6 +1184,7 @@ describe('DhcpEngine persists the granted lease time (#28)', () => {
       },
       delete: async () => {},
       pruneExpired: async () => 0,
+      takeRevocations: async () => [],
     };
     const engine = buildEngine({ leaseTtlSeconds: 3600 }, () => now, store);
 
@@ -1200,6 +1206,7 @@ describe('DhcpEngine does not silently extend a lease without opt-51 (RFC 2131 Â
       put: async (lease) => void puts.push(lease),
       delete: async () => {},
       pruneExpired: async () => 0,
+      takeRevocations: async () => [],
     };
   }
 
@@ -1534,6 +1541,94 @@ describe('DhcpEngine per-subnet PROXY MAC allowlist gate', () => {
   });
 });
 
+describe('DhcpEngine PXE decision observer', () => {
+  const LISTED_MAC = 'aa:aa:aa:aa:aa:aa';
+  const UNLISTED_MAC = 'bb:bb:bb:bb:bb:bb';
+
+  function observedProxyEngine(subnets: SubnetConfig[] = [proxySubnetConfig()]) {
+    const decisions: Array<[string, PxeDecision]> = [];
+    const engine = DhcpEngine.fromSubnets(
+      { mode: 'PROXY', networks: subnets.length === 0 ? [] : [{ interfaceKey: 'eth0', subnets }] },
+      undefined,
+      undefined,
+      undefined,
+      { onDecision: (mac, decision) => decisions.push([mac, decision]) },
+    );
+    return { engine, decisions };
+  }
+
+  function proxySubnetConfig(): SubnetConfig {
+    return makeSubnetConfig({
+      tftpServer: '10.0.0.7',
+      bootfile: 'pxelinux.0',
+      proxyAllowedMacs: new Set([LISTED_MAC]),
+    });
+  }
+
+  it('reports a refused-allowlist decision for an unlisted mac on the pxe port', () => {
+    const { engine, decisions } = observedProxyEngine();
+
+    const ack = engine.handle(
+      request(DHCPREQUEST, { chaddr: UNLISTED_MAC, ciaddr: '10.0.0.50', options: PXE_VENDOR }),
+      SERVER_ID,
+      true,
+    );
+
+    expect(ack).toBeNull();
+    expect(decisions).toEqual([[UNLISTED_MAC, 'refused-allowlist']]);
+  });
+
+  it('reports a refused-allowlist decision for an unlisted mac on the offer leg', () => {
+    const { engine, decisions } = observedProxyEngine();
+
+    const offer = engine.handle(request(DHCPDISCOVER, { chaddr: UNLISTED_MAC, options: PXE_VENDOR }), SERVER_ID);
+
+    expect(offer).toBeNull();
+    expect(decisions).toEqual([[UNLISTED_MAC, 'refused-allowlist']]);
+  });
+
+  it('reports an offered decision for a listed mac on both legs', () => {
+    const { engine, decisions } = observedProxyEngine();
+
+    const offer = engine.handle(request(DHCPDISCOVER, { chaddr: LISTED_MAC, options: PXE_VENDOR }), SERVER_ID);
+    const ack = engine.handle(
+      request(DHCPREQUEST, { chaddr: LISTED_MAC, ciaddr: '10.0.0.50', options: PXE_VENDOR }),
+      SERVER_ID,
+      true,
+    );
+
+    expect(offer).not.toBeNull();
+    expect(decodeReply(offer!.reply).messageType).toBe(DHCPOFFER);
+    expect(ack).not.toBeNull();
+    expect(decodeReply(ack!.reply).messageType).toBe(DHCPACK);
+    expect(decisions).toEqual([
+      [LISTED_MAC, 'offered'],
+      [LISTED_MAC, 'offered'],
+    ]);
+  });
+
+  it('reports a no-subnet decision when the engine holds no subnets', () => {
+    const { engine, decisions } = observedProxyEngine([]);
+
+    const ack = engine.handle(
+      request(DHCPREQUEST, { chaddr: LISTED_MAC, ciaddr: '10.0.0.50', options: PXE_VENDOR }),
+      SERVER_ID,
+      true,
+    );
+
+    expect(ack).toBeNull();
+    expect(decisions).toEqual([[LISTED_MAC, 'no-subnet']]);
+  });
+
+  it('reports nothing for a request without a pxe vendor class', () => {
+    const { engine, decisions } = observedProxyEngine();
+
+    engine.handle(request(DHCPDISCOVER, { chaddr: UNLISTED_MAC }), SERVER_ID);
+
+    expect(decisions).toEqual([]);
+  });
+});
+
 describe('DhcpEngine AUTHORITATIVE contract lock (#13)', () => {
   it('still allocates and writes a lease on a DISCOVER (PROXY branch must not regress it)', () => {
     const engine = buildEngine();
@@ -1785,9 +1880,6 @@ describe('DhcpEngine --dhcp-boot (authoritative boot params)', () => {
     );
     const file67 = decoded.options.get(OPT_BOOTFILE)!;
     const name66 = decoded.options.get(OPT_TFTP_SERVER)!;
-    // opt-67 (Bootfile-Name): some UEFI PXE ROMs (Dell iDRAC7) over-read an unterminated value and
-    // mangle the NBP filename -> PXE-E18, so we emit it NUL-terminated (len === name.length + 1),
-    // matching the proven-good dnsmasq offer. ref beads local-sim-brpn.
     expect(file67[file67.length - 1]).toBe(0x00);
     expect(file67.length).toBe('pxelinux.0'.length + 1);
     expect(asciiUntilNul(file67)).toBe('pxelinux.0');
@@ -1993,6 +2085,7 @@ function fixedStore(records: LeaseRecord[]): LeaseStore {
     put: async () => {},
     delete: async () => {},
     pruneExpired: async () => 0,
+    takeRevocations: async () => [],
   };
 }
 

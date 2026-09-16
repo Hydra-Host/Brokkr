@@ -23,7 +23,7 @@ const LOG_LEVEL_ALIAS_MAP: Record<string, LogLevel> = {
 };
 
 export function resolveLogLevel(env: NodeJS.ProcessEnv = process.env): LogLevel {
-  void env;
-  void LOG_LEVEL_ALIAS_MAP;
-  return 'info';
+  const raw = env.LOG_LEVEL?.trim().toLowerCase();
+  if (!raw) return 'info';
+  return LOG_LEVEL_ALIAS_MAP[raw] ?? 'info';
 }

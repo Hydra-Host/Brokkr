@@ -2,6 +2,21 @@ import { randomUUID } from 'node:crypto';
 
 import { dump } from 'js-yaml';
 
+import {
+  DATA_PARTITION_OFFSET,
+  GPT_SECONDARY_HEADER_BYTES,
+  GPT_TAIL_SLACK_BYTES,
+  LEGACY_BIOS_OFFSET,
+  LEGACY_BIOS_SIZE,
+  LEGACY_BOOT_OFFSET,
+  LEGACY_BOOT_SIZE,
+  LEGACY_ROOT_OFFSET,
+  UEFI_EFI_OFFSET,
+  UEFI_EFI_SIZE,
+  UEFI_ROOT_OFFSET,
+  perDiskBytesForUsable,
+} from '@repo/utils';
+
 import { isEncryptRestrictedMountpoint } from './curtin-storage-rules.js';
 
 import { getLogger } from '../logger/logger.service';
@@ -31,19 +46,6 @@ export class StorageLayoutError extends CurtinServiceError {
     this.name = 'StorageLayoutError';
   }
 }
-
-export const GPT_SECONDARY_HEADER_BYTES = 16385;
-export const GPT_TAIL_SLACK_BYTES = 5242880;
-
-export const UEFI_EFI_OFFSET = 1048576;
-export const UEFI_EFI_SIZE = 1127219200;
-export const UEFI_ROOT_OFFSET = 1128267776;
-
-export const LEGACY_BIOS_OFFSET = 1048576;
-export const LEGACY_BIOS_SIZE = 1048576;
-export const LEGACY_BOOT_OFFSET = 2097152;
-export const LEGACY_BOOT_SIZE = 2147483648;
-export const LEGACY_ROOT_OFFSET = 2149580800;
 
 export function computeUefiPartitionGeometry(diskSize: number): Record<string, number>;
 export function computeUefiPartitionGeometry(diskSize: bigint): Record<string, bigint>;
@@ -107,6 +109,7 @@ export interface DiskGroupInit {
   format: string;
   mountpoint: string;
   diskSize?: number | string | null;
+  size?: number | null;
   wipe?: boolean | null;
   encrypt?: boolean | null;
 }
@@ -117,6 +120,7 @@ export class DiskGroup {
   format: string;
   mountpoint: string;
   diskSize: number | string | null;
+  size: number | null;
   wipe: boolean;
   encrypt: boolean;
 
@@ -126,6 +130,7 @@ export class DiskGroup {
     this.format = init.format;
     this.mountpoint = init.mountpoint;
     this.diskSize = init.diskSize ?? null;
+    this.size = init.size ?? null;
     const rawWipe = init.wipe === undefined ? true : init.wipe;
     const rawEncrypt = init.encrypt === undefined ? false : init.encrypt;
 
@@ -143,6 +148,15 @@ export class DiskGroup {
     }
     if (!!rawEncrypt && !rawWipe) {
       throw new StorageConfigError('Cannot encrypt a preserved disk group — encryption requires wipe=True');
+    }
+    if (this.size !== null && (!Number.isInteger(this.size) || this.size <= 0)) {
+      throw new StorageConfigError('Disk group size must be a positive integer number of bytes');
+    }
+    if (this.size !== null && !!rawEncrypt) {
+      throw new StorageConfigError('Cannot set a size on an encrypted disk group');
+    }
+    if (this.size !== null && !rawWipe) {
+      throw new StorageConfigError('Cannot set a size on a preserved disk group');
     }
     this.wipe = !!rawWipe;
     this.encrypt = !!rawEncrypt;
@@ -422,6 +436,15 @@ export class CurtinService {
     }
   }
 
+  private resolveRootPartitionSize(diskGroup: DiskGroup, availableRootSize: number): number {
+    if (diskGroup.size === null) return availableRootSize;
+    const perDisk = Number(perDiskBytesForUsable(diskGroup.config, diskGroup.disks.length, BigInt(diskGroup.size)));
+    if (perDisk > availableRootSize) {
+      throw new StorageConfigError(`Requested size exceeds the available root capacity on ${diskGroup.mountpoint}`);
+    }
+    return perDisk;
+  }
+
   private async configureUefiBoot(diskGroup: DiskGroup): Promise<void> {
     logDebug('Configuring UEFI boot layout', { jobId: this.config.jobId });
 
@@ -430,7 +453,7 @@ export class CurtinService {
     const efiOffset = geometry['efi_offset'] ?? 0;
     const efiSize = geometry['efi_size'] ?? 0;
     const rootOffset = geometry['root_offset'] ?? 0;
-    const rootSize = geometry['root_size'] ?? 0;
+    const rootSize = this.resolveRootPartitionSize(diskGroup, geometry['root_size'] ?? 0);
 
     let index = 0;
     for (const disk of diskGroup.disks) {
@@ -483,7 +506,7 @@ export class CurtinService {
     const bootOffset = geometry['boot_offset'] ?? 0;
     const bootSize = geometry['boot_size'] ?? 0;
     const rootOffset = geometry['root_offset'] ?? 0;
-    const rootSize = geometry['root_size'] ?? 0;
+    const rootSize = this.resolveRootPartitionSize(diskGroup, geometry['root_size'] ?? 0);
 
     for (const disk of diskGroup.disks) {
       this.grubDisks.push(`/dev/${disk}`);
@@ -559,10 +582,35 @@ export class CurtinService {
 
     const partitionIds: string[] = [];
 
+    const perDiskDataSize =
+      diskGroup.size === null
+        ? null
+        : Number(perDiskBytesForUsable(diskGroup.config, diskGroup.disks.length, BigInt(diskGroup.size)));
+    if (
+      perDiskDataSize !== null &&
+      diskGroup.diskSize != null &&
+      perDiskDataSize + DATA_PARTITION_OFFSET + GPT_SECONDARY_HEADER_BYTES + GPT_TAIL_SLACK_BYTES >
+        coerceDiskSize(diskGroup.diskSize)
+    ) {
+      throw new StorageConfigError(`Requested size exceeds the disk capacity for ${diskGroup.mountpoint}`);
+    }
+
     for (const disk of diskGroup.disks) {
       const diskConfig = this.createDiskConfig({ disk, grubDevice: false, wipe: diskGroup.wipe, ptable: 'gpt' });
       this.storageConfig.push(diskConfig);
-      partitionIds.push(diskConfig.id);
+      if (perDiskDataSize === null) {
+        partitionIds.push(diskConfig.id);
+      } else {
+        const dataPartition = this.createPartitionConfig({
+          device: diskConfig.id,
+          number: 1,
+          offset: DATA_PARTITION_OFFSET,
+          size: perDiskDataSize,
+          wipe: diskGroup.wipe,
+        });
+        this.storageConfig.push(dataPartition);
+        partitionIds.push(dataPartition.id);
+      }
     }
 
     if (diskGroup.config.startsWith('raid')) {
@@ -906,6 +954,14 @@ function coerceDiskSize(value: unknown): number {
   throw new TypeError(`expected a string or number for disk size, got ${value === null ? 'null' : typeof value}`);
 }
 
+function coerceRequestedSize(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  throw new TypeError(
+    `expected an integer number of bytes for size, got ${typeof value === 'number' ? value : typeof value}`,
+  );
+}
+
 function requireKey(group: Record<string, unknown>, key: string): unknown {
   if (!(key in group)) {
     throw new StorageConfigError(`'${key}'`);
@@ -935,6 +991,7 @@ export async function createCurtinService(
       format: requireKey(group, 'format') as string,
       mountpoint: requireKey(group, 'mountpoint') as string,
       diskSize: ('disk_size' in group ? group['disk_size'] : null) as number | string | null,
+      size: coerceRequestedSize('size' in group ? group['size'] : null),
       wipe: wipeRaw,
       encrypt: encryptRaw,
     });

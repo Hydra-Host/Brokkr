@@ -8,6 +8,7 @@ export const EXTENSION_SLOTS = [
   'address-autocomplete',
   'inventory-page-extras',
   'inventory-item-cta',
+  'app-banner',
 ] as const;
 
 export type ExtensionSlot = (typeof EXTENSION_SLOTS)[number];
@@ -19,6 +20,9 @@ export interface PluginRouteProps {
   LoadingScreen?: ComponentType;
   /** Signed-in user's email when a session exists; omit or empty for anonymous visitors. */
   userEmail?: string;
+  /** Active organization id when a session exists. Key per-organization queries on it: the host's query cache
+   * survives organization switches. */
+  organizationId?: string;
 }
 
 export interface PluginRoute {
@@ -32,7 +36,7 @@ export type PluginPublicRouteLayout = 'navbar';
 
 export interface PluginPublicRoute {
   component: ComponentType<PluginRouteProps>;
-  /** Absolute SPA path the host mounts on `_navbar-layout`. Typed file-route `Link` cannot name these. */
+  /** Absolute product URL with no query/hash. The host disables plugins that collide with core or plugin routes. */
   path: string;
   layout: PluginPublicRouteLayout;
 }
@@ -121,6 +125,18 @@ export interface InventoryItemCtaContribution {
   component: ComponentType<InventoryItemCtaSlotProps>;
 }
 
+/** Rendered above the page content on every authenticated app route. Contributions render `null` when they have nothing to say. */
+export interface AppBannerSlotProps {
+  /** Current route pathname, so a plugin can suppress its banner on its own pages without importing the router. */
+  pathname: string;
+  /** Active organization id. Key per-organization queries on it: the host's query cache survives organization switches. */
+  organizationId: string;
+}
+
+export interface AppBannerSlotContribution {
+  component: ComponentType<AppBannerSlotProps>;
+}
+
 export interface SlotContributionMap {
   'dashboard-widget': DashboardWidgetContribution;
   'sidebar-nav': SidebarNavContribution;
@@ -128,6 +144,7 @@ export interface SlotContributionMap {
   'address-autocomplete': AddressAutocompleteContribution;
   'inventory-page-extras': InventoryPageExtrasContribution;
   'inventory-item-cta': InventoryItemCtaContribution;
+  'app-banner': AppBannerSlotContribution;
 }
 
 type PluginFrontendSlots = {

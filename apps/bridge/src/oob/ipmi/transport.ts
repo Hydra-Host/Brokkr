@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 
 import { Logger } from '@nestjs/common';
 
+import { PRIVILEGE_FALLBACK_LEVEL, hasPrivilegeFlag, isPrivilegeDenied, withPrivilegeLevel } from './privilege.js';
 import type { IPMIResult } from './result.js';
 
 const logger = new Logger('adapter-ipmi-transport');
@@ -32,6 +33,12 @@ function truncate(text: string, limit: number): string {
 export interface IPMITransportOptions {
   cipherUsed?: string | null;
   jobId?: string;
+  /**
+   * Set false for callers that need the raw ADMINISTRATOR verdict —
+   * `rmcp-plus.repairLanplusAccess` probes exist to detect exactly this block
+   * and would see it silently papered over. Defaults to true.
+   */
+  allowPrivilegeFallback?: boolean;
 }
 
 const LOSSY_DECODER = new TextDecoder('utf-8', { fatal: false });
@@ -77,7 +84,7 @@ async function spawnLossy(cmd: readonly string[], timeoutSec: number): Promise<S
   });
 }
 
-export async function run(
+async function runOnce(
   command: readonly string[],
   password: string,
   timeout: number,
@@ -153,4 +160,24 @@ export async function run(
     durationMs,
     timedOut: false,
   };
+}
+
+/**
+ * Execute an ipmitool command, retrying once with `-L OPERATOR` on a privilege-denied stderr
+ * (`./privilege.js` documents why that retry is safe). The result carries the argv that actually
+ * ran, so a fallback is visible in `IPMIResult.command`; the retry re-uses the same timeout
+ * budget, so a denied call can take up to 2x.
+ */
+export async function run(
+  command: readonly string[],
+  password: string,
+  timeout: number,
+  opts: IPMITransportOptions = {},
+): Promise<IPMIResult> {
+  const result = await runOnce(command, password, timeout, opts);
+  if (result.ok || opts.allowPrivilegeFallback === false) return result;
+  if (!isPrivilegeDenied(result.stderr) || hasPrivilegeFlag(command)) return result;
+
+  logger.log(`ipmitool refused ADMINISTRATOR; retrying with -L ${PRIVILEGE_FALLBACK_LEVEL}`, opts.jobId ?? '');
+  return runOnce(withPrivilegeLevel(command), password, timeout, opts);
 }

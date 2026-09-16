@@ -35,7 +35,7 @@ echo   Gateway:      ${netX/gateway}
 echo   Netmask:      ${netX/netmask}
 echo   Nameserver:   ${netX/dns}
 echo   DHCP Server:  ${netX/dhcp-server}
-echo   Next Server:  ${next-server}
+echo   Chain URL:    https://brokkr.lan/api/chain
 echo
 echo Build Information:
 echo   Architecture: ${buildarch}
@@ -82,8 +82,8 @@ inc backoff ${backoff}
 goto attempt
 
 :unreachable
-echo Chain unreachable after ${max_attempts} attempts; beaconing next-server ${next-server}
-imgfetch --name beacon "http://${next-server}/api/chain-unreachable?mac=${netX/mac:hexhyp}&attempts=${max_attempts}" || echo Beacon failed
+echo Chain unreachable after ${max_attempts} attempts; beaconing https://brokkr.lan/api/chain-unreachable
+imgfetch --name beacon "https://brokkr.lan/api/chain-unreachable?mac=${netX/mac:hexhyp}&attempts=${max_attempts}" || echo Beacon failed
 imgfree beacon || echo
 echo Dropping to iPXE shell for operator intervention.
 shell

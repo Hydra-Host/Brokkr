@@ -329,15 +329,15 @@ describe('JobDetailPanel retry', () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
-  it('surfaces a refusal that arrives as a non-200 success rather than reporting it retried', () => {
+  it('surfaces a 409 rejection as a retry-prefixed toast rather than reporting it retried', () => {
     const onChanged = vi.fn();
     render(<JobDetailPanel queue={QUEUE} jobId={REPEATABLE_ID} onChanged={onChanged} />);
     clickRetry();
 
     const options = mocks.retry.mutate.mock.calls[0][1];
-    act(() => options.onSuccess({ status: 409, body: { error: 'job is active (locked by a worker)' } }));
+    act(() => options.onError({ status: 409, body: { error: 'job is active (locked by a worker)' } }));
 
-    expect(mocks.toast.error).toHaveBeenCalledWith('job is active (locked by a worker)');
+    expect(mocks.toast.error).toHaveBeenCalledWith('retry — job is active (locked by a worker)');
     expect(mocks.toast.ok).not.toHaveBeenCalled();
     expect(onChanged).not.toHaveBeenCalled();
     expect(refetch).not.toHaveBeenCalled();

@@ -3,6 +3,7 @@ import { CreateDeviceDiagnosticsRequest } from '@repo/api-client';
 import { DeviceTokenContext, ServerLifecycleStatus, ServerPowerStatus } from '@repo/database';
 import { serverLifecycleToSlug, statusSlugToServerLifecycle } from '@repo/device-domain';
 import { getTelemetryMeter } from '@repo/telemetry';
+import { JobLogWriterService } from 'src/brokkr-bridge/job-logs/job-log-writer.service';
 import { BridgeInventoryCollectionService } from 'src/brokkr-bridge/lifecycle/inventory-collection.service';
 import { QualifyOrchestrationService } from 'src/brokkr-bridge/lifecycle/qualify-orchestration.service';
 import { ContextService } from 'src/common/context/context.service';
@@ -30,6 +31,7 @@ export class PhoneHomeService {
     private readonly bridgeInventoryCollection: BridgeInventoryCollectionService,
     private readonly lifecycleInbound: LifecycleInboundService,
     private readonly contextService: ContextService,
+    private readonly jobLogWriter: JobLogWriterService,
   ) {
     // Pre-register the alerted-on series at zero: increase()/rate() can't see a series' birth, so
     // without this the first FAILED transition after a hub restart never fires the saga-failures alert.
@@ -71,6 +73,24 @@ export class PhoneHomeService {
       token_context: this.contextService.deviceIdentity?.context ?? 'unknown',
       resulting_status: updatedDeviceStatus,
     });
+
+    const zoneId = device.zoneId;
+    if (zoneId) {
+      try {
+        const planId = await this.phoneHomeRepository.findActivePlanIdForDevice(device.id);
+        if (planId) {
+          await this.jobLogWriter.write(
+            zoneId,
+            planId,
+            'info',
+            `Phone-home from device ${device.id}: lifecycle status ${updatedDeviceStatus} (token context ${this.contextService.deviceIdentity?.context ?? 'unknown'})`,
+            'PhoneHomeService',
+          );
+        }
+      } catch (error) {
+        this.logger.warn(`Failed to write phone-home job log for device ${device.id}: ${getErrorMessage(error)}`);
+      }
+    }
 
     if (updatedDeviceStatus === 'provisioned') {
       await this.qualifyOrchestration.handleDeviceProvisioned(device.id);

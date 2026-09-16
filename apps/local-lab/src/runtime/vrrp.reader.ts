@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import type { ZoneVip, ZoneVrrp } from '../contract';
 import { RedisConnectionsService } from '../datastore/redis-connections.service';
 import { readAtom } from './atom-envelope';

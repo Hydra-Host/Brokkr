@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import type { FleetNodeEffective, Machine, Zone, ZoneRuntime, ZonesConfig } from '@/contract';
+import type {
+  BareMetalConfig,
+  BareMetalNode,
+  FleetNodeEffective,
+  Machine,
+  Zone,
+  ZoneRuntime,
+  ZonesConfig,
+} from '@/contract';
 
 import { buildTopology, type Source, type TopologyInput } from './fleet-topology';
 
@@ -55,11 +63,27 @@ const node = (over: Partial<FleetNodeEffective> = {}): FleetNodeEffective => ({
   ...over,
 });
 
+const bareMetalNode = (over: Partial<BareMetalNode> = {}): BareMetalNode => ({
+  name: 'metal-1',
+  bmc_ip: '192.168.1.50',
+  bmc_mac: '3c:ec:ef:00:00:01',
+  pxe_mac: '3c:ec:ef:00:00:02',
+  arch: null,
+  zone: 'sim-zone',
+  system_id: null,
+  network_type: null,
+  ...over,
+});
+
+const baremetalConfig = (nodes: BareMetalNode[] = []): BareMetalConfig => ({ nics: ['enp0'], arch: 'amd64', nodes });
+
 const machine = (over: Partial<Machine> = {}): Machine => ({
   name: 'cpu-1',
+  kind: 'vm',
   power: 'on',
   configured: true,
   deviceId: 'device-1',
+  bmc: null,
   ...over,
 });
 
@@ -76,6 +100,7 @@ const bridgeRow = (over: Record<string, unknown> = {}) => ({
   plugins: null,
   port: 8000,
   grpcPort: 9082,
+  http: null,
   readError: null,
   ...over,
 });
@@ -94,7 +119,7 @@ const runtime = (over: Partial<ZoneRuntime> = {}): ZoneRuntime => ({
 
 const input = (over: Partial<TopologyInput> = {}): TopologyInput => ({
   zones: ready(zonesConfig()),
-  fleet: ready({ nodes: [node()] }),
+  fleet: ready({ nodes: [node()], baremetal: baremetalConfig() }),
   machines: ready([machine()]),
   runtime: ready([runtime()]),
   ...over,
@@ -126,7 +151,9 @@ describe('buildTopology — the healthy shape', () => {
 
 describe('buildTopology — the states that cause the confusion', () => {
   it('lists a node whose zone nothing declares, rather than dropping it', () => {
-    const model = buildTopology(input({ fleet: ready({ nodes: [node({ zone: 'sim-zone0' })] }) }));
+    const model = buildTopology(
+      input({ fleet: ready({ nodes: [node({ zone: 'sim-zone0' })], baremetal: baremetalConfig() }) }),
+    );
 
     expect(model.zones[0].nodes).toEqual([]);
     expect(model.orphanNodes.map((n) => n.name)).toEqual(['cpu-1']);
@@ -153,6 +180,97 @@ describe('buildTopology — the states that cause the confusion', () => {
     );
 
     expect(model.hubOnly).toEqual(['gone-zone']);
+  });
+});
+
+describe('buildTopology — the bare-metal plane', () => {
+  it('puts a saved bare-metal machine under the zone it names, after the vm nodes', () => {
+    const model = buildTopology(
+      input({ fleet: ready({ nodes: [node()], baremetal: baremetalConfig([bareMetalNode()]) }) }),
+    );
+
+    expect(model.zones[0].nodes.map((n) => [n.kind, n.name])).toEqual([
+      ['vm', 'cpu-1'],
+      ['baremetal', 'metal-1'],
+    ]);
+  });
+
+  it('lands a bare-metal machine with no zone in the first declared zone', () => {
+    const model = buildTopology(
+      input({
+        zones: ready(zonesConfig({ zones: [zoneRow(), zoneRow({ name: 'edge', index: 1 })] })),
+        fleet: ready({ nodes: [], baremetal: baremetalConfig([bareMetalNode({ zone: null })]) }),
+      }),
+    );
+
+    expect(model.zones[0].nodes.map((n) => n.name)).toEqual(['metal-1']);
+    expect(model.zones[1].nodes).toEqual([]);
+    expect(model.orphanNodes).toEqual([]);
+  });
+
+  it('orphans a bare-metal machine with no zone when nothing declares a zone', () => {
+    const model = buildTopology(
+      input({
+        zones: ready(zonesConfig({ zones: [] })),
+        fleet: ready({ nodes: [], baremetal: baremetalConfig([bareMetalNode({ zone: null })]) }),
+      }),
+    );
+
+    expect(model.zones).toEqual([]);
+    expect(model.orphanNodes.map((n) => [n.name, n.zone])).toEqual([['metal-1', '']]);
+  });
+
+  it('takes a bare-metal power state and device id from its live machine row', () => {
+    const model = buildTopology(
+      input({
+        fleet: ready({ nodes: [], baremetal: baremetalConfig([bareMetalNode()]) }),
+        machines: ready([machine({ name: 'metal-1', kind: 'baremetal', power: 'off', deviceId: 'device-9' })]),
+      }),
+    );
+
+    expect(model.zones[0].nodes[0]).toMatchObject({ kind: 'baremetal', power: 'off', deviceId: 'device-9' });
+  });
+
+  it('inherits the fleet arch when the machine declares none', () => {
+    const model = buildTopology(
+      input({
+        fleet: ready({
+          nodes: [],
+          baremetal: baremetalConfig([
+            bareMetalNode({ arch: null }),
+            bareMetalNode({ name: 'metal-2', arch: 'arm64' }),
+          ]),
+        }),
+      }),
+    );
+
+    expect(model.zones[0].nodes.map((n) => n.arch)).toEqual(['amd64', 'arm64']);
+  });
+
+  it('reads an empty bmc address as unset', () => {
+    const model = buildTopology(
+      input({ fleet: ready({ nodes: [], baremetal: baremetalConfig([bareMetalNode({ bmc_ip: '' })]) }) }),
+    );
+
+    expect(model.zones[0].nodes[0]).toMatchObject({ kind: 'baremetal', bmcIp: null });
+  });
+
+  it('lists a bare-metal machine whose zone nothing declares, rather than dropping it', () => {
+    const model = buildTopology(
+      input({ fleet: ready({ nodes: [node()], baremetal: baremetalConfig([bareMetalNode({ zone: 'gone-zone' })]) }) }),
+    );
+
+    expect(model.zones[0].nodes.map((n) => n.name)).toEqual(['cpu-1']);
+    expect(model.orphanNodes.map((n) => [n.name, n.zone])).toEqual([['metal-1', 'gone-zone']]);
+  });
+
+  it('leaves bare-metal power unknown when no live answer covered it', () => {
+    const model = buildTopology(
+      input({ fleet: ready({ nodes: [], baremetal: baremetalConfig([bareMetalNode()]) }), machines: ready([]) }),
+    );
+
+    expect(model.zones[0].nodes[0]).toMatchObject({ power: null, deviceId: null });
+    expect(model.trustworthy).toBe(true);
   });
 });
 

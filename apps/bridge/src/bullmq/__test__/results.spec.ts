@@ -517,6 +517,73 @@ describe('enqueueDiscoveryComplete', () => {
     await service.enqueueDiscoveryComplete({ deviceId: '42' });
     expect(service.getCollectionFieldCount('42')).toBeNull();
   });
+
+  it('warns when discovery completes with no fields after successful steps', async () => {
+    const warnings: string[] = [];
+    const logger: ResultsLogger = {
+      info: async () => {},
+      warning: async (message) => {
+        warnings.push(message);
+      },
+    };
+    const queue = new FakeResultsQueue();
+    const service = new ResultsService(
+      makeQueueProvider(queue),
+      makeRedisProvider(null),
+      NULL_ZONE_CRYPTO,
+      ZONE_ID_PROVIDER,
+      logger,
+    );
+
+    const sent = await service.enqueueDiscoveryComplete({ deviceId: '42', jobId: 'test-job', succeededSteps: 3 });
+
+    expect(sent).toBe(true);
+    expect(warnings).toEqual(['discovery.complete for 42 leaves with no collector fields although 3 steps succeeded']);
+  });
+
+  it('stays quiet about an empty field list when no step succeeded', async () => {
+    const warnings: string[] = [];
+    const logger: ResultsLogger = {
+      info: async () => {},
+      warning: async (message) => {
+        warnings.push(message);
+      },
+    };
+    const service = new ResultsService(
+      makeQueueProvider(new FakeResultsQueue()),
+      makeRedisProvider(null),
+      NULL_ZONE_CRYPTO,
+      ZONE_ID_PROVIDER,
+      logger,
+    );
+
+    await service.enqueueDiscoveryComplete({ deviceId: '42', jobId: 'test-job', succeededSteps: 0 });
+    await service.enqueueDiscoveryComplete({ deviceId: '42', jobId: 'test-job' });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('stays quiet when collector fields are present', async () => {
+    const warnings: string[] = [];
+    const logger: ResultsLogger = {
+      info: async () => {},
+      warning: async (message) => {
+        warnings.push(message);
+      },
+    };
+    const service = new ResultsService(
+      makeQueueProvider(new FakeResultsQueue()),
+      makeRedisProvider(new FakeRedis()),
+      NULL_ZONE_CRYPTO,
+      ZONE_ID_PROVIDER,
+      logger,
+    );
+    await service.writeCollectorToResultsCache({ deviceId: '42', collector: 'lscpu', data: { cores: 16 } });
+
+    await service.enqueueDiscoveryComplete({ deviceId: '42', jobId: 'test-job', succeededSteps: 3 });
+
+    expect(warnings).toEqual([]);
+  });
 });
 
 function activatedCrypto(zonePriv: Buffer, zonePub: Buffer, hubPub: Buffer): ZoneCryptoProvider {

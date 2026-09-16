@@ -1,8 +1,8 @@
 import { getErrorMessage } from '@repo/utils';
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, stat, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { createReadStream, createWriteStream, type ReadStream } from 'node:fs';
+import { mkdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { join, resolve, sep } from 'node:path';
 import { Backoff } from '../../connection/backoff';
 import { sleepWithAbort } from '../../connection/sleep';
 import { dispatchContext } from '../../dispatch/context';
@@ -15,6 +15,7 @@ const logger = makeLogger('deploy');
 
 const RESTORE_TIMEOUT_MS = 45 * 60_000;
 const MKDIR_TIMEOUT_MS = 5_000;
+const LIST_MAX_STDOUT_CHARS = 64 * 1024 * 1024;
 
 const MAX_ATTEMPTS = 3;
 const BASE_BACKOFF_MS = 2_000;
@@ -259,6 +260,56 @@ async function fetchAndVerify(args: {
     : new Error(`fetch ${url} failed after ${MAX_ATTEMPTS} attempts (status=${lastStatus})`);
 }
 
+async function listArchive(
+  tmpPath: string,
+  decompressFlag: string,
+  verbose: boolean,
+  signal: AbortSignal | undefined,
+): Promise<string[]> {
+  const result = await run('tar', [verbose ? '-tv' : '-t', '--numeric-owner', decompressFlag, '-f', tmpPath], {
+    timeout_ms: RESTORE_TIMEOUT_MS,
+    signal,
+    max_stdout_chars: LIST_MAX_STDOUT_CHARS,
+  });
+  if (result.exit_code !== 0) {
+    throw new Error(`tar list failed (exit=${result.exit_code}): ${result.stderr.trim()}`);
+  }
+  return result.stdout.split('\n').filter((line) => line !== '');
+}
+
+function isWhiteoutEntry(detail: string): boolean {
+  const [mode, , device] = detail.split(/\s+/);
+  return mode !== undefined && mode.startsWith('c') && device === '0,0';
+}
+
+// -tv alone is ambiguous for names with spaces, so names come from -t and pair with -tv by index
+async function listWhiteouts(
+  tmpPath: string,
+  decompressFlag: string,
+  signal: AbortSignal | undefined,
+): Promise<string[]> {
+  const names = await listArchive(tmpPath, decompressFlag, false, signal);
+  const details = await listArchive(tmpPath, decompressFlag, true, signal);
+  if (names.length !== details.length) {
+    throw new Error(`tar listings disagree: ${names.length} names vs ${details.length} entries`);
+  }
+  return names.filter((_, i) => {
+    const detail = details[i];
+    return detail !== undefined && isWhiteoutEntry(detail);
+  });
+}
+
+// mirrors --strip-components=1, which drops the first component whether or not it is a leading `.`
+function whiteoutTargetPath(member: string, root: string): string {
+  const slash = member.indexOf('/');
+  const rest = slash === -1 ? '' : member.slice(slash + 1).replace(/^\/+/, '');
+  const full = resolve(root, rest);
+  if (member.startsWith('/') || rest.split('/').includes('..') || !full.startsWith(`${root}${sep}`)) {
+    throw new Error(`whiteout member does not map to a path under ${root}: ${member}`);
+  }
+  return full;
+}
+
 export function registerHttpsLayerOp(): void {
   registerOperation('deploy.restoreHttpsLayer', async (input, ctx) => {
     const { target_path, url, compression, sha256 } = input;
@@ -287,8 +338,26 @@ export function registerHttpsLayerOp(): void {
     });
 
     const decompressFlag = DECOMPRESS_FLAG[compression];
-    const tarStdin = createReadStream(tmpPath);
+    let excludeFile: string | null = null;
+    let tarStdin: ReadStream | null = null;
     try {
+      const whiteouts = await listWhiteouts(tmpPath, decompressFlag, signal);
+      const root = resolve(target_path);
+      const whiteoutPaths = whiteouts.map((member) => whiteoutTargetPath(member, root));
+      for (const path of whiteoutPaths) {
+        await rm(path, { recursive: true, force: true });
+      }
+
+      const excludeArgs: string[] = [];
+      if (whiteouts.length > 0) {
+        // tar cannot mknod over a directory or on a nodev mount, so whiteouts are applied above and never extracted
+        excludeFile = `${tmpPath}.exclude`;
+        await writeFile(excludeFile, `${whiteouts.join('\n')}\n`);
+        excludeArgs.push('--anchored', '--no-wildcards', `--exclude-from=${excludeFile}`);
+        logger.info('layer whiteouts applied', { layer: layerLog, count: whiteouts.length });
+      }
+
+      tarStdin = createReadStream(tmpPath);
       const tarResult = await run(
         'tar',
         [
@@ -303,6 +372,7 @@ export function registerHttpsLayerOp(): void {
           '--strip-components=1',
           '--overwrite',
           '--warning=no-timestamp',
+          ...excludeArgs,
         ],
         {
           stdin: tarStdin,
@@ -314,12 +384,14 @@ export function registerHttpsLayerOp(): void {
         throw new Error(`tar extraction failed (exit=${tarResult.exit_code}): ${tarResult.stderr.trim()}`);
       }
     } finally {
-      if (!tarStdin.destroyed) {
-        await new Promise<void>((resolve) => {
-          tarStdin.once('close', resolve);
-          tarStdin.destroy();
+      const stdin = tarStdin;
+      if (stdin !== null && !stdin.destroyed) {
+        await new Promise<void>((done) => {
+          stdin.once('close', done);
+          stdin.destroy();
         });
       }
+      if (excludeFile !== null) await safeUnlink(excludeFile);
       await safeUnlink(tmpPath);
     }
 

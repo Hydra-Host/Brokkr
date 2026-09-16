@@ -2,7 +2,7 @@ import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common'
 import { load as loadYaml } from 'js-yaml';
 import { readFileSync } from 'node:fs';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { parseBoundary, RenderedConfigSchema, type RenderedConfig } from '../common/pc-schemas';
 import { fingerprintSecret, isSecretKey, looksLikeDsn, maskDsn } from '../common/redact';
 import type { ProcessEnv } from '../contract';

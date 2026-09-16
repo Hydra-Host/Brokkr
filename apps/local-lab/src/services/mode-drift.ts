@@ -2,10 +2,10 @@ import { Logger } from '@nestjs/common';
 import { load as loadYaml } from 'js-yaml';
 import { readFileSync } from 'node:fs';
 
-import { isPlainObject } from '../common/type-guards';
+import { isRecord } from '@repo/utils';
 import { type PcProcessConfig, type ProcessComposeClient } from './process-compose.client';
 
-const log = new Logger('mode-drift');
+const log = new Logger('planes-drift');
 
 function canonicalJson(v: unknown): string {
   const isEmptyish = (x: unknown): boolean =>
@@ -14,11 +14,11 @@ function canonicalJson(v: unknown): string {
     x === false ||
     x === '' ||
     (Array.isArray(x) && x.length === 0) ||
-    (isPlainObject(x) && Object.keys(x).length === 0);
+    (isRecord(x) && Object.keys(x).length === 0);
   if (isEmptyish(v)) return '';
   const canon = (x: unknown): unknown => {
     if (Array.isArray(x)) return x.map(canon);
-    if (isPlainObject(x)) {
+    if (isRecord(x)) {
       const out: Record<string, unknown> = {};
       for (const k of Object.keys(x).sort()) out[k] = canon(x[k]);
       return out;
@@ -82,19 +82,19 @@ function extendedProcDrift(spec: Record<string, unknown>, info: PcProcessConfig)
 
 export async function swapDiffSet(pc: Pick<ProcessComposeClient, 'processInfo'>, cfgPath: string): Promise<string[]> {
   const doc = loadYaml(readFileSync(cfgPath, 'utf8'));
-  if (!isPlainObject(doc)) return [];
+  if (!isRecord(doc)) return [];
   const strList = (v: unknown): string[] =>
     Array.isArray(v) ? v.filter((e): e is string => typeof e === 'string') : [];
   const projectEnv = strList(doc.environment);
-  const procs = isPlainObject(doc.processes) ? doc.processes : {};
+  const procs = isRecord(doc.processes) ? doc.processes : {};
   const changed: string[] = [];
   const extended: string[] = [];
   for (const [name, spec] of Object.entries(procs)) {
-    if (!isPlainObject(spec)) continue;
+    if (!isRecord(spec)) continue;
     const desired = normalizeProc(
       typeof spec.command === 'string' ? spec.command : '',
       [...projectEnv, ...strList(spec.environment)],
-      isPlainObject(spec.depends_on) ? Object.keys(spec.depends_on) : [],
+      isRecord(spec.depends_on) ? Object.keys(spec.depends_on) : [],
     );
     let info: Awaited<ReturnType<ProcessComposeClient['processInfo']>>;
     try {
@@ -110,7 +110,7 @@ export async function swapDiffSet(pc: Pick<ProcessComposeClient, 'processInfo'>,
   }
   const extraExtended = extended.filter((n) => !changed.includes(n));
   if (extraExtended.length > 0) {
-    log.warn(`[mode] extended-surface drift (warn-only): {${extraExtended.join(', ')}}`);
+    log.warn(`[planes] extended-surface drift (warn-only): {${extraExtended.join(', ')}}`);
   }
   return changed;
 }

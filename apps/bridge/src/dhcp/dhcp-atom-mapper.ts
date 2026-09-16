@@ -1,4 +1,6 @@
-import { ipInCidr, type NetworkInterface } from '../bridge-network/bridge-ip-resolution.service.js';
+import { ipInCidr } from '@repo/utils';
+
+import type { NetworkInterface } from '../bridge-network/bridge-ip-resolution.service.js';
 import { getErrorMessage } from '../common/error-utils.js';
 
 import type { DhcpAtomValue } from './dhcp-atom-value.schema.js';
@@ -53,7 +55,7 @@ export function mapAtomsToEngine(
 
     // The in-CIDR local iface IP is this subnet's server-id/network anchor — the bridge's
     // global primary IP is only in-CIDR for the primary subnet and would fail pool validation.
-    const matchingIface = interfaces.find((iface) => ipInCidr(atom.subnet, iface.ip));
+    const matchingIface = interfaces.find((iface) => ipInCidr(iface.ip, atom.subnet));
     // Relayed subnets (no in-CIDR iface) get server-id '' so the Subnet anchors on its
     // pool start and pool validation skips the server-id checks.
     const subnetServerId = matchingIface?.ip ?? '';
@@ -104,7 +106,7 @@ function atomToSubnetConfig(
   // Without these exclusions the allocator could lease a client an address already in use
   // by the server, gateway, relay agent, or another bridge IP on this subnet.
   const relayAgentIp = atom.relay?.relayAgentIp;
-  const inSubnetLocalIps = allInterfaces.filter((iface) => ipInCidr(atom.subnet, iface.ip)).map((iface) => iface.ip);
+  const inSubnetLocalIps = allInterfaces.filter((iface) => ipInCidr(iface.ip, atom.subnet)).map((iface) => iface.ip);
   const excludeIps = [
     ...new Set(
       [serverId, ...atom.routers, ...(relayAgentIp ? [relayAgentIp] : []), ...inSubnetLocalIps].filter(

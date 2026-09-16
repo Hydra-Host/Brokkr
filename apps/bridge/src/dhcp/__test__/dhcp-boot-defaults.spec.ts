@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { IPXE_VALID_ARCHES, IPXE_VALID_EXTS, IPXE_VALID_TARGETS } from '../../tftp/tftp-dyn-file.js';
 import {
+  LEGACY_BIOS_OPT93,
+  LEGACY_BIOS_WARN_LIMIT,
   assertServableBootfile,
   defaultBootfileByArch,
   defaultBridgeBootfile,
+  isLegacyBiosArch,
   isServableBootfile,
+  latchMacWarning,
   resolveIpxeTarget,
 } from '../dhcp-boot-defaults.js';
 
@@ -108,5 +112,66 @@ describe('dhcp-boot-defaults', () => {
       expect(file).toMatch(/^ipxe-/);
       expect(isServableBootfile(file)).toBe(true);
     }
+  });
+
+  describe('isLegacyBiosArch', () => {
+    it('flags the legacy BIOS client archs (0x0000/0x0002)', () => {
+      expect(isLegacyBiosArch(0x0000)).toBe(true);
+      expect(isLegacyBiosArch(0x0002)).toBe(true);
+      expect([...LEGACY_BIOS_OPT93].sort()).toEqual([0x0000, 0x0002]);
+    });
+
+    it('does not flag the UEFI client archs (0x0007/0x000b)', () => {
+      expect(isLegacyBiosArch(0x0007)).toBe(false);
+      expect(isLegacyBiosArch(0x000b)).toBe(false);
+      expect(isLegacyBiosArch(0x0009)).toBe(false);
+    });
+
+    it('still maps the legacy x86 client arch (0x0000) to the amd64 UEFI stem', () => {
+      expect(defaultBootfileByArch().get(0x0000)).toBe('ipxe-amd64.efi');
+    });
+  });
+});
+
+describe('latchMacWarning', () => {
+  it('latches a mac once', () => {
+    const warned = new Set<string>();
+
+    expect(latchMacWarning(warned, 'aa:bb:cc:dd:ee:01')).toBe(true);
+    expect(latchMacWarning(warned, 'aa:bb:cc:dd:ee:01')).toBe(false);
+  });
+
+  it('never grows past the cap however many distinct macs arrive', () => {
+    const warned = new Set<string>();
+
+    for (let i = 0; i < LEGACY_BIOS_WARN_LIMIT * 3; i += 1) {
+      latchMacWarning(warned, `mac-${i}`);
+    }
+
+    expect(warned.size).toBe(LEGACY_BIOS_WARN_LIMIT);
+  });
+
+  it('evicts the oldest mac at the cap, so an evicted mac warns again', () => {
+    const warned = new Set<string>();
+    for (let i = 0; i < LEGACY_BIOS_WARN_LIMIT; i += 1) latchMacWarning(warned, `mac-${i}`);
+
+    latchMacWarning(warned, 'newcomer');
+
+    expect(warned.has('mac-0')).toBe(false);
+    expect(latchMacWarning(warned, 'mac-0')).toBe(true);
+  });
+
+  it('honours a caller-supplied cap', () => {
+    const warned = new Set<string>();
+
+    expect(latchMacWarning(warned, 'mac-0', 2)).toBe(true);
+    expect(latchMacWarning(warned, 'mac-1', 2)).toBe(true);
+    expect(latchMacWarning(warned, 'mac-0', 2)).toBe(false);
+
+    expect(latchMacWarning(warned, 'mac-2', 2)).toBe(true);
+
+    expect(warned.size).toBe(2);
+    expect(warned.has('mac-0')).toBe(false);
+    expect(latchMacWarning(warned, 'mac-0', 2)).toBe(true);
   });
 });

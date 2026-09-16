@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { PORTS } from '../ports';
+import { ipxeChainBaseUrl } from '../common/ipxe-chain-url';
 import { RunnerService } from '../runner/runner.service';
 import { OverlayStoreService } from '../services/overlay-store';
 import { RepoBranchService } from '../services/repo-branch.service';
@@ -75,7 +75,7 @@ export class BuildService {
     const run = this.runner.create({ section: 'build', opId: 'build-ipxe', label: 'iPXE (amd64 + arm64 EFI + ISO)' });
     const uplink = this.overlay.bmUplink();
     const args = uplink
-      ? ['-m', 'local.ipxe_build', '--force', '--chain-base-url', `http://${uplink.ip}:${PORTS.spoke.base}`]
+      ? ['-m', 'local.ipxe_build', '--force', '--chain-base-url', ipxeChainBaseUrl(uplink)]
       : ['-m', 'local.ipxe_build', '--force'];
     this.runner.emit(run, `[build] python ${args.join(' ')}\n\n`);
     void this.runner.spawn(run, 'python', args).then((code) => this.runner.finalize(run, code));

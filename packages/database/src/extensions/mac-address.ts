@@ -1,11 +1,7 @@
-import { isRecord } from '@repo/utils';
-import { Prisma } from '../../generated/client/index.js';
+import { canonicalMac, isRecord } from '@repo/utils';
+import { Prisma } from '../../generated/js/client.js';
 
-export function formatMacAddress(mac: string): string {
-  const hex = mac.replace(/[^0-9a-f]/gi, '').toLowerCase();
-  if (hex.length !== 12) return mac;
-  return (hex.match(/../g) ?? []).join(':');
-}
+export const formatMacAddress = (mac: string): string => canonicalMac(mac) ?? mac;
 
 export function normalizeMacField(data: unknown): void {
   if (!isRecord(data)) return;

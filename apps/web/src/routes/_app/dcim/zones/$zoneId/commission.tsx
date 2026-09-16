@@ -29,7 +29,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@repo/ui/components/pop
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@repo/ui/components/table';
 import { cn } from '@repo/ui/utils';
 
-import { unwrapErrorMessage } from '@repo/utils';
+import { ipv4ToInt, unwrapErrorMessage } from '@repo/utils';
 import { ServerCommissionIcon } from '~/components/server-commission-icon';
 import { tsr } from '~/lib/api';
 
@@ -96,10 +96,8 @@ export type EnrichPollAction =
   | { kind: 'expired' }
   | { kind: 'failed'; message: string };
 
-// Pure decision for a single in-flight enrich plan: whether to keep spinning, clear it silently
-// (enriched), surface an expiry ('enrichment expired — rescan'), or surface a failure. A dead plan
-// times out client-side while still 'pending' so it can never spin forever — but a terminal server
-// status (complete/failed/expired) always wins, even if it arrives past the client timeout.
+// A dead plan times out client-side while still 'pending' so it can never spin forever — but a
+// terminal server status (complete/failed/expired) always wins, even past the client timeout.
 export function enrichPollOutcome(args: {
   status: EnrichPollStatus;
   startedAt: number | undefined;
@@ -1186,19 +1184,6 @@ const COMMISSION_COLUMNS: ReadonlyArray<{ key: SortCol | null; label: string; al
   { key: 'status', label: 'Status' },
   { key: null, label: 'Actions', align: 'right' },
 ];
-
-export function ipv4ToInt(ip: string): number | null {
-  const parts = ip.split('.');
-  if (parts.length !== 4) return null;
-  let n = 0;
-  for (const part of parts) {
-    if (part.trim() === '') return null;
-    const octet = Number(part);
-    if (!Number.isInteger(octet) || octet < 0 || octet > 255) return null;
-    n = n * 256 + octet;
-  }
-  return n;
-}
 
 export function compareSortCell(col: SortCol, dir: SortDir, a: string, b: string): number {
   if (!a && !b) return 0;

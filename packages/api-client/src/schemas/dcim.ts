@@ -51,77 +51,53 @@ export {
   type UpdateServerInfoRequest,
 } from './baremetal';
 
+import {
+  CableLengthUnit,
+  CableStatus,
+  CableTerminationType,
+  CableType,
+  ConsolePortType,
+  FeedLegPhase,
+  InterfaceLinkType,
+  InterfaceMode,
+  InterfaceType,
+  PortType,
+  PowerOutletType,
+  PowerPortType,
+  RackRole,
+  RackStatus,
+} from '@repo/database/enums';
 import { z } from 'zod';
 import { BooleanQueryParamSchema } from './common';
 import { IpStatusSchema } from './ipam';
 import { PaginationQuerySchema, createPaginatedResponseSchema } from './pagination';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const DcimInterfaceTypeSchema = z.enum([
-  'ETHERNET_1G',
-  'ETHERNET_10G',
-  'ETHERNET_25G',
-  'ETHERNET_40G',
-  'ETHERNET_50G',
-  'ETHERNET_100G',
-  'ETHERNET_200G',
-  'ETHERNET_400G',
-  'ETHERNET_800G',
-  'INFINIBAND_FDR',
-  'INFINIBAND_EDR',
-  'INFINIBAND_HDR',
-  'INFINIBAND_NDR',
-  'INFINIBAND_XDR',
-  'IPMI_BMC',
-  'BOND',
-  'VIRTUAL',
-]);
+export const DcimInterfaceTypeSchema = zodEnumFromPrisma(InterfaceType);
 export type DcimInterfaceType = z.infer<typeof DcimInterfaceTypeSchema>;
 
-export const DcimInterfaceLinkTypeSchema = z.enum(['INFINIBAND', 'ETHERNET']);
+export const DcimInterfaceLinkTypeSchema = zodEnumFromPrisma(InterfaceLinkType);
 export type DcimInterfaceLinkType = z.infer<typeof DcimInterfaceLinkTypeSchema>;
 
-export const DcimInterfaceModeSchema = z.enum(['ACCESS', 'TAGGED']);
+export const DcimInterfaceModeSchema = zodEnumFromPrisma(InterfaceMode);
 export type DcimInterfaceMode = z.infer<typeof DcimInterfaceModeSchema>;
 
-export const DcimRackStatusSchema = z.enum(['ACTIVE', 'PLANNED', 'RESERVED', 'DEPRECATED']);
+export const DcimRackStatusSchema = zodEnumFromPrisma(RackStatus);
 export type DcimRackStatus = z.infer<typeof DcimRackStatusSchema>;
 
-export const DcimRackRoleKindSchema = z.enum(['COMPUTE', 'NETWORK', 'STORAGE', 'MIXED', 'POWER']);
+export const DcimRackRoleKindSchema = zodEnumFromPrisma(RackRole);
 export type DcimRackRoleKind = z.infer<typeof DcimRackRoleKindSchema>;
 
-export const DcimCableTypeSchema = z.enum([
-  'CAT5E',
-  'CAT6',
-  'CAT6A',
-  'MMF_OM3',
-  'MMF_OM4',
-  'SMF_OS1',
-  'SMF_OS2',
-  'POWER',
-  'SERIAL',
-  'USB',
-  'COAX',
-  'DAC',
-  'AOC',
-  'OTHER',
-]);
+export const DcimCableTypeSchema = zodEnumFromPrisma(CableType);
 export type DcimCableType = z.infer<typeof DcimCableTypeSchema>;
 
-export const DcimCableStatusSchema = z.enum(['CONNECTED', 'PLANNED', 'DECOMMISSIONING']);
+export const DcimCableStatusSchema = zodEnumFromPrisma(CableStatus);
 export type DcimCableStatus = z.infer<typeof DcimCableStatusSchema>;
 
-export const DcimCableLengthUnitSchema = z.enum(['METERS', 'CENTIMETERS', 'FEET', 'INCHES']);
+export const DcimCableLengthUnitSchema = zodEnumFromPrisma(CableLengthUnit);
 export type DcimCableLengthUnit = z.infer<typeof DcimCableLengthUnitSchema>;
 
-export const DcimCableTerminationTypeSchema = z.enum([
-  'INTERFACE',
-  'CONSOLE_PORT',
-  'CONSOLE_SERVER_PORT',
-  'POWER_PORT',
-  'POWER_OUTLET',
-  'FRONT_PORT',
-  'REAR_PORT',
-]);
+export const DcimCableTerminationTypeSchema = zodEnumFromPrisma(CableTerminationType);
 export type DcimCableTerminationType = z.infer<typeof DcimCableTerminationTypeSchema>;
 
 export const DcimCableTerminationInputSchema = z.object({
@@ -130,19 +106,19 @@ export const DcimCableTerminationInputSchema = z.object({
 });
 export type DcimCableTerminationInput = z.infer<typeof DcimCableTerminationInputSchema>;
 
-export const DcimConsolePortTypeSchema = z.enum(['DE9', 'RJ45', 'USB_A', 'USB_C', 'USB_MINI', 'USB_MICRO', 'OTHER']);
+export const DcimConsolePortTypeSchema = zodEnumFromPrisma(ConsolePortType);
 export type DcimConsolePortType = z.infer<typeof DcimConsolePortTypeSchema>;
 
-export const DcimPowerPortTypeSchema = z.enum(['IEC_C14', 'IEC_C20', 'NEMA_515P', 'NEMA_L630P', 'OTHER']);
+export const DcimPowerPortTypeSchema = zodEnumFromPrisma(PowerPortType);
 export type DcimPowerPortType = z.infer<typeof DcimPowerPortTypeSchema>;
 
-export const DcimPowerOutletTypeSchema = z.enum(['IEC_C13', 'IEC_C19', 'NEMA_515R', 'NEMA_L630R', 'OTHER']);
+export const DcimPowerOutletTypeSchema = zodEnumFromPrisma(PowerOutletType);
 export type DcimPowerOutletType = z.infer<typeof DcimPowerOutletTypeSchema>;
 
-export const DcimFeedLegPhaseSchema = z.enum(['A', 'B', 'C']);
+export const DcimFeedLegPhaseSchema = zodEnumFromPrisma(FeedLegPhase);
 export type DcimFeedLegPhase = z.infer<typeof DcimFeedLegPhaseSchema>;
 
-export const DcimPortTypeSchema = z.enum(['RJ45', 'FC', 'LC', 'SC', 'ST', 'MPO', 'CS', 'SN', 'OTHER']);
+export const DcimPortTypeSchema = zodEnumFromPrisma(PortType);
 export type DcimPortType = z.infer<typeof DcimPortTypeSchema>;
 
 // Sibling of `InterfaceIpAddressSchema` in ./interface, which carries `prefix` (zone containment)

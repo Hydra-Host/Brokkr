@@ -145,3 +145,28 @@ describe('BridgeIpResolutionService.getBridgeIpForDevice', () => {
     expect(result).toBe('10.30.0.1');
   });
 });
+
+describe('BridgeIpResolutionService.getBridgeIpForHostsFile — request client IP provider', () => {
+  function makeServiceWithProvider(provider: () => string | null, interfaces: NetworkInterface[]) {
+    const service = new BridgeIpResolutionService({
+      jobId: 'test-job',
+      netplanAddressExtractor: { extract: (yaml: string) => extractStaticAddresses(yaml).map((a) => a.ip) },
+      requestClientIpProvider: provider,
+    });
+    (service as unknown as { getBridgeInterfaces: () => Promise<NetworkInterface[]> }).getBridgeInterfaces = async () =>
+      interfaces;
+    return service;
+  }
+
+  it('resolves to the bridge leg on the client subnet, not the primary interface', async () => {
+    const service = makeServiceWithProvider(() => '10.20.0.50', makeBridgeInterfaces());
+
+    expect(await service.getBridgeIpForHostsFile()).toBe('10.20.0.1');
+  });
+
+  it('falls back to the primary interface when no client IP is available', async () => {
+    const service = makeServiceWithProvider(() => null, makeBridgeInterfaces());
+
+    expect(await service.getBridgeIpForHostsFile()).toBe('10.10.0.1');
+  });
+});

@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { BondParametersSchema } from '@repo/api-client';
 import type { DeviceContext, DeviceWithRelations } from '../device-context/device-context.types';
 import {
@@ -16,6 +17,7 @@ const ETHERNET_DNS = ['1.1.1.1', '8.8.8.8'];
 const VLAN_DNS_FALLBACK = ['1.1.1.1', '1.0.0.1'];
 const BASE_METRIC = 100;
 const VLAN_SECONDARY_METRIC_OFFSET = 500;
+const logger = new Logger('NetplanBuilders');
 
 export function hasEligibleConfiguredIp(interfaces: DeviceInterface[]): boolean {
   return hasAnyEligibleIp(interfaces);
@@ -102,14 +104,67 @@ export function renderBondBlock(bond: BondDecision, interfacePlans: InterfacePla
   return lines;
 }
 
+// Legacy rows can share a MAC; netplan keys `ethernets` by name, so a duplicate renames the NIC twice.
+// First in the given order wins, except `anchored` — the bonds and vlans blocks reference those by name.
+export function dedupeByMac<T extends { name: string }>(
+  deviceId: string,
+  ordered: readonly T[],
+  macOf: (item: T) => string | null,
+  anchored: ReadonlySet<string>,
+): T[] {
+  const holderByMac = new Map<string, string>();
+  const dropped: string[] = [];
+  const kept: T[] = [];
+  for (const item of ordered) {
+    const raw = macOf(item);
+    const mac = raw ? raw.toLowerCase() : null;
+    const holder = mac ? holderByMac.get(mac) : undefined;
+    if (holder !== undefined && !anchored.has(item.name)) {
+      dropped.push(`${item.name} (${mac} already on ${holder})`);
+      continue;
+    }
+    if (mac && holder === undefined) holderByMac.set(mac, item.name);
+    kept.push(item);
+  }
+  if (dropped.length > 0) {
+    logger.warn(`Device ${deviceId}: dropped duplicate-MAC interfaces from netplan ethernets: ${dropped.join(', ')}`);
+  }
+  return kept;
+}
+
+// Code-unit order, as a plain `.sort()` on the names gives; localeCompare would reorder mixed-case names.
+export function compareByName(a: { name: string }, b: { name: string }): number {
+  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+}
+
+// Ordering for dedupeByMac: the upstream eligibility guards count a duplicate's addresses, so dropping
+// the address-bearing interface would leave the device with `ethernets` and no addresses.
+export function preferConfigured<T extends { name: string }>(hasIp: (item: T) => boolean): (a: T, b: T) => number {
+  return (a, b) => {
+    const aHasIp = hasIp(a);
+    if (aHasIp !== hasIp(b)) return aHasIp ? -1 : 1;
+    return compareByName(a, b);
+  };
+}
+
 export function buildEthernetsBlock(ctx: DeviceContext, interfacePlans: InterfacePlan[], bond: BondDecision): string[] {
   const lines: string[] = ['  ethernets:'];
   const memberNames = new Set(bond.members.map((m) => m.name));
   const planByName = new Map(interfacePlans.map((p) => [p.iface.name, p]));
-  const sortedNames = ctx.device.interfaces
-    .filter(isEligibleInterface)
-    .map((i) => i.name)
-    .sort();
+  const hasIp = (i: DeviceInterface) => (planByName.get(i.name)?.configuredIps.length ?? 0) > 0;
+  const anchored = new Set<string>(bond.shouldBond ? memberNames : []);
+  for (const plan of interfacePlans) {
+    if (plan.vlanIps.size > 0) anchored.add(plan.iface.name);
+  }
+  // The preference only picks which duplicate survives; emission (and so metric order) stays name-sorted.
+  const sortedNames = dedupeByMac(
+    ctx.device.id,
+    ctx.device.interfaces.filter(isEligibleInterface).sort(preferConfigured(hasIp)),
+    (i) => i.macAddress,
+    anchored,
+  )
+    .sort(compareByName)
+    .map((i) => i.name);
 
   const metricCounter = { value: BASE_METRIC };
 

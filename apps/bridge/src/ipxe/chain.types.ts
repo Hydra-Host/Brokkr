@@ -1,4 +1,5 @@
 import type { DeviceRecord } from '../device-record/device-record.schema';
+import type { DiscoveryFlavor } from '../download/discovery.config';
 
 import type { RenderRequest } from './ipxe-renderer.helpers';
 
@@ -41,6 +42,7 @@ export interface RenderForRecordContext {
   jobId: string;
   pendingRegistered?: boolean;
   discoveryPlatformSlug?: string;
+  discoveryFlavors: readonly DiscoveryFlavor[];
   redisIpxeUrl?: string | null;
   redisIpxeUrlLookup?: (deviceId: string, jobId: string) => Promise<string | null>;
   renderer: RendererSpy;

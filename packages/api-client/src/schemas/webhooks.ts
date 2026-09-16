@@ -1,4 +1,6 @@
+import { DeliveryStatus, WebhookEventType } from '@repo/database/enums';
 import { z } from 'zod';
+import { zodEnumFromPrisma } from './prisma-enum';
 
 export function isPrivateIPv4(a: number, b: number): boolean {
   return (
@@ -52,22 +54,13 @@ const webhookEndpoint = z.string().url({ message: 'Endpoint must be a valid URL'
   message: 'Endpoint must be a public HTTPS URL — private IPs, localhost, and non-HTTPS schemes are not allowed',
 });
 
-const DeliveryStatusValues = ['PENDING', 'SUCCESS', 'FAILED', 'RETRYING'] as const;
-const WebhookEventTypeValues = [
-  'DEVICE_LISTING_UPDATED',
-  'DEVICE_LISTING_CREATED',
-  'DEVICE_LISTING_DECOMMISSIONED',
-  'DEPLOYMENT_INTERRUPTED',
-  'DEPLOYMENT_INTERRUPTION_COMPLETED',
-] as const;
-
-export const WebhookEventTypeSchema = z
-  .enum(WebhookEventTypeValues)
-  .describe('Type of webhook event that triggers delivery');
-export type WebhookEventTypeEnum = z.infer<typeof WebhookEventTypeSchema>;
-export const DeliveryStatusSchema = z
-  .enum(DeliveryStatusValues)
-  .describe('Current delivery status of a webhook payload');
+export const WebhookEventTypeSchema = zodEnumFromPrisma(WebhookEventType).describe(
+  'Type of webhook event that triggers delivery',
+);
+export type WebhookEventTypeEnum = WebhookEventType;
+export const DeliveryStatusSchema = zodEnumFromPrisma(DeliveryStatus).describe(
+  'Current delivery status of a webhook payload',
+);
 
 export const CreateWebhookRequestSchema = z.object({
   endpoint: webhookEndpoint.describe('URL that will receive webhook payloads'),
@@ -125,7 +118,7 @@ export const WebhookDeliverySchema = z.object({
   webhookEndpoint: z.string().describe('Endpoint URL the payload was sent to'),
   eventType: WebhookEventTypeSchema.describe('Event type that triggered this delivery'),
   payload: z.unknown().describe('Serialized event payload delivered to the endpoint'),
-  status: z.enum(['PENDING', 'SUCCESS', 'FAILED', 'RETRYING']).describe('Current delivery status'),
+  status: DeliveryStatusSchema.describe('Current delivery status'),
   statusCode: z.number().nullable().describe('HTTP status code returned by the endpoint'),
   responseBody: z.string().nullable().describe('Response body returned by the endpoint'),
   attemptNumber: z.number().describe('Number of delivery attempts made'),

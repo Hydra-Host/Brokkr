@@ -102,13 +102,18 @@ const KNOB_CATALOG: KnobCatalogEntry[] = [
   knob({ path: 'osLayerCache.originHost', label: 'OS layer origin', default: '' }),
   knob({ path: 'osLayerCache.resolvers', label: 'OS layer resolvers', default: '' }),
   knob({ path: 'lan.expose', kind: 'bool', default: false }),
+  knob({ path: 'lan.mode', kind: 'select', choices: ['loopback', 'direct', 'fronted'], default: 'loopback' }),
+  knob({ path: 'lan.bindAddress', default: '' }),
+  knob({ path: 'lan.publicHost', default: '' }),
+  knob({ path: 'lan.datastoreAuth', kind: 'bool', default: true }),
+  knob({ path: 'identity.redis.password', label: 'Redis password', default: 'password', secret: true }),
+  knob({ path: 'identity.mailpit.password', label: 'Mailpit UI password', default: 'password', secret: true }),
   knob({ path: 'telemetry.enable', kind: 'bool', default: 'false' }),
   knob({ path: 'stack.slot', kind: 'number', default: '0', editable: false }),
   knob({ path: 'stackCounts.spoke', kind: 'number', default: '1' }),
   knob({ path: 'stackCounts.hub', kind: 'number', default: '1' }),
   knob({ path: 'stack.fleetNodeCount', kind: 'number', default: '4' }),
   knob({ path: 'spoke.watch', kind: 'bool', default: 'true' }),
-  knob({ path: 'fleet.mode', label: 'Fleet mode', default: 'vm' }),
   knob({ path: 'redisAcl.enable', kind: 'bool', default: 'true' }),
   knob({ path: 'vrrpSim.enable', kind: 'bool', default: 'false' }),
   knob({ path: 'zoneCrypto.hubPrivateKey', label: 'Hub private key', secret: true, danger: true, editable: false }),
@@ -170,8 +175,14 @@ const EVAL_SEED = {
     { proc: 'spoke', zone: 'sim-zone', replica: 0, port: 8000, grpc: 9082 },
     { proc: 'spoke-edge', zone: 'edge-zone', replica: 0, port: 8100, grpc: 9182 },
   ],
-  identity: { pg: { user: 'labpg', password: 'labpass', db: 'labdb' }, orgId: 'org-uuid' },
+  identity: {
+    pg: { user: 'labpg', password: 'labpass', db: 'labdb' },
+    orgId: 'org-uuid',
+    redis: { password: 'labredis' },
+    mailpit: { password: 'labmail' },
+  },
   osLayerCache: { originHost: 'brokkr.assets.hydra.host', resolvers: '1.1.1.1 8.8.8.8' },
+  lan: { mode: 'loopback', bindAddress: '', publicHost: '', datastoreAuth: true, expose: false },
 };
 const evalSeedJson = (extra: Record<string, unknown> = {}): string => {
   const { envPins, ...rest } = extra;
@@ -185,7 +196,9 @@ const evalSeedJson = (extra: Record<string, unknown> = {}): string => {
 };
 
 const { nicState, seedEval } = vi.hoisted(() => ({
-  nicState: { value: {} as Record<string, { family: string; address: string; internal: boolean }[]> },
+  nicState: {
+    value: {} as Record<string, { family: string; address: string; internal: boolean; cidr?: string | null }[]>,
+  },
   seedEval: { stdout: '{}', error: null as Error | null, calls: 0 },
 }));
 vi.mock('node:os', async (importOriginal) => {
@@ -285,6 +298,211 @@ describe('OverlayStoreService — telemetry + rebind latch', () => {
     const { overlay } = await setupWithRoot();
     await overlay.setStackConfig({ entries: { 'lan.expose': 'true' } });
     expect(overlay.isRebindPending()).toBe(true);
+  });
+
+  it('arms the rebind latch on a network-mode change', async () => {
+    const { overlay } = await setupWithRoot();
+    await overlay.setStackConfig({ entries: { 'lan.mode': 'direct' } });
+    expect(overlay.isRebindPending()).toBe(true);
+  });
+
+});
+
+describe('OverlayStoreService — the LAN and datastore-credential write round trip', () => {
+  it('writes every network knob into the overlay and reads it back', async () => {
+    const { overlay, dir } = await setupWithRoot();
+
+    const res = await overlay.setStackConfig({
+      entries: {
+        'lan.mode': 'fronted',
+        'lan.bindAddress': '10.0.0.4',
+        'lan.publicHost': 'dev-box.local',
+        'lan.datastoreAuth': 'false',
+      },
+    });
+
+    expect(res.rejected).toEqual([]);
+    expect(res.applied.sort()).toEqual([
+      'lan.bindAddress',
+      'lan.datastoreAuth',
+      'lan.mode',
+      'lan.publicHost',
+    ]);
+    const written = readFileSync(join(dir, 'stack.local.nix'), 'utf8');
+    expect(written).toContain('lan.mode = "fronted";');
+    expect(written).toContain('lan.bindAddress = "10.0.0.4";');
+    expect(written).toContain('lan.publicHost = "dev-box.local";');
+    expect(written).toContain('lan.datastoreAuth = false;');
+    expect(overlay.stackConfig().lan).toEqual({
+      mode: 'fronted',
+      bindAddress: '10.0.0.4',
+      publicHost: 'dev-box.local',
+      datastoreAuth: false,
+      expose: false,
+    });
+  });
+
+  it('leaves a network knob the save omitted on the value it already had', async () => {
+    const { overlay, dir } = await setupWithRoot();
+    await overlay.setStackConfig({ entries: { 'lan.mode': 'direct', 'lan.bindAddress': '10.0.0.4' } });
+
+    await overlay.setStackConfig({ entries: { 'lan.datastoreAuth': 'false' } });
+
+    const written = readFileSync(join(dir, 'stack.local.nix'), 'utf8');
+    expect(written).toContain('lan.mode = "direct";');
+    expect(written).toContain('lan.bindAddress = "10.0.0.4";');
+    expect(overlay.stackConfig().lan.bindAddress).toBe('10.0.0.4');
+  });
+
+  it('refuses a network mode the enum does not declare rather than writing an unevaluable line', async () => {
+    const { overlay, dir } = await setupWithRoot();
+
+    const res = await overlay.setStackConfig({ entries: { 'lan.mode': 'wide-open' } });
+
+    expect(res.applied).toEqual([]);
+    expect(res.rejected).toEqual([{ path: 'lan.mode', reason: 'not-coercible', detail: 'select' }]);
+    expect(readFileSync(join(dir, 'stack.local.nix'), 'utf8')).not.toContain('wide-open');
+  });
+
+  it('refuses a bind address carrying a shell payload and writes no line for it', async () => {
+    const { overlay, dir } = await setupWithRoot();
+
+    const res = await overlay.setStackConfig({ entries: { 'lan.bindAddress': '0.0.0.0; curl evil | sh' } });
+
+    expect(res.applied).toEqual([]);
+    expect(res.rejected).toEqual([{ path: 'lan.bindAddress', reason: 'not-coercible', detail: 'ip address' }]);
+    const written = readFileSync(join(dir, 'stack.local.nix'), 'utf8');
+    expect(written).not.toContain('curl');
+    expect(written).not.toContain('lan.bindAddress');
+    expect(overlay.stackConfig().lan.bindAddress).toBe('');
+  });
+
+  it('takes an ipv4 and an ipv6 bind address', async () => {
+    for (const value of ['10.0.0.4', 'fe80::1']) {
+      const { overlay } = await setupWithRoot();
+      const res = await overlay.setStackConfig({ entries: { 'lan.bindAddress': value } });
+
+      expect(res.rejected, value).toEqual([]);
+      expect(overlay.stackConfig().lan.bindAddress).toBe(value);
+    }
+  });
+
+  it('refuses a hostname bind address, and takes the same name as the public host', async () => {
+    const { overlay, dir } = await setupWithRoot();
+
+    const refused = await overlay.setStackConfig({ entries: { 'lan.bindAddress': 'dev-box.local' } });
+
+    expect(refused.applied).toEqual([]);
+    expect(refused.rejected).toEqual([{ path: 'lan.bindAddress', reason: 'not-coercible', detail: 'ip address' }]);
+    expect(readFileSync(join(dir, 'stack.local.nix'), 'utf8')).not.toContain('lan.bindAddress');
+
+    const taken = await overlay.setStackConfig({ entries: { 'lan.publicHost': 'dev-box.local' } });
+
+    expect(taken.rejected).toEqual([]);
+    expect(overlay.stackConfig().lan.publicHost).toBe('dev-box.local');
+  });
+
+  it('refuses a public host carrying a shell payload', async () => {
+    const { overlay, dir } = await setupWithRoot();
+
+    const res = await overlay.setStackConfig({ entries: { 'lan.publicHost': 'a.b; curl evil | sh' } });
+
+    expect(res.applied).toEqual([]);
+    expect(res.rejected).toEqual([
+      { path: 'lan.publicHost', reason: 'not-coercible', detail: 'ip address or hostname' },
+    ]);
+    expect(readFileSync(join(dir, 'stack.local.nix'), 'utf8')).not.toContain('curl');
+  });
+
+  it('takes an empty bind address, which means every interface under direct', async () => {
+    const { overlay } = await setupWithRoot();
+    await overlay.setStackConfig({ entries: { 'lan.bindAddress': '10.0.0.4' } });
+
+    const res = await overlay.setStackConfig({ entries: { 'lan.bindAddress': '' } });
+
+    expect(res.rejected).toEqual([]);
+    expect(overlay.stackConfig().lan.bindAddress).toBe('');
+  });
+
+  it('keeps a rejected bind address from disturbing the knobs saved beside it', async () => {
+    const { overlay, dir } = await setupWithRoot();
+
+    const res = await overlay.setStackConfig({
+      entries: { 'lan.mode': 'direct', 'lan.bindAddress': '$(id)' },
+    });
+
+    expect(res.applied).toEqual(['lan.mode']);
+    expect(res.rejected.map((r) => r.path)).toEqual(['lan.bindAddress']);
+    expect(readFileSync(join(dir, 'stack.local.nix'), 'utf8')).toContain('lan.mode = "direct";');
+  });
+
+  it('refuses a datastore password carrying a newline, which would append a redis.conf directive', async () => {
+    const { overlay, dir } = await setupWithRoot();
+
+    const res = await overlay.setStackConfig({
+      entries: { 'identity.redis.password': 'hunter2\nrequirepass owned' },
+    });
+
+    expect(res.applied).toEqual([]);
+    expect(res.rejected).toEqual([
+      {
+        path: 'identity.redis.password',
+        reason: 'not-coercible',
+        detail: 'password without whitespace or control characters',
+      },
+    ]);
+    expect(readFileSync(join(dir, 'stack.local.nix'), 'utf8')).not.toContain('requirepass');
+  });
+
+  it('refuses whitespace in a pg password, which ports.nix would refuse at eval time', async () => {
+    const { overlay, dir } = await setupWithRoot();
+
+    const res = await overlay.setStackConfig({ entries: { 'identity.pg.password': 'two words' } });
+
+    expect(res.applied).toEqual([]);
+    expect(res.rejected).toEqual([
+      {
+        path: 'identity.pg.password',
+        reason: 'not-coercible',
+        detail: 'password without whitespace or control characters',
+      },
+    ]);
+    expect(readFileSync(join(dir, 'stack.local.nix'), 'utf8')).not.toContain('two words');
+  });
+
+  it('refuses whitespace in a mailpit password, which would split the directive it lands on', async () => {
+    const { overlay, dir } = await setupWithRoot();
+
+    const res = await overlay.setStackConfig({ entries: { 'identity.mailpit.password': 'two words' } });
+
+    expect(res.applied).toEqual([]);
+    expect(res.rejected).toEqual([
+      {
+        path: 'identity.mailpit.password',
+        reason: 'not-coercible',
+        detail: 'password without whitespace or control characters',
+      },
+    ]);
+    expect(readFileSync(join(dir, 'stack.local.nix'), 'utf8')).not.toContain('two words');
+  });
+
+  it('still takes an ordinary datastore password', async () => {
+    const { overlay, dir } = await setupWithRoot();
+
+    const res = await overlay.setStackConfig({ entries: { 'identity.redis.password': 'sV7-x_9!q' } });
+
+    expect(res.rejected).toEqual([]);
+    expect(readFileSync(join(dir, 'stack.local.nix'), 'utf8')).toContain('identity.redis.password = "sV7-x_9!q";');
+  });
+
+  it('emits no network line while every knob still holds the value nix declares', async () => {
+    const { overlay, dir } = await setupWithRoot();
+    await overlay.setStackConfig({ entries: { 'telemetry.enable': 'true' } });
+
+    const written = readFileSync(join(dir, 'stack.local.nix'), 'utf8');
+    expect(written).not.toContain('lan.mode');
+    expect(written).not.toContain('lan.bindAddress');
+    expect(written).not.toContain('lan.datastoreAuth');
   });
 
   it('does not arm the latch for a telemetry-only save (but still invokes the hook)', async () => {
@@ -627,13 +845,34 @@ describe('OverlayStoreService.configTree', () => {
     ]);
   });
 
-  it('keeps the pinned fleet.mode instead of persisting a value the pin discards', async () => {
-    seedEval.stdout = evalSeedJson({ envPins: { 'fleet.mode': 'BROKKR_FLEET_MODE' } });
-    const { overlay, dir } = await setupWithRoot();
+  it('derives the planes from the enabled vm nodes and the saved machines', async () => {
+    const zones = {
+      'sim-zone': { index: 0, bridges: 1, nodes: { 'gpu-1': { index: 0, enable: false }, 'gpu-2': { index: 1 } } },
+    };
+    const baremetal = { iface: 'enp35s0', arch: 'amd64', nodes: { 'metal-1': { index: 0, bmc_ip: '10.0.0.1' } } };
 
-    overlay.setFleetConfig({ nodes: [], mode: 'baremetal' });
+    seedEval.stdout = evalSeedJson({ fleet: { zones, baremetal } });
+    expect((await setupWithRoot()).overlay.planes()).toEqual({ vm: true, baremetal: true });
 
-    expect(readFileSync(join(dir, 'stack.local.nix'), 'utf8')).not.toContain('fleet.mode = "baremetal"');
+    seedEval.stdout = evalSeedJson({
+      fleet: { zones: { 'sim-zone': { ...zones['sim-zone'], nodes: { 'gpu-1': { index: 0, enable: false } } } }, baremetal },
+    });
+    expect((await setupWithRoot()).overlay.planes()).toEqual({ vm: false, baremetal: true });
+
+    seedEval.stdout = evalSeedJson({ fleet: { zones } });
+    expect((await setupWithRoot()).overlay.planes()).toEqual({ vm: true, baremetal: false });
+
+    seedEval.stdout = evalSeedJson({ fleet: { zones, baremetal: { ...baremetal, nodes: {} } } });
+    expect((await setupWithRoot()).overlay.planes()).toEqual({ vm: true, baremetal: false });
+  });
+
+  it('ignores a tombstoned bare-metal node when deriving the plane', async () => {
+    const zones = { 'sim-zone': { index: 0, bridges: 1, nodes: { 'gpu-1': { index: 0 } } } };
+    seedEval.stdout = evalSeedJson({
+      fleet: { zones, baremetal: { iface: 'enp35s0', arch: 'amd64', nodes: { 'metal-1': { index: 0, enable: false } } } },
+    });
+
+    expect((await setupWithRoot()).overlay.planes()).toEqual({ vm: true, baremetal: false });
   });
 
   it('reports fleet.autoStart from the eval, not the catalog default', async () => {
@@ -679,6 +918,29 @@ describe('OverlayStoreService.configTree', () => {
     await overlay.reseed();
 
     expect(overlay.configTree()).toEqual({ seeded: false, entries: [] });
+  });
+});
+
+describe('OverlayStoreService.baremetalNodesByZone', () => {
+  it('groups saved bare-metal machines by their zone with the first zone as the default', async () => {
+    seedEval.stdout = evalSeedJson({
+      fleet: {
+        zones: { 'zone-b': { index: 1, bridges: 1 }, 'zone-a': { index: 0, bridges: 1, nodes: { 'gpu-1': { index: 0 } } } },
+        baremetal: {
+          iface: 'enp35s0',
+          arch: 'amd64',
+          nodes: {
+            'metal-1': { index: 0, bmc_ip: '10.0.0.1', zone: null },
+            'metal-2': { index: 1, bmc_ip: '10.0.0.2', zone: 'zone-b' },
+            'metal-3': { index: 2, bmc_ip: '10.0.0.3', enable: false },
+          },
+        },
+      },
+    });
+    const { overlay } = await setupWithRoot();
+
+    expect(overlay.baremetalNodesByZone()).toEqual({ 'zone-a': ['metal-1'], 'zone-b': ['metal-2'] });
+    expect(overlay.fleetNodesByZone()).toEqual({ 'zone-a': ['gpu-1'], 'zone-b': [] });
   });
 });
 
@@ -927,7 +1189,13 @@ describe('OverlayStoreService — writes are refused while the devenv seed has n
     const cfg = overlay.stackConfig();
 
     expect(cfg.servicePorts).toEqual([]);
-    expect(cfg.identity).toEqual({ pg: { user: '', password: '', db: '' }, orgId: '' });
+    expect(cfg.identity).toEqual({
+      pg: { user: '', password: '', db: '' },
+      orgId: '',
+      redis: { password: '' },
+      mailpit: { password: '' },
+    });
+    expect(cfg.lan).toEqual({ mode: 'loopback', bindAddress: '', publicHost: '', datastoreAuth: true, expose: false });
   });
 
   it('accepts a save again once a later reseed succeeds', async () => {
@@ -956,7 +1224,7 @@ describe('OverlayStoreService.renderOverlay — a stack save never pins the comm
   const BASE_ZONES = { 'sim-zone': { index: 0, bridges: 1, nodes: { 'gpu-1': { index: 0, cpus: 4 } } } };
 
   async function setupBaremetalBase(): Promise<{ overlay: OverlayStoreService; path: string }> {
-    seedEval.stdout = evalSeedJson({ fleet: { mode: 'baremetal', zones: BASE_ZONES } });
+    seedEval.stdout = evalSeedJson({ fleet: { zones: BASE_ZONES } });
     const { overlay, dir } = await setupWithRoot();
     return { overlay, path: join(dir, 'stack.local.nix') };
   }
@@ -964,14 +1232,13 @@ describe('OverlayStoreService.renderOverlay — a stack save never pins the comm
   async function setupOwnedBaremetal(): Promise<{ overlay: OverlayStoreService; path: string }> {
     seedEval.stdout = JSON.stringify({
       fleet: {
-        mode: 'baremetal',
         zones: BASE_ZONES,
         baremetal: { iface: 'enp35s0', arch: 'amd64', nodes: { 'metal-1': { index: 0, bmc_ip: '10.0.0.1' } } },
       },
     });
     const { overlay, dir } = setupUnseeded();
     const path = join(dir, 'stack.local.nix');
-    writeFileSync(path, '{ ... }:\n{\n  fleet.mode = "baremetal";\n  fleet.baremetal.iface = "enp35s0";\n}\n');
+    writeFileSync(path, '{ ... }:\n{\n  fleet.baremetal.iface = "enp35s0";\n}\n');
     await overlay.reseed();
     return { overlay, path };
   }
@@ -994,25 +1261,25 @@ describe('OverlayStoreService.renderOverlay — a stack save never pins the comm
     expect(overlay.fleetCustomized()).toBe(false);
   });
 
-  it('round-trips fleet.mode + the bare-metal section on a plain save of an owned baremetal fleet', async () => {
+  it('round-trips the bare-metal section on a plain save of an owned bare-metal fleet', async () => {
     const { overlay, path } = await setupOwnedBaremetal();
 
     await overlay.setStackConfig({ entries: { 'telemetry.enable': 'true' } });
 
     const out = readFileSync(path, 'utf8');
-    expect(out).toContain('fleet.mode = "baremetal";');
+    expect(out).not.toMatch(/fleet\.mode/);
     expect(out).toContain('fleet.baremetal.iface = "enp35s0";');
     expect(out).toContain('fleet.baremetal.nodes."metal-1"');
     expect(out).toContain('fleet.zones."sim-zone".nodes."gpu-1"');
   });
 
-  it('persists a setFleetConfig mode flip that ships no bare-metal section', async () => {
+  it('persists a vm-only setFleetConfig over the base without a bare-metal section', async () => {
     const { overlay, path } = await setupBaremetalBase();
 
-    overlay.setFleetConfig({ nodes: [{ name: 'gpu-1', spec: { cpus: 4 } }], mode: 'baremetal' });
+    overlay.setFleetConfig({ nodes: [{ name: 'gpu-1', spec: { cpus: 4 } }] });
 
     const out = readFileSync(path, 'utf8');
-    expect(out).toContain('fleet.mode = "baremetal";');
+    expect(out).not.toContain('fleet.baremetal');
     expect(out).toContain('fleet.zones."sim-zone".nodes."gpu-1"');
   });
 });
@@ -1022,11 +1289,8 @@ describe('OverlayStoreService.seedMirror — ownership is adopted from a topolog
     zones: { 'sim-zone': { index: 0, bridges: 1, nodes: { 'gpu-1': { index: 0, cpus: 4 } } } },
   };
 
-  async function seedAgainst(
-    overlayText: string,
-    mode?: string,
-  ): Promise<{ overlay: OverlayStoreService; path: string }> {
-    seedEval.stdout = JSON.stringify({ fleet: { ...BASE_FLEET, ...(mode ? { mode } : {}) } });
+  async function seedAgainst(overlayText: string): Promise<{ overlay: OverlayStoreService; path: string }> {
+    seedEval.stdout = JSON.stringify({ fleet: { ...BASE_FLEET, autoStart: false } });
     const { overlay, dir } = setupUnseeded();
     const path = join(dir, 'stack.local.nix');
     writeFileSync(path, overlayText);
@@ -1034,8 +1298,8 @@ describe('OverlayStoreService.seedMirror — ownership is adopted from a topolog
     return { overlay, path };
   }
 
-  it('ignores the fleet.mode line an earlier baremetal save left on disk', async () => {
-    const { overlay, path } = await seedAgainst('{ ... }:\n{\n  fleet.mode = "baremetal";\n}\n', 'baremetal');
+  it('ignores a fleet.autoStart line that declares no topology', async () => {
+    const { overlay, path } = await seedAgainst('{ ... }:\n{\n  fleet.autoStart = false;\n}\n');
 
     await overlay.setStackConfig({ entries: { 'telemetry.enable': 'true' } });
 
@@ -1065,17 +1329,35 @@ describe('OverlayStoreService.seedMirror — ownership is adopted from a topolog
 });
 
 describe('OverlayStoreService.bmUplink — W4 uplink resolution', () => {
-  it('returns the iface + live IPv4 in bm mode', () => {
+  const METAL = { 'metal-1': { bmc_ip: '10.0.0.1' } };
+
+  it('returns the iface + live IPv4 when a machine is saved', () => {
     const overlay = makeOverlay();
-    vi.spyOn(overlay, 'fleetMode').mockReturnValue('baremetal');
-    vi.spyOn(overlay, 'baremetalConfig').mockReturnValue({ nics: ['eth0'], arch: 'amd64', nodes: {} });
-    nicState.value = { eth0: [{ family: 'IPv4', address: '10.0.0.5', internal: false }] };
-    expect(overlay.bmUplink()).toEqual({ iface: 'eth0', ip: '10.0.0.5' });
+    vi.spyOn(overlay, 'planes').mockReturnValue({ vm: true, baremetal: true });
+    vi.spyOn(overlay, 'baremetalConfig').mockReturnValue({ nics: ['eth0'], arch: 'amd64', nodes: METAL });
+    nicState.value = { eth0: [{ family: 'IPv4', address: '10.0.0.5', internal: false, cidr: '10.0.0.5/24' }] };
+    expect(overlay.bmUplink()).toEqual({ iface: 'eth0', ip: '10.0.0.5', cidr: '10.0.0.5/24' });
   });
 
-  it('is null in vm mode', () => {
+  it('bmUplink carries the nic cidr', () => {
     const overlay = makeOverlay();
-    vi.spyOn(overlay, 'fleetMode').mockReturnValue('vm');
+    vi.spyOn(overlay, 'planes').mockReturnValue({ vm: true, baremetal: true });
+    vi.spyOn(overlay, 'baremetalConfig').mockReturnValue({ nics: ['ens2'], arch: 'amd64', nodes: METAL });
+    nicState.value = { ens2: [{ family: 'IPv4', address: '172.16.12.60', internal: false, cidr: '172.16.12.60/22' }] };
+    expect(overlay.bmUplink()).toEqual({ iface: 'ens2', ip: '172.16.12.60', cidr: '172.16.12.60/22' });
+  });
+
+  it('bmUplink reports a null cidr when the nic has no mask', () => {
+    const overlay = makeOverlay();
+    vi.spyOn(overlay, 'planes').mockReturnValue({ vm: true, baremetal: true });
+    vi.spyOn(overlay, 'baremetalConfig').mockReturnValue({ nics: ['tun0'], arch: 'amd64', nodes: METAL });
+    nicState.value = { tun0: [{ family: 'IPv4', address: '10.8.0.2', internal: false, cidr: null }] };
+    expect(overlay.bmUplink()).toEqual({ iface: 'tun0', ip: '10.8.0.2', cidr: null });
+  });
+
+  it('is null when no machine is saved', () => {
+    const overlay = makeOverlay();
+    vi.spyOn(overlay, 'planes').mockReturnValue({ vm: true, baremetal: false });
     vi.spyOn(overlay, 'baremetalConfig').mockReturnValue({ nics: ['eth0'], arch: 'amd64', nodes: {} });
     nicState.value = { eth0: [{ family: 'IPv4', address: '10.0.0.5', internal: false }] };
     expect(overlay.bmUplink()).toBeNull();
@@ -1083,15 +1365,15 @@ describe('OverlayStoreService.bmUplink — W4 uplink resolution', () => {
 
   it('is null when no NIC is configured', () => {
     const overlay = makeOverlay();
-    vi.spyOn(overlay, 'fleetMode').mockReturnValue('baremetal');
-    vi.spyOn(overlay, 'baremetalConfig').mockReturnValue({ nics: [], arch: 'amd64', nodes: {} });
+    vi.spyOn(overlay, 'planes').mockReturnValue({ vm: true, baremetal: true });
+    vi.spyOn(overlay, 'baremetalConfig').mockReturnValue({ nics: [], arch: 'amd64', nodes: METAL });
     expect(overlay.bmUplink()).toBeNull();
   });
 
   it('is null when the NIC has no IPv4', () => {
     const overlay = makeOverlay();
-    vi.spyOn(overlay, 'fleetMode').mockReturnValue('baremetal');
-    vi.spyOn(overlay, 'baremetalConfig').mockReturnValue({ nics: ['eth0'], arch: 'amd64', nodes: {} });
+    vi.spyOn(overlay, 'planes').mockReturnValue({ vm: true, baremetal: true });
+    vi.spyOn(overlay, 'baremetalConfig').mockReturnValue({ nics: ['eth0'], arch: 'amd64', nodes: METAL });
     nicState.value = { eth0: [] };
     expect(overlay.bmUplink()).toBeNull();
   });
@@ -1244,6 +1526,25 @@ describe('OverlayStoreService — the pg password never reaches the client', () 
     expect(identity.pg.user).toBe('labpg');
     expect(identity.pg.db).toBe('labdb');
     expect(identity.orgId).toBe('org-uuid');
+  });
+
+  it('masks the redis and mailpit passwords the network mode turns on', async () => {
+    const { overlay } = await setupWithRoot();
+
+    const { identity } = overlay.stackConfig();
+
+    expect(identity.redis.password).toBe('***');
+    expect(identity.mailpit.password).toBe('***');
+  });
+
+  it('reads a masked datastore secret back as unchanged rather than storing the mask', async () => {
+    const { overlay, dir } = await setupWithRoot();
+
+    await overlay.setStackConfig({ entries: { 'identity.redis.password': '***', 'identity.pg.user': 'other' } });
+
+    const written = readFileSync(join(dir, 'stack.local.nix'), 'utf8');
+    expect(written).not.toContain('***');
+    expect(written).toContain('identity.redis.password = "labredis";');
   });
 
   it('leaves an unset password empty instead of masking it into a value', () => {

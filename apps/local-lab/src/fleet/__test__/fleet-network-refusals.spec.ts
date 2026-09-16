@@ -55,7 +55,6 @@ const svcFor = (tombstones: FleetTombstone[] = [], rejections: RejectedEntry[] =
     fleetZones: () => ['sim-zone'],
     fleetTombstones: () => tombstones,
     fleetCustomized: () => true,
-    fleetMode: () => 'vm',
   };
   const rendered = { renderDesiredFleetYaml: () => Promise.resolve(null) };
   const svc = new FleetTopologyService({ repoRoot: '/repo' } as never, overlay as never, rendered as never);
@@ -69,7 +68,6 @@ const put = (
   over: { nodes?: FleetNode[]; network?: FleetNetwork; prune?: string[] } = {},
 ) =>
   svc.putConfig({
-    mode: 'vm',
     nodes: over.nodes ?? [node()],
     network: over.network,
     prune: over.prune,
@@ -148,7 +146,7 @@ describe('putConfig — arch and network_type', () => {
 
 describe('putConfig — the rejected channel', () => {
   it('returns the entries the overlay writer refused to write', () => {
-    const entry: RejectedEntry = { path: 'fleet.mode', reason: 'pinned', detail: 'FLEET_MODE' };
+    const entry: RejectedEntry = { path: 'fleet.nodes.cpu-3', reason: 'tombstoned' };
     const { svc } = svcFor([], [entry]);
 
     expect(put(svc)).toEqual([entry]);

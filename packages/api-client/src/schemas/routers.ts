@@ -1,9 +1,11 @@
+import { RouterPowerStatus } from '@repo/database/enums';
 import { z } from 'zod';
 import { BooleanQueryParamSchema } from './common';
 import { PaginationQuerySchema, createPaginatedResponseSchema } from './pagination';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const RouterPowerStatusSchema = z.enum(['On', 'Off']);
-export type RouterPowerStatus = z.infer<typeof RouterPowerStatusSchema>;
+export const RouterPowerStatusSchema = zodEnumFromPrisma(RouterPowerStatus);
+export type { RouterPowerStatus };
 
 export const RouterSchema = z.object({
   deviceId: z.string().uuid().describe('Device UUID — the identifier for the Router-role device.'),

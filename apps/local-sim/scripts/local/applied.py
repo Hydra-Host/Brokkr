@@ -24,7 +24,7 @@ from local.schema import BareMetalNodeResolved, Fleet, Node
 SCHEMA_VERSION = 1
 APPLY_HINT_CLI = "run `task sim:fleet:apply`"
 
-Severity = Literal["in-sync", "hot-appliable", "needs-full-rebuild", "mode-change"]
+Severity = Literal["in-sync", "hot-appliable", "needs-full-rebuild", "planes-change", "stale-bake"]
 
 # canonical field classifications — single source of truth; apply_plan imports these.
 IDENTITY_FIELDS = ("ipmi_mac", "data_mac", "arch", "zone", "ip", "bmc_ip", "index")
@@ -120,7 +120,6 @@ class AppliedManifest(_Envelope):
     digest: str
     applied_at: float
     source: str
-    mode: str = "vm"
     # dict[str, Any] (not str): network carries the `dhcp` bool alongside the cidr strings.
     network: dict[str, Any]
     nodes: list[AppliedNode]
@@ -141,8 +140,7 @@ class AppliedManifest(_Envelope):
             "network": self.network,
             "nodes": [n.model_dump_node() for n in self.nodes],
         }
-        if self.mode != "vm":
-            wire["mode"] = self.mode
+        if self.bm_nodes:
             wire["bmNodes"] = [n.model_dump_node() for n in self.bm_nodes]
         return wire
 
@@ -160,14 +158,19 @@ def _resolved_bm_nodes(fleet: Fleet) -> list[AppliedBmNode]:
     return [AppliedBmNode.resolve(n) for n in fleet.bm_nodes]
 
 
+def planes_of(nodes: list[Any], bm_nodes: list[Any]) -> tuple[bool, bool]:
+    """The (vm, baremetal) plane set a pair of rosters carries; an empty roster is a plane that is off."""
+    return (len(nodes) > 0, len(bm_nodes) > 0)
+
+
 def _canonical_payload(fleet: Fleet) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "network": {"cidr": fleet.network.cidr, "bmc_cidr": fleet.network.bmc_cidr, "dhcp": fleet.network.dhcp},
         "nodes": [n.fields for n in _resolved_nodes(fleet)],
     }
-    if fleet.mode != "vm":
-        payload["mode"] = fleet.mode
-        payload["bmNodes"] = [n.fields for n in _resolved_bm_nodes(fleet)]
+    bm_nodes = [n.fields for n in _resolved_bm_nodes(fleet)]
+    if bm_nodes:
+        payload["bmNodes"] = bm_nodes
     return payload
 
 
@@ -181,7 +184,6 @@ def manifest(fleet: Fleet) -> AppliedManifest:
         digest=fleet_digest(fleet),
         applied_at=time.time(),
         source=str(get_settings().paths.fleet_path),
-        mode=fleet.mode,
         network={"cidr": fleet.network.cidr, "bmc_cidr": fleet.network.bmc_cidr, "dhcp": fleet.network.dhcp},
         nodes=_resolved_nodes(fleet),
         bm_nodes=_resolved_bm_nodes(fleet),
@@ -227,7 +229,6 @@ def read() -> AppliedManifest | None:
             digest=raw.get("digest", ""),
             applied_at=raw.get("appliedAt", 0.0),
             source=raw.get("source", ""),
-            mode=raw.get("mode", "vm"),
             network=raw.get("network", {}),
             nodes=[AppliedNode.from_record(n) for n in raw.get("nodes", [])],
             bm_nodes=[AppliedBmNode.from_record(n) for n in raw.get("bmNodes", [])],
@@ -292,7 +293,7 @@ class FleetDiff(_Envelope):
     desired_digest: str
     applied_digest: str | None = None
     applied_at: float | None = None
-    mode_change: bool = False
+    planes_change: bool = False
     summary: DriftSummary
     nodes: DriftNodes
     network: NetworkDrift
@@ -344,8 +345,8 @@ def _diff_bm(desired: Fleet, applied: AppliedManifest, desired_digest: str) -> F
     in_sync = not (added or removed or changed or net_fields)
     return FleetDiff(
         in_sync=in_sync,
-        # A bare-metal drift is never hot-appliable: fleet.cmd_apply refuses mode != vm (exit 3) and
-        # routes the operator to the lab's fleet-mode-apply op, so surface it as needs-full-rebuild.
+        # A bare-metal drift is never hot-appliable: fleet.cmd_apply defers it (exit 3) to the lab's
+        # Fleet apply, so surface it as needs-full-rebuild.
         severity="in-sync" if in_sync else "needs-full-rebuild",
         desired_digest=desired_digest,
         applied_digest=applied.digest,
@@ -357,27 +358,36 @@ def _diff_bm(desired: Fleet, applied: AppliedManifest, desired_digest: str) -> F
     )
 
 
+def _planes_label(planes: tuple[bool, bool]) -> str:
+    names = [name for name, on in zip(("vm", "baremetal"), planes, strict=True) if on]
+    return "+".join(names) or "none"
+
+
+def _planes_change(desired_digest: str, applied: AppliedManifest | None, note: str) -> FleetDiff:
+    return FleetDiff(
+        in_sync=False,
+        severity="hot-appliable",
+        desired_digest=desired_digest,
+        applied_digest=applied.digest if applied else None,
+        applied_at=applied.applied_at if applied else None,
+        planes_change=True,
+        summary=DriftSummary(),
+        nodes=DriftNodes(),
+        network=NetworkDrift(),
+        note=note,
+    )
+
+
 def diff(desired: Fleet, applied: AppliedManifest | None, host_os: HostOS | None = None) -> FleetDiff:
-    desired_nodes = _resolved_nodes(desired)
-    desired_by_name = {n.name: n for n in desired_nodes}
-    desired_net = {"cidr": desired.network.cidr, "bmc_cidr": desired.network.bmc_cidr, "dhcp": desired.network.dhcp}
     desired_digest = fleet_digest(desired)
+    desired_planes = (desired.has_vm, desired.has_bm)
 
     if applied is None:
-        if desired.mode != "vm":
-            return FleetDiff(
-                in_sync=False,
-                severity="hot-appliable",
-                desired_digest=desired_digest,
-                applied_digest=None,
-                applied_at=None,
-                mode_change=True,
-                summary=DriftSummary(),
-                nodes=DriftNodes(),
-                network=NetworkDrift(),
-                note="no applied manifest — apply the bare-metal mode to bring it up",
+        if desired.has_bm:
+            return _planes_change(
+                desired_digest, None, "no applied manifest — apply the fleet planes to bring the bare-metal plane up"
             )
-        added = [NodeRef(name=n.name, zone=n.zone) for n in desired_nodes]
+        added = [NodeRef(name=n.name, zone=n.zone) for n in _resolved_nodes(desired)]
         return FleetDiff(
             in_sync=not added,
             severity="needs-full-rebuild" if added else "in-sync",
@@ -390,23 +400,52 @@ def diff(desired: Fleet, applied: AppliedManifest | None, host_os: HostOS | None
             note="no applied manifest — bring the fleet up once to enable precise drift",
         )
 
-    if applied.mode != desired.mode:
-        return FleetDiff(
-            in_sync=False,
-            severity="hot-appliable",
-            desired_digest=desired_digest,
-            applied_digest=applied.digest,
-            applied_at=applied.applied_at,
-            mode_change=True,
-            summary=DriftSummary(),
-            nodes=DriftNodes(),
-            network=NetworkDrift(),
-            note=f"mode change {applied.mode!r} → {desired.mode!r} — apply via fleet-mode-apply",
+    applied_planes = planes_of(applied.nodes, applied.bm_nodes)
+    if applied_planes != desired_planes:
+        return _planes_change(
+            desired_digest,
+            applied,
+            f"plane change {_planes_label(applied_planes)} → {_planes_label(desired_planes)}"
+            " — apply via fleet-planes-apply",
         )
 
-    if desired.mode != "vm":
-        return _diff_bm(desired, applied, desired_digest)
+    # a fleet with no plane at all diffs as an empty VM roster
+    parts = [_diff_vm(desired, applied, desired_digest, host_os)] if desired.has_vm or not desired.has_bm else []
+    if desired.has_bm:
+        parts.append(_diff_bm(desired, applied, desired_digest))
+    return parts[0] if len(parts) == 1 else _merge_diffs(parts[0], parts[1])
 
+
+# only the severities the per-plane diffs produce; a plane change short-circuits before the merge
+_MERGE_ORDER = ("in-sync", "hot-appliable", "needs-full-rebuild")
+
+
+def _merge_diffs(vm: FleetDiff, bm: FleetDiff) -> FleetDiff:
+    return FleetDiff(
+        in_sync=vm.in_sync and bm.in_sync,
+        severity=max(vm.severity, bm.severity, key=_MERGE_ORDER.index),
+        desired_digest=vm.desired_digest,
+        applied_digest=vm.applied_digest,
+        applied_at=vm.applied_at,
+        summary=DriftSummary(
+            added=vm.summary.added + bm.summary.added,
+            removed=vm.summary.removed + bm.summary.removed,
+            changed=vm.summary.changed + bm.summary.changed,
+            unchanged=vm.summary.unchanged + bm.summary.unchanged,
+        ),
+        nodes=DriftNodes(
+            added=vm.nodes.added + bm.nodes.added,
+            removed=vm.nodes.removed + bm.nodes.removed,
+            changed=vm.nodes.changed + bm.nodes.changed,
+        ),
+        network=vm.network,
+        note=None,
+    )
+
+
+def _diff_vm(desired: Fleet, applied: AppliedManifest, desired_digest: str, host_os: HostOS | None) -> FleetDiff:
+    desired_by_name = {n.name: n for n in _resolved_nodes(desired)}
+    desired_net = {"cidr": desired.network.cidr, "bmc_cidr": desired.network.bmc_cidr, "dhcp": desired.network.dhcp}
     applied_by_name = applied.node_map()
     added: list[NodeRef] = []
     removed: list[NodeRef] = []
@@ -478,8 +517,8 @@ def diff(desired: Fleet, applied: AppliedManifest | None, host_os: HostOS | None
 
 
 def drift_summary_line(d: FleetDiff) -> str:
-    if d.mode_change:
-        return "⚠ fleet mode change pending — apply via the fleet-mode-apply op"
+    if d.planes_change:
+        return "⚠ fleet plane change pending — apply via the fleet-planes-apply op"
     if d.applied_at is None and not d.in_sync:
         return "fleet: not yet applied — run `task up` to bring it up"
     if d.in_sync:

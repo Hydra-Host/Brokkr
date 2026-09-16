@@ -41,9 +41,9 @@ async function waitForPasswordResetLink(email: string): Promise<string> {
       }
       const body: { Text?: string; HTML?: string } = await detail.json();
       const haystack = `${body.Text ?? ''}\n${body.HTML ?? ''}`;
-      const match = haystack.match(/reset-password\/([A-Za-z0-9_-]+)/);
-      if (match?.[1]) {
-        return match[1];
+      const match = haystack.match(/https?:\/\/[^\s"'<>)\]]+\/auth\/reset-password\/[A-Za-z0-9_-]+[^\s"'<>)\]]*/);
+      if (match?.[0]) {
+        return match[0];
       }
     }
     await new Promise((resolve) => {
@@ -83,8 +83,9 @@ test.describe('Forgot Password', () => {
     await page.getByRole('button', { name: 'Send Reset Link' }).click();
     await expect(page.getByText('Check Your Email')).toBeVisible();
 
-    const token = await waitForPasswordResetLink(email);
-    await page.goto(`/auth/reset-password?token=${token}`);
+    const resetLink = await waitForPasswordResetLink(email);
+    await page.goto(resetLink);
+    await expect(page).toHaveURL(new RegExp(`^${ORIGIN}/auth/reset-password\\?token=[A-Za-z0-9_-]+$`));
     await page.getByLabel('New Password').fill(newPassword);
     await page.getByLabel('Confirm Password').fill(newPassword);
     await page.getByRole('button', { name: 'Reset Password' }).click();

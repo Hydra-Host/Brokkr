@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import {
   AnsiLogPane,
@@ -13,27 +13,73 @@ import {
 import { FleetStatusCard } from '@/components/fleet-status';
 import { PendingBanner } from '@/components/pending-banner';
 import { VmConsole } from '@/components/terminal';
-import { streamPaths, type ExecResult, type Machine, type StackOp, type VerifyFinding } from '@/contract';
+import { Pill } from '@/components/ui/pill';
+import {
+  streamPaths,
+  type ExecResult,
+  type FleetPlanes,
+  type Machine,
+  type NodeKind,
+  type StackOp,
+  type VerifyFinding,
+} from '@/contract';
+import { groupFindingsByNode } from '@/features/config/baremetal-status';
 import { ErrorBanner, errText } from '@/features/datastore/shared/error-banner';
+import { BootTrailLine } from '@/features/fleet/boot-trail-line';
+import { bmcPill, hubPill } from '@/features/fleet/machine-pills';
+import { VERIFY_CARD_ID, VerifyFindingsCard } from '@/features/fleet/verify-findings-card';
 import { ZoneRuntimeSection } from '@/features/runtime';
 import { tsr } from '@/lib/api';
 import { useApplyPending } from '@/lib/apply-run';
 import { deviceQueuesSearch } from '@/lib/datastore-search';
-import { bodyError, errorMessage } from '@/lib/errors';
+import { errorMessage } from '@/lib/errors';
 import { deviceTokensSearch } from '@/lib/hub-search';
 import { reportControl } from '@/lib/report-control';
 import { useToast } from '@/lib/toast';
 import { useApplyConfirm } from '@/lib/use-apply-confirm';
+import { useHostToken } from '@/lib/use-host-token';
 import { awaitFleetRun, useLogStream } from '@/lib/use-log-stream';
 import { OPS_POLL_MS, useOps } from '@/lib/use-ops';
 import { usePoll } from '@/lib/use-poll';
 
-function FleetPage() {
+/** Pure so the spec asserts on strings; one sentence per plane the rosters carry. */
+export const planeCopy = (planes: FleetPlanes): { hardware: string; noMachines: ReactNode } => ({
+  hardware: [
+    planes.vm ? 'The simulated hardware (libvirt VMs + vbmc + sushy).' : null,
+    planes.baremetal ? 'Real machines PXE-booted from this stack (DHCP proxy + BMC power over Redfish).' : null,
+  ]
+    .filter((s) => s !== null)
+    .join(' '),
+  noMachines: planes.baremetal ? (
+    <>
+      no machines yet — a bare-metal machine is listed once it carries a PXE MAC; the simulated fleet is down if VMs are
+      missing. Fix either on{' '}
+      <Link to="/config/fleet" className="text-accent/80 hover:text-accent">
+        Fleet nodes
+      </Link>
+      .
+    </>
+  ) : (
+    'no machines (fleet down?)'
+  ),
+});
+
+// a non-null entry is the reason the action is disabled for that kind
+const ACTIONS_BY_KIND: Record<NodeKind, { console: string | null; exec: string | null }> = {
+  vm: { console: null, exec: null },
+  baremetal: {
+    console: 'console is the libvirt serial log — use the BMC KVM for a real machine',
+    exec: 'exec needs the data IP, which the lab only knows for a VM',
+  },
+};
+
+export function FleetPage() {
   const stream = useLogStream();
   const toast = useToast();
   const { confirmApply } = useApplyConfirm();
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [activeProc, setActiveProc] = useState<string | null>(null);
+  const [verifyOpen, setVerifyOpen] = useState(false);
   const ops = useOps(
     'fleet',
     (_opId, runId) => {
@@ -43,7 +89,11 @@ function FleetPage() {
     },
     (msg) => toast.error(msg),
   );
-  const { apply: applyPending, isPending: applyBusy } = useApplyPending(
+  const {
+    apply: applyPending,
+    isPending: applyBusy,
+    hostTokenDialog: applyHostDialog,
+  } = useApplyPending(
     (runId) => {
       setActiveProc(null);
       setSelectedRun(runId);
@@ -55,6 +105,13 @@ function FleetPage() {
   const machines = tsr.listMachines.useQuery({ queryKey: ['machines'], refetchInterval: usePoll(4000) });
   const stackState = tsr.getStackState.useQuery({ queryKey: ['stack-state'], refetchInterval: usePoll(3000) });
   const verify = tsr.getFleetVerify.useQuery({ queryKey: ['fleet-verify'], refetchInterval: usePoll(30000) });
+  const readiness = tsr.getFleetBootReadiness.useQuery({
+    queryKey: ['fleet-boot-readiness'],
+    queryData: { query: {} },
+    refetchInterval: usePoll(30000),
+  });
+  // same overlay planes the lab projects listMachines/machinesExpected from, so the list and the copy agree
+  const fleetConfig = tsr.getFleetConfig.useQuery({ queryKey: ['fleet-config'] });
   const power = tsr.powerMachine.useMutation();
   const reset = tsr.resetMachine.useMutation();
   const heal = tsr.healFleet.useMutation();
@@ -84,6 +141,9 @@ function FleetPage() {
   const fleetPending = stackBody?.fleetPending;
 
   const fleet = stackBody?.fleet;
+  // before the config resolves the page reads as vm-only, which is what it rendered unconditionally before
+  const planes: FleetPlanes =
+    fleetConfig.data?.status === 200 ? fleetConfig.data.body.planes : { vm: true, baremetal: false };
   const comingUp = fleet?.health === 'coming-up';
   const expectedSlots = fleet ? Array.from({ length: fleet.machinesExpected }, (_v, i) => i) : [];
   const startFleet = () => {
@@ -152,13 +212,7 @@ function FleetPage() {
     power.mutate(
       { body: { name, action } },
       {
-        onSuccess: (res) => {
-          if (res.status !== 200) {
-            toast.error(bodyError(res.body) ?? `power ${action} failed (${res.status})`);
-            return;
-          }
-          streamFleetRun(res.body.runId);
-        },
+        onSuccess: (res) => streamFleetRun(res.body.runId),
         onError: (e) => toast.error(`power ${action} — ${errorMessage(e) ?? 'request failed'}`),
       },
     );
@@ -168,13 +222,7 @@ function FleetPage() {
     reset.mutate(
       { body: { name } },
       {
-        onSuccess: (res) => {
-          if (res.status !== 200) {
-            toast.error(bodyError(res.body) ?? `reset failed (${res.status})`);
-            return;
-          }
-          streamFleetRun(res.body.runId);
-        },
+        onSuccess: (res) => streamFleetRun(res.body.runId),
         onError: (e) => toast.error(`reset — ${errorMessage(e) ?? 'request failed'}`),
       },
     );
@@ -185,13 +233,7 @@ function FleetPage() {
     discover.mutate(
       { body: { name } },
       {
-        onSuccess: (res) => {
-          if (res.status !== 200) {
-            toast.error(bodyError(res.body) ?? `rediscover failed (${res.status})`);
-            return;
-          }
-          streamFleetRun(res.body.runId);
-        },
+        onSuccess: (res) => streamFleetRun(res.body.runId),
         onError: (e) => toast.error(`rediscover — ${errorMessage(e) ?? 'request failed'}`),
       },
     );
@@ -203,10 +245,6 @@ function FleetPage() {
       { body: {} },
       {
         onSuccess: (res) => {
-          if (res.status !== 200) {
-            toast.error(bodyError(res.body) ?? `heal failed (${res.status})`);
-            return;
-          }
           setHealRunning(true);
           streamFleetRun(res.body.runId);
           // decoupled from the log pane: the shared stream can be switched mid-heal, so watch the run's
@@ -222,21 +260,15 @@ function FleetPage() {
   };
 
   const verifyBody = verify.data?.status === 200 ? verify.data.body : undefined;
-  const machineNameSet = new Set(machineList.map((m) => m.name));
-  const findingsByMachine = new Map<string, VerifyFinding[]>();
-  const fleetFindings: VerifyFinding[] = [];
-  for (const f of verifyBody?.findings ?? []) {
-    // node-level findings whose node is a live machine chip on its card; the rest (fleet-level nulls +
-    // orphan domains for machines not in config) collect into the compact card above the list.
-    if (f.node && machineNameSet.has(f.node)) {
-      const arr = findingsByMachine.get(f.node) ?? [];
-      arr.push(f);
-      findingsByMachine.set(f.node, arr);
-    } else {
-      fleetFindings.push(f);
-    }
-  }
-  const anyHealable = (verifyBody?.findings ?? []).some((f) => f.healable);
+  const readinessBody = readiness.data?.status === 200 ? readiness.data.body : undefined;
+  // boot readiness is a second producer of the same finding shape; the card renders one merged list
+  const allFindings = [...(verifyBody?.findings ?? []), ...(readinessBody?.findings ?? [])];
+  const findingsByMachine = groupFindingsByNode(allFindings);
+  const anyHealable = allFindings.some((f) => f.healable);
+  const showFindings = () => {
+    setVerifyOpen(true);
+    document.getElementById(VERIFY_CARD_ID)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  };
 
   const gatedText = (_op: StackOp) => null;
   // fleet-apply can wipe a node disk; the op-list button must go through the same confirm as the banner/Settings.
@@ -254,7 +286,7 @@ function FleetPage() {
   const opListProps = { activeOp: ops.activeOp, disabled: ops.isPending, gatedText, onOpClick: launchOp };
 
   return (
-    <div className="relative grid grid-cols-1 gap-6 lg:h-[calc(100dvh-7rem)] lg:grid-cols-[320px_1fr]">
+    <div className="relative grid grid-cols-1 gap-6 lg:h-full lg:grid-cols-[320px_1fr]">
       {ops.gate && <GateModal gate={ops.gate} />}
       {resetNode && (
         <GateModal
@@ -287,10 +319,11 @@ function FleetPage() {
       )}
       {execNode && <ExecModal key={execNode} node={execNode} exec={exec} onClose={() => setExecNode(null)} />}
       <div className="space-y-4 pr-1 lg:min-h-0 lg:overflow-auto">
+        {ops.hostTokenDialog}
+        {applyHostDialog}
         <SectionHeading>Fleet</SectionHeading>
         <p className="text-text-dim text-[11px]">
-          The simulated hardware (libvirt VMs + vbmc + sushy). Fleet up needs the stack running first (fleet:init seeds
-          against the live hub).
+          {planeCopy(planes).hardware} Fleet up needs the stack running first (fleet:init seeds against the live hub).
         </p>
         {opsFailure && (
           <ErrorBanner>
@@ -308,13 +341,14 @@ function FleetPage() {
           <PendingBanner
             pending={fleetPending}
             busy={applyBusy || !!ops.activeRun}
-            onApply={() => void applyPending(fleetPending.severity === 'mode-change')}
+            onApply={() => void applyPending(fleetPending.severity === 'planes-change')}
           />
         )}
-        {verifyBody?.status === 'findings' && (
+        {allFindings.length > 0 && (
           <VerifyFindingsCard
-            findings={fleetFindings}
-            total={verifyBody.summary.findings}
+            findings={allFindings}
+            open={verifyOpen}
+            onOpenChange={setVerifyOpen}
             anyHealable={anyHealable}
             healing={heal.isPending || healRunning}
             onHeal={onHeal}
@@ -327,6 +361,7 @@ function FleetPage() {
               key={m.name}
               machine={m}
               findings={findingsByMachine.get(m.name)}
+              onShowFindings={showFindings}
               bringup={bringupFor(m)}
               busy={power.isPending || reset.isPending || discover.isPending || exec.isPending || resetNode === m.name}
               onPower={(action) => onPower(m.name, action)}
@@ -355,7 +390,7 @@ function FleetPage() {
               </div>
             ))}
           {machineList.length === 0 && !comingUp && (
-            <div className="text-text-dim text-xs">no machines (fleet down?)</div>
+            <div className="text-text-dim text-xs">{planeCopy(planes).noMachines}</div>
           )}
         </div>
 
@@ -415,54 +450,10 @@ function FleetPage() {
   );
 }
 
-/** Compact verify summary above the machine list: fleet-level + orphan findings, plus a heal button
- *  when any finding (node-level too) is repairable in place. Non-healable ones read as needs-apply. */
-function VerifyFindingsCard({
-  findings,
-  total,
-  anyHealable,
-  healing,
-  onHeal,
-}: {
-  findings: VerifyFinding[];
-  total: number;
-  anyHealable: boolean;
-  healing: boolean;
-  onHeal: () => void;
-}) {
-  return (
-    <div className="border-status-warning/30 bg-status-warning/5 space-y-2 rounded-md border px-3 py-2 text-sm">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-status-warning/90 text-xs font-medium">
-          Fleet verify: {total} finding{total === 1 ? '' : 's'}
-        </span>
-        {anyHealable && (
-          <button
-            onClick={onHeal}
-            disabled={healing}
-            className="border-accent/30 text-accent hover:bg-accent/10 rounded border px-2 py-1 text-[11px] disabled:opacity-50"
-          >
-            {healing ? 'healing…' : 'heal'}
-          </button>
-        )}
-      </div>
-      {findings.length > 0 && (
-        <ul className="space-y-1">
-          {findings.map((f, i) => (
-            <li key={`${f.node ?? 'fleet'}-${f.kind}-${i}`} className="text-text-dim text-[11px]">
-              <span className="text-text-label font-mono">{f.node ?? 'fleet'}</span>: {f.detail}
-              {!f.healable && <span className="text-status-warning/70"> (needs apply)</span>}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 export function MachineCard({
   machine,
   findings,
+  onShowFindings,
   bringup,
   busy,
   onPower,
@@ -473,6 +464,7 @@ export function MachineCard({
 }: {
   machine: Machine;
   findings?: VerifyFinding[];
+  onShowFindings?: () => void;
   bringup?: { state: 'pending' | 'active' | 'done'; label?: string };
   busy: boolean;
   onPower: (action: 'on' | 'off' | 'cycle') => void;
@@ -496,6 +488,7 @@ export function MachineCard({
         : 'bg-status-warning';
   const statusText = bringup ? (bringup.label ?? bringup.state) : machine.power;
   const locked = busy || !!bringup;
+  const gate = ACTIONS_BY_KIND[machine.kind];
   return (
     <div className="border-border-dim rounded-md border px-3 py-2 text-sm">
       <div className="flex items-center justify-between gap-2">
@@ -511,25 +504,43 @@ export function MachineCard({
             </span>
           )}
           {findings && findings.length > 0 && (
-            <span
-              title={findings.map((f) => f.detail).join('; ')}
-              className="border-status-warning/30 text-status-warning/70 rounded border px-1 py-0.5 text-[9px]"
+            <button
+              type="button"
+              onClick={onShowFindings}
+              aria-label={`${findings.length} verify finding${findings.length === 1 ? '' : 's'} for ${machine.name}, show`}
+              className="border-status-warning/30 text-status-warning/70 hover:bg-status-warning/10 rounded border px-1 py-0.5 text-[9px]"
             >
               ⚠ {findings.length}
-            </span>
+            </button>
           )}
         </div>
         <span className="text-text-dim shrink-0 truncate text-[11px]" title={statusText}>
           {statusText}
         </span>
       </div>
+      {machine.kind === 'baremetal' && (
+        <>
+          <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px]">
+            <Pill label="BMC" {...bmcPill(machine.bmc)} />
+            <Pill label="hub" {...hubPill(deviceId)} />
+            {((findings?.length ?? 0) > 0 || machine.bmc?.reachable !== 'ok') && (
+              <Link to="/config/fleet" hash="BAREMETAL" className="text-accent/80 hover:text-accent ml-auto">
+                checklist →
+              </Link>
+            )}
+          </div>
+          <BootTrailLine name={machine.name} />
+        </>
+      )}
       <div className="mt-2 flex gap-1.5 text-[11px]">
         <SvcBtn label="on" disabled={locked || on} onClick={() => onPower('on')} />
         <SvcBtn label="cycle" disabled={locked || !on} onClick={() => onPower('cycle')} />
         <SvcBtn label="off" danger disabled={locked || !on} onClick={() => onPower('off')} />
         <button
           onClick={onConsole}
-          className="border-accent/30 text-accent hover:bg-accent/10 ml-auto rounded border px-2 py-1"
+          disabled={gate.console !== null}
+          title={gate.console ?? undefined}
+          className="border-accent/30 text-accent hover:bg-accent/10 ml-auto rounded border px-2 py-1 disabled:cursor-not-allowed disabled:opacity-50"
         >
           console
         </button>
@@ -539,7 +550,12 @@ export function MachineCard({
             regardless of power, but stays locked while the node is still coming up. */}
         {/* all three resolve the node through the fleet config, so orphan VMs (not in config) 404 */}
         <SvcBtn label="rediscover" disabled={locked || !on || !machine.configured} onClick={onDiscover} />
-        <SvcBtn label="exec" disabled={locked || !on || !machine.configured} onClick={onExec} />
+        <SvcBtn
+          label="exec"
+          disabled={locked || !on || !machine.configured || gate.exec !== null}
+          title={gate.exec ?? undefined}
+          onClick={onExec}
+        />
         <SvcBtn label="reset" danger disabled={locked || !machine.configured} onClick={onReset} />
         {deviceId && (
           <Link
@@ -578,6 +594,7 @@ function ExecModal({
   exec: ReturnType<typeof tsr.execMachine.useMutation>;
 }) {
   const toast = useToast();
+  const hostGate = useHostToken('Running a command on a node');
   const [command, setCommand] = useState('');
   const [user, setUser] = useState('');
   const [timeoutS, setTimeoutS] = useState('');
@@ -588,6 +605,10 @@ function ExecModal({
     if (exec.isPending) return;
     const cmd = command.trim();
     if (!cmd) return;
+    if (hostGate.blocked) {
+      hostGate.ask();
+      return;
+    }
     const parsed = timeoutS.trim() ? Number.parseInt(timeoutS, 10) : undefined;
     exec.mutate(
       {
@@ -597,14 +618,21 @@ function ExecModal({
           user: user.trim() || undefined,
           timeout_s: parsed !== undefined && !Number.isNaN(parsed) ? parsed : undefined,
         },
+        extraHeaders: { 'x-lab-token': hostGate.token },
       },
-      { onError: (e) => toast.error(`exec — ${errorMessage(e) ?? 'request failed'}`) },
+      {
+        onSuccess: (res) => void hostGate.noteRefusal(res.status, res.body),
+        onError: (e) => {
+          if (hostGate.noteThrownRefusal(e)) return;
+          toast.error(`exec — ${errorMessage(e) ?? 'request failed'}`);
+        },
+      },
     );
   };
 
   const data = exec.data;
   const result = data?.status === 200 ? data.body : null;
-  const reqError = data && data.status !== 200 ? (bodyError(data.body) ?? `exec failed (${data.status})`) : null;
+  const reqError = errorMessage(exec.error);
   const inputCls =
     'border-border-dim bg-bg-primary text-text-primary focus:border-accent/50 w-full rounded-md border px-2 py-1.5 text-sm outline-none';
 
@@ -623,6 +651,7 @@ function ExecModal({
           Runs one SSH command with the operator key and blocks until it finishes. Defaults to the root (brokkr-live)
           user; pass ubuntu/debian to reach a deployed OS.
         </p>
+        {hostGate.dialog}
         <input
           autoFocus
           value={command}

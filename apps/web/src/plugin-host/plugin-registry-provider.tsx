@@ -1,6 +1,9 @@
 import { useSession } from '@repo/auth/client';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
+import { useActiveOrganizationId } from '~/hooks/use-active-organization-id';
+
+import type { CorePathMatcher } from './public-routes';
 import { EMPTY_PLUGIN_REGISTRY, loadPluginRegistry, type PluginRegistry } from './registry';
 
 const PluginRegistryContext = createContext<PluginRegistry | null>(null);
@@ -8,20 +11,21 @@ const PluginRegistryContext = createContext<PluginRegistry | null>(null);
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
+  isCorePath: CorePathMatcher;
 }
 
 const EMPTY_REGISTRY = EMPTY_PLUGIN_REGISTRY;
 
-export function PluginRegistryProvider({ children, fallback }: Props) {
+export function PluginRegistryProvider({ children, fallback, isCorePath }: Props) {
   const [loaded, setLoaded] = useState<{ identityKey: string; registry: PluginRegistry } | null>(null);
   const { data: session } = useSession();
+  const activeOrgId = useActiveOrganizationId();
 
-  const activeOrgId = session ? (session.session as { activeOrganizationId?: string }).activeOrganizationId : undefined;
   const identityKey = session ? `${session.user.id}:${activeOrgId ?? ''}` : 'anon';
 
   useEffect(() => {
     let cancelled = false;
-    loadPluginRegistry()
+    loadPluginRegistry(isCorePath)
       .then((registry) => {
         if (!cancelled) setLoaded({ identityKey, registry });
       })
@@ -32,7 +36,7 @@ export function PluginRegistryProvider({ children, fallback }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [identityKey]);
+  }, [identityKey, isCorePath]);
 
   if (loaded === null) {
     return <>{fallback ?? null}</>;

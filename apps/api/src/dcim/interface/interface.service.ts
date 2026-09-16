@@ -6,11 +6,14 @@ import type {
   DcimInterfaceListResponse,
   DeviceInterfaceWithIps,
 } from '@repo/api-client';
+import { NetplanLiveInvalidatorService } from 'src/brokkr-bridge/netplan/netplan-live-invalidator.service';
 import { InterfacePresenter } from './interface.presenter';
 import { CreateInterfaceInput, InterfaceRecord, UpdateInterfaceInput } from './interface.record';
 
 @Injectable()
 export class InterfaceService {
+  constructor(private readonly netplanLive: NetplanLiveInvalidatorService) {}
+
   async list(query: DcimInterfaceListQuery): Promise<DcimInterfaceListResponse> {
     const result = await InterfaceRecord.listPaginated(query);
     return {
@@ -26,16 +29,19 @@ export class InterfaceService {
 
   async create(deviceId: string, input: CreateInterfaceInput): Promise<DcimInterface> {
     const record = await InterfaceRecord.createForDevice(deviceId, input);
+    await this.netplanLive.forDevice(deviceId);
     return InterfacePresenter.toResponse(record);
   }
 
   async update(id: string, input: UpdateInterfaceInput): Promise<DcimInterface> {
     const record = await InterfaceRecord.updateById(id, input);
+    await this.netplanLive.forDevice(record.data.deviceId);
     return InterfacePresenter.toResponse(record);
   }
 
   async delete(id: string) {
-    await InterfaceRecord.deleteById(id);
+    const { deviceId } = await InterfaceRecord.deleteById(id);
+    await this.netplanLive.forDevice(deviceId);
   }
 
   async listForDevice(deviceId: string): Promise<DeviceInterfaceWithIps[]> {
@@ -49,5 +55,6 @@ export class InterfaceService {
       updates: input.updates.map(({ id, ...data }) => ({ id, data })),
       creates: input.creates,
     });
+    await this.netplanLive.forDevice(deviceId);
   }
 }

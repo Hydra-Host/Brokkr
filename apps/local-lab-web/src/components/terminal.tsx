@@ -5,11 +5,11 @@ import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
 
 import { ConsoleControls } from '@/components/console';
-import { streamPaths } from '@/contract';
+import { streamPaths, WS_TOKEN_PROTOCOL } from '@/contract';
 import { tsr } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
-import { withLabToken } from '@/lib/lab-token';
 import { MAX_STREAM_RETRIES, STREAM_STABLE_MS } from '@/lib/reconnect';
+import { useHostToken } from '@/lib/use-host-token';
 import { usePoll } from '@/lib/use-poll';
 
 const TERM_OPTS = {
@@ -41,6 +41,8 @@ function fmtBytes(n: number): string {
 export function Xterm({ path }: { path: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const gate = useHostToken('An interactive console');
+  const { token, blocked, ask } = gate;
 
   const getText = () => {
     const term = termRef.current;
@@ -53,7 +55,7 @@ export function Xterm({ path }: { path: string }) {
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
+    if (!host || blocked) return;
 
     const term = new Terminal({ ...TERM_OPTS, cursorBlink: true });
     termRef.current = term;
@@ -63,15 +65,19 @@ export function Xterm({ path }: { path: string }) {
     fit.fit();
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    // browsers can't set headers on WS, so the lab token rides as a ?token= query param (off-loopback).
-    const url = `${proto}://${location.host}${withLabToken(path)}`;
-    let ws: WebSocket;
+    const url = `${proto}://${location.host}${path}`;
+    // the ws token is a subprotocol, never a query param: the lab refuses ?token= on an upgrade because
+    // it lands in every access log on the way there.
+    const protocols = token ? [WS_TOKEN_PROTOCOL, token] : undefined;
+    let ws: WebSocket | undefined;
     let retries = 0;
     let openedAt = 0; // set in onopen; onclose refreshes the budget only if the socket stayed up
+    let everOpened = false; // a socket refused for want of the capability never opens even once
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let disposed = false; // set on unmount so a pending reconnect never revives the socket
 
-    const sendResize = () => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ r: [term.cols, term.rows] }));
+    const sendResize = () =>
+      ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ r: [term.cols, term.rows] }));
 
     const connect = () => {
       // reset per attempt: a failed reconnect must not read the PREVIOUS session's open time, or a
@@ -79,10 +85,20 @@ export function Xterm({ path }: { path: string }) {
       openedAt = 0;
       // handlers bind to `sock` (this attempt's instance), not the reassignable `ws` — a late event
       // from a superseded socket must never touch the current one's state (same guard as use-log-stream).
-      const sock = new WebSocket(url);
+      let sock: WebSocket;
+      // a token holding a character no subprotocol may carry throws, and an uncaught throw here would
+      // take the page down with it.
+      try {
+        sock = new WebSocket(url, protocols);
+      } catch (error) {
+        term.write(`\r\n\x1b[90m[console unavailable — ${errorMessage(error) ?? 'bad token'}]\x1b[0m\r\n`);
+        ask();
+        return;
+      }
       ws = sock;
       sock.onopen = () => {
         if (ws !== sock) return;
+        everOpened = true;
         openedAt = Date.now();
         fit.fit();
         sendResize();
@@ -101,6 +117,9 @@ export function Xterm({ path }: { path: string }) {
         if (openedAt && Date.now() - openedAt > STREAM_STABLE_MS) retries = 0;
         if (retries >= MAX_STREAM_RETRIES) {
           term.write('\r\n\x1b[90m[console disconnected — reopen to retry]\x1b[0m\r\n');
+          // the lab destroys a refused upgrade, so a budget spent without one open socket is the only
+          // signal the client gets that the token, not the network, was the problem.
+          if (!everOpened) ask();
           return;
         }
         retries += 1;
@@ -111,7 +130,7 @@ export function Xterm({ path }: { path: string }) {
 
     // Guard on the live socket's readyState — `ws` is reassigned across reconnects, so this closure
     // always sends on the current one.
-    const onData = term.onData((data) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ i: data })));
+    const onData = term.onData((data) => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ i: data })));
     // Debounce, and never refit mid-selection — term.resize() clears the selection.
     let roTimer: ReturnType<typeof setTimeout> | undefined;
     const ro = new ResizeObserver(() => {
@@ -134,15 +153,16 @@ export function Xterm({ path }: { path: string }) {
       clearTimeout(roTimer);
       onData.dispose();
       ro.disconnect();
-      ws.close();
+      ws?.close();
       termRef.current = null;
       term.dispose();
     };
-  }, [path]);
+  }, [path, token, blocked, ask]);
 
   return (
     <div className="relative h-full w-full">
       <ConsoleControls getText={getText} />
+      {gate.dialog && <div className="absolute inset-x-0 top-0 z-10 p-2">{gate.dialog}</div>}
       <div ref={hostRef} className="h-full w-full" />
     </div>
   );

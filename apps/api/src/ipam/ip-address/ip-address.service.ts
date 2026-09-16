@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { CreateIpAddressRequest, IpAddress, IpAddressListQuery, UpdateIpAddressRequest } from '@repo/api-client';
 import { DhcpConfigPublisherService } from 'src/brokkr-bridge/dhcp/dhcp-config-publisher.service';
+import { NetplanLiveInvalidatorService } from 'src/brokkr-bridge/netplan/netplan-live-invalidator.service';
 import { ContextService } from 'src/common/context/context.service';
 import { IpAddressEntity } from './ip-address.entity';
 import { IpAddressRepository } from './ip-address.repository';
@@ -11,6 +12,7 @@ export class IpAddressService {
     private readonly ipaddressRepository: IpAddressRepository,
     private readonly contextService: ContextService,
     private readonly dhcpPublisher: DhcpConfigPublisherService,
+    private readonly netplanLive: NetplanLiveInvalidatorService,
   ) {}
 
   async findById(id: string): Promise<IpAddress> {
@@ -34,6 +36,7 @@ export class IpAddressService {
     const created = await this.ipaddressRepository.createWithConflictGuard(entity);
     // A device-interface IP is a DHCP reservation — republish its prefix eagerly.
     await this.dhcpPublisher.republishForIpAddress(created.id);
+    await this.netplanLive.forInterface(created.interfaceId);
     return created;
   }
 
@@ -62,6 +65,8 @@ export class IpAddressService {
         previousVrfId,
       );
     }
+    await this.netplanLive.forInterface(updated.interfaceId);
+    if (before.interfaceId !== updated.interfaceId) await this.netplanLive.forInterface(before.interfaceId);
     return updated;
   }
 
@@ -75,6 +80,7 @@ export class IpAddressService {
     // archiveUnderLock (not a bare save) re-asserts the check in-tx — TOCTOU close vs a concurrent setPrefixVrrpVip.
     const archived = await this.ipaddressRepository.archiveUnderLock(entity, before);
     await this.dhcpPublisher.republishForIpAddress(archived.id);
+    await this.netplanLive.forInterface(archived.interfaceId);
     return archived;
   }
 }

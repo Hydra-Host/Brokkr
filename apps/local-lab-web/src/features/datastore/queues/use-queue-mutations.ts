@@ -1,6 +1,6 @@
 import type { QueueCleanableState } from '@/contract';
 import { tsr } from '@/lib/api';
-import { bodyError, errorMessage } from '@/lib/errors';
+import { errorMessage } from '@/lib/errors';
 import { useToast } from '@/lib/toast';
 
 import type { QueueAddress } from './queue-health';
@@ -40,11 +40,7 @@ export function useQueueMutations(onChanged: () => void) {
     retry.mutate(
       { params: jobParams(target), body: { state } },
       {
-        onSuccess: (res) => {
-          if (res.status !== 200) {
-            toast.error(bodyError(res.body) ?? `retry failed (${res.status})`);
-            return;
-          }
+        onSuccess: () => {
           toast.ok('retried job');
           onChanged();
           after?.();
@@ -58,11 +54,7 @@ export function useQueueMutations(onChanged: () => void) {
     remove.mutate(
       { params: jobParams(target) },
       {
-        onSuccess: (res) => {
-          if (res.status !== 200) {
-            toast.error(bodyError(res.body) ?? `remove failed (${res.status})`);
-            return;
-          }
+        onSuccess: () => {
           toast.ok('removed job');
           onChanged();
           after?.();
@@ -76,11 +68,7 @@ export function useQueueMutations(onChanged: () => void) {
     drain.mutate(
       { params: queueParams(queue), body: { delayed } },
       {
-        onSuccess: (res) => {
-          if (res.status !== 200) {
-            toast.error(bodyError(res.body) ?? `drain failed (${res.status})`);
-            return;
-          }
+        onSuccess: () => {
           toast.ok('drained queue');
           onChanged();
           after?.();
@@ -94,11 +82,7 @@ export function useQueueMutations(onChanged: () => void) {
     clean.mutate(
       { params: queueParams(queue), body },
       {
-        onSuccess: (res) => {
-          if (res.status !== 200) {
-            toast.error(bodyError(res.body) ?? `clean failed (${res.status})`);
-            return;
-          }
+        onSuccess: () => {
           toast.ok(`cleaned ${body.state} jobs`);
           onChanged();
           after?.();

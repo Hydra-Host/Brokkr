@@ -42,6 +42,13 @@ describe('GhwPciHandler', () => {
     const mutation = await handler.handle(parsed);
     expect(mutation.upserts?.pciDevices).toHaveLength(1);
     expect(mutation.warnings?.[0]).toMatch(/2\/3 devices skipped/);
+    expect(mutation.pciDevicesPartial).toBe(true);
+  });
+
+  it('reports a complete bus when every row parsed, so stale rows stay prunable', async () => {
+    const parsed = handler.schema.parse(fixture('happy'));
+    const mutation = await handler.handle(parsed);
+    expect(mutation.pciDevicesPartial).toBe(false);
   });
 
   it('returns undefined upserts when Devices is empty', async () => {

@@ -80,26 +80,75 @@ ON CONFLICT (id) DO UPDATE SET
     "enabledBy" = EXCLUDED."enabledBy", "disabledAt" = EXCLUDED."disabledAt",
     "disabledBy" = EXCLUDED."disabledBy", "updatedAt" = NOW();
 -- role=Bridge device (+ 1:1 Bridge row) for the zone-detail "Bridges" card.
--- organizationId is the org-ownership FK the admin Bridges view joins on
--- (Device.organization) and MUST equal zone.organizationId — without it the
--- bridge reads back with a null zone/org and looks disconnected from the zone.
+-- supplierId is the owner FK and MUST equal zone.organizationId.
 WITH up AS (
     INSERT INTO "Device" (
         id, name, status, role, "deviceType",
-        "zoneId", "supplierId", "organizationId", "updatedAt"
+        "zoneId", "supplierId", "updatedAt"
     ) VALUES (
         '00000000-0000-0000-0000-000000008000', 'sim-bridge', 'PLANNED'::"DeviceStatus",
         'Bridge'::"DeviceRole", 'Baremetal'::"DeviceType",
-        '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-000000000000', NOW()
+        '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000', NOW()
     )
     ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name, role = EXCLUDED.role, "zoneId" = EXCLUDED."zoneId",
-        "supplierId" = EXCLUDED."supplierId", "organizationId" = EXCLUDED."organizationId", "updatedAt" = NOW()
+        "supplierId" = EXCLUDED."supplierId", "updatedAt" = NOW()
     RETURNING id
 )
 INSERT INTO "Bridge" (id, "deviceId", "createdAt", "updatedAt")
 SELECT gen_random_uuid(), id, NOW(), NOW() FROM up
 ON CONFLICT ("deviceId") DO NOTHING;
+INSERT INTO "Interface"
+    (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
+VALUES (gen_random_uuid(), 'eth0', 'ETHERNET_1G'::"InterfaceType", true,
+    '52:54:00:b0:00:00', false, '00000000-0000-0000-0000-000000008000', 'Primary data NIC', NOW())
+ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
+    type = EXCLUDED.type, "macAddress" = EXCLUDED."macAddress",
+    "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();
+INSERT INTO "Interface"
+    (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
+VALUES (gen_random_uuid(), 'IPMI', 'IPMI_BMC'::"InterfaceType", true,
+    '52:54:00:b1:00:00', true, '00000000-0000-0000-0000-000000008000', 'BMC management interface', NOW())
+ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
+    type = EXCLUDED.type, "macAddress" = EXCLUDED."macAddress",
+    "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();
+INSERT INTO "Interface"
+    (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
+VALUES (gen_random_uuid(), 'vip0', 'VIRTUAL'::"InterfaceType", true,
+    '52:54:00:b2:00:00', false, '00000000-0000-0000-0000-000000008000', 'VRRP virtual IP', NOW())
+ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
+    type = EXCLUDED.type, "macAddress" = EXCLUDED."macAddress",
+    "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();
+DELETE FROM "IpAddress" WHERE "interfaceId" IN
+    (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008000' AND name = 'eth0' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.200.2/24'::inet AND "organizationId" = '00000000-0000-0000-0000-000000000000'
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
+INSERT INTO "IpAddress"
+    (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
+SELECT gen_random_uuid(), '192.168.200.2/24'::inet, 'ACTIVE'::"IpStatus", '00000000-0000-0000-0000-000000000000',
+    id, 'Interface'::"AssignedObjectType", id, NOW()
+FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008000' AND name = 'eth0' AND "deletedAt" IS NULL;
+DELETE FROM "IpAddress" WHERE "interfaceId" IN
+    (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008000' AND name = 'IPMI' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.105.2/24'::inet AND "organizationId" = '00000000-0000-0000-0000-000000000000'
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
+INSERT INTO "IpAddress"
+    (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
+SELECT gen_random_uuid(), '192.168.105.2/24'::inet, 'ACTIVE'::"IpStatus", '00000000-0000-0000-0000-000000000000',
+    id, 'Interface'::"AssignedObjectType", id, NOW()
+FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008000' AND name = 'IPMI' AND "deletedAt" IS NULL;
+DELETE FROM "IpAddress" WHERE "interfaceId" IN
+    (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008000' AND name = 'vip0' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.200.3/24'::inet AND "organizationId" = '00000000-0000-0000-0000-000000000000'
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
+INSERT INTO "IpAddress"
+    (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
+SELECT gen_random_uuid(), '192.168.200.3/24'::inet, 'ACTIVE'::"IpStatus", '00000000-0000-0000-0000-000000000000',
+    id, 'Interface'::"AssignedObjectType", id, NOW()
+FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008000' AND name = 'vip0' AND "deletedAt" IS NULL;
 -- sim zone 00000000-0000-0000-0000-111111111112 (den-1) → org=00000000-0000-0000-0000-000000000000
 INSERT INTO "Zone" (id, name, "uuidSuffix", "organizationId", "updatedAt")
 VALUES ('00000000-0000-0000-0000-111111111112', 'den-1', '11112', '00000000-0000-0000-0000-000000000000', NOW())
@@ -177,47 +226,145 @@ ON CONFLICT (id) DO UPDATE SET
     "enabledBy" = EXCLUDED."enabledBy", "disabledAt" = EXCLUDED."disabledAt",
     "disabledBy" = EXCLUDED."disabledBy", "updatedAt" = NOW();
 -- role=Bridge device (+ 1:1 Bridge row) for the zone-detail "Bridges" card.
--- organizationId is the org-ownership FK the admin Bridges view joins on
--- (Device.organization) and MUST equal zone.organizationId — without it the
--- bridge reads back with a null zone/org and looks disconnected from the zone.
+-- supplierId is the owner FK and MUST equal zone.organizationId.
 WITH up AS (
     INSERT INTO "Device" (
         id, name, status, role, "deviceType",
-        "zoneId", "supplierId", "organizationId", "updatedAt"
+        "zoneId", "supplierId", "updatedAt"
     ) VALUES (
         '00000000-0000-0000-0000-000000008001', 'sim-bridge-den-1', 'PLANNED'::"DeviceStatus",
         'Bridge'::"DeviceRole", 'Baremetal'::"DeviceType",
-        '00000000-0000-0000-0000-111111111112', '00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-000000000000', NOW()
+        '00000000-0000-0000-0000-111111111112', '00000000-0000-0000-0000-000000000000', NOW()
     )
     ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name, role = EXCLUDED.role, "zoneId" = EXCLUDED."zoneId",
-        "supplierId" = EXCLUDED."supplierId", "organizationId" = EXCLUDED."organizationId", "updatedAt" = NOW()
+        "supplierId" = EXCLUDED."supplierId", "updatedAt" = NOW()
     RETURNING id
 )
 INSERT INTO "Bridge" (id, "deviceId", "createdAt", "updatedAt")
 SELECT gen_random_uuid(), id, NOW(), NOW() FROM up
 ON CONFLICT ("deviceId") DO NOTHING;
+INSERT INTO "Interface"
+    (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
+VALUES (gen_random_uuid(), 'eth0', 'ETHERNET_1G'::"InterfaceType", true,
+    '52:54:00:b0:00:01', false, '00000000-0000-0000-0000-000000008001', 'Primary data NIC', NOW())
+ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
+    type = EXCLUDED.type, "macAddress" = EXCLUDED."macAddress",
+    "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();
+INSERT INTO "Interface"
+    (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
+VALUES (gen_random_uuid(), 'IPMI', 'IPMI_BMC'::"InterfaceType", true,
+    '52:54:00:b1:00:01', true, '00000000-0000-0000-0000-000000008001', 'BMC management interface', NOW())
+ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
+    type = EXCLUDED.type, "macAddress" = EXCLUDED."macAddress",
+    "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();
+INSERT INTO "Interface"
+    (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
+VALUES (gen_random_uuid(), 'vip0', 'VIRTUAL'::"InterfaceType", true,
+    '52:54:00:b2:00:01', false, '00000000-0000-0000-0000-000000008001', 'VRRP virtual IP', NOW())
+ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
+    type = EXCLUDED.type, "macAddress" = EXCLUDED."macAddress",
+    "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();
+DELETE FROM "IpAddress" WHERE "interfaceId" IN
+    (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008001' AND name = 'eth0' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.200.4/24'::inet AND "organizationId" = '00000000-0000-0000-0000-000000000000'
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
+INSERT INTO "IpAddress"
+    (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
+SELECT gen_random_uuid(), '192.168.200.4/24'::inet, 'ACTIVE'::"IpStatus", '00000000-0000-0000-0000-000000000000',
+    id, 'Interface'::"AssignedObjectType", id, NOW()
+FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008001' AND name = 'eth0' AND "deletedAt" IS NULL;
+DELETE FROM "IpAddress" WHERE "interfaceId" IN
+    (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008001' AND name = 'IPMI' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.105.3/24'::inet AND "organizationId" = '00000000-0000-0000-0000-000000000000'
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
+INSERT INTO "IpAddress"
+    (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
+SELECT gen_random_uuid(), '192.168.105.3/24'::inet, 'ACTIVE'::"IpStatus", '00000000-0000-0000-0000-000000000000',
+    id, 'Interface'::"AssignedObjectType", id, NOW()
+FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008001' AND name = 'IPMI' AND "deletedAt" IS NULL;
+DELETE FROM "IpAddress" WHERE "interfaceId" IN
+    (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008001' AND name = 'vip0' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.200.5/24'::inet AND "organizationId" = '00000000-0000-0000-0000-000000000000'
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
+INSERT INTO "IpAddress"
+    (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
+SELECT gen_random_uuid(), '192.168.200.5/24'::inet, 'ACTIVE'::"IpStatus", '00000000-0000-0000-0000-000000000000',
+    id, 'Interface'::"AssignedObjectType", id, NOW()
+FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008001' AND name = 'vip0' AND "deletedAt" IS NULL;
 -- role=Bridge device (+ 1:1 Bridge row) for the zone-detail "Bridges" card.
--- organizationId is the org-ownership FK the admin Bridges view joins on
--- (Device.organization) and MUST equal zone.organizationId — without it the
--- bridge reads back with a null zone/org and looks disconnected from the zone.
+-- supplierId is the owner FK and MUST equal zone.organizationId.
 WITH up AS (
     INSERT INTO "Device" (
         id, name, status, role, "deviceType",
-        "zoneId", "supplierId", "organizationId", "updatedAt"
+        "zoneId", "supplierId", "updatedAt"
     ) VALUES (
         '00000000-0000-0000-0000-000000008002', 'sim-bridge-den-1-1', 'PLANNED'::"DeviceStatus",
         'Bridge'::"DeviceRole", 'Baremetal'::"DeviceType",
-        '00000000-0000-0000-0000-111111111112', '00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-000000000000', NOW()
+        '00000000-0000-0000-0000-111111111112', '00000000-0000-0000-0000-000000000000', NOW()
     )
     ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name, role = EXCLUDED.role, "zoneId" = EXCLUDED."zoneId",
-        "supplierId" = EXCLUDED."supplierId", "organizationId" = EXCLUDED."organizationId", "updatedAt" = NOW()
+        "supplierId" = EXCLUDED."supplierId", "updatedAt" = NOW()
     RETURNING id
 )
 INSERT INTO "Bridge" (id, "deviceId", "createdAt", "updatedAt")
 SELECT gen_random_uuid(), id, NOW(), NOW() FROM up
 ON CONFLICT ("deviceId") DO NOTHING;
+INSERT INTO "Interface"
+    (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
+VALUES (gen_random_uuid(), 'eth0', 'ETHERNET_1G'::"InterfaceType", true,
+    '52:54:00:b0:00:02', false, '00000000-0000-0000-0000-000000008002', 'Primary data NIC', NOW())
+ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
+    type = EXCLUDED.type, "macAddress" = EXCLUDED."macAddress",
+    "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();
+INSERT INTO "Interface"
+    (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
+VALUES (gen_random_uuid(), 'IPMI', 'IPMI_BMC'::"InterfaceType", true,
+    '52:54:00:b1:00:02', true, '00000000-0000-0000-0000-000000008002', 'BMC management interface', NOW())
+ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
+    type = EXCLUDED.type, "macAddress" = EXCLUDED."macAddress",
+    "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();
+INSERT INTO "Interface"
+    (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
+VALUES (gen_random_uuid(), 'vip0', 'VIRTUAL'::"InterfaceType", true,
+    '52:54:00:b2:00:02', false, '00000000-0000-0000-0000-000000008002', 'VRRP virtual IP', NOW())
+ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
+    type = EXCLUDED.type, "macAddress" = EXCLUDED."macAddress",
+    "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();
+DELETE FROM "IpAddress" WHERE "interfaceId" IN
+    (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008002' AND name = 'eth0' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.200.6/24'::inet AND "organizationId" = '00000000-0000-0000-0000-000000000000'
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
+INSERT INTO "IpAddress"
+    (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
+SELECT gen_random_uuid(), '192.168.200.6/24'::inet, 'ACTIVE'::"IpStatus", '00000000-0000-0000-0000-000000000000',
+    id, 'Interface'::"AssignedObjectType", id, NOW()
+FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008002' AND name = 'eth0' AND "deletedAt" IS NULL;
+DELETE FROM "IpAddress" WHERE "interfaceId" IN
+    (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008002' AND name = 'IPMI' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.105.4/24'::inet AND "organizationId" = '00000000-0000-0000-0000-000000000000'
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
+INSERT INTO "IpAddress"
+    (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
+SELECT gen_random_uuid(), '192.168.105.4/24'::inet, 'ACTIVE'::"IpStatus", '00000000-0000-0000-0000-000000000000',
+    id, 'Interface'::"AssignedObjectType", id, NOW()
+FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008002' AND name = 'IPMI' AND "deletedAt" IS NULL;
+DELETE FROM "IpAddress" WHERE "interfaceId" IN
+    (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008002' AND name = 'vip0' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.200.7/24'::inet AND "organizationId" = '00000000-0000-0000-0000-000000000000'
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
+INSERT INTO "IpAddress"
+    (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
+SELECT gen_random_uuid(), '192.168.200.7/24'::inet, 'ACTIVE'::"IpStatus", '00000000-0000-0000-0000-000000000000',
+    id, 'Interface'::"AssignedObjectType", id, NOW()
+FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008002' AND name = 'vip0' AND "deletedAt" IS NULL;
 -- admin ops fixture: zone permanently in maintenance (no bridges / fleet nodes)
 -- sim zone 0dab6ea4-66ab-5c75-85d4-a2dbb8c37ab1 (sim-zone-maintenance) → org=00000000-0000-0000-0000-000000000000
 INSERT INTO "Zone" (id, name, "uuidSuffix", "organizationId", "updatedAt")

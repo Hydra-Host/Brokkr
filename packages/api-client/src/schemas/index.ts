@@ -138,6 +138,13 @@ export {
 } from './inventory';
 
 export {
+  LifecycleJobKindSchema,
+  LifecycleJobPhaseSchema,
+  LifecycleJobSummarySchema,
+  type LifecycleJobSummary,
+} from './jobs';
+
+export {
   CreateInvitationRequestSchema,
   CreateOrganizationRequestSchema,
   InvitationIdParamsSchema,
@@ -193,11 +200,13 @@ export {
   ExportLogsJobTypeSchema,
   GetLogsRequestSchema,
   InterruptibleClaimSchema,
+  InterruptibleClaimStatusSchema,
   PowerControlDeploymentRequestSchema,
   PowerCycleDeploymentRequestSchema,
   RebootDeploymentRequestSchema,
   ReprovisionDeploymentRequestSchema,
   ReprovisionDiskLayoutSchema,
+  RescueModeActionResponseSchema,
   SolLogEntrySchema,
   SolLogsResponseSchema,
   UpdateDeploymentRequestSchema,
@@ -206,11 +215,13 @@ export {
   type ExportLogsJobType,
   type GetLogsRequest,
   type InterruptibleClaim,
+  type InterruptibleClaimStatus,
   type PowerControlDeploymentRequest,
   type PowerCycleDeploymentRequest,
   type RebootDeploymentRequest,
   type ReprovisionDeploymentRequest,
   type ReprovisionDiskLayout,
+  type RescueModeActionResponse,
   type SolLogEntry,
   type SolLogsResponse,
   type UpdateDeploymentRequest,
@@ -226,6 +237,19 @@ export {
   type MoveDeploymentsToProjectRequest,
   type UpdateDeploymentProjectRequest,
 } from './deployments-projects';
+
+export {
+  DeviceJobSchema,
+  DeviceJobsResponseSchema,
+  JobLogEntrySchema,
+  JobLogsQuerySchema,
+  JobLogsResponseSchema,
+  type DeviceJob,
+  type DeviceJobsResponse,
+  type JobLogEntry,
+  type JobLogsQuery,
+  type JobLogsResponse,
+} from './job-logs';
 
 export {
   BillingFrequencySchema,
@@ -393,6 +417,20 @@ export {
   type DcimDeviceTestRunsListResponse,
   type DcimDeviceTestRunsQuery,
 } from './dcim-test-runs';
+
+export {
+  DiscoveryIssuePhaseSchema,
+  DiscoveryIssueSeveritySchema,
+  DiscoveryRunIssueSchema,
+  DiscoveryRunSchema,
+  DiscoveryRunStatusSchema,
+  DiscoveryRunsListResponseSchema,
+  DiscoveryRunsQuerySchema,
+  type DiscoveryRun,
+  type DiscoveryRunIssue,
+  type DiscoveryRunsListResponse,
+  type DiscoveryRunsQuery,
+} from './discovery-runs';
 
 export { FilterFieldType, FilterOperator, OPERATORS_BY_TYPE, OPERATOR_LABELS } from './filters';
 

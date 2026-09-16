@@ -4,6 +4,7 @@ import { DhcpConfigRedisWriterService } from 'src/brokkr-bridge/dhcp/dhcp-config
 import { DhcpDerivationService } from 'src/brokkr-bridge/dhcp/dhcp-derivation.service';
 import { DhcpLeaseReaderService } from 'src/brokkr-bridge/dhcp/dhcp-lease-reader.service';
 import { DnsConfigPublisherService } from 'src/brokkr-bridge/dns/dns-config-publisher.service';
+import { NetplanLiveInvalidatorService } from 'src/brokkr-bridge/netplan/netplan-live-invalidator.service';
 import { VrrpRedisWriterService } from 'src/brokkr-bridge/vrrp/vrrp-redis-writer.service';
 import { DesignationOperatorPolicy } from 'src/common/authz/operator-policy';
 import { ContextService } from 'src/common/context/context.service';
@@ -24,8 +25,8 @@ import { VrfService } from '../vrf/vrf.service';
 describe('IPAM module service delegation coverage', () => {
   class TestContextService extends ContextService {
     override requirePermission(): undefined {
-    return undefined;
-  }
+      return undefined;
+    }
     override get organizationId(): string {
       return '11111111-1111-1111-1111-111111111111';
     }
@@ -91,6 +92,7 @@ describe('IPAM module service delegation coverage', () => {
           provide: `LoggerService${PrefixService.name}`,
           useValue: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
         },
+        { provide: NetplanLiveInvalidatorService, useValue: { forInterface: vi.fn() } },
       ],
     }).compile();
 

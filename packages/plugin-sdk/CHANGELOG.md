@@ -17,6 +17,10 @@ in a minor.
   open, so its document state is preserved across clicks. Backward compatible:
   existing contributions omit it and behave exactly as before.
 
+### Changed
+
+- Invalid or colliding public frontend routes now disable only the affected plugins; unaffected plugins continue loading.
+
 ## 0.1.0
 
 - Initial plugin SDK: `definePlugin` / `defineFrontendPlugin`, plugin manifests,

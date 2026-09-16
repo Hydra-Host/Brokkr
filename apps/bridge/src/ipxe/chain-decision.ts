@@ -1,5 +1,6 @@
 import type { DeviceRecord } from '../device-record/device-record.schema';
 import { isPlaceholder } from '../device-record/device-record.schema';
+import type { DiscoveryFlavor } from '../download/discovery.config';
 
 import { sanitizeChainJobId } from './chain.helpers';
 import { NIL_DEVICE_ID, RESCUE_OS_SLUG, type RendererCall, type RenderForRecordContext } from './chain.types';
@@ -27,6 +28,18 @@ export function isSafeIpxeUrl(url: string): boolean {
 }
 
 export const MAX_KNOWN_RECORD_MISSING_RETRIES = 5;
+
+export const DISCOVERY_LIGHT_TAG = 'discovery-light';
+
+// a lone configured flavor is the only synced tree, so it boots every device regardless of tags;
+// with both, an operator tags a device discovery-light to pick the light image over the full one
+export function flavorForDevice(
+  platformTags: readonly string[] | null | undefined,
+  configured: readonly DiscoveryFlavor[],
+): DiscoveryFlavor {
+  if (configured.length === 1) return configured[0];
+  return platformTags?.includes(DISCOVERY_LIGHT_TAG) ? 'light' : 'full';
+}
 
 export async function renderForRecord(ctx: RenderForRecordContext): Promise<string> {
   const { record, request, renderer } = ctx;
@@ -81,6 +94,7 @@ function renderUnknownDiscovery(ctx: RenderForRecordContext, arch: string): Prom
     job_id: jobId,
     kernel_network: [] as string[],
     pci_realloc_off: false,
+    flavor: flavorForDevice(null, ctx.discoveryFlavors),
     mac: perMacBuildable ? request.mac_address : undefined,
     is_placeholder_device: perMacBuildable,
   };
@@ -151,6 +165,7 @@ async function generateScriptByStatus(
   const effectiveJobId = sanitizeChainJobId(jobId || (record.last_job_id ?? ''));
   const discoverySlugs = new Set<string>([discoveryPlatformSlug, RESCUE_OS_SLUG]);
   const platformType = platformTypeFromTags(record.platform_tags);
+  const flavor = flavorForDevice(record.platform_tags, ctx.discoveryFlavors);
   const pciReallocOff = needsPciReallocOff(record.device_type);
 
   const dispatchDiscovery = async (): Promise<string> => {
@@ -165,6 +180,7 @@ async function generateScriptByStatus(
       job_id: effectiveJobId,
       kernel_network: kernelNetwork,
       pci_realloc_off: pciReallocOff,
+      flavor,
       mac: request.mac_address,
       is_placeholder_device: placeholder,
     };

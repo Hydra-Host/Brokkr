@@ -23,6 +23,8 @@ export const maskBmcPassword = (password: string | undefined): string => (passwo
 const ChainStampSchema = z.object({ chain_base_url: z.string().optional() }).passthrough();
 
 const ipxeBuildsDir = (): string => process.env.LOCAL_IPXE_BUILDS_DIR ?? '/opt/brokkr/ipxe-builds';
+// pins what local.ipxe_build writes a directory for, not what a node may declare (BareMetalArchSchema)
+const IPXE_ARCHES = ['amd64', 'arm64'];
 
 import {
   ApplyPlanSchema,
@@ -30,9 +32,10 @@ import {
   FleetPendingSchema,
   ipAtOffset,
   ipInCidr,
-  ipToInt,
+  ipv4ToInt,
   isIpv4,
   networkBase,
+  NetworkTypeSchema,
   NODE_IP_BASE,
   parseCidr,
   type ApplyPlan,
@@ -41,7 +44,6 @@ import {
   type BareMetalNode,
   type FleetConfig,
   type FleetDefaults,
-  type FleetMode,
   type FleetNetwork,
   type FleetNodeEffective,
   type FleetPending,
@@ -50,10 +52,11 @@ import {
 } from '@repo/local-lab-contract';
 import { isRecord } from '@repo/utils';
 import { ccBuildInfo } from '../common/build-info';
+import { ipxeChainBaseUrl } from '../common/ipxe-chain-url';
 import { isIpv4Family } from '../common/net';
 import type { FleetNode, HostInfo, PciDevice } from '../contract';
 import { RunnerService } from '../runner/runner.service';
-import { readAppliedMode } from '../services/applied-manifest';
+import { planesEqual, readAppliedPlanes } from '../services/applied-manifest';
 import { OverlayStoreService } from '../services/overlay-store';
 import { RenderedConfigService } from '../services/rendered-config.service';
 import type { EffectiveDefaults, EffectiveNetwork, EffectiveNode } from './effective-fleet';
@@ -104,7 +107,9 @@ const zodSummary = (err: z.ZodError): string =>
 type BmcCred = { user: string; pass: string };
 type BmcCredFile = Record<string, BmcCred>;
 
-const NON_UPLINK_NIC_RE = /^(lo|br-brokkr|virbr|docker|veth|tun|tap|tailscale|utun)/;
+/** Deliberately not the bridge's NON_CLIENT_FACING_PREFIXES: that filters a spoke in a rack
+ *  (cni, flannel, ipmi), this filters a dev host (virbr, tap, tailscale, utun, wg). */
+const NON_UPLINK_NIC_RE = /^(lo|br-brokkr|virbr|docker|veth|tun|tap|tailscale|utun|wt|wg)/;
 
 /** Mirrors apps/local-sim schema.py Defaults — what the engine applies when neither the node nor the
  *  fleet declares a value. */
@@ -171,10 +176,6 @@ export class FleetTopologyService {
     return this.activeFleet().nodes.map((n) => n.name);
   }
 
-  baremetalNodes(): { name: string; pxeMac: string }[] {
-    return this.baremetalView().nodes.map((n) => ({ name: n.name, pxeMac: n.pxe_mac }));
-  }
-
   hostFacts(): Omit<HostInfo, 'ccBuild'> {
     const os = platform();
     const arch = osArch() === 'x64' ? 'amd64' : osArch() === 'arm64' ? 'arm64' : osArch();
@@ -182,34 +183,11 @@ export class FleetTopologyService {
       os,
       arch,
       passthroughSupported: os === 'linux' && arch === 'amd64',
-      lanIp: this.lanIp(),
     };
   }
 
   async hostInfo(): Promise<HostInfo> {
     return { ...this.hostFacts(), ccBuild: await ccBuildInfo() };
-  }
-
-  private lanIp(): string {
-    const { network } = this.activeFleet();
-    const cand: string[] = [];
-    for (const addrs of Object.values(networkInterfaces())) {
-      for (const a of addrs ?? []) {
-        if (a.family !== 'IPv4' || a.internal) continue;
-        const ip = a.address;
-        if (
-          (network.cidr && ipInCidr(ip, network.cidr)) ||
-          (network.bmc_cidr && ipInCidr(ip, network.bmc_cidr)) ||
-          ip.startsWith('192.168.122.') ||
-          ip.startsWith('172.')
-        )
-          continue;
-        cand.push(ip);
-      }
-    }
-    return (
-      cand.find((ip) => ip.startsWith('192.168.')) ?? cand.find((ip) => ip.startsWith('10.')) ?? cand[0] ?? '127.0.0.1'
-    );
   }
 
   pciDevices(): Promise<PciDevice[]> {
@@ -296,7 +274,7 @@ export class FleetTopologyService {
     const dbmc = d.bmc;
     return {
       source: this.overlay.fleetCustomized() ? 'local' : 'default',
-      mode: this.overlay.fleetMode(),
+      planes: this.overlay.planes(),
       baremetal: this.baremetalView(),
       bakedChainUrl: this.bakedChainUrl(),
       nodes,
@@ -365,19 +343,22 @@ export class FleetTopologyService {
       .map(([name, spec]) => {
         const s: Record<string, unknown> = spec;
         const nodeArch = s.arch === 'amd64' || s.arch === 'arm64' ? s.arch : null;
+        const netType = NetworkTypeSchema.safeParse(s.network_type).data ?? null;
         return {
           name,
           bmc_ip: typeof s.bmc_ip === 'string' ? s.bmc_ip : '',
           bmc_mac: typeof s.bmc_mac === 'string' ? s.bmc_mac : '',
           pxe_mac: typeof s.pxe_mac === 'string' ? s.pxe_mac : '',
           arch: nodeArch,
+          zone: typeof s.zone === 'string' && s.zone ? s.zone : null,
           system_id: typeof s.system_id === 'string' && s.system_id ? s.system_id : null,
+          network_type: netType,
         };
       });
     return { nics: bm?.nics ?? [], arch, nodes };
   }
 
-  private bakedChainUrl(): string | null {
+  bakedChainUrl(): string | null {
     try {
       const raw: unknown = JSON.parse(readFileSync(join(ipxeBuildsDir(), '.chain-stamp.json'), 'utf8'));
       const stamp = ChainStampSchema.parse(raw);
@@ -385,6 +366,14 @@ export class FleetTopologyService {
     } catch {
       return null;
     }
+  }
+
+  // a stamp without every arch binary (or binaries without the stamp) is a half-finished bake
+  isIpxeBakedFor(chainBase: string): boolean {
+    return (
+      IPXE_ARCHES.every((arch) => existsSync(join(ipxeBuildsDir(), arch, 'snponly.efi'))) &&
+      this.bakedChainUrl() === chainBase
+    );
   }
 
   /** 2s TTL so the Stack + Fleet 3s polls don't double-spawn python. `diff` exits 2 on drift —
@@ -397,9 +386,10 @@ export class FleetTopologyService {
     const source = await this.rendered.renderDesiredFleetYaml();
     if (!source) return this.degradedPending('fleet config refresh failed — see engine logs');
     const args = ['-m', 'local.fleet', 'diff', '--source', source];
-    const withModeChange = (val: FleetPending): FleetPending =>
-      this.modeChangePending() ? { ...val, inSync: false, severity: 'mode-change' } : val;
-    const parse = (stdout: string): FleetPending => withModeChange(FleetPendingSchema.parse(JSON.parse(stdout)));
+    const withPlanesChange = (val: FleetPending): FleetPending =>
+      this.planesChangePending() ? { ...val, inSync: false, severity: 'planes-change' } : val;
+    const parse = (stdout: string): FleetPending =>
+      this.withStaleBake(withPlanesChange(FleetPendingSchema.parse(JSON.parse(stdout))));
     const cache = (val: FleetPending): FleetPending => {
       if (this.pendingGen === gen) this.pendingCache = { at: Date.now(), val };
       return val;
@@ -423,12 +413,32 @@ export class FleetTopologyService {
     }
   }
 
-  private appliedMode(): FleetMode {
-    return readAppliedMode();
+  planesChangePending(): boolean {
+    return !planesEqual(this.overlay.planes(), readAppliedPlanes());
   }
 
-  modeChangePending(): boolean {
-    return this.overlay.fleetMode() !== this.appliedMode();
+  /** Null while the bare-metal plane is off, where nothing serves these binaries. */
+  private servedChainUrl(): string | null {
+    const uplink = this.overlay.bmUplink();
+    return uplink ? ipxeChainBaseUrl(uplink) : null;
+  }
+
+  /** The engine digest covers topology only; the iPXE bake is a separate artifact, so a matching
+   *  topology can still leave machines unable to chain here. */
+  private withStaleBake(val: FleetPending): FleetPending {
+    // a pending flip re-bakes on its way through, so it already covers a stale stamp
+    if (val.severity === 'planes-change') return val;
+    const served = this.servedChainUrl();
+    if (!served) return val;
+    const baked = this.bakedChainUrl();
+    if (baked === served) return val;
+    const note = baked
+      ? `the iPXE bake names ${baked}, but this stack serves ${served} — re-bake via Build → iPXE`
+      : `no iPXE bake yet — the boot binaries carry no chain URL; bake ${served} via Build → iPXE`;
+    // pending topology work keeps its own severity: relabelling it would drop the row's destructive
+    // flag and send a full rebuild at the re-bake op
+    if (val.severity !== 'in-sync') return { ...val, inSync: false, note: val.note ? `${val.note} · ${note}` : note };
+    return { ...val, inSync: false, severity: 'stale-bake', note };
   }
 
   private degradedPending(note: string): FleetPending {
@@ -489,7 +499,7 @@ export class FleetTopologyService {
     const source = await this.rendered.renderDesiredFleetYaml();
     if (!source)
       throw new ServiceUnavailableException('could not refresh the fleet config, so a draft cannot be classified');
-    const specNodes = this.validateAndBuildVmSpecs(draft.nodes, 'vm');
+    const specNodes = this.validateAndBuildVmSpecs(draft.nodes);
     const parsed = RawFleetDocSchema.parse(yaml.load(readFileSync(source, 'utf8')) ?? {});
     const doc: Record<string, unknown> = { ...parsed };
     doc.nodes = specNodes.map(({ name, spec }) => ({ name, ...spec }));
@@ -512,7 +522,6 @@ export class FleetTopologyService {
   /** Validates, then persists via OverlayStoreService (the single overlay writer); bare-metal creds are
    *  split out to the 0600 secrets file, never the overlay. */
   putConfig(input: {
-    mode: FleetMode;
     nodes: FleetNode[];
     bmcDefaults?: { username: string; password: string };
     defaults?: { cpus: number | null; memory_mb: number | null; disk_gb: number | null; arch: string | null };
@@ -520,30 +529,30 @@ export class FleetTopologyService {
     prune?: string[];
     baremetal: BareMetalConfigWrite;
   }): RejectedEntry[] {
-    const { mode, nodes, defaults, network, prune, baremetal } = input;
+    const { nodes, defaults, network, prune, baremetal } = input;
+    if (nodes.length === 0 && baremetal.nodes.length === 0)
+      throw new BadRequestException('fleet must have at least one node in either plane');
     const bmcDefaults = this.resolveBmcDefaults(input.bmcDefaults);
-    const specNodes = this.validateAndBuildVmSpecs(this.resolveNodeBmc(nodes), mode);
-    if (mode === 'baremetal') this.validateBaremetalNodes(baremetal);
+    const specNodes = this.validateAndBuildVmSpecs(this.resolveNodeBmc(nodes));
+    if (baremetal.nodes.length > 0) {
+      this.validateBaremetalNodes(baremetal);
+      this.validateCrossPlane(nodes, baremetal, network?.bmcCidr ?? this.activeFleet().network.bmc_cidr ?? '');
+    }
     if (network) this.validateNetwork(network, nodes);
     if (prune?.length) this.validatePrune(prune);
-    const bmSpec = this.buildBaremetalSpec(baremetal, mode);
+    const bmSpec = this.buildBaremetalSpec(baremetal);
     const rejected = this.overlay.setFleetConfig({
       nodes: specNodes,
       bmcDefaults,
       defaults,
       network: network ? networkSpec(network) : undefined,
       prune,
-      mode,
       baremetal: { nics: baremetal.nics, arch: baremetal.arch, nodes: bmSpec.nodes },
     });
-    // vm mode's bare-metal config is an unvalidated draft — keep every stored cred (clearing a
-    // draft row must not purge its creds); baremetal mode purges to the request roster.
-    const keepCreds =
-      mode === 'baremetal' ? new Set(baremetal.nodes.map((n) => n.name)) : new Set(Object.keys(this.readBmcCreds()));
-    this.writeBmcCreds(bmSpec.creds, keepCreds);
+    this.writeBmcCreds(bmSpec.creds, new Set(baremetal.nodes.map((n) => n.name)));
     this.invalidatePending();
     this.log.log(
-      `saved fleet config to the stack overlay (mode=${mode}, ${nodes.length} vm nodes, ${baremetal.nodes.length} bare-metal nodes)`,
+      `saved fleet config to the stack overlay (${nodes.length} vm nodes, ${baremetal.nodes.length} bare-metal nodes)`,
     );
     return rejected;
   }
@@ -575,10 +584,25 @@ export class FleetTopologyService {
     }
   }
 
+  /** Every by-name resolver is first-match on the merged roster and answers the VM, while the bare-metal
+   *  power route reaches the real box — so a shared name or BMC address must not save. */
+  private validateCrossPlane(nodes: FleetNode[], bm: BareMetalConfigWrite, bmcCidr: string): void {
+    const vmNames = new Set(nodes.map((n) => n.name));
+    const vmByBmc = new Map<string, string>();
+    nodes.forEach((n, index) => {
+      const bmcIp = n.bmc_ip || ipAtOffset(bmcCidr, NODE_IP_BASE + index);
+      if (bmcIp) vmByBmc.set(bmcIp, n.name);
+    });
+    for (const n of bm.nodes) {
+      if (vmNames.has(n.name)) throw new BadRequestException(`bare-metal machine ${n.name} reuses a vm node name`);
+      const vm = vmByBmc.get(n.bmc_ip);
+      if (vm) throw new BadRequestException(`bare-metal machine ${n.name} reuses the bmc address of vm node ${vm}`);
+    }
+  }
+
   private validateBaremetalNodes(bm: BareMetalConfigWrite): void {
-    if (this.hostFacts().os !== 'linux') throw new BadRequestException('bare-metal mode requires a Linux host');
-    if (bm.nics.length === 0) throw new BadRequestException('select an uplink NIC for bare-metal mode');
-    if (bm.nodes.length === 0) throw new BadRequestException('add at least one bare-metal machine');
+    if (this.hostFacts().os !== 'linux') throw new BadRequestException('bare-metal machines need a Linux host');
+    if (bm.nics.length === 0) throw new BadRequestException('select an uplink NIC for the bare-metal machines');
     const names = new Set<string>();
     const macs = new Set<string>();
     const ips = new Set<string>();
@@ -602,10 +626,7 @@ export class FleetTopologyService {
     }
   }
 
-  private buildBaremetalSpec(
-    bm: BareMetalConfigWrite,
-    mode: FleetMode,
-  ): {
+  private buildBaremetalSpec(bm: BareMetalConfigWrite): {
     nodes: { name: string; spec: Record<string, unknown> }[];
     creds: BmcCredFile;
   } {
@@ -614,13 +635,8 @@ export class FleetTopologyService {
     if (bm.bmcDefaults.username && bm.bmcDefaults.password)
       creds.defaults = { user: bm.bmcDefaults.username, pass: bm.bmcDefaults.password };
     for (const n of bm.nodes) {
-      // vm mode persists the bare-metal draft unvalidated (validated on the flip to bare-metal),
-      // so an empty-name draft row is skipped, not rejected.
-      if (!n.name) {
-        if (mode === 'baremetal') throw new BadRequestException('bare-metal machine name is required');
-        continue;
-      }
-      // The reserved 'defaults' name is rejected in both modes — it would clobber the creds slot.
+      if (!n.name) throw new BadRequestException('bare-metal machine name is required');
+      // the reserved 'defaults' name would clobber the creds slot
       if (n.name === 'defaults') throw new BadRequestException("machine name 'defaults' is reserved");
       const spec: Record<string, unknown> = {
         bmc_ip: n.bmc_ip,
@@ -628,18 +644,16 @@ export class FleetTopologyService {
         pxe_mac: n.pxe_mac.toLowerCase(),
       };
       if (n.arch) spec.arch = n.arch;
+      if (n.zone) spec.zone = n.zone;
       if (n.system_id) spec.system_id = n.system_id;
+      if (n.network_type) spec.network_type = n.network_type;
       nodes.push({ name: n.name, spec });
       if (n.bmc_user && n.bmc_pass) creds[n.name] = { user: n.bmc_user, pass: n.bmc_pass };
     }
     return { nodes, creds };
   }
 
-  private validateAndBuildVmSpecs(
-    nodes: FleetNode[],
-    mode: FleetMode,
-  ): { name: string; spec: Record<string, unknown> }[] {
-    if (mode === 'vm' && nodes.length === 0) throw new BadRequestException('fleet must have at least one node');
+  private validateAndBuildVmSpecs(nodes: FleetNode[]): { name: string; spec: Record<string, unknown> }[] {
     const names = new Set<string>();
     const macs = new Set<string>();
     for (const n of nodes) {
@@ -658,7 +672,7 @@ export class FleetTopologyService {
       if (!isIpv4(ip)) throw new BadRequestException(`${name}: invalid IPv4 ${ip}`);
       if (c) {
         if (!ipInCidr(ip, c)) throw new BadRequestException(`${name}: ${label} ${ip} is outside ${c}`);
-        if (ipToInt(ip) === networkBase(c)! + 1)
+        if (ipv4ToInt(ip) === networkBase(c)! + 1)
           throw new BadRequestException(`${name}: ${label} ${ip} is the gateway`);
       }
     };
@@ -780,7 +794,6 @@ export class FleetTopologyService {
       },
     );
     this.putConfig({
-      mode: cfg.mode,
       nodes: [...baseNodes, ...added],
       bmcDefaults: cfg.bmcDefaults,
       baremetal: {

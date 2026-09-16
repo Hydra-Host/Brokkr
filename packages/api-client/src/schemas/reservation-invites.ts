@@ -1,8 +1,9 @@
+import { BillingFrequency } from '@repo/database/enums';
 import { z } from 'zod';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-const BillingFrequencyValues = ['HOURLY', 'WEEKLY', 'MONTHLY'] as const;
-
-export const BillingFrequencySchema = z.enum(BillingFrequencyValues).describe('How often billing occurs');
+export const BillingFrequencySchema = zodEnumFromPrisma(BillingFrequency).describe('How often billing occurs');
+export type { BillingFrequency };
 
 export const ReservationInviteListingSchema = z.object({
   id: z.string().describe('Brokkr Device UUID'),

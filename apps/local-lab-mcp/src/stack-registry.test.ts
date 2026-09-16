@@ -1,4 +1,5 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -26,6 +27,25 @@ function fixtureDir(files: Record<string, unknown>): string {
     writeFileSync(join(dir, name), typeof body === 'string' ? body : JSON.stringify(body));
   }
   return dir;
+}
+
+function initRepo(dir: string): void {
+  mkdirSync(dir, { recursive: true });
+  execFileSync('git', ['init', '-b', 'main'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-m', 'init'], {
+    cwd: dir,
+    stdio: 'ignore',
+  });
+}
+
+function siblingWorktreePair(): { primary: string; sibling: string } {
+  const parent = mkdtempSync(join(tmpdir(), 'lab-mcp-wt-'));
+  const primary = join(parent, 'primary');
+  const sibling = join(parent, 'worktrees', 'feature');
+  initRepo(primary);
+  mkdirSync(join(parent, 'worktrees'), { recursive: true });
+  execFileSync('git', ['worktree', 'add', '--detach', sibling], { cwd: primary, stdio: 'ignore' });
+  return { primary, sibling };
 }
 
 function stackEntry(slot: number, checkout: string, labPort: number) {
@@ -172,6 +192,23 @@ describe('isSameRepoCheckout', () => {
   it('rejects everything when the repository root is unknown', () => {
     expect(isSameRepoCheckout('/repo', null)).toBe(false);
   });
+
+  it('accepts a sibling worktree that shares the git common dir', () => {
+    const { primary, sibling } = siblingWorktreePair();
+    const nested = join(sibling, 'apps');
+    mkdirSync(nested);
+    expect(isSameRepoCheckout(sibling, primary)).toBe(true);
+    expect(isSameRepoCheckout(nested, primary)).toBe(true);
+  });
+
+  it('rejects a neighboring clone that does not share the git common dir', () => {
+    const parent = mkdtempSync(join(tmpdir(), 'lab-mcp-clone-'));
+    const primary = join(parent, 'primary');
+    const other = join(parent, 'other');
+    initRepo(primary);
+    initRepo(other);
+    expect(isSameRepoCheckout(other, primary)).toBe(false);
+  });
 });
 
 describe('repoRootOfCwd', () => {
@@ -203,6 +240,15 @@ describe('hostStackCandidates', () => {
 
   it('returns an empty list when nothing is registered', () => {
     expect(hostStackCandidates(fixtureDir({}), '/repo')).toEqual([]);
+  });
+
+  it('marks a sibling worktree as the same repository', () => {
+    const { primary, sibling } = siblingWorktreePair();
+    const dir = fixtureDir({
+      'stack-0.json': stackEntry(0, sibling, 3002),
+      'stack-2.json': stackEntry(2, '/elsewhere/clone', 21002),
+    });
+    expect(hostStackCandidates(dir, primary).map((candidate) => candidate.sameRepo)).toEqual([true, false]);
   });
 });
 

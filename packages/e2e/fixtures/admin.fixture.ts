@@ -141,7 +141,6 @@ export const test = base.extend<AdminTestFixtures, AdminWorkerFixtures>({
           role: DeviceRole.Server,
           status: DeviceStatus.ACTIVE,
           zoneId: zone.id,
-          organizationId: organization.id,
           supplierId: organization.id,
           server: { create: {} },
         },
@@ -167,10 +166,6 @@ export const test = base.extend<AdminTestFixtures, AdminWorkerFixtures>({
       const colocationName = `Acme DC1 ${tag}`;
       const otherColocationName = `Acme DC2 ${tag}`;
 
-      // Match on the worker tag rather than the exact seeded names: specs create
-      // further facilities and colocations of their own (e.g. "<facility> extra"),
-      // and every name embeds the tag. Matching exactly would leave those behind
-      // and the next run would collide with the case-insensitive name indexes.
       const owned = { name: { contains: tag } };
       const purge = async () => {
         await prisma.contact.deleteMany({

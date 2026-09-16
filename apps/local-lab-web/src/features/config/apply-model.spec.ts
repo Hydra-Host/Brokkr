@@ -180,11 +180,29 @@ describe('applyRows', () => {
     expect(rows[0].action).toEqual({ kind: 'stack-op', opId: 'fleet-apply' });
   });
 
-  it('routes a mode change to its own op, and marks it destructive', () => {
-    const rows = applyRows({ pending: pending(), fleet: fleet({ severity: 'mode-change' }) });
+  it('routes a plane change to its own op, and marks it destructive', () => {
+    const rows = applyRows({ pending: pending(), fleet: fleet({ severity: 'planes-change' }) });
 
-    expect(rows[0].action).toEqual({ kind: 'stack-op', opId: 'fleet-mode-apply' });
+    expect(rows[0].id).toBe('fleet-planes');
+    expect(rows[0].detail).toBe('the desired fleet planes differ from the applied ones');
+    expect(rows[0].action).toEqual({ kind: 'stack-op', opId: 'fleet-planes-apply' });
     expect(rows[0].destructive).toBe(true);
+  });
+
+  it('routes a stale iPXE bake to the fleet apply, whose rebake step re-bakes', () => {
+    const rows = applyRows({ pending: pending(), fleet: fleet({ severity: 'stale-bake' }) });
+
+    expect(rows[0].id).toBe('fleet-bake');
+    expect(rows[0].action).toEqual({ kind: 'stack-op', opId: 'fleet-apply' });
+    expect(rows[0].cost).toBe('needs a fleet apply, which re-bakes iPXE');
+    expect(rows[0].destructive).toBe(false);
+  });
+
+  it('shows the server note for a stale bake rather than the topology counts', () => {
+    const note = 'the iPXE bake names http://198.51.100.9:8000, but this stack serves http://198.51.100.14:8000';
+    const rows = applyRows({ pending: pending(), fleet: fleet({ severity: 'stale-bake', note }) });
+
+    expect(rows[0].detail).toBe(note);
   });
 
   it('leaves an in-sync fleet out', () => {

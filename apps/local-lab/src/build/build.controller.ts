@@ -10,7 +10,7 @@ export class BuildController {
   constructor(private readonly build: BuildService) {}
 
   @TsRestHandler(contract.buildAgent)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   agent() {
     return tsRestHandler(contract.buildAgent, async () => ({
       status: 200 as const,
@@ -19,7 +19,7 @@ export class BuildController {
   }
 
   @TsRestHandler(contract.buildNetbootGrub)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   netbootGrub() {
     return tsRestHandler(contract.buildNetbootGrub, async () => ({
       status: 200 as const,
@@ -28,7 +28,7 @@ export class BuildController {
   }
 
   @TsRestHandler(contract.buildIpxe)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   ipxe() {
     return tsRestHandler(contract.buildIpxe, async () => ({
       status: 200 as const,

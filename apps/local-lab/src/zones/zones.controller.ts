@@ -18,7 +18,7 @@ export class ZonesController {
   }
 
   @TsRestHandler(contract.putZonesConfig)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'admin' })
   putConfig() {
     return tsRestHandler(contract.putZonesConfig, async ({ body }) => ({
       status: 200 as const,

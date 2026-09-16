@@ -98,7 +98,11 @@ export async function startProductionServer(
     (async (): Promise<INestApplication> => {
       const { AppModule } = await import('./app.module');
       const rootModule = await AppModule.withPluginBackends();
-      return NestFactory.create<NestFastifyApplication>(rootModule, new FastifyAdapter(), { bufferLogs: false });
+      // trustProxy so req.ip is the client's real IP from nginx's X-Forwarded-For, not the loopback
+      // peer — bridge-IP resolution keys off it, and the REST surface only listens behind nginx.
+      return NestFactory.create<NestFastifyApplication>(rootModule, new FastifyAdapter({ trustProxy: true }), {
+        bufferLogs: false,
+      });
     });
   const app = await createApp();
   // Do NOT call app.enableShutdownHooks() — see file-level comment.

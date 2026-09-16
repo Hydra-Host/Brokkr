@@ -2,10 +2,12 @@ import http from 'node:http';
 import https from 'node:https';
 
 import { isRecord } from '@repo/utils';
+import { z } from 'zod';
+import { envInt } from '../../../common/env-utils.js';
 import { getLogger } from '../../../logger/logger.service.js';
+import { type BmcCoordinates, bmcCoordinates } from '../../bmc-coordinates.js';
 import { redactSensitive } from '../../redact.js';
 import {
-  isLocalSimulationEnabled,
   isTlsCertVerificationError,
   redfishRejectUnauthorized,
   redfishTlsVerificationFailureHint,
@@ -211,23 +213,22 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
-/** Returns the subset of `pending` entries that differ from `current`,
- *  treating boolean/number as loosely equal (0 ↔ false, 1 ↔ true). */
+/** Loose BIOS value equality: identical, boolean/number coerced (0 ↔ false, 1 ↔ true), or deep-equal. */
+export function biosValuesEqual(a: unknown, b: unknown): boolean {
+  return (
+    a === b ||
+    (typeof a === 'boolean' && typeof b === 'number' && (a ? 1 : 0) === b) ||
+    (typeof b === 'boolean' && typeof a === 'number' && (b ? 1 : 0) === a) ||
+    deepEqual(a, b)
+  );
+}
+
+/** Returns the subset of `pending` entries whose value is not loosely equal to `current`. */
 export function diffBiosPendingParams(pendingEntries: Iterable<[string, unknown]>, current: JsonRecord): JsonRecord {
   const pending: JsonRecord = {};
   for (const [key, value] of pendingEntries) {
     const currentValue = key in current ? current[key] : null;
-    const valueNormalized = value === undefined ? null : value;
-    const currentNormalized = currentValue ?? null;
-    const looseEq =
-      valueNormalized === currentNormalized ||
-      (typeof valueNormalized === 'boolean' &&
-        typeof currentNormalized === 'number' &&
-        (valueNormalized ? 1 : 0) === currentNormalized) ||
-      (typeof currentNormalized === 'boolean' &&
-        typeof valueNormalized === 'number' &&
-        (currentNormalized ? 1 : 0) === valueNormalized);
-    if (!looseEq && !deepEqual(valueNormalized, currentNormalized)) {
+    if (!biosValuesEqual(currentValue ?? null, value === undefined ? null : value)) {
       pending[key] = value;
     }
   }
@@ -288,6 +289,25 @@ export function extractNestedValue(obj: unknown, path: string, separator = '_', 
   return result === MISS ? defaultValue : result;
 }
 
+const DEFAULT_REBOOT_WAITS = 15;
+const DEFAULT_REBOOT_TIMEOUT_S = 45;
+
+const rebootBudgetEnvSchema = z.object({
+  REDFISH_REBOOT_WAITS: envInt(DEFAULT_REBOOT_WAITS),
+  REDFISH_REBOOT_TIMEOUT_S: envInt(DEFAULT_REBOOT_TIMEOUT_S),
+});
+
+export interface RebootBudget {
+  waits: number;
+  timeoutS: number;
+}
+
+// POST with TME enabled retrains memory, so a large box can outlast the 15 × 45 s default
+export function rebootBudget(env: NodeJS.ProcessEnv = process.env): RebootBudget {
+  const { REDFISH_REBOOT_WAITS: waits, REDFISH_REBOOT_TIMEOUT_S: timeoutS } = rebootBudgetEnvSchema.parse(env);
+  return { waits, timeoutS };
+}
+
 export class RedfishDevice {
   jobId: string;
   deviceId: string;
@@ -295,10 +315,10 @@ export class RedfishDevice {
   username: string;
   password: string;
 
-  protocol = 'https';
-  port = 443;
-  rebootTimeout = 45;
-  rebootWaits = 15;
+  protocol: BmcCoordinates['protocol'];
+  port: number;
+  rebootTimeout: number;
+  rebootWaits: number;
   rebootNeeded = false;
   biosRetryAttempts = 15;
 
@@ -340,10 +360,12 @@ export class RedfishDevice {
     this.bmcIp = bmcIp;
     this.username = username;
     this.password = password;
-    if (isLocalSimulationEnabled()) {
-      this.protocol = 'http';
-      this.port = parseInt(process.env.SIM_REDFISH_PORT ?? '8443', 10);
-    }
+    const coords = bmcCoordinates(bmcIp);
+    this.protocol = coords.protocol;
+    this.port = coords.port;
+    const budget = rebootBudget();
+    this.rebootTimeout = budget.timeoutS;
+    this.rebootWaits = budget.waits;
   }
 
   tag(): string {

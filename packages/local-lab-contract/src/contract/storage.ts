@@ -41,6 +41,6 @@ export const storageRoutes = {
     responses: { 200: StorageVerifyResultSchema },
     summary: 'Verify discovery-image shas',
     description:
-      'Fetches the upstream brokkr-live manifest per served arch and compares its sha256 values against the on-disk cache metadata, reporting match/stale/unverified per file. Read-only, on-demand.',
+      'Fetches the upstream brokkr-live manifest per served flavor and arch (20 s budget each) and compares its sha256 values against the on-disk cache metadata, reporting match/stale per file or the named reason it could not be compared. Read-only, on-demand.',
   },
 } as const;

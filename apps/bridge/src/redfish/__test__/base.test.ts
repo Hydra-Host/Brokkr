@@ -19,8 +19,12 @@ const ENV_KEYS = [
   'HH_ENV',
   'ENVIRONMENT',
   'LOCAL_SIMULATION_ENABLED',
+  'NETWORK_REDFISH_PORT',
   'SIM_REDFISH_PORT',
+  'SIM_BMC_CIDR',
   'REDFISH_TLS_VERIFY',
+  'REDFISH_REBOOT_WAITS',
+  'REDFISH_REBOOT_TIMEOUT_S',
 ];
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -63,6 +67,13 @@ describe('RedfishDevice sim-port selection', () => {
     const device = new RedfishDevice('job-1', 'dev-1', '1.2.3.4', 'root', 'calvin');
     expect(device.protocol).toBe(protocol);
     expect(device.port).toBe(port);
+  });
+
+  it('keeps https 443 for an address outside SIM_BMC_CIDR while simulation is enabled', () => {
+    process.env.LOCAL_SIMULATION_ENABLED = 'true';
+    process.env.SIM_BMC_CIDR = '192.168.105.0/24';
+    expect(new RedfishDevice('job-1', 'dev-1', '1.2.3.4')).toMatchObject({ protocol: 'https', port: 443 });
+    expect(new RedfishDevice('job-1', 'dev-1', '192.168.105.9')).toMatchObject({ protocol: 'http', port: 8443 });
   });
 
   it('uses the sim port in request URLs', async () => {

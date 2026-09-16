@@ -1,4 +1,6 @@
 import mdx from '@mdx-js/rollup';
+import { REACT_SINGLETON_DEDUPE } from '@repo/vite-config/dedupe';
+import { devAllowedHosts, devBindHost, devStrictPort } from '@repo/vite-config/dev-server';
 import tailwindcss from '@tailwindcss/vite';
 import tanstackRouter from '@tanstack/router-plugin/vite';
 import { D2 } from '@terrastruct/d2';
@@ -152,13 +154,15 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, './src'),
         '~': path.resolve(__dirname, './src'),
       },
-      dedupe: ['react', 'react-dom', '@tanstack/react-router'],
+      dedupe: REACT_SINGLETON_DEDUPE,
     },
     server: {
-      host: process.env.HOST || undefined,
-      allowedHosts: process.env.HOST === '0.0.0.0' ? true : undefined,
+      host: devBindHost(),
+      allowedHosts: devAllowedHosts(),
+      // No proxy here, but the host check and CORS are stated rather than inherited, like the sibling dev servers.
+      cors: false,
       port: Number(process.env.PORT || 5200),
-      strictPort: process.env.VITE_STRICT_PORT === 'true' || !process.env.PORT,
+      strictPort: devStrictPort(),
     },
   };
 });

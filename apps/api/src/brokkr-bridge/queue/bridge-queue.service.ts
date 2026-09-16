@@ -10,9 +10,15 @@ import { type EnvelopeJson, SealedEnvelopeService } from 'src/crypto/sealed-enve
 import { isSealedEnvelope } from 'src/crypto/sealed-envelope.types';
 import { LoggerService } from 'src/logger/logger.service';
 import { COLLECTION_QUEUE_NAME, LIFECYCLE_QUEUE_NAME, QUEUE_JOB_STATES } from '../constants/queue.constants';
+import { JobLogWriterService } from '../job-logs/job-log-writer.service';
 import { type SagaJobData, type SagaName, JOB_NAME } from './bridge-queue.types';
 
 export type LifecycleJobData = SagaJobData | EnvelopeJson;
+
+export type EnqueueSagaJobOptions = Pick<JobsOptions, 'removeOnComplete' | 'removeOnFail'> & {
+  coalesceKey?: string;
+  idempotent?: boolean;
+};
 
 @Injectable()
 export class BridgeQueueService implements OnModuleDestroy {
@@ -45,6 +51,7 @@ export class BridgeQueueService implements OnModuleDestroy {
     @Inject(REDIS_CONFIG) private readonly redisConfig: RedisTransportConnectionConfig,
     private readonly sealedEnvelope: SealedEnvelopeService,
     @Logger(BridgeQueueService.name) private readonly logger: LoggerService,
+    private readonly jobLogWriter: JobLogWriterService,
   ) {
     this.queueJobs.addCallback(this.observeQueueJobs);
   }
@@ -85,15 +92,34 @@ export class BridgeQueueService implements OnModuleDestroy {
     return queue;
   }
 
-  // zoneId doubles as the BullMQ queue prefix (must match the bridge's BROKKR_ZONE_ID); coalesceKey caps work at one waiting/active job per key, best-effort — a worker can activate the job between getState() and remove(), and the next tick recovers.
+  // Read-only peek at a coalesce slot so a caller that records a row per enqueue can skip the row when the trigger would coalesce anyway.
+  async hasActiveSagaJob(zoneId: string, bullmqJobId: string): Promise<boolean> {
+    const existing = await this.getLifecycleQueue(zoneId).getJob(bullmqJobId);
+    if (!existing) return false;
+    return (await existing.getState()) === 'active';
+  }
+
   async enqueueSagaJob(
     zoneId: string,
     sagaName: SagaName,
     planId: string,
     payload: Record<string, unknown>,
     deviceId: string,
-    opts?: Pick<JobsOptions, 'removeOnComplete' | 'removeOnFail'> & { coalesceKey?: string; idempotent?: boolean },
+    opts?: EnqueueSagaJobOptions,
   ): Promise<Job<LifecycleJobData>> {
+    const { job } = await this.enqueueSagaJobOrCoalesce(zoneId, sagaName, planId, payload, deviceId, opts);
+    return job;
+  }
+
+  // zoneId doubles as the BullMQ queue prefix (must match the bridge's BROKKR_ZONE_ID); coalesceKey caps work at one waiting/active job per key, best-effort — a worker can activate the job between getState() and remove(), and the next tick recovers. `coalesced` is true whenever the existing job is returned instead of this planId being enqueued.
+  async enqueueSagaJobOrCoalesce(
+    zoneId: string,
+    sagaName: SagaName,
+    planId: string,
+    payload: Record<string, unknown>,
+    deviceId: string,
+    opts?: EnqueueSagaJobOptions,
+  ): Promise<{ job: Job<LifecycleJobData>; coalesced: boolean }> {
     const queue = this.getLifecycleQueue(zoneId);
 
     const bullmqJobId = opts?.coalesceKey ?? `${deviceId}-${sagaName}-${planId}`;
@@ -104,7 +130,7 @@ export class BridgeQueueService implements OnModuleDestroy {
       if (state === 'active') {
         // remove() throws on active, so no re-seal here; a stale-format job gets rejected by the bridge, fails, and the next enqueue re-seals it.
         this.logger.log(`Skipping enqueue of ${sagaName} for ${deviceId}: job ${bullmqJobId} already active`, planId);
-        return existing;
+        return { job: existing, coalesced: true };
       }
       // Re-seal a not-yet-started job whose seal format no longer matches the zone's activation state — the activated bridge would reject the stale-format payload.
       if (opts?.idempotent && state !== 'failed') {
@@ -116,7 +142,7 @@ export class BridgeQueueService implements OnModuleDestroy {
             `Idempotent enqueue of ${sagaName} for ${deviceId}: returning existing ${state} job ${bullmqJobId}`,
             planId,
           );
-          return existing;
+          return { job: existing, coalesced: true };
         }
         this.logger.log(
           `Re-sealing stale-format ${sagaName} job ${bullmqJobId} for ${deviceId}: zone activation changed since enqueue`,
@@ -147,7 +173,15 @@ export class BridgeQueueService implements OnModuleDestroy {
     });
 
     this.logger.log(`Enqueued ${sagaName} saga to ${zoneId}: planId=${planId}, deviceId=${deviceId}`, planId);
-    return job;
+    await this.jobLogWriter.write(
+      zoneId,
+      planId,
+      'info',
+      `Enqueued saga ${sagaName} for device ${deviceId}`,
+      'BridgeQueueService',
+      sagaName,
+    );
+    return { job, coalesced: false };
   }
 
   // Enrolled zones FAIL CLOSED: sealHubToBridge throws on a dormant hub key rather than downgrading the zone's BMC creds to plaintext; the enroll-window race is retry-safe (bridge raises key-unknown, BullMQ retries).

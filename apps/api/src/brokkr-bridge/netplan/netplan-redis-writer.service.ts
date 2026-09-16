@@ -38,7 +38,15 @@ export class NetplanRedisWriterService {
   }
 
   async deleteDeploy(zonePrefix: string, deviceId: string): Promise<void> {
-    const key = netplanConfig(deviceId, 'deploy');
+    await this.deletePhase(zonePrefix, deviceId, 'deploy');
+  }
+
+  async deleteLive(zonePrefix: string, deviceId: string): Promise<void> {
+    await this.deletePhase(zonePrefix, deviceId, 'live');
+  }
+
+  private async deletePhase(zonePrefix: string, deviceId: string, phase: NetplanPhase): Promise<void> {
+    const key = netplanConfig(deviceId, phase);
     await this.atomWriter.deleteKeys(zonePrefix, [key]);
     this.logger.log(`Deleted ${zonePrefix}:${key}`);
   }

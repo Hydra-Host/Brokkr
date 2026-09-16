@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
-import { ServerLifecycleStatus, ServerPowerStatus } from '@repo/database';
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import { LifecycleJobPhase, ServerLifecycleStatus, ServerPowerStatus } from '@repo/database';
+import { LifecycleJobRecord } from '@repo/lifecycle';
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { PhoneHomeRepository } from '../phone-home.repository';
 
 interface PrismaMock {
@@ -27,6 +28,35 @@ describe('PhoneHomeRepository', () => {
       deviceDiagnostics: { create: vi.fn() },
     };
     repo = new PhoneHomeRepository(prisma as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe('findActivePlanIdForDevice', () => {
+    it('returns the newest in-flight lifecycle plan id for the device', async () => {
+      const findOne = vi.spyOn(LifecycleJobRecord, 'findOneUnscoped').mockResolvedValue({ data: { id: 'plan-1' } });
+
+      const result = await repo.findActivePlanIdForDevice(DEVICE_ID);
+
+      expect(findOne).toHaveBeenCalledExactlyOnceWith({
+        where: {
+          deviceId: DEVICE_ID,
+          phase: {
+            in: [LifecycleJobPhase.DISPATCHED, LifecycleJobPhase.RUNNING, LifecycleJobPhase.AWAITING_PHONE_HOME],
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(result).toBe('plan-1');
+    });
+
+    it('returns null when the device has no in-flight lifecycle job', async () => {
+      vi.spyOn(LifecycleJobRecord, 'findOneUnscoped').mockResolvedValue(null);
+
+      await expect(repo.findActivePlanIdForDevice(DEVICE_ID)).resolves.toBeNull();
+    });
   });
 
   describe('updateDevice', () => {

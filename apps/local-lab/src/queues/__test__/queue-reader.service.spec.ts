@@ -383,7 +383,7 @@ describe('QueueReaderService.withQueue', () => {
   });
 });
 
-describe('QueueReaderService.inFlightCount — the fleet-mode-flip guard', () => {
+describe('QueueReaderService.inFlightCount — the fleet-planes-apply guard', () => {
   it('fans LLEN/ZCARD across every zone and both saga queues', async () => {
     const reader = makeReader(['zone-a', 'zone-b']);
     h.holder.redis.pipeline.exec.mockResolvedValue(Array(2 * 2 * (3 + 2)).fill([null, 0]));

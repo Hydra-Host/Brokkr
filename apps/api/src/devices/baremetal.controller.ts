@@ -127,8 +127,8 @@ export class BaremetalController {
   @TsRestHandler(contract.provisionBaremetalServer)
   async provisionBaremetalServer() {
     return tsRestHandler(contract.provisionBaremetalServer, async ({ params, body }) => {
-      await this.baremetalService.provisionServer(params.deviceId, body);
-      return { status: 200, body: { success: true } };
+      const job = await this.baremetalService.provisionServer(params.deviceId, body);
+      return { status: 200, body: { success: true, jobId: job.data.id } };
     });
   }
 

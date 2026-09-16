@@ -1,6 +1,6 @@
 import { InterfaceType, ServerLifecycleStatus } from '@repo/database';
 import type { DeviceContext, PrefixWithRelations } from '../../device-context/device-context.types';
-import { formatScalar } from '../netplan-builders';
+import { compareByName, dedupeByMac, formatScalar, preferConfigured } from '../netplan-builders';
 import { extractMask, isIpv4, stripMask, type AdditionalRoute } from '../netplan-planner';
 import type { NetplanPhase } from '../netplan.service';
 import { mapRoleToNetplanSlug } from './role-slug';
@@ -327,7 +327,17 @@ function emit(
   if (p.bond) lines.push(...bondBlock(p.bond, p, bondHasVlans, lifecycle, metric, OFF));
 
   lines.push(`${OFF}  ethernets:`);
-  for (const e of [...p.ethernets].sort((a, b) => a.name.localeCompare(b.name))) {
+  const anchored = new Set<string>([
+    ...(p.bond?.members ?? []),
+    ...[...p.vlanGroups.values()].map((g) => g.parentInterface),
+  ]);
+  const ethernets = dedupeByMac(
+    ctx.device.id,
+    [...p.ethernets].sort(preferConfigured((e) => p.configured.has(e.name))),
+    (e) => e.mac,
+    anchored,
+  ).sort(compareByName);
+  for (const e of ethernets) {
     if (!e.mac) continue; // the Jinja skips MAC-less interfaces entirely
     const mac = e.mac.toLowerCase();
 

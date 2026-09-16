@@ -31,7 +31,6 @@ const makeTx = (): TxMock => ({
   device: {
     update: vi.fn(),
     findUnique: vi.fn().mockResolvedValue({
-      organizationId: null,
       supplierId: null,
       zone: null,
       ...noHardwareRows,

@@ -27,7 +27,13 @@ describe('disk.ipxe.njk (real template) — PXE-04 grub gating', () => {
       grub_supported: true,
     });
     expect(out).toContain('/api/grub?platform=efi&arch=amd64');
-    expect(out).toContain('set bootload_url "https://bridge.example/api/grub?platform=efi&arch=amd64"');
+    // Unquoted deliberately: iPXE's `set` takes the rest of the line verbatim and does NOT strip
+    // quotes, so a quoted value makes `chain ${bootload_url}` request the literal `"https://..."`
+    // as a RELATIVE path (resolving to /api/"https://.../api/grub?...", a 404). The 404 then falls
+    // through to sanboot and the node silently boots its local disk instead of BROKKR GRUB — which
+    // strands any saga waiting on Brokkr Live (deprovision/re-wipe) on a box with an installed OS.
+    expect(out).toContain('set bootload_url https://bridge.example/api/grub?platform=efi&arch=amd64');
+    expect(out).not.toContain('set bootload_url "');
   });
 
   it('skips the grub chain and sanboots directly for an unsupported pair (arm64:pcbios)', async () => {

@@ -7,6 +7,10 @@ Three layers, split so the classifier is fixture-testable with zero I/O:
 - :func:`heal_findings` — repairs healable findings for the *applied* topology; it is not apply,
   so it refuses when the desired fleet has drifted for a finding's node (that needs a rebuild).
 
+Bare-metal boxes classify in :mod:`local.verify_baremetal` — same collect/classify split, no heal
+layer (every bare-metal cause is off-box). A plane runs when its roster (``manifest.nodes`` /
+``manifest.bm_nodes``) is populated, never on ``mode``, so a manifest carrying both gets both.
+
 Fleet primitives resolve via function-body ``from local.fleet import X`` — the apply_exec seam:
 avoids the import cycle and keeps ``local.fleet`` the monkeypatch surface."""
 
@@ -14,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -45,6 +50,13 @@ from local.process_utils import ensure_sudo_cached, virsh
 from local.schema import Fleet
 from local.status import _virsh_domstate
 
+if TYPE_CHECKING:
+    from local.verify_baremetal import BareMetalLiveState
+
+# bare-metal probing is per-box network I/O, so a fleet of dead BMCs is unbounded without a deadline; the
+# lab passes its own budget and derives its exec timeout from it, this default only covers a hand-run CLI.
+DEFAULT_PROBE_BUDGET_SECONDS = 120.0
+
 
 class VerifyStatus(StrEnum):
     HEALTHY = "healthy"
@@ -62,6 +74,12 @@ class FindingKind(StrEnum):
     VMNET_SOCKET_MISSING = "vmnet-socket-missing"
     BOOTPTAB_MISSING = "bootptab-missing"
     ORPHAN_DOMAIN = "orphan-domain"
+    BMC_UNREACHABLE = "bmc-unreachable"
+    BMC_AUTH_FAILED = "bmc-auth-failed"
+    NO_HUB_DEVICE = "no-hub-device"
+    IDENTITY_SPLIT = "identity-split"
+    # the lab composes boot readiness over HTTP; this engine emits none, but test_verify_parity pins the set
+    BOOT_READINESS = "boot-readiness"
 
 
 class _Wire(BaseModel):
@@ -81,9 +99,14 @@ class VerifySummary(_Wire):
     findings: int
 
 
+class VerifyPlanes(_Wire):
+    vm: bool
+    baremetal: bool
+
+
 class VerifyReport(_Wire):
     status: VerifyStatus
-    mode: str
+    planes: VerifyPlanes | None
     findings: list[VerifyFinding]
     summary: VerifySummary
 
@@ -222,11 +245,17 @@ def _classify_fleet(manifest: AppliedManifest, live: LiveState, host_os: HostOS)
     return out
 
 
-def build_verify_report(manifest: AppliedManifest | None, live: LiveState | None, host_os: HostOS) -> VerifyReport:
-    """Classify a manifest + live snapshot into a report (pure — no I/O).
+def build_verify_report(
+    manifest: AppliedManifest | None,
+    live: LiveState | None,
+    host_os: HostOS,
+    bm_live: BareMetalLiveState | None = None,
+) -> VerifyReport:
+    """Classify a manifest + live snapshots into a report (pure — no I/O).
 
-    ``manifest is None`` → one non-healable ``no-manifest`` finding. Non-vm (bare-metal) mode skips
-    every VM check and reports healthy — the lab's redfish/mode-apply ops own that plane."""
+    ``manifest is None`` → one non-healable ``no-manifest`` finding. Each plane is classified when
+    its roster is populated — VM nodes against ``live``, bare-metal boxes against ``bm_live`` — and
+    the summary sums the planes; a box with no snapshot is reported unreachable, never healthy."""
     if manifest is None:
         finding = VerifyFinding(
             node=None,
@@ -236,36 +265,39 @@ def build_verify_report(manifest: AppliedManifest | None, live: LiveState | None
         )
         return VerifyReport(
             status=VerifyStatus.NO_MANIFEST,
-            mode="unknown",
+            planes=None,
             findings=[finding],
             summary=VerifySummary(checked=0, ok=0, findings=1),
         )
-    if manifest.mode != "vm":
-        return VerifyReport(
-            status=VerifyStatus.HEALTHY,
-            mode=manifest.mode,
-            findings=[],
-            summary=VerifySummary(checked=0, ok=0, findings=0),
-        )
-
-    live = live or LiveState()
-    live_by_name = {n.name: n for n in live.nodes}
     findings: list[VerifyFinding] = []
+    checked = 0
     ok = 0
-    for an in manifest.nodes:
-        node_findings = _classify_node(an.name, an.bmc_ip, live_by_name.get(an.name), host_os)
-        if node_findings:
-            findings.extend(node_findings)
-        else:
-            ok += 1
-    findings.extend(_classify_fleet(manifest, live, host_os))
+    if manifest.nodes:
+        live = live or LiveState()
+        live_by_name = {n.name: n for n in live.nodes}
+        for an in manifest.nodes:
+            node_findings = _classify_node(an.name, an.bmc_ip, live_by_name.get(an.name), host_os)
+            if node_findings:
+                findings.extend(node_findings)
+            else:
+                ok += 1
+        findings.extend(_classify_fleet(manifest, live, host_os))
+        checked += len(manifest.nodes)
+    if manifest.bm_nodes:
+        from local.verify_baremetal import classify_baremetal
+
+        bm_findings = classify_baremetal(manifest, bm_live)
+        findings.extend(bm_findings)
+        checked += len(manifest.bm_nodes)
+        ok += len(manifest.bm_nodes) - len({f.node for f in bm_findings})
 
     status = VerifyStatus.HEALTHY if not findings else VerifyStatus.FINDINGS
+    vm, bm = applied.planes_of(manifest.nodes, manifest.bm_nodes)
     return VerifyReport(
         status=status,
-        mode=manifest.mode,
+        planes=VerifyPlanes(vm=vm, baremetal=bm),
         findings=findings,
-        summary=VerifySummary(checked=len(manifest.nodes), ok=ok, findings=len(findings)),
+        summary=VerifySummary(checked=checked, ok=ok, findings=len(findings)),
     )
 
 
@@ -370,7 +402,12 @@ def _emit_human(report: VerifyReport) -> None:
 
 
 def run_verify(
-    fleet: Fleet | None, manifest: AppliedManifest | None, *, heal: bool = False, as_json: bool = False
+    fleet: Fleet | None,
+    manifest: AppliedManifest | None,
+    *,
+    heal: bool = False,
+    as_json: bool = False,
+    probe_budget_seconds: float = DEFAULT_PROBE_BUDGET_SECONDS,
 ) -> int:
     """Verify (and optionally heal) the applied fleet; 0 healthy / 2 findings remain.
 
@@ -379,15 +416,24 @@ def run_verify(
     if as_json:
         log.use_stderr_only()
     with _stdout_fd_to_stderr(as_json):
-        if manifest is None or manifest.mode != "vm":
+        if manifest is None:
             report = build_verify_report(manifest, None, host_os())
         else:
-            report = build_verify_report(manifest, collect_live_state(manifest), host_os())
+            from local.verify_baremetal import collect_baremetal_live_state
+
+            vm_live = collect_live_state(manifest) if manifest.nodes else None
+            bm_live = (
+                collect_baremetal_live_state(manifest, probe_budget_seconds=probe_budget_seconds)
+                if manifest.bm_nodes
+                else None
+            )
+            report = build_verify_report(manifest, vm_live, host_os(), bm_live)
             if heal and any(f.healable for f in report.findings):
                 if fleet is None:
                     raise SystemExit("cannot heal: no fleet.yml found — run `task up` (or fleet:init) first")
                 heal_findings(fleet, manifest, report, host_os())
-                report = build_verify_report(manifest, collect_live_state(manifest), host_os())
+                # heal only repairs this host's VM daemons, so only the VM snapshot is retaken
+                report = build_verify_report(manifest, collect_live_state(manifest), host_os(), bm_live)
     if as_json:
         print(report.model_dump_json(by_alias=True), flush=True)
     else:

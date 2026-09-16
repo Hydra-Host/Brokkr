@@ -6,7 +6,7 @@ import { runAndCollect, waitShape } from '../runs.js';
 import { call, failOnError } from '../shared.js';
 import type { ToolOptions } from './index.js';
 
-const { WipeableCategoryIdSchema } = labContractPkg;
+const { StorageVerifyStatusSchema, WipeableCategoryIdSchema } = labContractPkg;
 
 export function registerBuildTools(server: McpServer, ctx: LabContext, options: ToolOptions): void {
   server.tool(
@@ -153,7 +153,7 @@ export function registerBuildTools(server: McpServer, ctx: LabContext, options: 
 
   server.tool(
     'lab_verify_storage',
-    'Compare upstream brokkr-live manifest sha256 values against the on-disk cache — match/stale/unverified per file. Read-only.',
+    `Compare upstream brokkr-live manifest sha256 values against the on-disk cache. One row per flavor, arch and file, with status ${StorageVerifyStatusSchema.options.join(' | ')}. Read-only.`,
     {},
     () =>
       call(ctx, async (client) => {

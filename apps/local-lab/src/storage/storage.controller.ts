@@ -18,7 +18,7 @@ export class StorageController {
   }
 
   @TsRestHandler(contract.wipeStorage)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   wipe() {
     return tsRestHandler(contract.wipeStorage, async ({ body }) => ({
       status: 200 as const,
@@ -27,7 +27,7 @@ export class StorageController {
   }
 
   @TsRestHandler(contract.resyncStorage)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   resync() {
     return tsRestHandler(contract.resyncStorage, async () => ({
       status: 200 as const,

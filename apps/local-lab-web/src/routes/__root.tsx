@@ -69,7 +69,7 @@ function BrokkrShell() {
   }, []);
   return (
     <ApiDownProvider value={apiIsDown(health.banner)}>
-      <div className="bg-bg-primary text-text-primary flex min-h-screen font-mono">
+      <div className="bg-bg-primary text-text-primary flex h-dvh overflow-hidden font-mono">
         <AppSidebar open={open} setOpen={setOpen} />
         <div className="content-plus-pattern flex min-w-0 flex-1 flex-col">
           <header className="relative z-30 flex h-12 shrink-0 items-center gap-3 bg-transparent px-3">
@@ -105,8 +105,11 @@ function BrokkrShell() {
           </header>
           <CcSkewBanner />
           <RecreatingBanner banner={health.banner} />
-          <main className="min-w-0 flex-1 overflow-auto p-4 sm:p-6">
-            <Outlet />
+          {/* the bound establishes a definite height; the inner div is the only page scroller */}
+          <main className="min-w-0 flex-1 overflow-hidden">
+            <div className="h-full overflow-y-auto p-4 sm:p-6">
+              <Outlet />
+            </div>
           </main>
         </div>
       </div>

@@ -10,7 +10,6 @@ import {
   formatMacInput,
   getPhaseStatus,
   identityKey,
-  ipv4ToInt,
   normalizeMac,
   phaseFraction,
   summarizeSubnets,
@@ -244,24 +243,6 @@ describe('deriveCommissioningStatus', () => {
       sagaSteps: [mkStep({ phase: 'provision', status: 'running', completedAt: '2026-06-26T00:59:00.000Z' })],
     });
     expect(deriveCommissioningStatus(item)).toBe('InProgress');
-  });
-});
-
-describe('ipv4ToInt', () => {
-  it('converts a clean dotted-quad to its integer value', () => {
-    expect(ipv4ToInt('0.0.0.0')).toBe(0);
-    expect(ipv4ToInt('10.0.0.5')).toBe(167772165);
-    expect(ipv4ToInt('255.255.255.255')).toBe(4294967295);
-  });
-  it('rejects anything that is not exactly four parts', () => {
-    expect(ipv4ToInt('1.2.3')).toBeNull();
-    expect(ipv4ToInt('1.2.3.4.5')).toBeNull();
-  });
-  it('rejects out-of-range or non-numeric octets and empty parts', () => {
-    expect(ipv4ToInt('1.2.3.256')).toBeNull();
-    expect(ipv4ToInt('1.2.3.-1')).toBeNull();
-    expect(ipv4ToInt('1.2.3.x')).toBeNull();
-    expect(ipv4ToInt('1.2.3.')).toBeNull();
   });
 });
 

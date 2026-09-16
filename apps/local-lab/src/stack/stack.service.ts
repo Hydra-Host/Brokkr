@@ -5,18 +5,23 @@ import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { catchError, EMPTY, lastValueFrom, Observable, takeUntil, tap, timeout, timer } from 'rxjs';
+import { z } from 'zod';
 
-import { ApplyPlanSchema, type ApplyPlan, type FleetPending } from '@repo/local-lab-contract';
-import { getErrorMessage } from '../common/errors';
+import { ApplyPlanSchema, type ApplyPlan, type FleetPending, type FleetPlanes } from '@repo/local-lab-contract';
+import { getErrorMessage } from '@repo/utils';
+import { ipxeChainBaseUrl } from '../common/ipxe-chain-url';
 import type { StackOp } from '../contract';
 import { FleetResetService } from '../fleet/fleet-reset.service';
 import { FleetStatusService } from '../fleet/fleet-status.service';
 import { FleetTopologyService } from '../fleet/fleet-topology.service';
-import { PORTS, resolvePgUrl } from '../ports';
-import { RunnerService, type RunState } from '../runner/runner.service';
+import { UplinkPrefixService } from '../fleet/uplink-prefix.service';
+import { resolvePgUrl } from '../ports';
+import { runBacklog, RunnerService, type RunState } from '../runner/runner.service';
+import { planesEqual, VM_ONLY } from '../services/applied-manifest';
 import { applyScopeNamespaces, applyScopeProcesses } from '../services/apply-scope';
 import { parseEnvEntries } from '../services/env-entries';
 import type { FleetStatus } from '../services/fleet-health';
+import { diagnoseGateTimeout } from '../services/flip-gate-diagnosis';
 import { swapDiffSet } from '../services/mode-drift';
 import { OverlayStoreService } from '../services/overlay-store';
 import { devenvRoot } from '../services/paths';
@@ -24,6 +29,7 @@ import {
   classifyProc,
   depsReady,
   ProcessComposeClient,
+  procIsDepReady,
   procIsUp,
   type PcProcess,
   type ProcDiag,
@@ -34,19 +40,20 @@ import { RepoBranchService } from '../services/repo-branch.service';
 import type { RestartWipe } from '../services/restart-marker';
 import { StackRestartService } from '../services/stack-restart.service';
 import { SudoService } from '../sudo/sudo.service';
+import { STACK_OPS, ZONE_SEED_TASKS, type StackOpDef } from './stack-ops';
+
+export { STACK_OPS, type StackOpDef } from './stack-ops';
 
 const execFileP = promisify(execFile);
+const StagedRoster = z.array(z.unknown()).default([]);
+const StagedFleetSchema = z.object({ nodes: StagedRoster, baremetal: z.object({ nodes: StagedRoster }).nullish() });
 
 export class ActiveSagaConflictException extends ConflictException {
   constructor(readonly activeJobs: number) {
     super(
-      `${activeJobs} in-flight saga job(s) across the configured zones — a mid-saga fleet-mode flip could strand them. Confirm "force apply" to override.`,
+      `${activeJobs} in-flight saga job(s) across the configured zones — a mid-saga plane flip could strand them. Confirm "force apply" to override.`,
     );
   }
-}
-
-export interface StackOpDef extends StackOp {
-  sections?: StackOp['section'][];
 }
 
 // Stack ops never tear down the fleet or lab/lab-web IN-PROCESS (that would kill the control center
@@ -58,9 +65,8 @@ const HUB_PROC = 'hub-api';
 
 const BM_CAP_ENSURE_SCRIPT = 'scripts/tasks/bm-cap-ensure.sh';
 
-// Order is safety-critical: the acl password derives from the zone NAME (spoke.nix), so a bridge
-// restart ahead of the seed dials a password the acl user does not hold and dies on WRONGPASS.
-const ZONE_SEED_TASKS = ['sim:seed', 'redis-acl:seed', 'zone-crypto:mint-tokens'] as const;
+// the ipxe build pulls docker/dockerfile:1 from Docker Hub; a refused lookup is the one failure an operator fixes outside the lab
+const DOCKER_HUB_DNS_FAILURE = /lookup registry-1\.docker\.io|registry-1\.docker\.io.*no such host/;
 
 const ZONE_SEED_REQUIRED_PROCS = [HUB_PROC, 'redis', 'postgres'];
 
@@ -72,242 +78,6 @@ const ZONE_SEED_SCOPE = applyScopeNamespaces('spoke');
 
 // `local.fleet apply` exit code for "bare-metal drift, converge it from the lab" (fleet.py cmd_apply).
 const BM_DRIFT_EXIT = 3;
-
-export const STACK_OPS: StackOpDef[] = [
-  {
-    id: 'db-drift',
-    label: 'DB drift check',
-    task: 'prisma migrate diff (db:drift)',
-    description:
-      'Read-only: compare the live hub DB schema against the Prisma schema and report drift. Exit 0 = in sync; exit 2 = schema differs (apply DB migrate deploy, or Reinit for a clean rebuild); any other exit = the check itself errored. Changes nothing.',
-    section: 'stack',
-    group: 'status',
-    destructive: false,
-    needsSudo: false,
-  },
-  {
-    id: 'up',
-    label: 'Stack up',
-    task: 'start datastores → hub/spoke → seed',
-    description:
-      'Bring up the control plane: start the datastore processes (Postgres/Redis/nginx/Thanos), launch hub and spoke, then seed the hub DB. Reconciles an already-initialized stack — does not touch the fleet or the control center itself.',
-    section: 'stack',
-    group: 'bringup',
-    destructive: false,
-    needsSudo: false,
-  },
-  {
-    id: 'reconcile',
-    label: 'Reconcile / self-heal',
-    task: 'stack-reconcile (process-compose)',
-    description:
-      'Self-heal the control plane: (re)start any datastore/hub/spoke/observability process that has stopped or given up, in dependency order, leaving Disabled (opt-in-off) and already-running ones be. Safe to run anytime — idempotent on a healthy stack. Does not touch the fleet or the control center itself.',
-    section: 'stack',
-    group: 'bringup',
-    destructive: false,
-    needsSudo: false,
-  },
-  {
-    id: 'datastores',
-    label: 'Datastores up',
-    task: 'start datastores (process-compose)',
-    description: 'Start just the datastore processes (Postgres/Redis/nginx/Thanos) via process-compose. No hub/spoke.',
-    section: 'stack',
-    group: 'bringup',
-    destructive: false,
-    needsSudo: false,
-  },
-  {
-    id: 'seed',
-    label: 'Seed DB',
-    task: 'seed (sql-seed generators)',
-    description:
-      'Re-run the generator-driven sim seed against the running hub (devices, OS catalog, SSH keys, listing). Idempotent; needs the hub up.',
-    section: 'stack',
-    group: 'bringup',
-    destructive: false,
-    needsSudo: false,
-  },
-  {
-    id: 'zone-seed',
-    label: 'Seed zones',
-    task: `devenv tasks run ${ZONE_SEED_TASKS.join(' → ')}`,
-    description:
-      'Make a saved zone set live on the hub: seed the Zone rows, provision each zone’s Redis ACL user, then mint its registration token — in that order — then restart the bridges so they dial the new credentials. Idempotent; re-running against an unchanged zone set is a no-op. Each task runs alone (--mode single), so the running stack is used as-is and nothing re-runs hub:init. Needs the datastores and the hub already up.',
-    section: 'stack',
-    group: 'bringup',
-    destructive: false,
-    needsSudo: false,
-  },
-  {
-    id: 'db-migrate-deploy',
-    label: 'DB migrate deploy',
-    task: 'prisma migrate deploy',
-    description:
-      'Apply any pending Prisma migrations to the hub DB (forward-only, idempotent — a no-op when the schema is already current). Does not author new migrations or wipe data. Needs the datastores up.',
-    section: 'stack',
-    group: 'bringup',
-    destructive: false,
-    needsSudo: false,
-  },
-  {
-    id: 'down',
-    label: 'Stack down',
-    task: 'stop hub/spoke → datastores down',
-    description:
-      'Stop hub/spoke and the datastore processes (Postgres/Redis/nginx/Thanos). Data is preserved (use Stack nuke to wipe). Fleet + control center untouched.',
-    section: 'stack',
-    group: 'destructive',
-    destructive: true,
-    needsSudo: false,
-  },
-  {
-    id: 'restart',
-    label: 'Stack restart (down → up)',
-    task: 'down → up',
-    description:
-      'Stop hub/spoke and the datastore processes, then bring the control plane back up. Data is preserved. Fleet + control center untouched.',
-    section: 'stack',
-    group: 'destructive',
-    destructive: true,
-    needsSudo: false,
-  },
-  {
-    id: 'nuke',
-    label: 'Stack nuke (down + WIPE data)',
-    task: 'stop hub/spoke → wipe datastore data',
-    description:
-      'DESTRUCTIVE: stop hub/spoke + the datastore processes and wipe their data dirs (hub DB, Redis) for a clean slate — the nginx layer cache is preserved. Does NOT re-initialize: use Reinit for wipe-and-rebuild in one op, or follow this with Stack up → DB migrate deploy → Seed DB. Fleet + control center untouched.',
-    section: 'stack',
-    group: 'destructive',
-    destructive: true,
-    needsSudo: false,
-  },
-  {
-    id: 'reinit',
-    label: 'Reinit (nuke + rebuild)',
-    task: 'stack-down; stack-await-down && stack-wipe-data; stack-up',
-    description:
-      'DESTRUCTIVE: the full cycle Stack nuke never finished — stop the stack, wipe the datastore data dirs (hub DB, Redis, Thanos/Tempo/Grafana), then bring everything back up through the init DAG (migrate + device seed + zone crypto) so you land on a working stack, not a bare one. KEEPS fleet disk overlays and the nginx layer cache. The wipe is gated on the supervisor actually being gone, so a stack that will not stop is reported as a failed restart rather than having a live data dir deleted under it — and the bring-up still runs, so you are never left without a cockpit. The fleet goes down and comes back with the stack. The control center itself restarts: this API drops and the UI reconnects when the stack is back.',
-    section: 'stack',
-    sections: ['fleet', 'stack'],
-    group: 'destructive',
-    destructive: true,
-    needsSudo: true,
-  },
-  {
-    id: 'reset',
-    label: 'Reset (wipe data + fleet overlays)',
-    task: 'stack-reset; stack-up',
-    description:
-      'DESTRUCTIVE: everything Reinit wipes PLUS the fleet — disk overlays, NVRAM, and sushy configs are deleted (fully fresh VMs), then the whole stack is brought back up through the init DAG. KEEPS the nginx OS-layer cache and build artifacts. The control center itself restarts: this API drops and the UI reconnects when the stack is back.',
-    section: 'stack',
-    sections: ['fleet', 'stack'],
-    group: 'destructive',
-    destructive: true,
-    needsSudo: true,
-  },
-  {
-    id: 'purge',
-    label: 'Purge (pristine devenv state)',
-    task: 'stack-purge; stack-up',
-    description:
-      "DESTRUCTIVE: everything Reset wipes PLUS host-global caches shared by every checkout — synced discovery images and built initrds (/tmp/brokkr-dev), sim boot artifacts, telegraf conf, zone-crypto tokens — plus the nginx OS-layer cache (re-downloads), process-compose logs, and devenv's task-status db, then a full bring-up. REFUSES while another checkout's stack is live, because those caches are not ours alone to delete; that is stricter than terminal `task local:purge`, which stops the siblings for you. The control center itself restarts: this API drops and the UI reconnects when the stack is back.",
-    section: 'stack',
-    sections: ['fleet', 'stack'],
-    group: 'destructive',
-    destructive: true,
-    needsSudo: true,
-  },
-  {
-    id: 'fleet-status',
-    label: 'Fleet status',
-    task: 'status (python -m local.status)',
-    description: 'Read-only: per-VM libvirt domain, ipmi_sim, and sushy state. Changes nothing.',
-    section: 'fleet',
-    group: 'status',
-    destructive: false,
-    needsSudo: false,
-  },
-  {
-    id: 'fleet-up',
-    label: 'Fleet up',
-    task: 'start fleet (process-compose)',
-    description:
-      'Start the supervised fleet process: build artifacts (brokkr-live + per-VM iPXE) if needed, then render domains, start ipmi_sim/sushy, and power on the VMs. Needs the control plane running first.',
-    section: 'fleet',
-    group: 'bringup',
-    destructive: false,
-    needsSudo: true,
-  },
-  {
-    id: 'fleet-down',
-    label: 'Fleet down',
-    task: 'stop fleet (process-compose)',
-    description:
-      'Stop the fleet process — power off the VMs (kept defined for a fast restart) and stop ipmi_sim/sushy. Disk overlays are preserved (use Fleet nuke to destroy + delete them).',
-    section: 'fleet',
-    group: 'destructive',
-    destructive: true,
-    needsSudo: true,
-  },
-  {
-    id: 'fleet-rebuild',
-    label: 'Fleet rebuild',
-    task: 'apply overlay → nuke → seed → build → power on',
-    description:
-      'DESTRUCTIVE: apply the saved fleet builder config — re-eval the stack overlay so the engine renders the new topology, nuke (delete overlays), re-seed the hub, rebuild artifacts, and bring all VMs back up with the new nodes/disks/passthrough. Needs the control plane running.',
-    section: 'fleet',
-    group: 'destructive',
-    destructive: true,
-    needsSudo: true,
-  },
-  {
-    id: 'fleet-apply',
-    label: 'Fleet apply (incremental)',
-    task: 'diff → minimal per-node ops',
-    description:
-      'Apply the saved fleet builder config the cheap way: diff desired vs applied topology and run only the minimal ops (hot power-cycle a resized node, recreate one disk, add/remove a tail node), falling back to a full rebuild only when a change shifts node identity. Needs the control plane running.',
-    section: 'fleet',
-    group: 'bringup',
-    destructive: false,
-    needsSudo: true,
-  },
-  {
-    id: 'fleet-mode-apply',
-    label: 'Apply fleet mode',
-    task: 'preflight → force-render → drift guard → cap+bake → stop fleet → project update → health-gate',
-    description:
-      'Apply a saved fleet-mode change (vm ↔ bare-metal) — no stack down/up. Preflights the active-saga guard (409 unless forced), force-renders the new-mode config and pre-swap drift-guards it (aborts if the running stack would restart more than {spoke, hub-api, fleet} — this guard is unconditional; force overrides only the active-saga preflight), on the bm direction ensures the ambient-cap binary and re-bakes iPXE with the IP-literal chain URL, refreshes the staged fleet.yml, stops the VM fleet, then does the single restart event (process-compose project update) that hard-restarts exactly {spoke, hub-api, fleet} with their new-mode env, re-stops the resurrected fleet, and health-gates the control plane back up. Needs the control plane running.',
-    section: 'fleet',
-    sections: ['fleet', 'stack'],
-    group: 'bringup',
-    destructive: false,
-    needsSudo: true,
-  },
-  {
-    id: 'fleet-add-commissioning',
-    label: 'Add commissioning nodes (+2)',
-    task: 'append 2 commissioning nodes → apply (seed + boot)',
-    description:
-      'Add 2 commissioning-candidate VMs (role=NULL, IPMI-only/DHCP — no seeded OS or server row) to the fleet and apply incrementally: the existing VMs are untouched; the 2 new ones are seeded as discoverable devices and powered on so you can exercise commissioning. Idempotent — a no-op once 2 already exist. Needs the control plane running.',
-    section: 'fleet',
-    group: 'bringup',
-    destructive: false,
-    needsSudo: true,
-  },
-  {
-    id: 'fleet-nuke',
-    label: 'Fleet nuke',
-    task: 'nuke + stop fleet',
-    description:
-      'DESTRUCTIVE: Fleet down + delete disk overlays, sushy configs, and NVRAM — fully fresh VMs on the next bring-up.',
-    section: 'fleet',
-    group: 'destructive',
-    destructive: true,
-    needsSudo: true,
-  },
-];
 
 @Injectable()
 export class StackService implements OnApplicationBootstrap {
@@ -326,6 +96,7 @@ export class StackService implements OnApplicationBootstrap {
     private readonly repoBranch: RepoBranchService,
     private readonly sudo: SudoService,
     private readonly stackRestart: StackRestartService,
+    private readonly uplinkPrefix: UplinkPrefixService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -366,21 +137,21 @@ export class StackService implements OnApplicationBootstrap {
     const phase = last && typeof last.phase === 'string' ? last.phase : null;
     if (!phase) return;
     // The same apply-journal is written by the incremental fleet-apply roster steps (opId
-    // 'fleet-apply'); only a real mode flip ('fleet-mode-apply') should synthesize a crashed-flip run.
+    // 'fleet-apply'); only a real plane flip ('fleet-planes-apply') should synthesize a crashed-flip run.
     const opId = last && typeof last.opId === 'string' ? last.opId : null;
-    if (opId !== 'fleet-mode-apply') return;
+    if (opId !== 'fleet-planes-apply') return;
     if ((phase === 'done' || phase === 'failed') && !torn) return;
-    const run = this.runner.create({ section: 'stack', opId: 'fleet-mode-apply', label: 'fleet-mode-apply' });
+    const run = this.runner.create({ section: 'stack', opId: 'fleet-planes-apply', label: 'fleet-planes-apply' });
     const msg =
       phase === 'done' || phase === 'failed'
-        ? `[mode] apply journal ends mid-write after phase ${phase} — if the last Apply visibly succeeded this is stale; re-Apply is a safe no-op, otherwise it converges\n`
-        : `[mode] control center restarted mid-flip at phase ${phase} — re-Apply to converge\n`;
+        ? `[planes] apply journal ends mid-write after phase ${phase} — if the last Apply visibly succeeded this is stale; re-Apply is a safe no-op, otherwise it converges\n`
+        : `[planes] control center restarted mid-flip at phase ${phase} — re-Apply to converge\n`;
     this.runner.emit(run, msg);
     this.runner.finalize(run, 1);
     try {
       appendFileSync(
         p,
-        JSON.stringify({ runId: run.runId, opId: 'fleet-mode-apply', phase: 'failed', ts: Date.now() }) + '\n',
+        JSON.stringify({ runId: run.runId, opId: 'fleet-planes-apply', phase: 'failed', ts: Date.now() }) + '\n',
       );
     } catch {
       /* empty */
@@ -461,7 +232,7 @@ export class StackService implements OnApplicationBootstrap {
   }
 
   async startRun(opId: string, allowDataLoss = false, force = false): Promise<string> {
-    if (opId === 'fleet-mode-apply' && !force && this.fleet.modeChangePending()) {
+    if (opId === 'fleet-planes-apply' && !force && this.fleet.planesChangePending()) {
       const activeJobs = await this.fleetReset.countActiveSagaJobs().catch(() => 0);
       if (activeJobs > 0) throw new ActiveSagaConflictException(activeJobs);
     }
@@ -672,12 +443,12 @@ export class StackService implements OnApplicationBootstrap {
 
   private async fleetRebuild(run: RunState): Promise<number | null> {
     this.runner.emit(run, '\n[fleet] rebuild: refresh config → nuke → seed → build artifacts → power on\n\n');
-    // A destructive nuke/rebuild against the wrong applied mode is exactly what the sibling ops
-    // refuse; guard here too so the mode-change banner's fleet-mode-apply is the only next step.
-    if (this.fleet.modeChangePending()) {
+    // A destructive nuke/rebuild against the wrong applied planes is exactly what the sibling ops
+    // refuse; guard here too so the planes-change banner's fleet-planes-apply is the only next step.
+    if (this.fleet.planesChangePending()) {
       this.runner.emit(
         run,
-        '[fleet] rebuild blocked: a fleet-mode change is pending — apply it via Fleet → Apply (fleet-mode-apply) first\n',
+        '[fleet] rebuild blocked: a fleet plane change is pending — apply it via Fleet → Apply (fleet-planes-apply) first\n',
       );
       return 1;
     }
@@ -706,12 +477,12 @@ export class StackService implements OnApplicationBootstrap {
 
   private async fleetAddCommissioning(run: RunState): Promise<number | null> {
     this.runner.emit(run, '\n[commissioning] adding commissioning-candidate nodes to the fleet config\n\n');
-    // fleetApply refuses while a mode flip is pending; guard here too so the operator gets an
+    // fleetApply refuses while a plane flip is pending; guard here too so the operator gets an
     // commissioning-context message instead of a mid-stream '[fleet] apply blocked' from the delegate.
-    if (this.fleet.modeChangePending()) {
+    if (this.fleet.planesChangePending()) {
       this.runner.emit(
         run,
-        '[commissioning] blocked: a fleet-mode change is pending — apply it via Fleet → Apply (fleet-mode-apply) first, then add commissioning nodes\n',
+        '[commissioning] blocked: a fleet plane change is pending — apply it via Fleet → Apply (fleet-planes-apply) first, then add commissioning nodes\n',
       );
       return 1;
     }
@@ -754,12 +525,12 @@ export class StackService implements OnApplicationBootstrap {
 
   private async fleetApply(run: RunState, allowDataLoss = false): Promise<number | null> {
     this.runner.emit(run, '\n[fleet] apply: refresh config → plan → minimal ops\n\n');
-    // An incremental apply during a pending mode flip would run the engine against the wrong-mode
+    // An incremental apply during a pending plane flip would run the engine against the wrong
     // posture; mirrors the redeploy()/reloadGroup() guards in redeploy.service.ts.
-    if (this.fleet.modeChangePending()) {
+    if (this.fleet.planesChangePending()) {
       this.runner.emit(
         run,
-        '[fleet] apply blocked: a fleet-mode change is pending — apply it via Fleet → Apply (fleet-mode-apply) first\n',
+        '[fleet] apply blocked: a fleet plane change is pending — apply it via Fleet → Apply (fleet-planes-apply) first\n',
       );
       return 1;
     }
@@ -794,12 +565,12 @@ export class StackService implements OnApplicationBootstrap {
     const rc = await this.runner.spawnPty(run, 'python', ['-m', 'local.fleet', 'apply', ...flags], env);
     // The engine refuses bare-metal roster drift and defers to the lab (fleet.py cmd_apply), so
     // converge it here — otherwise a bm roster edit has no apply path at all.
-    if (rc === BM_DRIFT_EXIT && !this.fleet.modeChangePending() && this.overlay.fleetMode() === 'baremetal') {
+    if (rc === BM_DRIFT_EXIT && !this.fleet.planesChangePending() && this.overlay.planes().baremetal) {
       return this.applyBmRosterDrift(run, env);
     }
     if (rc !== 0 || run.cancelled) return rc;
 
-    if (!this.fleet.modeChangePending() && this.overlay.fleetMode() === 'baremetal') {
+    if (!this.fleet.planesChangePending() && this.overlay.planes().baremetal) {
       const bmRc = await this.applyBmRosterSteps(run, env);
       this.journalPhase(run, bmRc === 0 ? 'done' : 'failed');
       if (bmRc !== 0) return bmRc;
@@ -808,10 +579,10 @@ export class StackService implements OnApplicationBootstrap {
     return rc;
   }
 
-  // Roster-only convergence: no overlay swap and no hub/spoke mode restart, just realign the hub
+  // Roster-only convergence: no overlay swap and no hub/spoke plane restart, just realign the hub
   // rows, redo the host steps, and let the anchor's own `fleet up` commit the applied manifest.
   private async applyBmRosterDrift(run: RunState, env: Record<string, string>): Promise<number | null> {
-    this.runner.emit(run, '\n[fleet] bare-metal roster drift — converging without a mode flip\n');
+    this.runner.emit(run, '\n[fleet] bare-metal roster drift — converging without a plane flip\n');
     const seed = await this.runner.spawn(run, 'bash', [SEED_SCRIPT], env);
     if (seed !== 0) {
       this.runner.emit(run, `[fleet] hub seed failed (exit ${seed}) — aborting before the host steps\n`);
@@ -875,27 +646,27 @@ export class StackService implements OnApplicationBootstrap {
     if (run.cancelled) return null;
 
     this.journalPhase(run, 'gate');
-    this.runner.emit(run, '[mode] restarting spoke\n');
+    this.runner.emit(run, '[planes] restarting spoke\n');
     if (!(await this.pc.restartAndWait(SPOKE_PROC))) {
-      this.runner.emit(run, '[mode] spoke restart failed (stop or start) — aborting before the gate\n');
+      this.runner.emit(run, '[planes] spoke restart failed (stop or start) — aborting before the gate\n');
       return 1;
     }
     const gated = await this.waitProcessesReady(run, [SPOKE_PROC], 120_000);
     if (!gated) {
-      this.runner.emit(run, '[mode] timed out waiting for spoke to become Ready — check its logs\n');
+      this.runner.emit(run, '[planes] timed out waiting for spoke to become Ready — check its logs\n');
       return 1;
     }
     return 0;
   }
 
-  private async fleetModeApply(run: RunState, force: boolean): Promise<number | null> {
-    const desired = this.overlay.fleetMode();
-    this.runner.emit(run, `\n[mode] apply fleet mode → ${desired}\n\n`);
+  private async fleetPlanesApply(run: RunState, force: boolean): Promise<number | null> {
+    const desired = this.overlay.planes();
+    this.runner.emit(run, `\n[planes] apply fleet planes → vm=${desired.vm} baremetal=${desired.baremetal}\n\n`);
 
-    // No-op short-circuit BEFORE the saga guard: an already-matching mode must exit 0 even with
+    // No-op short-circuit BEFORE the saga guard: already-applied planes must exit 0 even with
     // in-flight jobs (the Fleet op-list launch skips the 409 preflight when nothing is pending).
-    if (!this.fleet.modeChangePending()) {
-      this.runner.emit(run, `[mode] already in ${desired} mode — nothing to flip\n`);
+    if (!this.fleet.planesChangePending()) {
+      this.runner.emit(run, '[planes] already applied — nothing to flip\n');
       return 0;
     }
 
@@ -905,18 +676,18 @@ export class StackService implements OnApplicationBootstrap {
     } catch (e) {
       this.runner.emit(
         run,
-        `[mode] active-saga guard could not read Redis (${e instanceof Error ? e.message : String(e)}) — treating as 0\n`,
+        `[planes] active-saga guard could not read Redis (${e instanceof Error ? e.message : String(e)}) — treating as 0\n`,
       );
     }
     if (activeJobs > 0 && !force) {
       this.runner.emit(
         run,
-        `[mode] BLOCKED: ${activeJobs} in-flight saga job(s) across the configured zones — a mid-saga flip could strand them. Re-apply with "force apply" to override.\n`,
+        `[planes] BLOCKED: ${activeJobs} in-flight saga job(s) across the configured zones — a mid-saga flip could strand them. Re-apply with "force apply" to override.\n`,
       );
       return 1;
     }
     if (activeJobs > 0) {
-      this.runner.emit(run, `[mode] forcing the flip despite ${activeJobs} in-flight saga job(s) (user confirmed)\n`);
+      this.runner.emit(run, `[planes] forcing the flip despite ${activeJobs} in-flight saga job(s) (user confirmed)\n`);
     }
 
     const rc = await this.runFlip(run, desired);
@@ -926,12 +697,12 @@ export class StackService implements OnApplicationBootstrap {
 
   private async applyBmRebake(run: RunState, env: Record<string, string>): Promise<number | null> {
     this.journalPhase(run, 'cap');
-    this.runner.emit(run, '[mode] ensuring the ambient-cap binary (bm-cap-ensure)\n');
+    this.runner.emit(run, '[planes] ensuring the ambient-cap binary (bm-cap-ensure)\n');
     const cap = await this.runner.spawn(run, 'bash', [BM_CAP_ENSURE_SCRIPT], env);
     if (cap !== 0) {
       this.runner.emit(
         run,
-        `[mode] cap-ensure failed (exit ${cap}) — the sudoers pin may have rotated; run \`task sudo:setup\` then re-Apply\n`,
+        `[planes] cap-ensure failed (exit ${cap}) — the sudoers pin may have rotated; run \`task sudo:setup\` then re-Apply\n`,
       );
       return cap;
     }
@@ -942,12 +713,16 @@ export class StackService implements OnApplicationBootstrap {
     if (!uplink) {
       this.runner.emit(
         run,
-        '[mode] no bare-metal uplink (mode/NIC/IPv4 unresolved) — aborting before the iPXE rebake\n',
+        '[planes] no bare-metal uplink (mode/NIC/IPv4 unresolved) — aborting before the iPXE rebake\n',
       );
       return 1;
     }
-    const chainBase = `http://${uplink.ip}:${PORTS.spoke.base}`;
-    this.runner.emit(run, `[mode] re-baking iPXE with chain URL ${chainBase}\n`);
+    const chainBase = ipxeChainBaseUrl(uplink);
+    if (this.fleet.isIpxeBakedFor(chainBase)) {
+      this.runner.emit(run, `[planes] iPXE already baked for ${chainBase} — skipping the rebuild\n`);
+      return 0;
+    }
+    this.runner.emit(run, `[planes] re-baking iPXE with chain URL ${chainBase}\n`);
     const bake = await this.runner.spawnPty(
       run,
       'python',
@@ -955,7 +730,13 @@ export class StackService implements OnApplicationBootstrap {
       env,
     );
     if (bake !== 0) {
-      this.runner.emit(run, `[mode] iPXE rebake failed (exit ${bake}) — aborting before the swap\n`);
+      if (DOCKER_HUB_DNS_FAILURE.test(runBacklog(run))) {
+        this.runner.emit(
+          run,
+          '[planes] iPXE rebake needs Docker Hub — the resolver refused; fix DNS or pre-pull docker/dockerfile:1, then re-Apply\n',
+        );
+      }
+      this.runner.emit(run, `[planes] iPXE rebake failed (exit ${bake}) — aborting before the swap\n`);
     }
     return bake;
   }
@@ -992,33 +773,33 @@ export class StackService implements OnApplicationBootstrap {
     // child needs the zone private key.
     const zoneKey = process.env.BROKKR_HUB_PRIVATE_KEY?.trim() || (await this.liveHubZoneKey());
     if (!zoneKey) {
-      this.runner.emit(run, '[mode] no hub zone key resolved — the BMC seal will skip every node\n');
+      this.runner.emit(run, '[planes] no hub zone key resolved — the BMC seal will skip every node\n');
     }
     const sealEnv = zoneKey ? { ...env, BROKKR_HUB_PRIVATE_KEY: zoneKey } : env;
-    this.runner.emit(run, '[mode] sealing bare-metal BMC creds\n');
+    this.runner.emit(run, '[planes] sealing bare-metal BMC creds\n');
     const seal = await this.runner.spawn(run, 'pnpm', ['--filter', 'api', 'seed:baremetal-bmc'], sealEnv);
     if (seal !== 0) {
-      this.runner.emit(run, `[mode] BMC cred seal failed (exit ${seal}) — aborting before the swap\n`);
+      this.runner.emit(run, `[planes] BMC cred seal failed (exit ${seal}) — aborting before the swap\n`);
     }
     return seal;
   }
 
-  private async runFlip(run: RunState, desired: 'vm' | 'baremetal'): Promise<number | null> {
-    const bm = desired === 'baremetal';
+  private async runFlip(run: RunState, desired: FleetPlanes): Promise<number | null> {
+    const bm = desired.baremetal;
     this.journalPhase(run, 'guard');
 
-    this.runner.emit(run, '[mode] force-rendering the new-mode config (refresh-eval-cache)\n');
+    this.runner.emit(run, '[planes] force-rendering the new config (refresh-eval-cache)\n');
     let cfgPath: string;
     try {
       cfgPath = await this.rendered.buildRenderedConfig({ refreshEvalCache: true });
     } catch (e) {
       this.runner.emit(
         run,
-        `[mode] could not render the new-mode config (${e instanceof Error ? e.message : String(e)}) — aborting (stack still in prior mode)\n`,
+        `[planes] could not render the new config (${e instanceof Error ? e.message : String(e)}) — aborting (stack still on the prior planes)\n`,
       );
       return 1;
     }
-    this.runner.emit(run, `[mode] rendered config: ${cfgPath}\n`);
+    this.runner.emit(run, `[planes] rendered config: ${cfgPath}\n`);
     if (run.cancelled) return null;
 
     let diff: string[] = [];
@@ -1029,18 +810,18 @@ export class StackService implements OnApplicationBootstrap {
       // check vacuously and restart the control center mid-flip — what the guard exists to prevent.
       this.runner.emit(
         run,
-        `[mode] drift guard could not read the daemon config (${e instanceof Error ? e.message : String(e)}) — aborting (stack still in prior mode)\n`,
+        `[planes] drift guard could not read the daemon config (${e instanceof Error ? e.message : String(e)}) — aborting (stack still on the prior planes)\n`,
       );
       return 1;
     }
     const offenders = diff.filter((n) => !SWAP_ALLOWED_PROCS.has(n));
-    this.runner.emit(run, `[mode] swap diff-set: {${diff.join(', ') || '∅'}}\n`);
+    this.runner.emit(run, `[planes] swap diff-set: {${diff.join(', ') || '∅'}}\n`);
     // Unconditional — `force` overrides only the active-saga preflight, never this guard: restarting
     // processes outside {spoke, hub-api, fleet} mid-flip is never operator-intended.
     if (offenders.length > 0) {
       this.runner.emit(
         run,
-        `[mode] BLOCKED: stack config has drifted since bring-up — the swap would restart ${offenders.join(', ')} (including the control center); run Redeploy (or Reinit) first, then re-Apply.\n`,
+        `[planes] BLOCKED: stack config has drifted since bring-up — the swap would restart ${offenders.join(', ')} (including the control center); run Redeploy (or Reinit) first, then re-Apply.\n`,
       );
       return 1;
     }
@@ -1055,19 +836,19 @@ export class StackService implements OnApplicationBootstrap {
     }
 
     this.journalPhase(run, 'stop-fleet');
-    this.runner.emit(run, '[mode] stopping the fleet (waiting for terminal state)\n');
+    this.runner.emit(run, '[planes] stopping the fleet (waiting for terminal state)\n');
     if (!(await this.pc.stopAndWait(FLEET_PROC))) {
       this.runner.emit(
         run,
-        '[mode] fleet did not reach a terminal state in time — aborting (stack still in prior mode)\n',
+        '[planes] fleet did not reach a terminal state in time — aborting (stack still on the prior planes)\n',
       );
       return 1;
     }
     if (run.cancelled) return null;
-    this.runner.emit(run, '[mode] running the old-mode engine teardown (fleet down)\n');
+    this.runner.emit(run, '[planes] running the engine teardown for the prior planes (fleet down)\n');
     const down = await this.runner.spawn(run, 'python', ['-m', 'local.fleet', 'down'], env);
     if (down !== 0) {
-      this.runner.emit(run, `[mode] engine fleet down failed (exit ${down}) — aborting (stack still in prior mode)\n`);
+      this.runner.emit(run, `[planes] engine fleet down failed (exit ${down}) — aborting (planes unchanged)\n`);
       return down;
     }
     if (run.cancelled) return null;
@@ -1077,19 +858,19 @@ export class StackService implements OnApplicationBootstrap {
     if (!fleetPath) {
       this.runner.emit(
         run,
-        '[mode] could not refresh the staged fleet config — aborting (stack still in prior mode)\n',
+        '[planes] could not refresh the staged fleet config — aborting (stack still on the prior planes)\n',
       );
       return 1;
     }
     env.LOCAL_FLEET_PATH = fleetPath;
-    this.runner.emit(run, `[mode] refreshed fleet config: ${fleetPath}\n`);
+    this.runner.emit(run, `[planes] refreshed fleet config: ${fleetPath}\n`);
     if (run.cancelled) return null;
 
     this.journalPhase(run, 'seed');
-    this.runner.emit(run, '[mode] seeding hub devices for the new mode\n');
+    this.runner.emit(run, '[planes] seeding hub devices for the new planes\n');
     const seed = await this.runner.spawn(run, 'bash', [SEED_SCRIPT], env);
     if (seed !== 0) {
-      this.runner.emit(run, `[mode] hub seed failed (exit ${seed}) — aborting before the swap\n`);
+      this.runner.emit(run, `[planes] hub seed failed (exit ${seed}) — aborting before the swap\n`);
       return seed;
     }
     if (run.cancelled) return null;
@@ -1101,64 +882,71 @@ export class StackService implements OnApplicationBootstrap {
     }
 
     this.journalPhase(run, 'swap');
-    this.runner.emit(run, '[mode] applying the overlay — the single restart event (spoke, hub-api, fleet)\n');
+    this.runner.emit(run, '[planes] applying the overlay — the single restart event (spoke, hub-api, fleet)\n');
     const applied = await this.rendered.applyOverlay(cfgPath, FLIP_SCOPE);
     if (!applied) {
-      this.runner.emit(run, '[mode] overlay apply failed — see logs; stack may be mid-swap, run Reconcile\n');
+      this.runner.emit(run, '[planes] overlay apply failed — see logs; stack may be mid-swap, run Reconcile\n');
       return 1;
     }
-    this.runner.emit(run, '[mode] re-stopping the resurrected fleet anchor\n');
+    this.runner.emit(run, '[planes] re-stopping the resurrected fleet anchor\n');
     await this.pc.stopAndWait(FLEET_PROC);
     this.fleet.invalidatePending();
 
-    this.runner.emit(run, '[mode] restarting spoke + hub-api into the new-mode posture\n');
-    // Stop both before starting either: starting hub-api while the spoke still runs the old mode
+    this.runner.emit(run, '[planes] restarting spoke + hub-api into the new plane posture\n');
+    // Stop both before starting either: starting hub-api while the spoke still runs the prior planes
     // would leave the pair straddling two postures for the length of a stop.
     for (const proc of [HUB_PROC, SPOKE_PROC]) {
-      if (!(await this.pc.stopAndWait(proc))) {
+      if (!(await this.pc.stopAndWait(proc, undefined, { absentIsStopped: false }))) {
         this.runner.emit(
           run,
-          `[mode] ${proc} did not stop in time — aborting (stack may be mid-swap, run Reconcile)\n`,
+          `[planes] ${proc} did not stop in time — aborting (stack may be mid-swap, run Reconcile)\n`,
         );
         return 1;
       }
     }
     for (const proc of [HUB_PROC, SPOKE_PROC]) {
-      try {
-        await this.pc.start(proc);
-      } catch (e) {
+      if (!(await this.pc.restartAndWait(proc))) {
         this.runner.emit(
           run,
-          `[mode] ${proc} failed to start — aborting (stack may be mid-swap, run Reconcile): ${getErrorMessage(e)}\n`,
+          `[planes] ${proc} could not be restarted — aborting (stack may be mid-swap, run Reconcile)\n`,
         );
+        return 1;
+      }
+      if (!(await this.pc.waitUntilDepReady(proc))) {
+        this.runner.emit(
+          run,
+          `[planes] ${proc} did not reach Ready after restart — aborting (stack may be mid-swap, run Reconcile)\n`,
+        );
+        this.runner.emit(run, `${await this.gateDiagnosis([proc])}\n`);
         return 1;
       }
     }
 
     this.journalPhase(run, 'gate');
-    this.runner.emit(run, '[mode] health-gating spoke + hub-api back to Ready\n');
+    this.runner.emit(run, '[planes] health-gating spoke + hub-api back to Ready\n');
     const gated = await this.waitProcessesReady(run, [SPOKE_PROC, HUB_PROC], 120_000);
     if (!gated) {
-      this.runner.emit(run, '[mode] timed out waiting for spoke + hub-api to become Ready — check their logs\n');
+      this.runner.emit(run, '[planes] timed out waiting for spoke + hub-api to become Ready\n');
+      this.runner.emit(run, `${await this.gateDiagnosis([SPOKE_PROC, HUB_PROC])}\n`);
       return 1;
     }
 
-    const staged = this.stagedFleetMode(env.LOCAL_FLEET_PATH);
-    if (staged !== desired) {
+    const staged = this.stagedPlanes(env.LOCAL_FLEET_PATH);
+    if (!planesEqual(staged, desired)) {
       this.runner.emit(
         run,
-        '[mode] staged fleet config was clobbered mid-flip — re-staging from the rendered config\n',
+        '[planes] staged fleet config was clobbered mid-flip — re-staging from the rendered config\n',
       );
       const restaged = await this.rendered.refreshFleetYaml(cfgPath);
       if (!restaged) {
-        this.runner.emit(run, '[mode] could not re-stage the fleet config — aborting before the anchor\n');
+        this.runner.emit(run, '[planes] could not re-stage the fleet config — aborting before the anchor\n');
         return 1;
       }
       env.LOCAL_FLEET_PATH = restaged;
     }
 
     this.journalPhase(run, 'anchor');
-    this.runner.emit(run, `[mode] starting the '${FLEET_PROC}' anchor\n`);
+    this.runner.emit(run, `[planes] starting the '${FLEET_PROC}' anchor\n`);
     await this.startFleetProcess(run);
     this.fleet.invalidatePending();
 
@@ -1167,30 +955,28 @@ export class StackService implements OnApplicationBootstrap {
     while (Date.now() < deadline) {
       if (run.cancelled) break;
       this.fleet.invalidatePending();
-      if (!this.fleet.modeChangePending()) {
+      if (!this.fleet.planesChangePending()) {
         committed = true;
         break;
       }
       await new Promise((r) => setTimeout(r, 3_000));
     }
     if (!committed) {
-      this.runner.emit(run, '[mode] anchor did not commit the applied manifest within 240s — see fleet logs\n');
+      this.runner.emit(run, '[planes] anchor did not commit the applied manifest within 240s — see fleet logs\n');
       return 1;
     }
-    this.runner.emit(run, `\n[mode] flip to ${desired} complete\n`);
+    this.runner.emit(run, `\n[planes] flip complete — vm=${desired.vm} baremetal=${desired.baremetal}\n`);
     // Verdict is the committed manifest, not the anchor's exit code — a post-commit SIGTERM/teardown
     // race can make it exit non-zero without meaning the flip failed.
     return 0;
   }
 
-  private stagedFleetMode(path: string | undefined): 'vm' | 'baremetal' {
-    if (!path) return 'vm';
+  private stagedPlanes(path: string): FleetPlanes {
     try {
-      const doc: unknown = loadYaml(readFileSync(path, 'utf8'));
-      const mode = doc && typeof doc === 'object' && 'mode' in doc ? doc.mode : undefined;
-      return mode === 'baremetal' ? 'baremetal' : 'vm';
+      const doc = StagedFleetSchema.parse(loadYaml(readFileSync(path, 'utf8')));
+      return { vm: doc.nodes.length > 0, baremetal: (doc.baremetal?.nodes.length ?? 0) > 0 };
     } catch {
-      return 'vm';
+      return VM_ONLY;
     }
   }
 
@@ -1216,13 +1002,27 @@ export class StackService implements OnApplicationBootstrap {
       if (run.cancelled) return false;
       try {
         const byName = new Map((await this.pc.listAll()).map((p) => [p.name, p]));
-        if (names.every((n) => procIsUp(byName.get(n)))) return true;
+        if (names.every((n) => procIsDepReady(byName.get(n)))) return true;
       } catch (error) {
         this.log.debug(`waitProcessesReady poll failed: ${error instanceof Error ? error.message : String(error)}`);
       }
       await new Promise((r) => setTimeout(r, 1_000));
     }
     return false;
+  }
+
+  private async gateDiagnosis(names: string[]): Promise<string> {
+    let procs: PcProcess[] = [];
+    try {
+      procs = await this.pc.listAll();
+    } catch (error) {
+      this.log.debug(`gate diagnosis roster read failed: ${getErrorMessage(error)}`);
+    }
+    return diagnoseGateTimeout(
+      names,
+      procs,
+      (n) => this.pc.tailError(n) ?? this.pc.tailFileLast(this.pc.taskLogFile(n)),
+    );
   }
 
   /** The direct `fleet up` fallback must stay a true last resort — a false negative races the supervised run over ipmi_sim/sushy/libvirt state and corrupts it. */
@@ -1386,8 +1186,10 @@ export class StackService implements OnApplicationBootstrap {
     if (id === 'fleet-nuke') return this.fleetNuke(run).then(done);
     if (id === 'fleet-rebuild') return this.fleetRebuild(run).then(done);
     if (id === 'fleet-apply') return this.fleetApply(run, allowDataLoss).then(done);
-    if (id === 'fleet-mode-apply') return this.fleetModeApply(run, force).then(done);
+    if (id === 'fleet-planes-apply') return this.fleetPlanesApply(run, force).then(done);
     if (id === 'fleet-add-commissioning') return this.fleetAddCommissioning(run).then(done);
+    if (id === 'baremetal-uplink-prefix')
+      return this.uplinkPrefix.configure(run, (text) => this.runner.emit(run, text)).then(done);
     this.runner.finalize(run, 1);
     return Promise.resolve();
   }

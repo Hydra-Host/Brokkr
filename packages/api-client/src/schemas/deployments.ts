@@ -1,8 +1,10 @@
+import { InterruptibleClaimStatus } from '@repo/database/enums';
 import { z } from 'zod';
 import { DeviceDiagnosticsTypeSchema } from './bmc';
 import { IpxeBootUrlSchema } from './common';
 import { availableLayersFields } from './customizations';
 import { LifecycleRequestResponseSchema } from './lifecycle-requests';
+import { zodEnumFromPrisma } from './prisma-enum';
 import {
   customizationsField,
   isValidMountpoint,
@@ -202,9 +204,27 @@ export const DeploymentActionResponseSchema = z.object({
   success: z.boolean().describe('Whether the action completed successfully'),
   error_code: z.string().optional().nullable().describe('Machine-readable error code if the action failed'),
   message: z.string().optional().nullable().describe('Human-readable result or error message'),
+  jobId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe('Identifier of the lifecycle job created by this action; correlate it with the job history endpoint'),
 });
 
 export type DeploymentActionResponse = z.infer<typeof DeploymentActionResponseSchema>;
+
+export const RescueModeActionResponseSchema = z.object({
+  success: z.boolean().describe('Whether the action completed successfully'),
+  message: z.string().optional().nullable().describe('Human-readable result or error message'),
+  planId: z
+    .string()
+    .uuid()
+    .describe(
+      'Bridge power-plan identifier for the rescue reboot; correlate it with bridge logs. This is not a lifecycle job and will never appear in the job history endpoint',
+    ),
+});
+
+export type RescueModeActionResponse = z.infer<typeof RescueModeActionResponseSchema>;
 
 export const ExportLogsJobTypeSchema = z
   .enum(['Provision', 'Reprovision'])
@@ -240,10 +260,15 @@ export const SolLogsResponseSchema = z.object({
 
 export type SolLogsResponse = z.infer<typeof SolLogsResponseSchema>;
 
+export const InterruptibleClaimStatusSchema = zodEnumFromPrisma(InterruptibleClaimStatus).describe(
+  'Current status of the interruption claim',
+);
+export type { InterruptibleClaimStatus };
+
 export const InterruptibleClaimSchema = z.object({
   id: z.string().uuid().describe('Unique identifier for the interruption claim'),
   deploymentName: z.string().describe('Name of the deployment being interrupted'),
-  status: z.enum(['Pending', 'Complete']).describe('Current status of the interruption claim'),
+  status: InterruptibleClaimStatusSchema.describe('Current status of the interruption claim'),
   interruptAt: z.string().describe('ISO 8601 timestamp when the interruption is scheduled'),
   deviceId: z.string().describe('Device ID associated with this claim'),
 });
@@ -270,6 +295,14 @@ export const ReprovisionDiskLayoutSchema = z.object({
     .describe('Filesystem mount point (absolute path; no shell metacharacters or whitespace)'),
   diskType: z.string().min(1).describe('Type of disk (e.g. NVMe, SSD, HDD)'),
   disks: z.array(z.string().min(1)).describe('List of disk device names to include'),
+  size: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "Requested usable size in bytes for this disk group's filesystem (binary units). Omit for the full disk. RAID/LVM groups derive per-disk partition sizes from this value; must be at least 8 GiB for the root group and 1 GiB for other groups, must not exceed the group's usable capacity, and cannot be combined with encrypt or with wipe=false.",
+    ),
   wipe: z
     .boolean()
     .describe(

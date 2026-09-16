@@ -19,6 +19,7 @@ class SeededNic:
 
 DATA_NIC = SeededNic(name="eth0", iface_type="ETHERNET_1G", mgmt_only=False, description="Primary data NIC")
 IPMI_NIC = SeededNic(name="IPMI", iface_type="IPMI_BMC", mgmt_only=True, description="BMC management interface")
+VIRTUAL_NIC = SeededNic(name="vip0", iface_type="VIRTUAL", mgmt_only=False, description="VRRP virtual IP")
 
 
 def emit_interface(device_id: str, nic: SeededNic, mac: str) -> str:
@@ -42,8 +43,20 @@ def emit_ip_delete(device_id: str, nic: SeededNic) -> str:
     (SELECT id FROM "Interface" WHERE "deviceId" = {q(device_id)} AND name = {q(nic.name)} AND "deletedAt" IS NULL);"""
 
 
+def emit_ip_address_clear(address: str, org: str) -> str:
+    """Free ``address`` in the default VRF of ``org``, so a re-seed survives a renamed nic.
+
+    Matches IpAddress_active_unique exactly — (organizationId, vrfId, address) among live rows — so
+    it frees what the insert would collide with and nothing else. The seed writes no vrfId, so a row
+    in another VRF is a different key and must survive, as must a soft-deleted twin.
+    """
+    return f"""DELETE FROM "IpAddress"
+WHERE address = {q(address)}::inet AND "organizationId" = {org}
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;"""
+
+
 def emit_device_name_clear(device_id: str, zone_id: str, name: str, org: str) -> str:
-    """Free (org, zone, name) when a DIFFERENT row holds it, so a shifted Device.id can take it.
+    """Free (supplier, zone, name) when a DIFFERENT row holds it, so a shifted Device.id can take it.
 
     Device.id derives from the node's flat list position, so removing a non-terminal node moves
     every later id. The upsert then renames whichever row now sits at that id, which collides with
@@ -52,7 +65,7 @@ def emit_device_name_clear(device_id: str, zone_id: str, name: str, org: str) ->
     """
     return f"""UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()
 WHERE "deletedAt" IS NULL AND "zoneId" = {q(zone_id)} AND name = {q(name)}
-  AND id <> {q(device_id)} AND "organizationId" = {org};"""
+  AND id <> {q(device_id)} AND "supplierId" = {org};"""
 
 
 def emit_device_zone_move_prep(device_id: str, zone_id: str) -> str:
@@ -79,7 +92,7 @@ def emit_role_trigger(on: bool) -> str:
 
 
 def emit_ip_on_interface(device_id: str, nic: SeededNic, address: str, org: str) -> list[str]:
-    """Delete-then-insert ``address`` on this device's live ``nic``, as two separate statements.
+    """Delete-then-insert ``address`` on this device's live ``nic``, as three separate statements.
 
     ``address`` must already carry any prefix length. ``org`` is emitted verbatim, so callers pass a
     ``Zone`` subquery rather than a literal. ``assignedObjectType``/``Id`` mirror the discovery
@@ -88,6 +101,7 @@ def emit_ip_on_interface(device_id: str, nic: SeededNic, address: str, org: str)
     """
     return [
         emit_ip_delete(device_id, nic),
+        emit_ip_address_clear(address, org),
         f"""INSERT INTO "IpAddress"
     (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
 SELECT gen_random_uuid(), {q(address)}::inet, 'ACTIVE'::"IpStatus", {org},

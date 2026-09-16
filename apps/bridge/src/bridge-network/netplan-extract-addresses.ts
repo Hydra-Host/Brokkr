@@ -1,6 +1,6 @@
 import { parse as loadYaml, YAMLParseError } from 'yaml';
 
-import { isRecord } from '@repo/utils';
+import { intToIpv4, ipv4ToInt, isRecord } from '@repo/utils';
 
 import { pythonFalsy } from '../saga-framework/truthiness';
 
@@ -100,23 +100,6 @@ function isNetmask(value: string): boolean {
 function isContiguousMask(ipInt: number): boolean {
   const inverted = (~ipInt >>> 0) >>> 0;
   return (inverted & (inverted + 1)) >>> 0 ? false : true;
-}
-
-function ipv4ToInt(addr: string): number | null {
-  const parts = addr.split('.');
-  if (parts.length !== 4) return null;
-  let value = 0;
-  for (const part of parts) {
-    if (!/^(0|[1-9]\d*)$/.test(part)) return null;
-    const octet = Number.parseInt(part, 10);
-    if (octet > 255) return null;
-    value = value * 256 + octet;
-  }
-  return value >>> 0;
-}
-
-function intToIpv4(value: number): string {
-  return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff].join('.');
 }
 
 function toIterable(value: unknown): unknown[] {

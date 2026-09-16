@@ -46,12 +46,39 @@ describe('HostPluginLifecycleRequests', () => {
       cloudInit: null,
       ipxeUrl: null,
       customizations: null,
-      source: RequestSource.ADMIN,
+      source: RequestSource.UI,
     });
 
     expect(lifecycle.requestProvisionAsOperator).toHaveBeenCalled();
     expect(lifecycle.requestProvision).not.toHaveBeenCalled();
     expect(ref).toEqual({ jobId: 'job-1', jobType: 'Provision', phase: 'DISPATCHED' });
+  });
+
+  it('forwards retry attribution beside the engine request, not inside it', async () => {
+    await adapter.requestProvision({
+      deviceId: 'device-1',
+      userId: 'user-1',
+      organizationId: 'org-1',
+      deploymentName: 'box',
+      operatingSystemSlug: 'ubuntu-22.04',
+      sshKeyIds: ['11111111-1111-4111-8111-111111111111'],
+      diskLayouts: [DISK_LAYOUT],
+      cloudInit: null,
+      ipxeUrl: null,
+      customizations: null,
+      source: RequestSource.UI,
+      retriedFromJobId: 'job-old',
+      retriedBy: 'operator-1',
+      triggeredByEmail: 'op@hydrahost.test',
+    });
+
+    expect(lifecycle.requestProvisionAsOperator).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'device-1', userId: 'user-1' }),
+      { retriedFromJobId: 'job-old', retriedBy: 'operator-1', triggeredByEmail: 'op@hydrahost.test' },
+    );
+    const [engineRequest] = lifecycle.requestProvisionAsOperator.mock.calls[0];
+    expect(engineRequest).not.toHaveProperty('retriedFromJobId');
+    expect(engineRequest).not.toHaveProperty('retriedBy');
   });
 
   it('rejects a bad operatingSystemSlug before calling the engine', async () => {
@@ -67,7 +94,7 @@ describe('HostPluginLifecycleRequests', () => {
         cloudInit: null,
         ipxeUrl: null,
         customizations: null,
-        source: RequestSource.ADMIN,
+        source: RequestSource.UI,
       }),
     ).rejects.toThrow();
     expect(lifecycle.requestReprovision).not.toHaveBeenCalled();
@@ -86,7 +113,7 @@ describe('HostPluginLifecycleRequests', () => {
         cloudInit: null,
         ipxeUrl: null,
         customizations: null,
-        source: RequestSource.ADMIN,
+        source: RequestSource.UI,
       }),
     ).rejects.toThrow();
     expect(lifecycle.requestReprovision).not.toHaveBeenCalled();
@@ -110,11 +137,11 @@ describe('HostPluginLifecycleRequests', () => {
       deviceId: 'device-1',
       userId: 'user-1',
       organizationId: 'org-1',
-      source: RequestSource.ADMIN,
+      source: RequestSource.UI,
       gateOverride: true,
     });
     expect(lifecycle.requestDeprovision).toHaveBeenCalledWith(
-      expect.objectContaining({ source: RequestSource.ADMIN, gateOverride: true }),
+      expect.objectContaining({ source: RequestSource.UI, gateOverride: true }),
     );
     expect(ref.jobId).toBe('job-1');
   });
@@ -123,12 +150,13 @@ describe('HostPluginLifecycleRequests', () => {
     const ref = await adapter.requestLifecycleDeprovision({
       deviceId: 'device-1',
       userId: 'user-1',
-      source: RequestSource.ADMIN,
+      source: RequestSource.UI,
     });
     expect(lifecycle.requestDeprovisionWithoutDeployment).toHaveBeenCalledWith({
       deviceId: 'device-1',
       userId: 'user-1',
-      source: RequestSource.ADMIN,
+      source: RequestSource.UI,
+      triggeredByEmail: undefined,
     });
     expect(lifecycle.requestDeprovision).not.toHaveBeenCalled();
     expect(ref.jobId).toBe('job-1');

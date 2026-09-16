@@ -14,6 +14,7 @@ import {
   getWeeklyOrInvitePrice,
   mibSizesToGib,
   normalizeGpuModel,
+  parseSize,
   perDriveSizeGb,
 } from '../format';
 
@@ -146,6 +147,46 @@ describe('formatSize', () => {
 
   it('accepts the bigint StorageDrive.sizeBytes carries', () => {
     expect(formatSize(3840n * 1024n ** 3n)).toBe('3.8 TB');
+  });
+});
+
+describe('parseSize', () => {
+  it('parses number-with-unit strings on 1024 steps', () => {
+    expect(parseSize('500 GB')).toBe(500 * 1024 ** 3);
+    expect(parseSize('1.5TB')).toBe(1.5 * 1024 ** 4);
+    expect(parseSize('512MB')).toBe(512 * 1024 ** 2);
+  });
+
+  it('tolerates case and surrounding whitespace', () => {
+    expect(parseSize('500gb')).toBe(500 * 1024 ** 3);
+    expect(parseSize('  1 tb  ')).toBe(1024 ** 4);
+  });
+
+  it('accepts binary-suffixed units as the same magnitude', () => {
+    expect(parseSize('10 GiB')).toBe(10 * 1024 ** 3);
+  });
+
+  it('treats a bare number as bytes', () => {
+    expect(parseSize('1048576')).toBe(1_048_576);
+  });
+
+  it('round-trips formatSize output', () => {
+    expect(parseSize(formatSize(10 * 1024 ** 3)!)).toBe(10 * 1024 ** 3);
+    expect(parseSize(formatSize(512 * 1024 ** 2)!)).toBe(512 * 1024 ** 2);
+    expect(parseSize(formatSize(1.5 * 1024 ** 4)!)).toBe(1.5 * 1024 ** 4);
+  });
+
+  it('returns null for unparseable or non-positive input', () => {
+    expect(parseSize('')).toBeNull();
+    expect(parseSize('   ')).toBeNull();
+    expect(parseSize('abc')).toBeNull();
+    expect(parseSize('10 XB')).toBeNull();
+    expect(parseSize('-5 GB')).toBeNull();
+    expect(parseSize('0')).toBeNull();
+    expect(parseSize('0 GB')).toBeNull();
+    expect(parseSize('10 GB extra')).toBeNull();
+    expect(parseSize(null)).toBeNull();
+    expect(parseSize(undefined)).toBeNull();
   });
 });
 

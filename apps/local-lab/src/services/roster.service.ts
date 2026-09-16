@@ -83,6 +83,7 @@ export class RosterService {
           ...health,
           ...svcTelemetry(p, running),
           canStop: true,
+          features: resolveCatalog(p.name, catalog)?.entry.features,
         });
         continue;
       }
@@ -103,6 +104,7 @@ export class RosterService {
         ...health,
         ...svcTelemetry(p, running),
         canStop: r.entry.namespace !== 'control',
+        features: r.entry.features,
       });
     }
     return out.sort((a, b) => a.port - b.port);
@@ -111,7 +113,7 @@ export class RosterService {
   async defs(): Promise<Service[]> {
     const catalog = await this.rendered.catalogOrEmpty();
     const out: Service[] = [];
-    const mk = (id: string, label: string, ns: string, port: number): Service => ({
+    const mk = (id: string, label: string, ns: string, port: number, features?: string[]): Service => ({
       id,
       label,
       group: ns,
@@ -122,6 +124,7 @@ export class RosterService {
       pid: null,
       health: 'missing',
       canStop: ns !== 'control',
+      features,
     });
     const roster = this.overlay.labBridges();
     const rosterProcs = new Set(roster.map((b) => b.proc));
@@ -130,9 +133,10 @@ export class RosterService {
       // bridge rows come from the labBridges roster (skip their catalog twins); non-bridge spoke
       // processes (telegraf, spoke-watch) and — with no roster — the catalog's own rows stand in.
       if (rosterProcs.has(name)) continue;
-      out.push(mk(name, c.label, c.namespace, c.port ?? 0));
+      out.push(mk(name, c.label, c.namespace, c.port ?? 0, c.features));
     }
-    for (const b of roster) out.push(mk(b.proc, bridgeLabel(b), 'spoke', b.port));
+    for (const b of roster)
+      out.push(mk(b.proc, bridgeLabel(b), 'spoke', b.port, resolveCatalog(b.proc, catalog)?.entry.features));
     return out.sort((a, b) => a.port - b.port);
   }
 

@@ -1,3 +1,5 @@
+import { intToIpv4, ipv4ToInt } from '@repo/utils';
+
 import { type KnownOption, encodeClasslessRoutes, encodeDomainSearch, knownOption } from './dhcp-option-encoders.js';
 import { encodeIp } from './dhcp-options.js';
 
@@ -56,14 +58,15 @@ export function assertIpv4(name: string, value: string): string {
   return value;
 }
 
+// the lease/pool arithmetic downstream is total over `number`; a malformed address is a bug
+// upstream, so fail loudly here rather than silently anchoring a subnet on 0.0.0.0.
 export function ipToInt(ip: string): number {
-  const [a, b, c, d] = ip.split('.').map((o) => Number.parseInt(o, 10));
-  return ((a << 24) | (b << 16) | (c << 8) | d) >>> 0;
+  const value = ipv4ToInt(ip);
+  if (value === null) throw new TypeError(`not a dotted-quad IPv4 address: ${JSON.stringify(ip)}`);
+  return value;
 }
 
-export function intToIp(n: number): string {
-  return `${(n >>> 24) & 0xff}.${(n >>> 16) & 0xff}.${(n >>> 8) & 0xff}.${n & 0xff}`;
-}
+export const intToIp = intToIpv4;
 
 const DEC_WIDTH_4_THRESHOLD = 0xffff;
 const DEC_WIDTH_2_THRESHOLD = 0xff;

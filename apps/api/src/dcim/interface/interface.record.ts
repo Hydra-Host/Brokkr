@@ -146,6 +146,8 @@ export class InterfaceRecord extends createActiveRecord(InterfacePersistenceSche
 
     assertValidMtu(input.mtu);
     assertValidMacAddress(input.macAddress);
+    const mac = normalizeMac(input.macAddress);
+    if (mac) await this.ensureMacUnique(deviceId, mac);
     assertNoSelfReference(null, input.lagId, input.parentId);
     assertParentRequiresVirtualType(input.type, input.parentId);
     assertVirtualCannotHaveLag(input.type, input.lagId);
@@ -181,7 +183,11 @@ export class InterfaceRecord extends createActiveRecord(InterfacePersistenceSche
     const effectiveType: string | null = input.type !== undefined ? input.type : record.data.type;
 
     assertValidMtu(effectiveMtu);
-    if (input.macAddress !== undefined) assertValidMacAddress(input.macAddress);
+    if (input.macAddress !== undefined) {
+      assertValidMacAddress(input.macAddress);
+      const mac = normalizeMac(input.macAddress);
+      if (mac) await this.ensureMacUnique(record.data.deviceId, mac, id);
+    }
     assertNoSelfReference(id, effectiveLagId, effectiveParentId);
     assertParentRequiresVirtualType(effectiveType, effectiveParentId);
     assertVirtualCannotHaveLag(effectiveType, effectiveLagId);
@@ -211,7 +217,7 @@ export class InterfaceRecord extends createActiveRecord(InterfacePersistenceSche
     return record;
   }
 
-  static async deleteById(id: string): Promise<void> {
+  static async deleteById(id: string): Promise<{ deviceId: string }> {
     this.requireAction('delete');
     const record = await this.findByIdOrThrow(id);
     // Retire assigned IPs first: the hard delete FK-nulls interfaceId but leaves the IP rows ACTIVE with a stale assignedObjectId.
@@ -223,6 +229,7 @@ export class InterfaceRecord extends createActiveRecord(InterfacePersistenceSche
       });
       await record.delete({ tx });
     });
+    return { deviceId: record.data.deviceId };
   }
 
   // The unscoped by-device query is safe only because assertParentDeviceOwnedOrSupplied confirms the device is the caller's first.
@@ -259,7 +266,16 @@ export class InterfaceRecord extends createActiveRecord(InterfacePersistenceSche
     const client = ActiveRecordRegistry.client;
     const current = await client.interface.findMany({
       where: { deviceId, deletedAt: null },
-      select: { id: true, name: true, type: true, mtu: true, lagId: true, parentId: true, untaggedVlanId: true },
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        mtu: true,
+        macAddress: true,
+        lagId: true,
+        parentId: true,
+        untaggedVlanId: true,
+      },
     });
     const byId = new Map(current.map((i) => [i.id, i]));
 
@@ -363,7 +379,24 @@ export class InterfaceRecord extends createActiveRecord(InterfacePersistenceSche
     }
     for (const c of ops.creates) claimName(c.name);
 
+    // Post-batch MACs must be unique per device as well; checking the final set legalizes MAC swaps.
+    const finalMacs = new Set<string>();
+    const claimMac = (mac: string | null | undefined) => {
+      if (!mac) return;
+      if (finalMacs.has(mac.toLowerCase())) throw duplicateMacConflict(mac);
+      finalMacs.add(mac.toLowerCase());
+    };
+    for (const i of current) {
+      if (deleteIds.has(i.id)) continue;
+      const u = updateById.get(i.id);
+      claimMac(u && u.macAddress !== undefined ? normalizeMac(u.macAddress) : i.macAddress);
+    }
+    for (const c of ops.creates) claimMac(normalizeMac(c.macAddress));
+
     const renames = ops.updates.filter(({ id, data }) => data.name !== undefined && data.name !== byId.get(id)?.name);
+    const macChanges = ops.updates.filter(
+      ({ id, data }) => data.macAddress !== undefined && normalizeMac(data.macAddress) !== byId.get(id)?.macAddress,
+    );
     await client.$transaction(async (tx) => {
       if (ops.deletes.length > 0) {
         // Same IP retirement as deleteById — no active IP row may survive the interface hard delete.
@@ -375,6 +408,11 @@ export class InterfaceRecord extends createActiveRecord(InterfacePersistenceSche
       }
       for (const { id } of renames) {
         await tx.interface.update({ where: { id }, data: { name: `__tmp__${id}` } });
+      }
+      // Same staging for MACs, clears included: the partial unique index would otherwise reject a swap
+      // or an order-dependent transfer (B adopts A's MAC before A's clear runs) mid-batch.
+      for (const { id } of macChanges) {
+        await tx.interface.update({ where: { id }, data: { macAddress: null } });
       }
       for (const { id, data: input } of ops.updates) {
         // Copy only the fields the caller set (undefined = "leave unchanged"); MAC is canonicalized.
@@ -421,6 +459,19 @@ export class InterfaceRecord extends createActiveRecord(InterfacePersistenceSche
     }
   }
 
+  // Case-insensitive to match the lower() partial index: normalizeMac lowercases six-octet MACs but passes other forms (IB GUIDs) through as given.
+  private static async ensureMacUnique(deviceId: string, mac: string, excludeId?: string): Promise<void> {
+    const existing = await this._unscopedDelegate().findFirst({
+      where: {
+        deviceId,
+        deletedAt: null,
+        macAddress: { equals: mac, mode: 'insensitive' },
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+    });
+    if (existing) throw duplicateMacConflict(mac);
+  }
+
   private static async assertReferenceOnSameDevice(
     referenceId: string,
     expectedDeviceId: string,
@@ -449,6 +500,10 @@ export function assertValidMacAddress(mac?: string | null): void {
   if (mac != null && mac.trim() !== '' && !MAC_ADDRESS_REGEX.test(mac.trim())) {
     throw new BadRequestException('MAC address must be six hex octets separated by ":" or "-"');
   }
+}
+
+function duplicateMacConflict(mac: string): ConflictException {
+  return new ConflictException(`another interface on this device already carries ${mac}`);
 }
 
 // assertValidMacAddress checks the TRIMMED value, so store the trimmed value too — consistent even for a caller that bypasses the request schema's own trim; null/undefined (clear / no-op) pass through.

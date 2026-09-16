@@ -259,6 +259,20 @@ in
         "${builtins.getEnv "HOME"}/.local/share/local-s${toString config.stack.slot}"
     );
 
+    # Token POINTERS for stdio children of the devenv shell. The brokkr-lab MCP server is the reason:
+    # modules/agent-tooling.nix registers it with no `env` block (a pinned LAB_MCP_URL would defeat
+    # the slot registry), and it is a child of the editor session, not of the lab process — so it
+    # inherits nothing exported inside processes.lab.exec. Interpolated at eval time, like
+    # LOCAL_FLEET_PATH in modules/fleet-topology.nix, so nothing depends on shell ordering.
+    #
+    # Paths, never values. LAB_HOST_TOKEN is the one credential that reaches host-exec, and putting
+    # it in the shell environment would hand it to every process the developer runs — which is the
+    # exact property that makes a second token worth having. The files are 0600 and are minted by the
+    # `lab:token` task, so a checkout that has never brought the stack up has a well-formed pointer
+    # at a file that does not exist yet; a reader must treat an unreadable file as no token.
+    LAB_API_TOKEN_FILE = "${config.env.DEVENV_STATE}/lab/api-token";
+    LAB_HOST_TOKEN_FILE = "${config.env.DEVENV_STATE}/lab/host-token";
+
     # brokkr-app monorepo checkout — hub processes, bridge processes, and the sim engine
     # all cd into this single path. SSOT: config.polyrepo.hub (./devenv/modules/polyrepo.nix).
     HUB_REPO_PATH = lib.mkOptionDefault (
@@ -278,7 +292,7 @@ in
   services.postgres = {
     enable = localStack;
     package = pkgs.postgresql_16;
-    listen_addresses = P.bindHost;
+    listen_addresses = lib.concatStringsSep "," P.bindHostList;
     port = config.ports.postgres;
     initialDatabases = [
       {
@@ -287,31 +301,29 @@ in
         pass = config.identity.pg.password;
       }
     ];
+    # SUPERUSER stays: Hub's Prisma migrate creates extensions, which a plain role cannot. Under
+    # lan.datastoreAuth the non-loopback lines below demand the password before the role is reachable
+    # at all, so the grant is no longer what decides LAN access.
     initialScript = "ALTER ROLE ${config.identity.pg.user} WITH SUPERUSER;";
-    # pg_hba follows the LAN toggle: loopback trust always; add remote trust only when exposed, so a
-    # 0.0.0.0 listener actually admits LAN clients (dev trust auth — matches the existing loopback
-    # trust + SUPERUSER role). devenv re-copies this on every start, so a Redeploy reverts it.
-    hbaConf = ''
-      local all all trust
-      host  all all 127.0.0.1/32 trust
-      host  all all ::1/128 trust
-    ''
-    + lib.optionalString config.lan.expose ''
-      host  all all 0.0.0.0/0 trust
-      host  all all ::/0 trust
-    '';
+    # devenv re-copies this on every start, so a Redeploy reverts a hand edit. Rendered by
+    # modules/ports.nix so the credential branches are reachable from devenv/tests/nix.
+    hbaConf = P.mkHbaConf {
+      inherit (P) offLoopback;
+      inherit (config.lan) datastoreAuth;
+    };
   };
 
   services.redis = {
     enable = localStack;
-    bind = P.bindHost;
+    bind = lib.concatStringsSep " " P.bindHostList;
     port = config.ports.redis;
-    # local redis is plaintext + auth-less; binding 0.0.0.0 trips redis protected-mode (refuses
-    # non-loopback clients), so disable it only when the LAN toggle exposes redis. loopback default
-    # keeps protected-mode's safety net.
-    extraConfig = lib.optionalString config.lan.expose ''
-      protected-mode no
-    '';
+    # requirepass passwords `default` without narrowing it, reversing the scope note in
+    # modules/redis-acl.nix. The probe is a bare `redis-cli ping`, so it reads REDISCLI_AUTH below.
+    extraConfig = P.mkRedisExtraConf {
+      inherit (P) offLoopback;
+      inherit (config.lan) datastoreAuth;
+      password = config.identity.redis.password;
+    };
   };
 
   # postgres/redis are services.* (the module owns processes.<name>.exec); merge the control-center
@@ -323,6 +335,11 @@ in
   processes.redis.process-compose = lib.mkIf localStack {
     namespace = "datastore";
     description = "Redis";
+    # The upstream readiness probe is a bare `redis-cli -p <port> ping` with no credential, so it
+    # needs the password out of band once requirepass is on.
+    environment = lib.optional (
+      P.offLoopback && config.lan.datastoreAuth
+    ) "REDISCLI_AUTH=${P.safeSecret "identity.redis.password" config.identity.redis.password}";
   };
 
   # Local-dev OS-layer cache — a stripped-down port of the prod bridge nginx (TLS,
@@ -349,6 +366,12 @@ in
       resolver ${config.osLayerCache.resolvers} ipv6=off valid=300s;
 
       server {
+        # Deliberately address-less, so this listener does NOT follow P.bindHost. A provisioning VM
+        # pulls its OS-layer blobs from the data-plane gateway address (P.hosts.dataPlaneGateway),
+        # which the sim's virtual network creates after nginx starts — naming it in a `listen`
+        # directive makes nginx fail to start whenever the fleet network is down, and it is not in
+        # bindHostList. The residual surface is an origin-pinned CDN blob cache that strips
+        # Authorization and Cookie (see the proxy_set_header lines below), not an open proxy.
         listen ${toString P.ports.nginx};
         server_name _;
         # the module sets a http-level `access_log off`; re-enable here so the cache
@@ -426,19 +449,30 @@ in
       namespace = "datastore";
       description = "Thanos";
     };
-    exec = ''
-      mkdir -p "$DEVENV_STATE/thanos"
-      exec ${pkgs.thanos}/bin/thanos receive \
-        --tsdb.path="$DEVENV_STATE/thanos" \
-        --tsdb.retention=24h \
-        --http-address=${P.bindHost}:${toString P.ports.thanosHttp} \
-        --grpc-address=${P.bindHost}:${toString P.ports.thanosGrpc} \
-        --remote-write.address=${P.bindHost}:${toString P.ports.thanosRemoteWrite} \
-        --label='receive_replica="0"'
-    '';
+    # Thanos receive has no authentication mechanism of any kind, and its remote-write listener
+    # accepts arbitrary metric injection — so lan.datastoreAuth pins it back to loopback rather than
+    # publishing a surface no credential can cover. Every writer (the spokes' telegraf) runs on this
+    # host, so loopback costs the local stack nothing.
+    exec =
+      let
+        # thanos binds a cap'n proto server whether or not we name it, and its default is a fixed
+        # 0.0.0.0:19391 — unslotted, so two stacks collide, and off-loopback under datastoreAuth.
+        thanosBind = if config.lan.datastoreAuth then P.hosts.loopback else P.bindHost;
+      in
+      ''
+        mkdir -p "$DEVENV_STATE/thanos"
+        exec ${pkgs.thanos}/bin/thanos receive \
+          --tsdb.path="$DEVENV_STATE/thanos" \
+          --tsdb.retention=24h \
+          --http-address=${lib.escapeShellArg (P.hostPort thanosBind P.ports.thanosHttp)} \
+          --grpc-address=${lib.escapeShellArg (P.hostPort thanosBind P.ports.thanosGrpc)} \
+          --remote-write.address=${lib.escapeShellArg (P.hostPort thanosBind P.ports.thanosRemoteWrite)} \
+          --receive.capnproto-address=${lib.escapeShellArg (P.hostPort thanosBind P.ports.thanosCapnproto)} \
+          --label='receive_replica="0"'
+      '';
     ready = {
       http.get = {
-        host = P.hosts.loopback;
+        host = if config.lan.datastoreAuth then P.hosts.loopback else P.probeHost;
         port = P.ports.thanosHttp;
         path = "/-/ready";
       };
@@ -488,20 +522,29 @@ in
     process-compose = {
       # LAB_WEB_UI marks this as a browser UI for the control-center "Apps" sidebar; the link
       # port comes from the readiness probe (mailpitWeb), so no LAB_WEB_PORT override.
-      environment = [ "LAB_WEB_UI=Mailpit" ];
+      environment = [
+        "LAB_WEB_UI=Mailpit"
+      ]
+      ++ P.mkMailpitAuthEnv {
+        inherit (P) offLoopback;
+        inherit (config.lan) datastoreAuth;
+        password = config.identity.mailpit.password;
+      };
       namespace = "datastore";
       description = "Mailpit";
     };
     exec = ''
       exec ${pkgs.mailpit}/bin/mailpit \
-        --smtp ${P.hosts.loopback}:${toString P.ports.mailpitSmtp} \
-        --listen ${P.bindHost}:${toString P.ports.mailpitWeb}
+        --smtp ${lib.escapeShellArg (P.hostPort P.hosts.loopback P.ports.mailpitSmtp)} \
+        --listen ${lib.escapeShellArg (P.hostPort P.bindHost P.ports.mailpitWeb)}
     '';
     ready = {
       http.get = {
-        host = P.hosts.loopback;
+        host = P.probeHost;
         port = P.ports.mailpitWeb;
-        path = "/";
+        # mailpit registers /readyz outside the middleware that holds its basic auth, so the probe
+        # still passes once MP_UI_AUTH is set. A probe on "/" answers 401 and restart-loops mailpit.
+        path = "/readyz";
       };
       initial_delay = 1;
       period = 2;
@@ -790,18 +833,30 @@ in
       '';
     };
 
-    # LabAuthGuard denies every off-loopback caller unless LAB_API_TOKEN is set (fail-closed), so LAN mode
-    # needs one to exist. A task, not per-process shell: lab + lab-web both read this file and must agree,
-    # and a task runs once before either. Persistent — rotate by deleting it and restarting both.
+    # Two tokens, because they reach different ceilings. `api-token` is injected into the control-center
+    # SPA (VITE_ ⇒ it is a literal string in the served bundle), so it must stop below host execution;
+    # `host-token` is never handed to a browser and is the only one that reaches `host-exec`. A task,
+    # not per-process shell: lab + lab-web both read api-token and must agree, and a task runs once
+    # before either. Persistent — rotate by deleting a file and restarting both.
     "lab:token" = {
-      description = "mint the lab API token ($DEVENV_STATE/lab/api-token, 0600) that LabAuthGuard requires from off-loopback callers.";
-      status = ''test -s "$DEVENV_STATE/lab/api-token"'';
+      description = "mint the lab API + host tokens ($DEVENV_STATE/lab/{api,host}-token, 0600) the control-center capability model resolves against.";
+      # No `status` guard: a short-circuit on presence would leave a pre-existing file at whatever
+      # mode it already had. The exec is idempotent instead, and re-tightens on every run.
       exec = ''
         set -eu
         : "''${DEVENV_STATE:?DEVENV_STATE unset — run inside the devenv shell}"
-        mkdir -p "$DEVENV_STATE/lab"
-        # od, not openssl/uuidgen: no dependency beyond coreutils, same on linux + darwin.
-        ( umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$DEVENV_STATE/lab/api-token" )
+        (
+          # inside the subshell, so the directory is created 0700 rather than at the caller's umask
+          umask 077
+          mkdir -p "$DEVENV_STATE/lab"
+          chmod 700 "$DEVENV_STATE/lab"
+          for name in api-token host-token; do
+            path="$DEVENV_STATE/lab/$name"
+            # od, not openssl/uuidgen: no dependency beyond coreutils, same on linux + darwin.
+            [ -s "$path" ] || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$path"
+            chmod 600 "$path"
+          done
+        )
       '';
     };
 
@@ -832,6 +887,32 @@ in
       '';
     };
   }
+  # services.postgres applies initialDatabases' password only on a FRESH datadir, so a checkout that
+  # already has one keeps whatever password it was created with — and every scram-sha-256 line in
+  # hbaConf then refuses the LAN client that just started needing one. Reapply it on each start.
+  # Only defined where the scram lines exist; loopback trust needs no password at all.
+  // lib.optionalAttrs (localStack && P.offLoopback && config.lan.datastoreAuth) {
+    "pg:password" = {
+      description = "reapply identity.pg.password to the postgres role, which initialDatabases sets only on a fresh datadir.";
+      after = [ "devenv:processes:postgres" ];
+      before = [ "hub:migrate" ];
+      # psql variable substitution, never concatenated SQL: :"role" renders a quoted identifier and
+      # :'pw' a quoted literal, so neither knob can close the statement. The heredoc delimiter is
+      # quoted, so bash expands nothing inside the body either, and every argument is shell-escaped.
+      exec = ''
+        set -eu
+        exec ${config.services.postgres.package}/bin/psql \
+          -h ${lib.escapeShellArg P.hosts.loopback} -p ${toString config.ports.postgres} \
+          -d ${lib.escapeShellArg config.identity.pg.db} \
+          -U ${lib.escapeShellArg config.identity.pg.user} \
+          -v ON_ERROR_STOP=1 -q \
+          --set=role=${lib.escapeShellArg config.identity.pg.user} \
+          --set=pw=${lib.escapeShellArg config.identity.pg.password} <<'SQL'
+        ALTER ROLE :"role" WITH PASSWORD :'pw';
+        SQL
+      '';
+    };
+  }
   # sql-seed:notify seeds local lifecycle triggers — part of the hermetic stack only. Under
   # remoteInfra it must not exist: the remote DB owns its own schema.
   // lib.optionalAttrs localStack {
@@ -853,7 +934,12 @@ in
   # No static `GET /` in dev (ServeStatic mounts only under NODE_ENV=production), so the
   # probe hits /api/host — always mounted, though an uncached hit now spawns a bounded 2s git subprocess.
   processes.lab = {
-    after = [ "apps:init" ] ++ lib.optional config.lan.expose "lab:token";
+    # Minted in every mode, not only when a listener moves: `fronted` binds loopback yet needs both
+    # tokens, and the pointers in the shell env have to resolve whatever the posture is.
+    after = [
+      "apps:init"
+      "lab:token"
+    ];
     process-compose = {
       # control center drives the local stack/fleet/datastores — pointless against remote infra.
       disabled = config.remoteInfra.enable;
@@ -866,29 +952,27 @@ in
     exec = ''
       cd "${repoRoot}/apps/local-lab"
       export LOCAL_BROKKR_ROOT="${repoRoot}/apps/local-sim"
-      # bind host follows the LAN toggle; off-loopback is gated by LabAuthGuard (needs LAB_API_TOKEN).
-      export LAB_BIND_HOST=${P.bindHost};
+      # bind host follows lan.mode; off-loopback callers are gated by the capability model below.
+      export LAB_BIND_HOST=${lib.escapeShellArg P.bindHost};
       # lab-web proxies /api over loopback, so a LAN client would look like a loopback peer; trust the
-      # proxy's appended x-forwarded-for last hop so LabAuthGuard sees the real client (needs xfwd on).
+      # proxy's appended x-forwarded-for last hop so the guard sees the real client (needs xfwd on).
       export LAB_TRUST_PROXY=1;
-    ''
-    + lib.optionalString config.lan.expose ''
-      # LAN mode is only usable with BOTH gates opened: the token (else every remote call is 401 —
-      # unset is fail-closed) and remote-sharp (else the 29 loopback-only routes — fleet power, service
-      # restarts, SQL console, test runs, the WS terminals — are 403 even with a valid token). lab-web
-      # injects this same token into the SPA, so anything that can load the UI over the LAN holds it:
-      # the LAN itself is the trust boundary here, exactly like the auth-less datastores this toggle exposes.
+      # The posture the capability model reads: `fronted` drops the address branch entirely, so every
+      # caller presents a token. An unrecognised value is read as `fronted` (fail-closed).
+      export LAB_MODE=${lib.escapeShellArg config.lan.mode};
+      # Both tokens: `api-token` reaches `admin`, `host-token` reaches `host-exec`. The host token is
+      # exported HERE ONLY — lab-web must never see it, or the SPA bundle would carry root shell.
       export LAB_API_TOKEN="$(cat "$DEVENV_STATE/lab/api-token")";
-      export LAB_ALLOW_REMOTE_SHARP=1;
-    ''
-    + ''
+      export LAB_HOST_TOKEN="$(cat "$DEVENV_STATE/lab/host-token")";
       exec node dist/main.js
     '';
     ready = {
       http.get = {
-        host = P.hosts.loopback;
+        host = P.probeHost;
+        # /api/host is capability-gated and returns the hostname, LAN address and build stamp; the
+        # probe sends no token, so under `fronted` it must use the deliberately public health route.
         port = P.ports.lab;
-        path = "/api/host";
+        path = "/api/health";
       };
       initial_delay = 3;
       period = 2;
@@ -898,11 +982,14 @@ in
     restart.on = "on_failure";
   };
 
-  # control center UI (lab-web) — Vite dev server on :5175. HOST follows the LAN toggle
-  # (P.bindHost): 0.0.0.0 exposes it to the LAN/Tailscale, 127.0.0.1 keeps it loopback-only. The
-  # vite config derives allowedHosts off HOST too (HOST=0.0.0.0 → relax the host-header check).
+  # control center UI (lab-web) — Vite dev server on :5175. HOST follows lan.mode (P.bindHost): the
+  # LAN address exposes it, 127.0.0.1 keeps it loopback-only. ALLOWED_HOSTS is the same list the hub
+  # SPAs get, so a name that reaches one reaches the other.
   processes.lab-web = {
-    after = [ "apps:init" ] ++ lib.optional config.lan.expose "lab:token";
+    after = [
+      "apps:init"
+      "lab:token"
+    ];
     process-compose = {
       disabled = config.remoteInfra.enable;
       namespace = "control";
@@ -910,13 +997,15 @@ in
     };
     exec = ''
       cd "${repoRoot}"
-      export HOST=${P.bindHost};
+      export HOST=${lib.escapeShellArg P.bindHost};
       export LAB_WEB_PORT=${toString P.ports.labWeb};
       export LAB_PORT=${toString P.ports.lab};
     ''
-    + lib.optionalString config.lan.expose ''
-      # hand the SPA the lab API's token so a LAN browser authenticates with no manual paste (VITE_ ⇒
-      # it reaches client code). Only under lan.expose: loopback callers need no token at all.
+    + lib.optionalString (config.lan.mode != "loopback") ''
+      export ALLOWED_HOSTS=${lib.escapeShellArg P.allowedHosts};
+      # hand the SPA the API token so a browser authenticates with no manual paste (VITE_ ⇒ it is a
+      # literal string in the served bundle, which is why the host token is never injected here).
+      # Skipped under `loopback`, where the address alone still carries the caller.
       export VITE_LAB_API_TOKEN="$(cat "$DEVENV_STATE/lab/api-token")";
     ''
     + ''
@@ -924,7 +1013,7 @@ in
     '';
     ready = {
       http.get = {
-        host = P.hosts.loopback;
+        host = P.probeHost;
         port = P.ports.labWeb;
         path = "/";
       };

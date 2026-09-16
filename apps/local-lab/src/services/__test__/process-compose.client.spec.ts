@@ -138,6 +138,20 @@ describe('ProcessComposeClient.stopAndWait — D1.2 deterministic stop', () => {
 
     await expect(client.stopAndWait('fleet', 5_000)).resolves.toBe(true);
   });
+
+  it('keeps waiting on an absent process when absence must not count as stopped', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new ProcessComposeClient();
+      vi.spyOn(client, 'stop').mockResolvedValue();
+      listSpy(client, async () => []);
+      const p = client.stopAndWait('ghost', 5_000, { absentIsStopped: false });
+      await vi.advanceTimersByTimeAsync(6_000);
+      await expect(p).resolves.toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 const withStubSocket = () => {
@@ -354,8 +368,17 @@ describe('ProcessComposeClient.followFile', () => {
 });
 
 describe('ProcessComposeClient.restartAndWait', () => {
+  const pids = (client: ProcessComposeClient, sequence: (number | null)[]) => {
+    let calls = 0;
+    return vi.spyOn(client, 'listAll').mockImplementation(async () => {
+      const pid = sequence[Math.min(calls++, sequence.length - 1)];
+      return [{ name: 'spoke', status: 'Running', pid }];
+    });
+  };
+
   it('stops first, then starts — pc restart alone leaves a signal-shutdown process down', async () => {
     const client = new ProcessComposeClient();
+    pids(client, [100, 200]);
     const stopAndWait = vi.spyOn(client, 'stopAndWait').mockResolvedValue(true);
     const start = vi.spyOn(client, 'start').mockResolvedValue();
     const restart = vi.spyOn(client, 'restart').mockResolvedValue();
@@ -368,8 +391,43 @@ describe('ProcessComposeClient.restartAndWait', () => {
     expect(stopAndWait.mock.invocationCallOrder[0]).toBeLessThan(start.mock.invocationCallOrder[0]);
   });
 
+  it('returns false when the process pid did not change across a restart', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new ProcessComposeClient();
+      pids(client, [100]);
+      vi.spyOn(client, 'stopAndWait').mockResolvedValue(true);
+      vi.spyOn(client, 'start').mockResolvedValue();
+
+      const p = client.restartAndWait('spoke', 3_000);
+      await vi.advanceTimersByTimeAsync(4_000);
+      await expect(p).resolves.toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for the new pid to land rather than reading the old row once', async () => {
+    const client = new ProcessComposeClient();
+    pids(client, [100, 100, 200]);
+    vi.spyOn(client, 'stopAndWait').mockResolvedValue(true);
+    vi.spyOn(client, 'start').mockResolvedValue();
+
+    await expect(client.restartAndWait('spoke', 5_000)).resolves.toBe(true);
+  });
+
+  it('accepts a first pid for a process that was not running before', async () => {
+    const client = new ProcessComposeClient();
+    pids(client, [null, 200]);
+    vi.spyOn(client, 'stopAndWait').mockResolvedValue(true);
+    vi.spyOn(client, 'start').mockResolvedValue();
+
+    await expect(client.restartAndWait('spoke', 5_000)).resolves.toBe(true);
+  });
+
   it('does not start when the stop never settles', async () => {
     const client = new ProcessComposeClient();
+    pids(client, [100]);
     vi.spyOn(client, 'stopAndWait').mockResolvedValue(false);
     const start = vi.spyOn(client, 'start').mockResolvedValue();
 
@@ -380,16 +438,48 @@ describe('ProcessComposeClient.restartAndWait', () => {
 
   it('reports false, not a rejection, when the stop settles but the start throws', async () => {
     const client = new ProcessComposeClient();
+    pids(client, [100]);
     vi.spyOn(client, 'stopAndWait').mockResolvedValue(true);
     vi.spyOn(client, 'start').mockRejectedValue(new Error('pc 503'));
 
     await expect(client.restartAndWait('spoke')).resolves.toBe(false);
+  });
+
+  it('accepts any started pid when the pre-stop roster read fails', async () => {
+    const client = new ProcessComposeClient();
+    let calls = 0;
+    vi.spyOn(client, 'listAll').mockImplementation(async () => {
+      if (calls++ === 0) throw new Error('pc unreachable');
+      return [{ name: 'spoke', status: 'Running', pid: 200 }];
+    });
+    vi.spyOn(client, 'stopAndWait').mockResolvedValue(true);
+    vi.spyOn(client, 'start').mockResolvedValue();
+
+    await expect(client.restartAndWait('spoke', 5_000)).resolves.toBe(true);
+  });
+
+  it('retries the post-restart pid poll after a roster read fails mid-loop', async () => {
+    const client = new ProcessComposeClient();
+    let calls = 0;
+    vi.spyOn(client, 'listAll').mockImplementation(async () => {
+      const call = calls++;
+      if (call === 0) return [{ name: 'spoke', status: 'Running', pid: 100 }];
+      if (call === 1) throw new Error('pc unreachable');
+      return [{ name: 'spoke', status: 'Running', pid: 200 }];
+    });
+    vi.spyOn(client, 'stopAndWait').mockResolvedValue(true);
+    vi.spyOn(client, 'start').mockResolvedValue();
+
+    await expect(client.restartAndWait('spoke', 5_000)).resolves.toBe(true);
+
+    expect(calls).toBe(3);
   });
 });
 
 describe('ProcessComposeClient.ensureRunning', () => {
   it('still attempts a start when the stop never settles', async () => {
     const client = new ProcessComposeClient();
+    vi.spyOn(client, 'listAll').mockResolvedValue([]);
     vi.spyOn(client, 'stopAndWait').mockResolvedValue(false);
     const start = vi.spyOn(client, 'start').mockResolvedValue();
 
@@ -400,6 +490,7 @@ describe('ProcessComposeClient.ensureRunning', () => {
 
   it('swallows a failing start rather than throwing at the caller', async () => {
     const client = new ProcessComposeClient();
+    vi.spyOn(client, 'listAll').mockResolvedValue([]);
     vi.spyOn(client, 'stopAndWait').mockResolvedValue(false);
     vi.spyOn(client, 'start').mockRejectedValue(new Error('pc 404'));
 

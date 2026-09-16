@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import type { LifecycleQueueJoin, LifecycleQueueMatch, QueueRef } from '../contract';
 import { QueueJobsService } from '../queues/queue-jobs.service';
 import { QueueRegistryService } from '../queues/queue-registry.service';

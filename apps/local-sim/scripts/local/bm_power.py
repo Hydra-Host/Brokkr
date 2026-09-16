@@ -386,15 +386,21 @@ def _resolve_auto_action_ipmi(node: BareMetalNode, creds: BmcCreds, timeout: int
     return "reset" if ipmi_power_status(node, creds, timeout) == "on" else "on"
 
 
+def probe_power_state(node: BareMetalNode, creds: BmcCreds, timeout: int) -> str:
+    """Redfish PowerState read: GETs only, no wrong-machine guard, no IPMI fallback. Raises
+    :class:`RedfishAuthError` on 401/403; every other failure is a :class:`RuntimeError` subclass."""
+    base = f"https://{node.bmc_ip}"
+    auth = _auth_header(creds)
+    system_path = _resolve_system_path(base, auth, node, timeout)
+    return _redfish_power_state(base, auth, system_path, timeout)
+
+
 def bm_status(node: BareMetalNode, creds: BmcCreds, expected_uuid: str, *, timeout: int = 60) -> str:
     """Redfish PowerState. GETs only, wrong-machine guard active, and no IPMI fallback: a degraded
     read would mask a dead Redfish surface every mutating path depends on."""
     assert_target(node, expected_uuid)
-    base = f"https://{node.bmc_ip}"
-    auth = _auth_header(creds)
     try:
-        system_path = _resolve_system_path(base, auth, node, timeout)
-        return _redfish_power_state(base, auth, system_path, timeout)
+        return probe_power_state(node, creds, timeout)
     except _RedfishUnusable as e:
         raise BmPowerError(f"{node.name}: Redfish status read failed: {e}") from None
 

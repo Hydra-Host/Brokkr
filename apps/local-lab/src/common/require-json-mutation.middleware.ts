@@ -1,11 +1,11 @@
 import { Logger } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
 
+import { getErrorMessage } from '@repo/utils';
 import type { AuditStore } from '../ledger/audit-store';
 import { auditParams } from './audit-row';
-import { getErrorMessage } from './errors';
 import { isMutationOriginAllowed } from './lab-auth';
-import { currentOrigin, originColumns } from './lab-context';
+import { auditOriginColumns, currentOrigin } from './lab-context';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -35,7 +35,7 @@ export function requireJsonMutation(audit: AuditStore) {
         duration_ms: null,
         run_id: null,
         params: auditParams(req),
-        ...originColumns(currentOrigin()),
+        ...auditOriginColumns(currentOrigin()),
         error: message,
       });
     } catch (error) {
@@ -60,11 +60,8 @@ export function requireJsonMutation(audit: AuditStore) {
     // a dual-stack socket reports an ipv4 peer/address with the ::ffff: prefix; compare on the v4 form
     const local = req.socket.localAddress;
     const localAddress = local?.startsWith('::ffff:') ? local.slice('::ffff:'.length) : local;
-    // a valid token stands in for an allowlisted origin: it IS an anti-csrf proof, and it is what makes a
-    // LAN operator's own hostname work without an allowlist entry per name. A drive-by page cannot hold it
-    // — localStorage is origin-scoped, the vite dev server refuses to serve the bundle to a foreign origin,
-    // and sending the header at all forces a preflight our CORS allowlist rejects. Loopback callers present
-    // no token (they need none), so the gate below is unchanged for them — which is who it was written for.
+    // a valid token is itself an anti-csrf proof a drive-by page cannot hold, so it stands in for an
+    // allowlist entry per hostname. Loopback callers present none and the gate below is unchanged for them.
     const tokenAuth = currentOrigin()?.tokenAuth === true;
     if (origin !== undefined && !tokenAuth && !isMutationOriginAllowed(origin, localAddress)) {
       deny(req, res, 403, ORIGIN_DENIAL);

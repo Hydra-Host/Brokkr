@@ -7,14 +7,13 @@ import {
   type NestInterceptor,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { isRecord } from '@repo/utils';
+import { getErrorMessage, isRecord } from '@repo/utils';
 import { catchError, type Observable, tap, throwError } from 'rxjs';
 
 import type { AuditEventRow } from '../db/db';
 import { AuditStore } from '../ledger/audit-store';
 import { auditParams, type AuditRequest, isSafeMethod } from './audit-row';
-import { getErrorMessage } from './errors';
-import { currentOrigin, originColumns } from './lab-context';
+import { auditOriginColumns, currentOrigin } from './lab-context';
 import { LAB_ROUTE, type LabRouteOptions } from './lab-route';
 
 type AuditWrite = Omit<AuditEventRow, 'id'>;
@@ -42,7 +41,7 @@ export class AuditInterceptor implements NestInterceptor {
       path: req.path,
       handler: `${ctx.getClass().name}.${ctx.getHandler().name}`,
       params: auditParams(req),
-      ...originColumns(currentOrigin()),
+      ...auditOriginColumns(currentOrigin()),
     };
     return next.handle().pipe(
       tap((body) => {

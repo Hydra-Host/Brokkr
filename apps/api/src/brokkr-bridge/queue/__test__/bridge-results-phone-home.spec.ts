@@ -12,8 +12,9 @@ import { ZoneCryptoConfig } from 'src/zone-crypto/zone-crypto.config';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { DeviceRecordPublisher } from '../../device-record/device-record-publisher.service';
 import { DiscoveryIngressService } from '../../discovery/discovery-ingress.service';
-import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
+import { JobLogWriterService } from '../../job-logs/job-log-writer.service';
 import { BridgeCommissioningService } from '../../lifecycle/commissioning.service';
+import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../../lifecycle/qualify-orchestration.service';
 import { RenderRequestDispatcher } from '../../render-request/render-request-dispatcher.service';
 import { BridgeResultsConsumer } from '../bridge-results.consumer';
@@ -53,6 +54,7 @@ describe('BridgeResultsConsumer — Brokkr Live phone-home zone correlation', ()
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BridgeResultsConsumer,
+        { provide: JobLogWriterService, useValue: { write: vi.fn() } },
         {
           provide: SealedEnvelopeService,
           useValue: { isZoneEnrolled: vi.fn().mockResolvedValue(false), openBridgeToHub: vi.fn() },

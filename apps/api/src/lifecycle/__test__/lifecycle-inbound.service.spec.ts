@@ -790,4 +790,78 @@ describe('LifecycleInboundService', () => {
     expect(prisma.device.update).not.toHaveBeenCalled();
     expect(eventBus.emit).not.toHaveBeenCalled();
   });
+
+  it('inventory collection job_failed fails the job without touching the device', async () => {
+    const job = jobAt(LifecycleJobPhase.DISPATCHED, JobType.InventoryCollection);
+    vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(job);
+
+    await service.applyStepResult(
+      stepResult({
+        action_type: 'inventory_collection',
+        event_type: 'job_failed',
+        status: 'failed',
+        error: { message: 'bmc unreachable' },
+      }),
+    );
+
+    expect(job.data.phase).toBe(LifecycleJobPhase.FAILED);
+    expect(job.data.error).toBe('bmc unreachable');
+    expect(appendEvent).toHaveBeenCalledWith(expect.objectContaining({ sagaName: 'inventory_collection' }));
+    expect(prisma.server.createMany).not.toHaveBeenCalled();
+    expect(prisma.server.updateMany).not.toHaveBeenCalled();
+    expect(prisma.device.update).not.toHaveBeenCalled();
+    expect(eventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it('benchmarks job.completed completes the job with no phone-home wait and no device write', async () => {
+    const job = jobAt(LifecycleJobPhase.RUNNING, JobType.Benchmarks);
+    vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(job);
+
+    await service.applyJobCompleted(jobCompleted({ saga_name: 'benchmarks' }));
+
+    expect(job.data.phase).toBe(LifecycleJobPhase.COMPLETED);
+    expect(watchdogQueue.add).not.toHaveBeenCalled();
+    expect(prisma.device.update).not.toHaveBeenCalled();
+    expect(eventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it('benchmarks job_failed fails the job without touching the device', async () => {
+    const job = jobAt(LifecycleJobPhase.DISPATCHED, JobType.Benchmarks);
+    vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(job);
+
+    await service.applyStepResult(
+      stepResult({
+        action_type: 'benchmarks',
+        event_type: 'job_failed',
+        status: 'failed',
+        error: { message: 'gpu stress run failed' },
+      }),
+    );
+
+    expect(job.data.phase).toBe(LifecycleJobPhase.FAILED);
+    expect(job.data.error).toBe('gpu stress run failed');
+    expect(appendEvent).toHaveBeenCalledWith(expect.objectContaining({ sagaName: 'benchmarks' }));
+    expect(prisma.server.createMany).not.toHaveBeenCalled();
+    expect(prisma.server.updateMany).not.toHaveBeenCalled();
+    expect(prisma.device.update).not.toHaveBeenCalled();
+    expect(eventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it('sweepStuckJobs fails a stuck InventoryCollection job without touching the device', async () => {
+    const job = jobAt(LifecycleJobPhase.DISPATCHED, JobType.InventoryCollection);
+    job.set({ updatedAt: new Date(Date.now() - 31 * 60 * 1000) });
+    vi.spyOn(LifecycleJobRecord, 'findManyUnscoped').mockResolvedValue([job]);
+
+    await expect(service.sweepStuckJobs()).resolves.toBe(1);
+
+    expect(job.data.phase).toBe(LifecycleJobPhase.FAILED);
+    expect(job.data.error).toBe('no bridge response after dispatch');
+    expect(appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'stuck_sweep', error: 'no bridge response after dispatch' }),
+    );
+    expect(prisma.server.createMany).not.toHaveBeenCalled();
+    expect(prisma.server.updateMany).not.toHaveBeenCalled();
+    expect(prisma.device.update).not.toHaveBeenCalled();
+    expect(eventBus.emit).not.toHaveBeenCalled();
+  });
 });

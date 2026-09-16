@@ -158,6 +158,19 @@ describe('InventoryRecord', () => {
     });
   });
 
+  describe('reservation-invite availability', () => {
+    it('findAvailableForInviteById does not filter isListed', async () => {
+      mockDelegate.findFirst.mockResolvedValue(null);
+
+      await InventoryRecord.findAvailableForInviteById('device-1');
+
+      const [args] = mockDelegate.findFirst.mock.calls[0];
+      expect(args.where.id).toBe('device-1');
+      expect(args.where.server.lifecycleStatus).toBe(ServerLifecycleStatus.INVENTORY);
+      expect(args.where.server).not.toHaveProperty('isListed');
+    });
+  });
+
   describe('attachLatestGpuBurnInRuns hydration', () => {
     it('attaches the latest completed GpuBurnIn run onto the aggregate', async () => {
       mockDelegate.findFirst.mockResolvedValue(fullRow);

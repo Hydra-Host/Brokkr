@@ -235,6 +235,34 @@ describe('InterfaceRecord', () => {
       await expect(InterfaceRecord.createForDevice(deviceId, { name: 'eth0' })).rejects.toThrow(ConflictException);
     });
 
+    it('rejects a second interface carrying a mac the device already has', async () => {
+      mockDevice.findUnique.mockResolvedValue({ id: deviceId });
+      mockDelegate.findFirst.mockImplementation(async (args: { where: { macAddress?: unknown } }) =>
+        args.where.macAddress ? { ...fullIface, id: 'if-2', name: 'eth1', macAddress: 'aa:bb:cc:dd:ee:ff' } : null,
+      );
+
+      await expect(
+        InterfaceRecord.createForDevice(deviceId, { name: 'eth0', macAddress: 'AA-BB-CC-DD-EE-FF' }),
+      ).rejects.toThrow(new ConflictException('another interface on this device already carries aa:bb:cc:dd:ee:ff'));
+
+      expect(mockDelegate.findFirst).toHaveBeenCalledWith({
+        where: { deviceId, deletedAt: null, macAddress: { equals: 'aa:bb:cc:dd:ee:ff', mode: 'insensitive' } },
+      });
+      expect(mockDelegate.create).not.toHaveBeenCalled();
+    });
+
+    it('creates when the mac is carried by no other live interface on the device', async () => {
+      mockDevice.findUnique.mockResolvedValue({ id: deviceId });
+      mockDelegate.findFirst.mockResolvedValue(null);
+      mockDelegate.create.mockResolvedValue({ ...fullIface, macAddress: 'aa:bb:cc:dd:ee:ff' });
+
+      await InterfaceRecord.createForDevice(deviceId, { name: 'eth0', macAddress: 'aa:bb:cc:dd:ee:ff' });
+
+      expect(mockDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ macAddress: 'aa:bb:cc:dd:ee:ff' }) }),
+      );
+    });
+
     it('rejects MTU below 68', async () => {
       mockDevice.findUnique.mockResolvedValue({ id: deviceId });
       mockDelegate.findFirst.mockResolvedValue(null);
@@ -367,6 +395,46 @@ describe('InterfaceRecord', () => {
         data: { name: 'eth1', mtu: 9000 },
       });
       expect(result.data.mtu).toBe(9000);
+    });
+
+    it('rejects a mac change onto a mac another interface on the device carries', async () => {
+      mockDelegate.findFirst
+        .mockResolvedValueOnce(fullIface)
+        .mockResolvedValueOnce({ ...fullIface, id: 'if-2', name: 'eth1', macAddress: 'aa:bb:cc:dd:ee:ff' });
+
+      await expect(InterfaceRecord.updateById('if-1', { macAddress: 'aa:bb:cc:dd:ee:ff' })).rejects.toThrow(
+        new ConflictException('another interface on this device already carries aa:bb:cc:dd:ee:ff'),
+      );
+
+      expect(mockDelegate.update).not.toHaveBeenCalled();
+    });
+
+    it('excludes the interface itself from the mac uniqueness check', async () => {
+      mockDelegate.findFirst.mockResolvedValueOnce(fullIface).mockResolvedValueOnce(null);
+      mockDelegate.update.mockResolvedValue({ ...fullIface, macAddress: 'aa:bb:cc:dd:ee:ff' });
+
+      await InterfaceRecord.updateById('if-1', { macAddress: 'aa:bb:cc:dd:ee:ff' });
+
+      expect(mockDelegate.findFirst).toHaveBeenNthCalledWith(2, {
+        where: {
+          deviceId,
+          deletedAt: null,
+          macAddress: { equals: 'aa:bb:cc:dd:ee:ff', mode: 'insensitive' },
+          id: { not: 'if-1' },
+        },
+      });
+      expect(mockDelegate.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ macAddress: 'aa:bb:cc:dd:ee:ff' }) }),
+      );
+    });
+
+    it('does not run the mac uniqueness check when the mac is cleared or untouched', async () => {
+      mockDelegate.findFirst.mockResolvedValueOnce(fullIface);
+      mockDelegate.update.mockResolvedValue({ ...fullIface, macAddress: null });
+
+      await InterfaceRecord.updateById('if-1', { macAddress: '  ', mtu: 1500 });
+
+      expect(mockDelegate.findFirst).toHaveBeenCalledTimes(1);
     });
 
     it('throws NotFoundException when the interface is not visible to the caller', async () => {
@@ -505,7 +573,8 @@ describe('InterfaceRecord', () => {
   describe('deleteById', () => {
     it('deletes when the interface is visible to the caller (relation filter lands in delete WHERE)', async () => {
       mockDelegate.findFirst.mockResolvedValue(fullIface);
-      await InterfaceRecord.deleteById('if-1');
+      const result = await InterfaceRecord.deleteById('if-1');
+      expect(result).toEqual({ deviceId });
       expect(mockDelegate.delete).toHaveBeenCalledWith({
         where: { id: 'if-1', device: { supplierId: supplierOrgId } },
       });
@@ -737,6 +806,119 @@ describe('InterfaceRecord', () => {
       expect(mockDelegate.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'if-1' }, data: expect.objectContaining({ macAddress: null }) }),
       );
+    });
+
+    it('rejects a create carrying a mac a surviving interface on the device already has', async () => {
+      mockDevice.findUnique.mockResolvedValue({ id: deviceId });
+      mockDelegate.findMany.mockResolvedValue([
+        { ...fullIface, id: 'if-a', name: 'eth0', macAddress: 'aa:bb:cc:dd:ee:ff' },
+      ]);
+
+      await expect(
+        InterfaceRecord.bulkApplyForDevice(deviceId, {
+          creates: [{ name: 'eth9', macAddress: 'AA:BB:CC:DD:EE:FF' }],
+          updates: [],
+          deletes: [],
+        }),
+      ).rejects.toThrow(new ConflictException('another interface on this device already carries aa:bb:cc:dd:ee:ff'));
+
+      expect(mockDelegate.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects two creates in one batch that carry the same mac', async () => {
+      mockDevice.findUnique.mockResolvedValue({ id: deviceId });
+      mockDelegate.findMany.mockResolvedValue([]);
+
+      await expect(
+        InterfaceRecord.bulkApplyForDevice(deviceId, {
+          creates: [
+            { name: 'eth8', macAddress: 'aa:bb:cc:dd:ee:ff' },
+            { name: 'eth9', macAddress: 'aa-bb-cc-dd-ee-ff' },
+          ],
+          updates: [],
+          deletes: [],
+        }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('lets a create take the mac of an interface deleted in the same batch', async () => {
+      mockDevice.findUnique.mockResolvedValue({ id: deviceId });
+      mockDelegate.findMany.mockResolvedValue([
+        { ...fullIface, id: 'if-a', name: 'eth0', macAddress: 'aa:bb:cc:dd:ee:ff' },
+      ]);
+      mockDelegate.create.mockResolvedValue({ id: 'new-1' });
+
+      await InterfaceRecord.bulkApplyForDevice(deviceId, {
+        creates: [{ name: 'eth9', macAddress: 'aa:bb:cc:dd:ee:ff' }],
+        updates: [],
+        deletes: ['if-a'],
+      });
+
+      expect(mockDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ macAddress: 'aa:bb:cc:dd:ee:ff' }) }),
+      );
+    });
+
+    it('clears changed macs first so a mac swap applies without a unique-mac collision', async () => {
+      mockDevice.findUnique.mockResolvedValue({ id: deviceId });
+      mockDelegate.findMany.mockResolvedValue([
+        { ...fullIface, id: 'if-a', name: 'eth0', macAddress: 'aa:aa:aa:aa:aa:aa' },
+        { ...fullIface, id: 'if-b', name: 'eth1', macAddress: 'bb:bb:bb:bb:bb:bb' },
+      ]);
+
+      await InterfaceRecord.bulkApplyForDevice(deviceId, {
+        creates: [],
+        updates: [
+          { id: 'if-a', data: { macAddress: 'bb:bb:bb:bb:bb:bb' } },
+          { id: 'if-b', data: { macAddress: 'aa:aa:aa:aa:aa:aa' } },
+        ],
+        deletes: [],
+      });
+
+      expect(mockDelegate.update).toHaveBeenCalledWith({ where: { id: 'if-a' }, data: { macAddress: null } });
+      expect(mockDelegate.update).toHaveBeenCalledWith({ where: { id: 'if-b' }, data: { macAddress: null } });
+
+      const calls = mockDelegate.update.mock.calls;
+      const orders = mockDelegate.update.mock.invocationCallOrder;
+      const clearOrder = orders[calls.findIndex((c) => c[0].where.id === 'if-a' && c[0].data.macAddress === null)]!;
+      const finalOrder =
+        orders[calls.findIndex((c) => c[0].where.id === 'if-a' && c[0].data.macAddress === 'bb:bb:bb:bb:bb:bb')]!;
+      expect(clearOrder).toBeLessThan(finalOrder);
+
+      expect(mockDelegate.update).toHaveBeenCalledWith({
+        where: { id: 'if-a' },
+        data: { macAddress: 'bb:bb:bb:bb:bb:bb' },
+      });
+      expect(mockDelegate.update).toHaveBeenCalledWith({
+        where: { id: 'if-b' },
+        data: { macAddress: 'aa:aa:aa:aa:aa:aa' },
+      });
+    });
+
+    it('stages a mac that another update in the batch adopts, so the transfer is order-independent', async () => {
+      mockDevice.findUnique.mockResolvedValue({ id: deviceId });
+      mockDelegate.findMany.mockResolvedValue([
+        { ...fullIface, id: 'if-a', name: 'eth0', macAddress: 'aa:aa:aa:aa:aa:aa' },
+        { ...fullIface, id: 'if-b', name: 'eth1', macAddress: null },
+      ]);
+
+      await InterfaceRecord.bulkApplyForDevice(deviceId, {
+        creates: [],
+        updates: [
+          { id: 'if-b', data: { macAddress: 'aa:aa:aa:aa:aa:aa' } },
+          { id: 'if-a', data: { macAddress: null } },
+        ],
+        deletes: [],
+      });
+
+      expect(mockDelegate.update).toHaveBeenCalledWith({ where: { id: 'if-a' }, data: { macAddress: null } });
+
+      const calls = mockDelegate.update.mock.calls;
+      const orders = mockDelegate.update.mock.invocationCallOrder;
+      const clearOrder = orders[calls.findIndex((c) => c[0].where.id === 'if-a' && c[0].data.macAddress === null)]!;
+      const adoptOrder =
+        orders[calls.findIndex((c) => c[0].where.id === 'if-b' && c[0].data.macAddress === 'aa:aa:aa:aa:aa:aa')]!;
+      expect(clearOrder).toBeLessThan(adoptOrder);
     });
   });
 

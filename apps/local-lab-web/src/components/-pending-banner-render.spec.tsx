@@ -29,11 +29,17 @@ describe('PendingBanner without an apply handler', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 
-  it('offers no mode-change button either, so a shared control cannot be duplicated', () => {
-    render(<PendingBanner pending={pending({ severity: 'mode-change' })} busy={false} />);
+  it('offers no planes-change button either, so a shared control cannot be duplicated', () => {
+    render(<PendingBanner pending={pending({ severity: 'planes-change' })} busy={false} />);
 
-    expect(screen.getByText(/Fleet mode changed/)).toBeTruthy();
+    expect(screen.getByText(/Fleet planes changed/)).toBeTruthy();
     expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('labels the planes-change button Apply planes where a page passes one', () => {
+    render(<PendingBanner pending={pending({ severity: 'planes-change' })} busy={false} onApply={() => {}} />);
+
+    expect(screen.getByRole('button', { name: 'Apply planes' })).toBeTruthy();
   });
 
   it('still offers the button where a page passes one', () => {

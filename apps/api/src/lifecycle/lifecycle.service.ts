@@ -28,6 +28,7 @@ import {
   START_LINKED_PROVISION_JOB,
   interruptibleEvictionRequiresApproval,
   type ScheduledJobData,
+  type SystemJobType,
 } from '@repo/lifecycle';
 import { Queue } from 'bullmq';
 import { Logger } from 'src/common/decorators/logger.decorator';
@@ -51,9 +52,11 @@ import { ReprovisionOperation, type ReprovisionRequest } from './operations/repr
 
 export interface RebootRequest {
   deviceId: string;
+  deploymentId?: string | null;
   userId: string;
   organizationId: string | null;
   source: RequestSource;
+  triggeredByEmail?: string;
 }
 
 export interface PowerControlRequest extends RebootRequest {
@@ -65,6 +68,7 @@ export interface DeprovisionRequest {
   userId: string;
   organizationId: string;
   source: RequestSource;
+  triggeredByEmail?: string;
   gateOverride?: boolean;
 }
 
@@ -77,6 +81,14 @@ export interface DeprovisionWithoutDeploymentRequest {
   deviceId: string;
   userId: string;
   source: RequestSource;
+  triggeredByEmail?: string;
+}
+
+/** Audit extras on the job payload; `retried*` are retry-only. `request.userId` stays the original owner. */
+export interface LifecycleJobAudit {
+  triggeredByEmail?: string;
+  retriedFromJobId?: string;
+  retriedBy?: string;
 }
 
 export interface InterruptibleProvisionInput {
@@ -121,11 +133,22 @@ interface RunParams {
   organizationId: string | null;
   performedBy: string;
   source: RequestSource;
-  payload: Prisma.InputJsonValue;
+  triggeredByEmail?: string;
+  payload: Prisma.JsonObject;
   prepare?: (jobId: string) => Promise<PrepareResult>;
   gate?: (jobId: string, prep: PrepareResult, override: boolean) => Promise<void>;
   gateOverride?: boolean;
   dispatch: (jobId: string, prep: PrepareResult) => Promise<void>;
+}
+
+export type SystemJobSource = 'manual' | 'cron' | 'phone-home' | 'discovery';
+
+interface RunSystemParams {
+  jobType: SystemJobType;
+  deviceId: string;
+  zoneId: string;
+  source: SystemJobSource;
+  dispatch: (jobId: string) => Promise<void>;
 }
 
 @Injectable()
@@ -151,9 +174,11 @@ export class LifecycleService {
     return this.run({
       jobType: JobType.Reboot,
       deviceId: input.deviceId,
+      deploymentId: input.deploymentId,
       organizationId: input.organizationId,
       performedBy: input.userId,
       source: input.source,
+      triggeredByEmail: input.triggeredByEmail,
       payload: {},
       dispatch: (jobId) => this.rebootOperation.dispatch(input.deviceId, jobId),
     });
@@ -163,9 +188,11 @@ export class LifecycleService {
     return this.run({
       jobType: input.operation === 'on' ? JobType.PowerOn : JobType.PowerOff,
       deviceId: input.deviceId,
+      deploymentId: input.deploymentId,
       organizationId: input.organizationId,
       performedBy: input.userId,
       source: input.source,
+      triggeredByEmail: input.triggeredByEmail,
       payload: { operation: input.operation },
       dispatch: (jobId) => this.powerControlOperation.dispatch(input.deviceId, jobId, input.operation),
     });
@@ -178,19 +205,28 @@ export class LifecycleService {
 
   // Operator entry (backs PLUGIN_LIFECYCLE_REQUESTS): skips the request-context identity check — the caller is an
   // operator-gated plugin acting for a validated identity. Device/OS/SSH-key validation still runs in full.
-  async requestProvisionAsOperator(input: ProvisionRequest): Promise<LifecycleJobRecord> {
+  async requestProvisionAsOperator(input: ProvisionRequest, audit?: LifecycleJobAudit): Promise<LifecycleJobRecord> {
     const ctx = await this.provisionOperation.assembleContextForReplay(input);
-    return this.runProvision(input, ctx);
+    return this.runProvision(input, ctx, audit);
   }
 
-  private runProvision(input: ProvisionRequest, ctx: ProvisionContext): Promise<LifecycleJobRecord> {
+  private runProvision(
+    input: ProvisionRequest,
+    ctx: ProvisionContext,
+    audit?: LifecycleJobAudit,
+  ): Promise<LifecycleJobRecord> {
     return this.run({
       jobType: JobType.Provision,
       deviceId: input.deviceId,
       organizationId: input.organizationId,
-      performedBy: input.userId,
+      performedBy: audit?.retriedBy ?? input.userId,
       source: input.source,
-      payload: { operatingSystemSlug: input.operatingSystemSlug, request: this.serializeRequest(input) },
+      triggeredByEmail: audit?.triggeredByEmail,
+      payload: {
+        operatingSystemSlug: input.operatingSystemSlug,
+        request: this.serializeRequest(input),
+        ...this.auditPayload(audit),
+      },
       prepare: async () => {
         const reservationId = await this.provisionOperation.createReservation(input);
         try {
@@ -228,19 +264,22 @@ export class LifecycleService {
     });
   }
 
-  async requestReprovision(input: ReprovisionRequest): Promise<LifecycleJobRecord> {
+  async requestReprovision(input: ReprovisionRequest, audit?: LifecycleJobAudit): Promise<LifecycleJobRecord> {
     const ctx = await this.reprovisionOperation.assembleContext(input);
     return this.run({
       jobType: JobType.Reprovision,
       deviceId: input.deviceId,
+      deploymentId: ctx.deploymentId,
       organizationId: ctx.organizationId,
-      performedBy: input.userId,
+      performedBy: audit?.retriedBy ?? input.userId,
       source: input.source,
+      triggeredByEmail: audit?.triggeredByEmail,
       payload: {
         operatingSystemSlug: input.operatingSystemSlug,
         tee: input.tee ?? false,
         customizations: input.customizations ?? null,
         request: this.serializeRequest(input),
+        ...this.auditPayload(audit),
       },
       dispatch: (jobId) =>
         this.reprovisionOperation.dispatch({
@@ -263,6 +302,7 @@ export class LifecycleService {
       organizationId: input.organizationId,
       performedBy: input.userId,
       source: input.source,
+      triggeredByEmail: input.triggeredByEmail,
       payload: {},
       gateOverride: input.gateOverride,
       gate: (jobId, _prep, override) =>
@@ -302,6 +342,7 @@ export class LifecycleService {
       organizationId: null,
       performedBy: input.userId,
       source: input.source,
+      triggeredByEmail: input.triggeredByEmail,
       payload: {},
       dispatch: (jobId) => this.deprovisionOperation.dispatchWithoutDeployment({ deviceId: input.deviceId, jobId }),
     });
@@ -318,11 +359,16 @@ export class LifecycleService {
       organizationId: input.organizationId,
       performedBy: input.userId,
       source: input.source,
-      payload: {
-        interruptible: true,
-        interruptionWarningTime: input.interruptionWarningTime,
-        ...(input.gateOverride ? { gateOverride: true } : {}),
-      },
+      payload: this.withAttribution(
+        {
+          interruptible: true,
+          interruptionWarningTime: input.interruptionWarningTime,
+          ...(input.gateOverride ? { gateOverride: true } : {}),
+        },
+        input.userId,
+        input.source,
+        input.triggeredByEmail,
+      ),
     });
     await job.save();
 
@@ -498,7 +544,7 @@ export class LifecycleService {
       organizationId: input.request.organizationId,
       performedBy: input.request.userId,
       source: input.request.source,
-      payload: this.toJson(incomingPayload),
+      payload: this.withAttribution(this.toJson(incomingPayload), input.request.userId, input.request.source),
     });
     await incomingJob.save();
     const incomingJobId = incomingJob.data.id;
@@ -511,7 +557,11 @@ export class LifecycleService {
       organizationId: outgoingOrgId,
       performedBy: input.request.userId,
       source: input.request.source,
-      payload: { interruptible: true, interruptionWarningTime: noticeMs },
+      payload: this.withAttribution(
+        { interruptible: true, interruptionWarningTime: noticeMs },
+        input.request.userId,
+        input.request.source,
+      ),
     });
     await deprovisionJob.save();
 
@@ -882,12 +932,32 @@ export class LifecycleService {
     return parsed.success ? parsed.data.interruptibleClaimId : null;
   }
 
-  private toJson(value: IncomingProvisionPayload): Prisma.InputJsonValue {
+  private toJson(value: IncomingProvisionPayload): Prisma.JsonObject {
     return JSON.parse(JSON.stringify(value));
   }
 
-  private serializeRequest(value: ProvisionRequest | ReprovisionRequest): Prisma.InputJsonValue {
+  private serializeRequest(value: ProvisionRequest | ReprovisionRequest): Prisma.JsonObject {
     return JSON.parse(JSON.stringify(value));
+  }
+
+  // Retry-only fields; `triggeredByEmail` reaches the payload through `withAttribution`.
+  private auditPayload(audit?: LifecycleJobAudit): Record<string, string> {
+    if (!audit) return {};
+    const extra: Record<string, string> = {};
+    if (audit.retriedFromJobId) extra.retriedFromJobId = audit.retriedFromJobId;
+    if (audit.retriedBy) extra.retriedBy = audit.retriedBy;
+    return extra;
+  }
+
+  private withAttribution(
+    payload: Prisma.JsonObject,
+    performedBy: string,
+    source: RequestSource,
+    triggeredByEmail?: string,
+  ): Prisma.InputJsonValue {
+    const attribution: Record<string, string> = { triggeredBy: performedBy, source };
+    if (triggeredByEmail) attribution.triggeredByEmail = triggeredByEmail;
+    return { ...payload, ...attribution };
   }
 
   /** Transient failures rewind to SCHEDULED and rethrow for BullMQ retry (the grace timer fires only once); permanent failures terminalize and swallow. */
@@ -960,6 +1030,23 @@ export class LifecycleService {
     }
   }
 
+  /** A system job has no actor, deployment or gate — nothing to bill, defer or emit; the row exists so inbound results correlate and the timeline is queryable. */
+  async runSystem(params: RunSystemParams): Promise<LifecycleJobRecord> {
+    const job: LifecycleJobRecord = LifecycleJobRecord.build({
+      jobType: params.jobType,
+      phase: LifecycleJobPhase.REQUESTED,
+      deviceId: params.deviceId,
+      deploymentId: null,
+      organizationId: null,
+      performedBy: null,
+      source: RequestSource.SYSTEM,
+      payload: { source: params.source, zoneId: params.zoneId },
+    });
+    await job.save();
+    await this.proceed(job, { dispatch: params.dispatch });
+    return job;
+  }
+
   private async run(params: RunParams): Promise<LifecycleJobRecord> {
     const job: LifecycleJobRecord = LifecycleJobRecord.build({
       jobType: params.jobType,
@@ -969,7 +1056,7 @@ export class LifecycleService {
       organizationId: params.organizationId,
       performedBy: params.performedBy,
       source: params.source,
-      payload: params.payload,
+      payload: this.withAttribution(params.payload, params.performedBy, params.source, params.triggeredByEmail),
     });
     await job.save();
 

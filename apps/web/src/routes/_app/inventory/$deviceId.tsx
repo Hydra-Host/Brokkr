@@ -12,13 +12,19 @@ import { DetailListItem } from '~/components/detail-list-item';
 import {
   CloudInitSchema,
   isIpxeCustomOs,
+  provisionDiskLayoutSchema,
   ProvisionRequestSchema,
   validateDiskLayoutEncryption,
   type ProvisionRequest,
   type SshKeyWithUser,
 } from '@repo/api-client';
 import { CustomizationLayers, type CustomizationLayersData } from '@repo/domain-ui/provision/customization-layers';
-import { applyDirectModeToSubmission, getDefaultDiskLayouts } from '@repo/domain-ui/provision/disk-layout-selector';
+import {
+  applyDirectModeToSubmission,
+  diskLayoutSizeToBytes,
+  getDefaultDiskLayouts,
+  validateDiskLayoutSizeInputs,
+} from '@repo/domain-ui/provision/disk-layout-selector';
 import { ProvisionAdvancedSettings } from '@repo/domain-ui/provision/provision-advanced-settings';
 import { Alert, AlertDescription } from '@repo/ui/components/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@repo/ui/components/card';
@@ -100,6 +106,7 @@ const provisionFormSchema = ProvisionRequestSchema.omit({ customizations: true }
     cloudInit: z.string(),
     ipxeUrl: z.string(),
     customizations: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
+    diskLayouts: z.array(provisionDiskLayoutSchema.omit({ size: true }).extend({ size: z.string().optional() })),
   })
   .superRefine((data, ctx) => {
     if (isIpxeCustomOs(data.operatingSystem) && !data.ipxeUrl) {
@@ -142,6 +149,7 @@ const provisionFormSchema = ProvisionRequestSchema.omit({ customizations: true }
     }
 
     validateDiskLayoutEncryption(data.diskLayouts, ctx, 'provision');
+    validateDiskLayoutSizeInputs(data.diskLayouts, ctx);
   });
 
 type ProvisionFormData = z.input<typeof provisionFormSchema>;
@@ -153,10 +161,13 @@ function InventoryDevicePage() {
   const { deviceId } = Route.useParams();
   const { device, sshKeys, projects } = Route.useLoaderData();
 
-  useDocumentTitle(device.specs.gpu?.model ?? device.specs.cpu?.model ?? 'Inventory Device');
+  const title = device.specs.gpu?.model ?? device.specs.cpu?.model ?? 'Hardware not discovered yet';
+
+  useDocumentTitle(title);
 
   const [showAddSshKeyForm, setShowAddSshKeyForm] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [provisionSubmitted, setProvisionSubmitted] = useState(false);
 
   const { mutateAsync: provisionDevice } = tsr.provisionDevice.useMutation({
     meta: { successMessage: 'Your device has been successfully provisioned' },
@@ -231,6 +242,7 @@ function InventoryDevicePage() {
         mountpoint: layout.mountpoint,
         diskType: layout.diskType,
         disks: layout.disks,
+        size: diskLayoutSizeToBytes(layout.size),
         encrypt: layout.encrypt ?? false,
         wipe: true,
       })),
@@ -241,12 +253,18 @@ function InventoryDevicePage() {
     };
 
     try {
+      setProvisionSubmitted(true);
+      queryClient.setQueryDefaults(['inventory-device', deviceId], {
+        staleTime: Infinity,
+        refetchOnWindowFocus: false,
+      });
       await provisionDevice({ params: { id: deviceId }, body });
 
       queryClient.invalidateQueries({ queryKey: DEPLOYMENT_PROJECTS_KEY });
       queryClient.invalidateQueries({ queryKey: ['interruptible-claims'] });
       await navigate({ to: '/deployments' });
     } catch (error) {
+      setProvisionSubmitted(false);
       setSubmitError(unwrapErrorMessage(error, 'Failed to provision device.'));
     }
   };
@@ -265,7 +283,7 @@ function InventoryDevicePage() {
 
       <div className="grid grid-cols-12 gap-8">
         <div className="col-span-12 xl:col-span-6">
-          <p className="mb-8 text-3xl font-bold">{device.specs.gpu?.model ?? device.specs.cpu?.model}</p>
+          <p className="mb-8 text-3xl font-bold">{title}</p>
           <p className="mb-4 text-xl text-teal-400">Overview</p>
 
           <dl className="mb-6 flex flex-col divide-y">
@@ -510,7 +528,7 @@ function InventoryDevicePage() {
 
                     {submitError && <p className="text-destructive text-sm">{submitError}</p>}
 
-                    <FormSubmitButton pending={form.formState.isSubmitting} disabled={hasNoOs}>
+                    <FormSubmitButton pending={form.formState.isSubmitting} disabled={hasNoOs || provisionSubmitted}>
                       Provision
                     </FormSubmitButton>
                   </div>

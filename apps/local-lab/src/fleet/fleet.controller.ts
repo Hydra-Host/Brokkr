@@ -6,6 +6,7 @@ import { map, merge, Observable } from 'rxjs';
 import { LabRoute } from '../common/lab-route';
 import { contract } from '../contract';
 import { ProcessComposeClient } from '../services/process-compose.client';
+import { BootReadinessService } from './boot-readiness.service';
 import { FleetExecService } from './fleet-exec.service';
 import { FleetPowerService } from './fleet-power.service';
 import { FleetResetService } from './fleet-reset.service';
@@ -21,6 +22,7 @@ export class FleetController {
     private readonly power: FleetPowerService,
     private readonly reset: FleetResetService,
     private readonly verify: FleetVerifyService,
+    private readonly bootReadiness: BootReadinessService,
     private readonly pc: ProcessComposeClient,
   ) {}
 
@@ -33,7 +35,7 @@ export class FleetController {
   }
 
   @TsRestHandler(contract.powerMachine)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   powerMachine() {
     return tsRestHandler(contract.powerMachine, async ({ body }) => ({
       status: 200 as const,
@@ -42,7 +44,7 @@ export class FleetController {
   }
 
   @TsRestHandler(contract.discoverMachine)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   discover() {
     return tsRestHandler(contract.discoverMachine, async ({ body }) => ({
       status: 200 as const,
@@ -51,7 +53,7 @@ export class FleetController {
   }
 
   @TsRestHandler(contract.resetMachine)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   resetMachine() {
     return tsRestHandler(contract.resetMachine, async ({ body }) => ({
       status: 200 as const,
@@ -60,7 +62,7 @@ export class FleetController {
   }
 
   @TsRestHandler(contract.execMachine)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'host-exec' })
   runMachineExec() {
     return tsRestHandler(contract.execMachine, async ({ body }) => ({
       status: 200 as const,
@@ -109,11 +111,10 @@ export class FleetController {
   }
 
   @TsRestHandler(contract.putFleetConfig)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'admin' })
   putConfig() {
     return tsRestHandler(contract.putFleetConfig, async ({ body }) => {
       const rejected = this.fleet.putConfig({
-        mode: body.mode,
         nodes: body.nodes,
         bmcDefaults: body.bmcDefaults,
         defaults: body.defaults,
@@ -132,7 +133,7 @@ export class FleetController {
 
   @UseFilters(RedfishExceptionFilter)
   @TsRestHandler(contract.baremetalPower)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   baremetalPower() {
     return tsRestHandler(contract.baremetalPower, async ({ params, body }) => ({
       status: 200 as const,
@@ -149,7 +150,7 @@ export class FleetController {
   }
 
   @TsRestHandler(contract.previewFleetApplyPlan)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   previewApplyPlan() {
     return tsRestHandler(contract.previewFleetApplyPlan, async ({ body }) => ({
       status: 200 as const,
@@ -165,8 +166,24 @@ export class FleetController {
     }));
   }
 
+  @TsRestHandler(contract.getFleetBootReadiness)
+  getFleetBootReadiness() {
+    return tsRestHandler(contract.getFleetBootReadiness, async ({ query }) => ({
+      status: 200 as const,
+      body: await this.bootReadiness.getBootReadiness(query.node),
+    }));
+  }
+
+  @TsRestHandler(contract.getMachineBootTrail)
+  getMachineBootTrail() {
+    return tsRestHandler(contract.getMachineBootTrail, async ({ params }) => ({
+      status: 200 as const,
+      body: await this.bootReadiness.forMachine(params.name),
+    }));
+  }
+
   @TsRestHandler(contract.healFleet)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   healFleet() {
     return tsRestHandler(contract.healFleet, async () => ({
       status: 200 as const,
@@ -175,6 +192,7 @@ export class FleetController {
   }
 
   @Sse('api/fleet/process-logs/stream')
+  @LabRoute({ capability: 'admin' })
   processLogs(): Observable<{ data: { line: string } }> {
     const tag = (name: string, src: Observable<string>) =>
       src.pipe(map((line) => ({ data: { line: `[${name}] ${line}` } })));

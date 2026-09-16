@@ -48,7 +48,7 @@ const putSvc = (cidr: string, bmcCidr = '192.168.105.0/24') => {
   const overlay = {
     fleetConfig: () => ({ network: { cidr, bmc_cidr: bmcCidr }, defaults: {}, nodes: {} }),
     setFleetConfig: vi.fn().mockReturnValue([]),
-    fleetMode: () => 'vm',
+    planes: () => ({ vm: true, baremetal: false }),
     fleetZones: () => ['sim-zone'],
     fleetTombstones: () => [],
     fleetCustomized: () => true,
@@ -85,7 +85,7 @@ const getConfigSvc = (network: Record<string, unknown>, nodes: Record<string, Re
     fleetZones: () => ['sim-zone'],
     fleetTombstones: () => [],
     fleetCustomized: () => false,
-    fleetMode: () => 'vm',
+    planes: () => ({ vm: true, baremetal: false }),
   };
   const rendered = { renderDesiredFleetYaml: () => Promise.resolve(null) };
   return new FleetTopologyService({ repoRoot: '/repo' } as never, overlay as never, rendered as never);
@@ -145,7 +145,7 @@ describe('FleetTopologyService.addCommissioningNodesConfig — no derived-field 
       fleetZones: () => ['sim-zone'],
       fleetTombstones: () => [],
       fleetCustomized: () => false,
-      fleetMode: () => 'vm',
+      planes: () => ({ vm: true, baremetal: false }),
     };
     const rendered = { renderDesiredFleetYaml: () => Promise.resolve(null) };
     const svc = new FleetTopologyService({ repoRoot: '/repo' } as never, overlay as never, rendered as never);
@@ -171,7 +171,7 @@ describe('FleetTopologyService.rawFleet — malformed LOCAL_FLEET_PATH yaml', ()
       fleetZones: () => ['sim-zone'],
       fleetTombstones: () => [],
       fleetCustomized: () => false,
-      fleetMode: () => 'vm',
+      planes: () => ({ vm: true, baremetal: false }),
     };
     const rendered = { renderDesiredFleetYaml: () => Promise.resolve(null) };
     const svc = new FleetTopologyService({ repoRoot: '/repo' } as never, overlay as never, rendered as never);

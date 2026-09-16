@@ -21,6 +21,8 @@ enum JobType {
   Interrupted
   Commission
   Decommission
+  InventoryCollection
+  Benchmarks
 }
 
 enum JobStatus {

@@ -144,6 +144,7 @@ describe('DeploymentsService', () => {
     validateMountpoint: Mock;
     validateDiskLayouts: Mock;
     validateDiskGroupHomogeneity: Mock;
+    validateDiskGroupSizeLimits: Mock;
     validate: Mock;
     validateIpxeRequirements: Mock;
     validateCustomizations: Mock;
@@ -151,6 +152,7 @@ describe('DeploymentsService', () => {
     validateMountpoint: vi.fn(),
     validateDiskLayouts: vi.fn(),
     validateDiskGroupHomogeneity: vi.fn(),
+    validateDiskGroupSizeLimits: vi.fn(),
     validate: vi.fn(),
     validateIpxeRequirements: vi.fn(),
     validateCustomizations: vi.fn().mockResolvedValue(undefined),
@@ -554,14 +556,15 @@ describe('DeploymentsService', () => {
     it('reboots via the lifecycle engine', async () => {
       const agg = rebootAggregate();
       vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue(agg);
-      mockLifecycleService.requestReboot.mockResolvedValue({ id: 'job-1' });
+      mockLifecycleService.requestReboot.mockResolvedValue({ data: { id: 'job-1' } });
 
-      await service.rebootDirectProvisionDevice(mockDeployment.id);
+      const result = await service.rebootDirectProvisionDevice(mockDeployment.id);
 
       expect(mockLifecycleService.requestReboot).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: agg.server.device.id }),
+        expect.objectContaining({ deviceId: agg.server.device.id, deploymentId: mockDeployment.id }),
       );
       expect(mockContextService.requirePermission).toHaveBeenCalledWith('device', 'power-control');
+      expect(result).toEqual({ data: { id: 'job-1' } });
     });
 
     it('throws NotFoundException when deployment not found', async () => {
@@ -587,17 +590,19 @@ describe('DeploymentsService', () => {
       } as any;
 
       vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue(mockAggregate);
-      mockLifecycleService.requestPowerControl.mockResolvedValue({ id: 'job-1' });
+      mockLifecycleService.requestPowerControl.mockResolvedValue({ data: { id: 'job-1' } });
 
-      await service.powerControlDevice(mockDeployment.id, { operation: 'off' });
+      const result = await service.powerControlDevice(mockDeployment.id, { operation: 'off' });
       expect(mockContextService.requirePermission).toHaveBeenCalledWith('device', 'power-control');
 
       expect(mockLifecycleService.requestPowerControl).toHaveBeenCalledWith(
         expect.objectContaining({
           operation: 'off',
           deviceId: mockAggregate.server.device.id,
+          deploymentId: mockDeployment.id,
         }),
       );
+      expect(result).toEqual({ data: { id: 'job-1' } });
     });
 
     it('should throw NotFoundException when deployment not found', async () => {
@@ -627,12 +632,13 @@ describe('DeploymentsService', () => {
         server: { device: { ...mockDevice, ...mockDeviceMetadata } },
       } as any;
       vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue(agg);
-      mockLifecycleService.requestDeprovision.mockResolvedValue({ id: 'job-1' });
+      mockLifecycleService.requestDeprovision.mockResolvedValue({ data: { id: 'job-1' } });
 
-      await service.deprovisionDirectProvisionDevice(mockDeployment.id);
+      const result = await service.deprovisionDirectProvisionDevice(mockDeployment.id);
       expect(mockLifecycleService.requestDeprovision).toHaveBeenCalledWith(
         expect.objectContaining({ deviceId: agg.server.device.id }),
       );
+      expect(result).toEqual({ data: { id: 'job-1' } });
     });
 
     it('should throw NotFoundException when not found', async () => {
@@ -731,6 +737,10 @@ describe('DeploymentsService', () => {
 
       expect(mockProvisionValidatorService.validateDiskLayouts).toHaveBeenCalledWith(diskLayouts, 'reprovision');
       expect(mockProvisionValidatorService.validateDiskGroupHomogeneity).toHaveBeenCalledWith(
+        diskLayouts,
+        storageDrives,
+      );
+      expect(mockProvisionValidatorService.validateDiskGroupSizeLimits).toHaveBeenCalledWith(
         diskLayouts,
         storageDrives,
       );
@@ -1010,16 +1020,17 @@ describe('DeploymentsService', () => {
         callOrder.push('rebootDevice');
       });
 
-      await service.activateRescueMode(mockDeployment.id);
+      const jobId = await service.activateRescueMode(mockDeployment.id);
 
       expect(mockServerTokenWrite).toHaveBeenCalledOnce();
       expect(mockServerTokenWrite).toHaveBeenCalledWith(aggregate.server.device.id, {
-        requestId: expect.any(String),
+        requestId: jobId,
         opLabel: 'rescue activate',
       });
       expect(mockDeviceRecordWrite).toHaveBeenCalledWith(aggregate.server.device.id, {
-        requestId: expect.any(String),
+        requestId: jobId,
       });
+      expect(mockRebootDevice).toHaveBeenCalledWith(aggregate.server.device.id, jobId, { bootDevice: 'pxe' });
       expect(callOrder).toEqual(['writeForDeviceBestEffort', 'rebootDevice']);
 
       expect(record.setRescueLayer).toHaveBeenCalledWith(mockUbuntuRescueOS.id);
@@ -1072,7 +1083,7 @@ describe('DeploymentsService', () => {
       vi.spyOn(LayerRecord, 'findBySlug').mockResolvedValue(mockUbuntuRescueOS as any);
       mockServerTokenWrite.mockResolvedValueOnce(undefined);
 
-      await expect(service.activateRescueMode(mockDeployment.id)).resolves.toBeUndefined();
+      await expect(service.activateRescueMode(mockDeployment.id)).resolves.toEqual(expect.any(String));
 
       expect(mockRebootDevice).toHaveBeenCalledOnce();
     });
@@ -1084,7 +1095,7 @@ describe('DeploymentsService', () => {
       vi.spyOn(LayerRecord, 'findBySlug').mockResolvedValue(mockUbuntuRescueOS as any);
       mockDeviceRecordWrite.mockResolvedValueOnce({ written: false, reason: 'stale' });
 
-      await expect(service.activateRescueMode(mockDeployment.id)).resolves.toBeUndefined();
+      await expect(service.activateRescueMode(mockDeployment.id)).resolves.toEqual(expect.any(String));
 
       expect(mockLoggerWarn).toHaveBeenCalledWith(
         expect.stringContaining('Skipped device_record publish for rescue activate'),
@@ -1100,7 +1111,7 @@ describe('DeploymentsService', () => {
       vi.spyOn(LayerRecord, 'findBySlug').mockResolvedValue(mockUbuntuRescueOS as any);
       mockDeviceRecordWrite.mockResolvedValueOnce({ written: false, reason: 'role-not-published' });
 
-      await expect(service.activateRescueMode(mockDeployment.id)).resolves.toBeUndefined();
+      await expect(service.activateRescueMode(mockDeployment.id)).resolves.toEqual(expect.any(String));
 
       expect(mockLoggerWarn).not.toHaveBeenCalled();
       expect(mockLoggerLog).toHaveBeenCalledWith(expect.stringContaining('not in the publish allow-list'), undefined);
@@ -1133,7 +1144,7 @@ describe('DeploymentsService', () => {
       const record = createMockRecord();
       vi.spyOn(DeploymentRecord, 'findActiveById').mockResolvedValue(record as any);
 
-      await expect(service.deactivateRescueMode(mockDeployment.id)).resolves.toBeUndefined();
+      await expect(service.deactivateRescueMode(mockDeployment.id)).resolves.toEqual(expect.any(String));
 
       expect(record.setRescueLayer).toHaveBeenCalledWith(null);
       expect(mockRebootDevice).toHaveBeenCalledOnce();
@@ -1145,7 +1156,8 @@ describe('DeploymentsService', () => {
       const record = createMockRecord();
       vi.spyOn(DeploymentRecord, 'findActiveById').mockResolvedValue(record as any);
 
-      await service.deactivateRescueMode(mockDeployment.id);
+      const jobId = await service.deactivateRescueMode(mockDeployment.id);
+      expect(mockRebootDevice).toHaveBeenCalledWith(aggregate.server.device.id, jobId, { bootDevice: 'pxe' });
 
       expect(mockResolveZoneContext).toHaveBeenCalledWith(aggregate.server.device.id);
       expect(mockConfigAtomDelKey).toHaveBeenCalledWith(
@@ -1163,7 +1175,7 @@ describe('DeploymentsService', () => {
       vi.spyOn(DeploymentRecord, 'findActiveById').mockResolvedValue(createMockRecord() as any);
       mockConfigAtomDelKey.mockRejectedValueOnce(new Error('redis down'));
 
-      await expect(service.deactivateRescueMode(mockDeployment.id)).resolves.toBeUndefined();
+      await expect(service.deactivateRescueMode(mockDeployment.id)).resolves.toEqual(expect.any(String));
 
       expect(mockRebootDevice).toHaveBeenCalledOnce();
     });
@@ -1175,7 +1187,7 @@ describe('DeploymentsService', () => {
       const record = createMockRecord();
       vi.spyOn(DeploymentRecord, 'findActiveById').mockResolvedValue(record as any);
 
-      await expect(service.deactivateRescueMode(mockDeployment.id)).resolves.toBeUndefined();
+      await expect(service.deactivateRescueMode(mockDeployment.id)).resolves.toEqual(expect.any(String));
       expect(record.setRescueLayer).toHaveBeenCalledWith(null);
       expect(mockRebootDevice).toHaveBeenCalledOnce();
     });

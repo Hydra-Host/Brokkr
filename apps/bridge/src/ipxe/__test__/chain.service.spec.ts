@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetApplicationConfigForTests } from '../../core/application.config';
 import { deviceRecordSchema, type DeviceRecord } from '../../device-record/device-record.schema';
 import { ResolveOutcome, type ResolveResult } from '../../device-record/device-record.service';
+import { resetDiscoveryFileConfig } from '../../download/discovery.config';
 
 import { MAX_KNOWN_RECORD_MISSING_RETRIES } from '../chain-decision';
 import { extractIdentifiers } from '../chain.helpers';
@@ -108,6 +109,24 @@ function makeService(): ServiceUnderTest {
 function request(buildarch: string, mac = 'aa:bb:cc:dd:ee:ff', platform = 'efi-amd64'): RenderRequest {
   return { platform, buildarch, mac_address: mac };
 }
+
+async function discoveryFlavorFor(configured: string, rec: ResolveResult): Promise<unknown> {
+  const prior = process.env.DISCOVERY_FLAVORS;
+  process.env.DISCOVERY_FLAVORS = configured;
+  resetDiscoveryFileConfig();
+  try {
+    const { chain, events } = makeService();
+    await chain.renderForRecord(rec, request('x86_64'), 'test-job-123', true);
+    return events.find((e) => e.method === 'render_discovery')?.kwargs.flavor;
+  } finally {
+    if (prior === undefined) delete process.env.DISCOVERY_FLAVORS;
+    else process.env.DISCOVERY_FLAVORS = prior;
+    resetDiscoveryFileConfig();
+  }
+}
+
+const untagged = (): DeviceRecord => record({ installed_os: null, platform_tags: [] });
+const lightTagged = (): DeviceRecord => record({ installed_os: null, platform_tags: ['discovery-light'] });
 
 void IPXE_RENDERER;
 
@@ -372,6 +391,22 @@ describe('ChainService.renderForRecord', () => {
     const rec = record({ rescue_os: 'brokkr-discovery', platform_tags: ['rescue'] });
     await chain.renderForRecord(rec, request('x86_64'), 'test-job-123');
     expect((events[0]?.kwargs as Record<string, unknown>).platform_type).toBe('rescue');
+  });
+
+  it('serves the only configured flavor to every device', async () => {
+    expect(await discoveryFlavorFor('light', untagged())).toBe('light');
+    expect(await discoveryFlavorFor('light', lightTagged())).toBe('light');
+    expect(await discoveryFlavorFor('light', ResolveOutcome.UNKNOWN)).toBe('light');
+    expect(await discoveryFlavorFor('full', lightTagged())).toBe('full');
+  });
+
+  it('serves light to a device tagged discovery-light when both flavors are configured', async () => {
+    expect(await discoveryFlavorFor('light,full', lightTagged())).toBe('light');
+  });
+
+  it('serves full to an untagged device when both flavors are configured', async () => {
+    expect(await discoveryFlavorFor('light,full', untagged())).toBe('full');
+    expect(await discoveryFlavorFor('light,full', ResolveOutcome.UNKNOWN)).toBe('full');
   });
 
   it('placeholder on custom slug renders discovery', async () => {

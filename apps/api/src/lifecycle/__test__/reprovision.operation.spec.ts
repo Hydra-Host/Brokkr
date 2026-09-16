@@ -78,7 +78,7 @@ describe('ReprovisionOperation', () => {
         device: {
           storageDrives: [],
           server: {
-            deployments: [{ customer: { id: 'org-1' } }],
+            deployments: [{ id: 'dep-1', customer: { id: 'org-1' } }],
           },
         },
         sshKeys: [{ id: 'key-1', key: 'ssh-ed25519 AAA' }],
@@ -88,6 +88,7 @@ describe('ReprovisionOperation', () => {
       await expect(operation.assembleContext(input)).resolves.toEqual({
         baseLayerId: 'layer-1',
         organizationId: 'org-1',
+        deploymentId: 'dep-1',
         pubkeys: ['ssh-ed25519 AAA'],
       });
     });
@@ -154,7 +155,7 @@ describe('ReprovisionOperation', () => {
     it('accepts a homogeneous RAID group', async () => {
       repo.fetchReprovisionableDevice.mockResolvedValue({
         device: {
-          server: { deployments: [{ customer: { id: 'org-1' } }] },
+          server: { deployments: [{ id: 'dep-1', customer: { id: 'org-1' } }] },
           storageDrives: storageDrives(),
         },
         sshKeys: [{ id: 'key-1', key: 'ssh-ed25519 AAA' }],
@@ -164,6 +165,7 @@ describe('ReprovisionOperation', () => {
       await expect(operation.assembleContext({ ...input, diskLayouts: [raidLayout] })).resolves.toEqual({
         baseLayerId: 'layer-1',
         organizationId: 'org-1',
+        deploymentId: 'dep-1',
         pubkeys: ['ssh-ed25519 AAA'],
       });
     });

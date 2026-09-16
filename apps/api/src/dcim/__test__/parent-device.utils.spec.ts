@@ -24,7 +24,7 @@ describe('assertParentDeviceOwnedOrSupplied', () => {
       where: {
         id: 'device-1',
         deletedAt: null,
-        OR: [{ supplierId: 'org-1' }, { organizationId: 'org-1' }],
+        supplierId: 'org-1',
       },
       select: { id: true },
     });

@@ -8,6 +8,7 @@ import { STACK_OPS } from '../../stack/stack.service';
 import { FLEET_MUTATING_STACK_OP_IDS, FleetOpRegistry } from '../fleet-op-registry';
 import { FleetPowerService } from '../fleet-power.service';
 import { FleetResetService } from '../fleet-reset.service';
+import { resolveRoster } from '../fleet-roster';
 
 vi.mock('../../common/sleep', () => ({ sleep: () => Promise.resolve() }));
 vi.mock('../../common/hub-client', async (importOriginal) => {
@@ -54,13 +55,14 @@ function makeRunner(stackRuns: StackRunEntry[] = []) {
 }
 
 function makePower(registry: FleetOpRegistry, runner: ReturnType<typeof makeRunner>, nodes = ['cpu-1', 'cpu-2']) {
-  const topology = { nodeNames: () => nodes };
-  return new FleetPowerService(runner as never, {} as never, topology as never, registry);
+  const topology = { nodeNames: () => nodes, baremetalView: () => ({ nodes: [] }) };
+  const overlay = { planes: () => ({ vm: true, baremetal: false }) };
+  return new FleetPowerService(runner as never, overlay as never, topology as never, registry);
 }
 
 function makeReset(registry: FleetOpRegistry, runner: ReturnType<typeof makeRunner>, nodes = ['cpu-1', 'cpu-2']) {
-  const topology = { nodeNames: () => nodes };
-  const svc = new FleetResetService(runner as never, {} as never, topology as never, {} as never, registry, {} as never);
+  const power = { roster: () => resolveRoster({ vmNodeNames: () => nodes, baremetalNodes: () => [] }) };
+  const svc = new FleetResetService(runner as never, {} as never, power as never, registry, {} as never);
   Object.assign(svc, { discoverDeadlineMs: 0 });
   return svc;
 }

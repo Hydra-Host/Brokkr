@@ -13,6 +13,7 @@ export interface RedisDriver {
   del(key: string): Promise<number>;
   exists(key: string): Promise<number>;
   rpush(key: string, values: string[]): Promise<number>;
+  xadd(key: string, fields: Record<string, string>, maxlen?: number): Promise<string>;
   lrange(key: string, start: number, stop: number): Promise<string[]>;
   expire(key: string, seconds: number): Promise<number>;
   hset(key: string, mapping: Record<string, string>): Promise<number>;

@@ -1,10 +1,3 @@
-/**
- * Smoke e2e — fast, non-destructive checks that the local-dev stack is up.
- *
- * Branches on fleet.mode: the vm group checks the sim fleet, the baremetal group checks the bench
- * box's BMC + proxy DHCP. Roster access happens inside each `it` — a describe-factory deref crashes
- * collection on a bm roster.
- */
 import { execFile } from 'node:child_process';
 import { createSocket } from 'node:dgram';
 import { existsSync, readFileSync } from 'node:fs';
@@ -52,7 +45,9 @@ let hubDb: HubDB;
 
 beforeAll(() => {
   hubDb = HubDB.fromEnv();
-  step(`smoke: fleet mode ${fleet.mode}`, { metadata: { mode: fleet.mode } });
+  step(`smoke: fleet planes vm=${fleet.planes.vm} baremetal=${fleet.planes.baremetal}`, {
+    metadata: { planes: fleet.planes },
+  });
 });
 
 afterAll(async () => {
@@ -62,10 +57,7 @@ afterAll(async () => {
 function bareMetal(): BareMetal {
   const bm = fleet.baremetal;
   if (!bm) {
-    throw new Error(
-      `fleet.yaml (${process.env.LOCAL_FLEET_PATH}) is mode=baremetal but carries no baremetal block — ` +
-        're-apply the fleet from the control center Fleet builder',
-    );
+    throw new Error(`fleet.yaml (${process.env.LOCAL_FLEET_PATH}) carries no baremetal block`);
   }
   return bm;
 }
@@ -124,7 +116,7 @@ describe('smoke', () => {
     expect(response.status).toBe(200);
   });
 
-  describe.runIf(fleet.mode === 'vm')('vm fleet', () => {
+  describe.runIf(fleet.planes.vm)('vm fleet', () => {
     it('fleet has nodes', () => {
       expect(fleet.nodes.length).toBeGreaterThanOrEqual(1);
     });
@@ -196,7 +188,7 @@ describe('smoke', () => {
     });
   });
 
-  describe.runIf(fleet.mode === 'baremetal')('bare-metal bench box', () => {
+  describe.runIf(fleet.planes.baremetal)('bare-metal bench box', () => {
     it('fleet.yaml carries a bare-metal roster', () => {
       const bm = bareMetal();
       expect(bm.nodes.length).toBeGreaterThanOrEqual(1);

@@ -13,11 +13,13 @@ import { AuditController } from '../audit/audit.controller';
 import { AuditService } from '../audit/audit.service';
 import { AuditInterceptor } from '../common/audit.interceptor';
 import { LabAuthGuard } from '../common/lab-auth';
+import { HealthController } from '../health/health.controller';
 import { AuditStore } from '../ledger/audit-store';
 import { RunLedgerService } from '../ledger/run-ledger.service';
 import { QueuesController } from '../queues/queues.controller';
 import { HubController } from '../hub/hub.controller';
 import { RuntimeController } from '../runtime/runtime.controller';
+import { RunCapabilityGuard } from '../runs/run-capability.guard';
 import { RUN_SINK } from '../runner/run-sink';
 import { RunnerService } from '../runner/runner.service';
 import { RunsController } from '../runs/runs.controller';
@@ -82,6 +84,16 @@ describe('AppModule', () => {
   it('mounts the hub controller', async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     expect(moduleRef.get(HubController)).toBeInstanceOf(HubController);
+  });
+
+  it('resolves the per-run guard from the runs module injector', async () => {
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    expect(moduleRef.get(RunCapabilityGuard, { strict: false })).toBeInstanceOf(RunCapabilityGuard);
+  });
+
+  it('mounts the health controller', async () => {
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    expect(moduleRef.get(HealthController)).toBeInstanceOf(HealthController);
   });
 
   it('mounts the audit controller and hands its service the shared audit store', async () => {

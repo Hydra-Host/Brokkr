@@ -1,6 +1,8 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { FleetPlanes } from '@repo/local-lab-contract';
+
 import { FleetPowerService, RedfishError } from '../fleet-power.service';
 
 const { requestMock } = vi.hoisted(() => ({ requestMock: vi.fn() }));
@@ -38,12 +40,12 @@ function wireRedfish(allowable: string[], powerState = 'On') {
 }
 
 function makeService(opts: {
-  mode?: string;
+  planes?: FleetPlanes;
   os?: string;
   nodes?: { name: string; bmc_ip: string; system_id: string | null }[];
   cred?: { user: string; pass: string } | null;
 }) {
-  const overlay = { fleetMode: () => opts.mode ?? 'baremetal' };
+  const overlay = { planes: () => opts.planes ?? { vm: false, baremetal: true } };
   const topology = {
     hostFacts: vi.fn(() => ({ os: opts.os ?? 'linux' })),
     baremetalView: vi.fn(() => ({
@@ -58,9 +60,10 @@ describe('FleetPowerService.baremetalPower — guards', () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(() => vi.restoreAllMocks());
 
-  it('rejects when the fleet is not in baremetal mode', async () => {
-    const svc = makeService({ mode: 'vm' });
+  it('rejects with 400 when no bare-metal machine is saved', async () => {
+    const svc = makeService({ planes: { vm: true, baremetal: false } });
     await expect(svc.baremetalPower('metal-1', 'on')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.baremetalPower('metal-1', 'on')).rejects.toThrow(/no bare-metal machine is saved/);
     expect(requestMock).not.toHaveBeenCalled();
   });
 

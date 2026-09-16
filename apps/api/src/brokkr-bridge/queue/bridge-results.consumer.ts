@@ -12,10 +12,12 @@ import {
   DeviceSecretActorType,
   DeviceSecretAuditEventType,
   DeviceTokenRevocationReason,
+  JobStatus,
   ServerLifecycleStatus,
   ServerPowerStatus,
 } from '@repo/database';
 import { powerWordToServerPowerStatus, statusSlugToServerLifecycle } from '@repo/device-domain';
+import { SYSTEM_JOB_SAGAS } from '@repo/lifecycle';
 import { type ObservableGaugeCallback, getBullMqTelemetry, getTelemetryMeter } from '@repo/telemetry';
 import { isRecord } from '@repo/utils';
 import { type Job, Queue, Worker } from 'bullmq';
@@ -40,12 +42,14 @@ import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { SanitizationReportService } from 'src/sanitization-reports/sanitization-report.service';
 import { createDeviceLifecycleTransitionsCounter } from 'src/telemetry/domain-metrics';
+import { type SettleCommissionJobExtras, settleCommissionJob } from 'src/utils/settle-commission-job';
 import { ZoneCryptoConfig } from 'src/zone-crypto/zone-crypto.config';
 import { z } from 'zod';
 import { QUEUE_JOB_STATES, RESULTS_PREFIX, RESULTS_QUEUE_NAME } from '../constants/queue.constants';
 import { DeviceRecordPublisher } from '../device-record/device-record-publisher.service';
 import { DiscoveryIngressService } from '../discovery/discovery-ingress.service';
 import { discoveryCompleteDataSchema } from '../discovery/discovery.types';
+import { type JobLogLevel, isJobLogSuppressed, JobLogWriterService } from '../job-logs/job-log-writer.service';
 import { BridgeNetworkScanService } from '../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../lifecycle/qualify-orchestration.service';
 import { isTeeRequested } from '../lifecycle/tee-requested';
@@ -67,12 +71,16 @@ import {
 
 export type ProcessableJob = Pick<Job, 'id' | 'name' | 'data'>;
 
+const SYSTEM_SAGA_NAMES: ReadonlySet<string> = new Set(Object.values(SYSTEM_JOB_SAGAS));
+
+// wire saga_name, not JobType — the five actor sagas are listed by hand (the hub keeps no saga↔jobType map for them); the system half comes from the SYSTEM_JOB_SAGAS catalog
 const LIFECYCLE_ENGINE_SAGAS: ReadonlySet<string> = new Set([
   'provision',
   'deprovision',
   'reboot',
   'power_on',
   'power_off',
+  ...SYSTEM_SAGA_NAMES,
 ]);
 
 const HANDLER_SOFT_FAIL: unique symbol = Symbol('bridge-results:handler-soft-fail');
@@ -140,6 +148,7 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
     @Inject(forwardRef(() => DeviceSecretAuditService))
     private readonly deviceSecretAudit: DeviceSecretAuditService,
     @Logger(BridgeResultsConsumer.name) private readonly logger: LoggerService,
+    private readonly jobLogWriter: JobLogWriterService,
   ) {
     // Pre-register the alerted-on series at zero: increase()/rate() can't see a series' birth, so
     // without this the first FAILED transition after a hub restart never fires the saga-failures alert.
@@ -373,6 +382,24 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
       data.plan_id,
     );
 
+    if (data.event_type === 'job_failed') {
+      await this.writeJobLog(
+        data.plan_id,
+        data.device_id,
+        'error',
+        `Step ${data.step_name} failed (saga ${data.action_type}): ${data.error?.message ?? 'unknown'}`,
+        data.action_type,
+      );
+    } else {
+      await this.writeJobLog(
+        data.plan_id,
+        data.device_id,
+        'info',
+        `Step ${data.step_name}: ${data.status}`,
+        data.action_type,
+      );
+    }
+
     if (data.event_type === 'job_blocked') return;
 
     // C11 must gate the engine (it trusts validated input); applyStepResult returns false when no LifecycleJob exists, so the mutations below still run.
@@ -412,6 +439,14 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
           );
           await this.updateServerLifecycle(data.device_id, 'failed', data.plan_id, 'saga_result');
         }
+        if (data.action_type === 'commission') {
+          await this.settleCommissionAttempt(
+            data.plan_id,
+            JobStatus.Failed,
+            { error: data.error?.message ?? `Commission step '${data.step_name}' failed` },
+            { terminal: true },
+          );
+        }
       } else {
         this.logger.log(
           `Step failure for non-lifecycle saga '${data.action_type}' — device status unchanged`,
@@ -432,6 +467,16 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
         if (gate !== 'proceed') return gate === 'reject' ? HANDLER_SOFT_FAIL : undefined;
         await this.updateDevicePowerStatus(data.device_id, powerStatus, data.plan_id);
       }
+    }
+
+    if (data.action_type === 'commission' && data.event_type === 'stage_changed') {
+      const gate = await this.assertPlanMatchesDevice(data.plan_id, data.device_id);
+      if (gate !== 'proceed') return gate === 'reject' ? HANDLER_SOFT_FAIL : undefined;
+      await this.settleCommissionAttempt(
+        data.plan_id,
+        JobStatus.InProgress,
+        data.status === 'complete' ? { lastCompletedStep: data.step_name } : {},
+      );
     }
 
     if (data.action_type === 'benchmarks' && data.event_type === 'stage_changed' && data.result) {
@@ -499,6 +544,13 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
     // per attempt), and a trust-gate refusal soft-fails without recording — it was never a real completion.
     const result = await this.applyJobCompleted(data);
     if (result === HANDLER_SOFT_FAIL) return result;
+    await this.writeJobLog(
+      data.plan_id,
+      data.device_id,
+      data.status === 'complete' ? 'info' : 'error',
+      `Saga ${data.saga_name} completed: ${data.status}`,
+      data.saga_name,
+    );
     this.sagasCompleted.add(1, { saga_name: data.saga_name, status: data.status });
     if (typeof data.duration_seconds === 'number') {
       this.sagaDurationSeconds.record(data.duration_seconds, { saga_name: data.saga_name, status: data.status });
@@ -529,7 +581,7 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
       where: { id: data.device_id, deletedAt: null },
       select: { id: true },
     });
-    if (!device) {
+    if (!device && !SYSTEM_SAGA_NAMES.has(data.saga_name)) {
       this.logger.warn(
         `No live Device matches id ${data.device_id} for ${data.saga_name} saga (plan=${data.plan_id}); dropping job.completed`,
         data.plan_id,
@@ -544,6 +596,15 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
     const engineHandled = LIFECYCLE_ENGINE_SAGAS.has(data.saga_name)
       ? await this.lifecycleInbound.applyJobCompleted(data)
       : false;
+
+    // system sagas write no device status, so the lifecycle row can settle after the device is gone
+    if (!device) {
+      this.logger.warn(
+        `No live Device matches id ${data.device_id} for ${data.saga_name} saga (plan=${data.plan_id}); settled only the lifecycle job`,
+        data.plan_id,
+      );
+      return;
+    }
 
     switch (data.saga_name) {
       case 'provision':
@@ -582,7 +643,14 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
             `Commission saga complete for device ${data.device_id} — discovery will trigger qualify`,
             data.plan_id,
           );
+          await this.settleCommissionAttempt(data.plan_id, JobStatus.Completed, {}, { terminal: true });
         } else {
+          await this.settleCommissionAttempt(
+            data.plan_id,
+            JobStatus.Failed,
+            { error: data.error?.message ?? 'Commission saga failed' },
+            { terminal: true },
+          );
           // Skip when qualify has already advanced this device; conditional updateMany avoids the read-then-write TOCTOU.
           const ADVANCED_STATUSES: ServerLifecycleStatus[] = [
             ServerLifecycleStatus.PROVISIONING,
@@ -809,7 +877,32 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // C11: a device-bound Job row's deviceId MUST equal the message's device_id — else a bridge could mutate another tenant's device; no Job row → allow (autonomous health checks / legacy flows) but log.
+  /** plan_id = Job.id. Terminal settles rethrow so BullMQ retries; stage_changed is swallowed. */
+  private async settleCommissionAttempt(
+    planId: string,
+    status: JobStatus,
+    extras: SettleCommissionJobExtras = {},
+    opts: { terminal?: boolean } = {},
+  ): Promise<void> {
+    try {
+      const { count } = await settleCommissionJob(this.prisma, planId, status, extras);
+      if (opts.terminal && count === 0) {
+        this.logger.warn(
+          `Terminal Commission Job settle was a no-op for ${planId} → ${status} (already settled or missing)`,
+          planId,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to update Commission Job ${planId} to ${status}: ${getErrorMessage(error)}`,
+        undefined,
+        planId,
+      );
+      if (opts.terminal) throw error;
+    }
+  }
+
+  // C11: a device-bound Job or LifecycleJob row's deviceId MUST equal the message's device_id — else a bridge could mutate another tenant's device; no row in either table → allow (autonomous health checks / legacy flows) but log.
   private async assertPlanMatchesDevice(planId: string, deviceIdRaw: string): Promise<PlanDeviceGate> {
     if (!deviceIdRaw) {
       this.logger.warn(`Skipping bridge result: missing device_id`, planId);
@@ -818,10 +911,9 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
 
     let jobRecord: { deviceId: string | null } | null;
     try {
-      jobRecord = await this.prisma.job.findUnique({
-        where: { id: planId },
-        select: { deviceId: true },
-      });
+      jobRecord =
+        (await this.prisma.job.findUnique({ where: { id: planId }, select: { deviceId: true } })) ??
+        (await this.prisma.lifecycleJob.findUnique({ where: { id: planId }, select: { deviceId: true } }));
     } catch (error) {
       this.logger.error(
         `Failed to look up Job for plan ${planId}: ${getErrorMessage(error)}; skipping mutation`,
@@ -832,7 +924,7 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
     }
 
     if (!jobRecord) {
-      this.logger.warn(`No Job row for plan ${planId}; allowing without correlation check`, planId);
+      this.logger.warn(`No Job or LifecycleJob row for plan ${planId}; allowing without correlation check`, planId);
       return 'proceed';
     }
 
@@ -853,6 +945,30 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
     }
 
     return 'proceed';
+  }
+
+  private async writeJobLog(
+    planId: string,
+    deviceId: string,
+    level: JobLogLevel,
+    message: string,
+    sagaName: string,
+  ): Promise<void> {
+    if (isJobLogSuppressed(planId, sagaName)) return;
+    let jobRecord: { deviceId: string | null; device: { zoneId: string | null } | null } | null;
+    try {
+      jobRecord = await this.prisma.job.findUnique({
+        where: { id: planId },
+        select: { deviceId: true, device: { select: { zoneId: true } } },
+      });
+    } catch (error) {
+      this.logger.warn(`Skipping job log for plan ${planId}: ${getErrorMessage(error)}`, planId);
+      return;
+    }
+    if (!jobRecord?.deviceId || jobRecord.deviceId !== deviceId) return;
+    const zoneId = jobRecord.device?.zoneId;
+    if (!zoneId) return;
+    await this.jobLogWriter.write(zoneId, planId, level, message, 'BridgeResultsConsumer');
   }
 
   private mapPowerStepToStatus(stepName: string, status: string): string | null {

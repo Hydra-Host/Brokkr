@@ -7,10 +7,9 @@ import { getErrorMessage } from '../common/error-utils';
 import { URL } from 'node:url';
 
 import { Injectable } from '@nestjs/common';
-import { isRecord } from '@repo/utils';
+import { intToIpv4, ipInCidr, ipv4ToInt, isRecord, isRoutableUnicastIpv4, networkBase } from '@repo/utils';
 
 import { getLogger } from '../logger/logger.service';
-import { ipv4ToInt, isRoutableUnicastIpv4, isValidIpv4Cidr } from './ip-utils';
 
 const DEFAULT_BRIDGE_URL = 'https://brokkr.lan';
 const INTERFACES_CACHE_KEY = 'bridge:interfaces';
@@ -281,7 +280,7 @@ export class BridgeIpResolutionService {
       const interfaces = await this.getBridgeInterfaces();
       for (const deviceAddr of deviceAddresses) {
         for (const iface of interfaces) {
-          if (ipInCidr(iface.network, deviceAddr)) {
+          if (ipInCidr(deviceAddr, iface.network)) {
             void getLogger().debug(
               `Device address ${deviceAddr} overlaps bridge interface ${iface.name} (${iface.ip}/${networkPrefix(iface.network)}); using ${iface.ip} for hosts file job=${this.jobId}`,
             );
@@ -342,7 +341,7 @@ export class BridgeIpResolutionService {
         `Checking direct network membership for ${clientIp} against ${interfaces.length} interfaces job=${this.jobId}`,
       );
       for (const iface of interfaces) {
-        if (ipInCidr(iface.network, clientIp)) {
+        if (ipInCidr(clientIp, iface.network)) {
           void getLogger().debug(
             `Direct match: ${clientIp} ∈ ${iface.network} → interface ${iface.name} (${iface.ip}) job=${this.jobId}`,
           );
@@ -514,16 +513,9 @@ function parseUrlHostname(value: string): string | null {
 }
 
 function ipv4NetworkCidr(addr: string, prefix: number): string {
-  const ipInt = ipv4ToInt(addr);
-  if (ipInt === null) return `${addr}/${prefix}`;
-  if (prefix === 0) return `0.0.0.0/0`;
-  const mask = (0xffffffff << (32 - prefix)) >>> 0;
-  const network = (ipInt & mask) >>> 0;
+  const network = networkBase(`${addr}/${prefix}`);
+  if (network === null) return `${addr}/${prefix}`;
   return `${intToIpv4(network)}/${prefix}`;
-}
-
-function intToIpv4(value: number): string {
-  return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff].join('.');
 }
 
 function prefixFromNetmask(netmask: string): number | null {
@@ -540,18 +532,6 @@ function prefixFromNetmask(netmask: string): number | null {
     probe >>>= 1;
   }
   return prefix;
-}
-
-export function ipInCidr(cidr: string, addr: string): boolean {
-  if (!isValidIpv4Cidr(cidr) || !isIPv4(addr)) return false;
-  const slash = cidr.indexOf('/');
-  const prefix = Number.parseInt(cidr.slice(slash + 1), 10);
-  const netInt = ipv4ToInt(cidr.slice(0, slash));
-  const addrInt = ipv4ToInt(addr);
-  if (netInt === null || addrInt === null) return false;
-  if (prefix === 0) return true;
-  const mask = (0xffffffff << (32 - prefix)) >>> 0;
-  return (netInt & mask) === (addrInt & mask);
 }
 
 export function serializeInterfaces(interfaces: NetworkInterface[]): string {

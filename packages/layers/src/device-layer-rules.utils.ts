@@ -79,7 +79,8 @@ function baseSlugs(gpuModel: string | null): string[] {
 
 function teeSetupSlugs(gpuModel: string | null, teeCapable: boolean): string[] {
   if (!teeCapable) return [];
-  if (!gpuModel) return [];
+  // a host with no accelerator has nothing to attest beyond the firmware discovery already verified
+  if (!gpuModel) return [LAYER_SLUGS.tee.TEE_SETUP];
   if (!TEE_GPU_PATTERN.test(gpuModel) && !TEE_GPU_RTX_PRO_SERVER.test(gpuModel)) return [];
   return [LAYER_SLUGS.tee.TEE_SETUP];
 }

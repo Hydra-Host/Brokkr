@@ -380,6 +380,18 @@ describe('ProvisionValidatorService', () => {
           /not compatible with this device/,
         );
       });
+
+      it('accepts tee-setup on a GPU-less device when teeCapable=true', async () => {
+        mockLayerFindMany.mockResolvedValueOnce([...ALL_LAYERS, { slug: 'tee-setup', kind: 'COMPONENT' }]);
+        await expect(service.validateCustomizations(['tee-setup'], null, true)).resolves.toBeUndefined();
+      });
+
+      it('rejects tee-setup on a GPU-less device when teeCapable=false', async () => {
+        mockLayerFindMany.mockResolvedValueOnce([...ALL_LAYERS, { slug: 'tee-setup', kind: 'COMPONENT' }]);
+        await expect(service.validateCustomizations(['tee-setup'], null, false)).rejects.toThrow(
+          /not compatible with this device/,
+        );
+      });
     });
 
     describe('per-artifact relations include arch when provided', () => {
@@ -1056,6 +1068,141 @@ describe('ProvisionValidatorService', () => {
     });
   });
 
+  describe('validateDiskGroupSizeLimits', () => {
+    const ROOT_OVERHEAD = 2_154_840_065;
+    const DATA_OVERHEAD = 6_307_841;
+    const DRIVE_BYTES = 1_000_000_000_000;
+    const ROOT_MIN = 8_589_934_592;
+    const DATA_MIN = 1_073_741_824;
+
+    const twoDrives = () => [storageDrive({ name: 'nvme0n1' }), storageDrive({ name: 'nvme1n1' })];
+
+    it('ignores rows without a size', () => {
+      const drives = [storageDrive({ name: 'nvme0n1', sizeBytes: BigInt(1) })];
+      expect(() => service.validateDiskGroupSizeLimits([lvmRow()], drives)).not.toThrow();
+    });
+
+    it('accepts a direct root group at the exact usable capacity', () => {
+      const drives = [storageDrive({ name: 'nvme0n1' })];
+      expect(() =>
+        service.validateDiskGroupSizeLimits([{ ...directRow(), size: DRIVE_BYTES - ROOT_OVERHEAD }], drives),
+      ).not.toThrow();
+    });
+
+    it('rejects a direct root group one byte over the usable capacity', () => {
+      const drives = [storageDrive({ name: 'nvme0n1' })];
+      expect(() =>
+        service.validateDiskGroupSizeLimits([{ ...directRow(), size: DRIVE_BYTES - ROOT_OVERHEAD + 1 }], drives),
+      ).toThrow(/exceeds the disk group's usable capacity/);
+    });
+
+    it('caps a raid1 data group at the per-disk size minus the data overhead', () => {
+      const layout = raidRow({ config: 'raid1', mountpoint: '/data0' });
+      expect(() =>
+        service.validateDiskGroupSizeLimits([{ ...layout, size: DRIVE_BYTES - DATA_OVERHEAD }], twoDrives()),
+      ).not.toThrow();
+      expect(() =>
+        service.validateDiskGroupSizeLimits([{ ...layout, size: DRIVE_BYTES - DATA_OVERHEAD + 1 }], twoDrives()),
+      ).toThrow(/exceeds the disk group's usable capacity/);
+    });
+
+    it('caps a raid5 three-disk data group at twice the per-disk usable capacity', () => {
+      const drives = [
+        storageDrive({ name: 'nvme0n1' }),
+        storageDrive({ name: 'nvme1n1' }),
+        storageDrive({ name: 'nvme2n1' }),
+      ];
+      const capacity = 2 * (DRIVE_BYTES - DATA_OVERHEAD);
+      const layout = raidRow({ config: 'raid5', mountpoint: '/data0', disks: ['nvme0n1', 'nvme1n1', 'nvme2n1'] });
+      expect(() => service.validateDiskGroupSizeLimits([{ ...layout, size: capacity }], drives)).not.toThrow();
+      expect(() => service.validateDiskGroupSizeLimits([{ ...layout, size: capacity + 1 }], drives)).toThrow(
+        /exceeds the disk group's usable capacity/,
+      );
+    });
+
+    it('caps a raid0 data group at the disk count times the per-disk usable capacity', () => {
+      const capacity = 2 * (DRIVE_BYTES - DATA_OVERHEAD);
+      const layout = raidRow({ config: 'raid0', mountpoint: '/data0' });
+      expect(() => service.validateDiskGroupSizeLimits([{ ...layout, size: capacity }], twoDrives())).not.toThrow();
+      expect(() => service.validateDiskGroupSizeLimits([{ ...layout, size: capacity + 1 }], twoDrives())).toThrow(
+        /exceeds the disk group's usable capacity/,
+      );
+    });
+
+    it('uses the smallest disk as the per-disk basis when drives differ', () => {
+      const drives = [
+        storageDrive({ name: 'nvme0n1', sizeBytes: BigInt(DRIVE_BYTES) }),
+        storageDrive({ name: 'nvme1n1', sizeBytes: BigInt(500_000_000_000) }),
+      ];
+      const layout = raidRow({ config: 'raid1', mountpoint: '/data0' });
+      expect(() =>
+        service.validateDiskGroupSizeLimits([{ ...layout, size: 500_000_000_000 - DATA_OVERHEAD }], drives),
+      ).not.toThrow();
+      expect(() =>
+        service.validateDiskGroupSizeLimits([{ ...layout, size: 500_000_000_000 - DATA_OVERHEAD + 1 }], drives),
+      ).toThrow(/exceeds the disk group's usable capacity/);
+    });
+
+    it('rejects a sized group that is also encrypted', () => {
+      const layout = { ...raidRow({ config: 'raid1', mountpoint: '/data0' }), encrypt: true, size: 1 };
+      expect(() => service.validateDiskGroupSizeLimits([layout], twoDrives())).toThrow(
+        /a size cannot be combined with encryption/,
+      );
+    });
+
+    it('rejects a sized group that is preserved (wipe=false)', () => {
+      const layout = { ...raidRow({ config: 'raid1', mountpoint: '/data0' }), wipe: false, size: 1 };
+      expect(() => service.validateDiskGroupSizeLimits([layout], twoDrives())).toThrow(
+        /a size cannot be set on a preserved disk group/,
+      );
+    });
+
+    it('rejects a sized group referencing an unknown disk identifier', () => {
+      const layout = { ...lvmRow({ mountpoint: '/data0', disks: ['unknown-disk'] }), size: DATA_MIN };
+      expect(() => service.validateDiskGroupSizeLimits([layout], twoDrives())).toThrow(/does not match a known disk/);
+    });
+
+    it('rejects a sized group whose disks cannot fit the partition overhead', () => {
+      const drives = [storageDrive({ name: 'nvme0n1', sizeBytes: BigInt(ROOT_OVERHEAD) })];
+      expect(() => service.validateDiskGroupSizeLimits([{ ...directRow(), size: ROOT_MIN }], drives)).toThrow(
+        /disks are too small to carry a custom size/,
+      );
+    });
+
+    it('rejects a root group one byte below the root minimum', () => {
+      const drives = [storageDrive({ name: 'nvme0n1' })];
+      expect(() => service.validateDiskGroupSizeLimits([{ ...directRow(), size: ROOT_MIN - 1 }], drives)).toThrow(
+        /below the minimum of 8 GB/,
+      );
+    });
+
+    it('accepts a root group at exactly the root minimum', () => {
+      const drives = [storageDrive({ name: 'nvme0n1' })];
+      expect(() =>
+        service.validateDiskGroupSizeLimits([{ ...directRow(), size: ROOT_MIN }], drives),
+      ).not.toThrow();
+    });
+
+    it('rejects a data group one byte below the data minimum', () => {
+      const layout = raidRow({ config: 'raid1', mountpoint: '/data0' });
+      expect(() => service.validateDiskGroupSizeLimits([{ ...layout, size: DATA_MIN - 1 }], twoDrives())).toThrow(
+        /below the minimum of 1 GB/,
+      );
+    });
+
+    it('accepts a data group at exactly the data minimum', () => {
+      const layout = raidRow({ config: 'raid1', mountpoint: '/data0' });
+      expect(() => service.validateDiskGroupSizeLimits([{ ...layout, size: DATA_MIN }], twoDrives())).not.toThrow();
+    });
+
+    it('rejects a bare-number byte size that would pass the capacity check', () => {
+      const drives = [storageDrive({ name: 'nvme0n1' })];
+      expect(() => service.validateDiskGroupSizeLimits([{ ...directRow(), size: 500 }], drives)).toThrow(
+        /below the minimum/,
+      );
+    });
+  });
+
   describe('validate — provision bundle', () => {
     const provisionRequest = (diskLayouts: DiskLayout[]): ProvisionRequest =>
       ({
@@ -1087,6 +1234,13 @@ describe('ProvisionValidatorService', () => {
           drives,
         ),
       ).not.toThrow();
+    });
+
+    it('runs the size-capacity check as part of the bundle (rejects an oversize root)', () => {
+      const drives = [storageDrive({ name: 'nvme0n1' })];
+      expect(() =>
+        service.validate(provisionRequest([{ ...directRow(), size: 1_000_000_000_000 }]), drives),
+      ).toThrow(/exceeds the disk group's usable capacity/);
     });
 
     it('still enforces structural rules before homogeneity (rejects wipe:false on provision)', () => {

@@ -452,13 +452,14 @@ Plugins extend the host UI at **named extension slots**. Each slot type has its 
 
 Available slot names live in `EXTENSION_SLOTS`. Currently shipped:
 
-| Slot                    | Shape                                               | Host renders                                               | Use for                                                      |
-| ----------------------- | --------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
-| `dashboard-widget`      | `{ component, label? }`                             | the plugin's component                                     | dashboard cards, custom widgets, freeform plugin UI          |
-| `sidebar-nav`           | `{ label, to, icon?, section?, external?, popup? }` | the host's typed `<Link>` (or `<a>` if `external`/`popup`) | nav entries that link to plugin routes or off-platform URLs  |
-| `address-autocomplete`  | `{ component }`                                     | the plugin's component above the address inputs            | geocoder search affordances that fill the host address forms |
-| `inventory-page-extras` | `{ component }`                                     | the plugin's component after the listing grid              | lead-capture walls, banners, trackers on inventory pages     |
-| `inventory-item-cta`    | `{ component }`                                     | the plugin's component in each listing-card footer         | secondary calls-to-action pre-filled with the card's specs   |
+| Slot                    | Shape                                               | Host renders                                               | Use for                                                         |
+| ----------------------- | --------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------- |
+| `dashboard-widget`      | `{ component, label? }`                             | the plugin's component                                     | dashboard cards, custom widgets, freeform plugin UI             |
+| `sidebar-nav`           | `{ label, to, icon?, section?, external?, popup? }` | the host's typed `<Link>` (or `<a>` if `external`/`popup`) | nav entries that link to plugin routes or off-platform URLs     |
+| `address-autocomplete`  | `{ component }`                                     | the plugin's component above the address inputs            | geocoder search affordances that fill the host address forms    |
+| `inventory-page-extras` | `{ component }`                                     | the plugin's component after the listing grid              | lead-capture walls, banners, trackers on inventory pages        |
+| `inventory-item-cta`    | `{ component }`                                     | the plugin's component in each listing-card footer         | secondary calls-to-action pre-filled with the card's specs      |
+| `app-banner`            | `{ component }`                                     | the plugin's component above the page content              | account-wide notices (billing onboarding, expiring credentials) |
 
 ```tsx
 // frontend/index.ts
@@ -495,6 +496,8 @@ Optional fields:
 **`inventory-page-extras`** — rendered once per inventory listing page (public and authenticated), after the listing grid. The host passes `{ category?, userEmail?, hasListings, isAuthenticated }` so contributions can adapt to the page: lead walls only for anonymous visitors, banners only when listings exist, trackers only on public pages.
 
 **`inventory-item-cta`** — rendered inside each inventory listing card's footer, below the primary action. The host passes `{ category?, userEmail?, device }` where `device` carries the card's hardware summary (GPU/CPU/memory/storage) for pre-filling forms.
+
+**`app-banner`** — rendered above the page content on every authenticated app route. The host passes `{ pathname, organizationId }` so a contribution can suppress itself on its own pages and key its queries per organization (the host's query cache survives organization switches). It mounts on every navigation, so back it with a cached query (long `staleTime`, no refetch on focus) and render `null` when there is nothing to show.
 
 ## Plugin routes
 

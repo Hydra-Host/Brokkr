@@ -1,6 +1,6 @@
 import type { Logger } from '@nestjs/common';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import type { RunSection } from '../contract';
 
 export const ORPHAN_KILL_MAX_AGE_MS = 24 * 60 * 60 * 1000;

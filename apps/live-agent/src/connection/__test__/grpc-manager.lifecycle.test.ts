@@ -31,6 +31,11 @@ const h = vi.hoisted(() => {
     sessionCalls,
     runSession,
     pool: { getClient: vi.fn((a: string) => ({ __addr: a })), removeBridge: vi.fn(), listAddresses: vi.fn(() => []) },
+    telemetryPool: {
+      getClient: vi.fn((a: string) => ({ __addr: a })),
+      removeBridge: vi.fn(),
+      listAddresses: vi.fn(() => []),
+    },
     logShipper: { start: vi.fn(), stop: vi.fn() },
     tokenRenewer: { start: vi.fn(), stop: vi.fn() },
     sleepWithAbort: vi.fn().mockResolvedValue(undefined),
@@ -38,13 +43,19 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock('../session', () => ({ runSession: h.runSession }));
-vi.mock('../pool', () => ({ createTransportPool: () => h.pool }));
+vi.mock('../pool', () => ({
+  createTransportPool: () => h.pool,
+  createSiblingTransportPool: () => h.telemetryPool,
+}));
 vi.mock('../result-reporter', () => ({ createResultReporter: () => ({}) }));
 vi.mock('../log-shipper', () => ({ LogShipper: vi.fn(() => h.logShipper) }));
+vi.mock('../trace-shipper', () => ({ createTraceSender: vi.fn(() => async () => {}) }));
 vi.mock('../token-renewer', () => ({ TokenRenewer: vi.fn(() => h.tokenRenewer) }));
 vi.mock('../sleep', () => ({ sleepWithAbort: h.sleepWithAbort }));
 
 import { GrpcConnectionManager } from '../grpc-manager';
+import { LogShipper } from '../log-shipper';
+import { createTraceSender } from '../trace-shipper';
 
 function makeConfig(addresses: string[]): AgentConfig {
   return {
@@ -101,6 +112,7 @@ describe('GrpcConnectionManager lifecycle', () => {
     first.resolve({ permanent: true });
 
     await vi.waitFor(() => expect(h.pool.removeBridge).toHaveBeenCalledWith(first.addr));
+    await vi.waitFor(() => expect(h.telemetryPool.removeBridge).toHaveBeenCalledWith(first.addr));
 
     first.callbacks.onTopologyUpdate([{ address: 'b1:443', bridge_id: 'x' }], []);
     await Promise.resolve();
@@ -141,6 +153,27 @@ describe('GrpcConnectionManager lifecycle', () => {
 
     expect(b2.signal.aborted).toBe(true);
     expect(h.pool.removeBridge).toHaveBeenCalledWith(b2.addr);
+    expect(h.telemetryPool.removeBridge).toHaveBeenCalledWith(b2.addr);
+  });
+
+  it('ships logs on the telemetry pool, not the pool carrying the sessions', async () => {
+    mgr = new GrpcConnectionManager(makeConfig(['b1:443']));
+    mgr.start();
+    await vi.waitFor(() => expect(h.sessionCalls).toHaveLength(1));
+
+    const ctorArg = vi.mocked(LogShipper).mock.calls[0]?.[0] as { pool: unknown } | undefined;
+    expect(ctorArg?.pool).toBe(h.telemetryPool);
+    expect(ctorArg?.pool).not.toBe(h.pool);
+  });
+
+  it('ships traces on the telemetry pool, not the pool carrying the sessions', async () => {
+    mgr = new GrpcConnectionManager(makeConfig(['b1:443']));
+    mgr.start();
+    await vi.waitFor(() => expect(h.sessionCalls).toHaveLength(1));
+
+    const ctorArg = vi.mocked(createTraceSender).mock.calls[0]?.[0] as { pool: unknown } | undefined;
+    expect(ctorArg?.pool).toBe(h.telemetryPool);
+    expect(ctorArg?.pool).not.toBe(h.pool);
   });
 
   it('stop() aborts all sessions and stops the log shipper and token renewer', async () => {
@@ -285,6 +318,7 @@ describe('GrpcConnectionManager lifecycle', () => {
     const evicted = h.sessionCalls.find((c) => c.addr.includes('b2'))!;
     evicted.resolve({ permanent: true });
     await vi.waitFor(() => expect(h.pool.removeBridge).toHaveBeenCalledWith(evicted.addr));
+    await vi.waitFor(() => expect(h.telemetryPool.removeBridge).toHaveBeenCalledWith(evicted.addr));
 
     const picks = Array.from({ length: 6 }, () => provider()).map(addrOf);
     expect(picks).not.toContain(evicted.addr);

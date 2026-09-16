@@ -172,12 +172,14 @@ function ServerDetailsContent({ device }: { device: Server }) {
           </Section>
         )}
 
-        <Section icon={Cpu} title="CPU">
-          <SpecRow label="Model" value={cpu.model} />
-          <SpecRow label="Physical CPUs" value={cpu.count} />
-          <SpecRow label="Total Cores" value={cpu.totalCores} />
-          <SpecRow label="Total Threads" value={cpu.totalThreads} />
-        </Section>
+        {cpu.model && (
+          <Section icon={Cpu} title="CPU">
+            <SpecRow label="Model" value={cpu.model} />
+            <SpecRow label="Physical CPUs" value={cpu.count} />
+            <SpecRow label="Total Cores" value={cpu.totalCores} />
+            <SpecRow label="Total Threads" value={cpu.totalThreads} />
+          </Section>
+        )}
 
         {memory.total && (
           <Section icon={MemoryStick} title="Memory">

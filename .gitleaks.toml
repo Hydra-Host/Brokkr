@@ -38,4 +38,6 @@ regexes = [
   '''^"password"$''',
   # scripts/ci/helm-lint.sh dummy (base64 decodes to not-a-real-key-just-for-linting=)
   '''^bm90LWEtcmVhbC1rZXktanVzdC1mb3ItbGludGluZz0=$''',
+  # shared synthetic BRIDGE_AT_REST_KEY fixture in apps/bridge redis-client specs
+  '''^wmjZhYLXlEQTYtwCVFNg1Q4k\+5yQEQHLa87eDmf0Tmo=$''',
 ]

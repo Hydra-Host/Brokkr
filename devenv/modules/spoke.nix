@@ -30,13 +30,15 @@ let
   # knob if your key name differs.
   sshKey = "${builtins.getEnv "HOME"}/.ssh/id_ed25519";
 
-  bm = pkgs.stdenv.isLinux && config.fleet.mode == "baremetal";
+  bm = pkgs.stdenv.isLinux && config.fleet.planes.baremetal;
   inherit (config.fleet.baremetal) ifaceIp;
+  hostArch = if pkgs.stdenv.isAarch64 then "arm64" else "amd64";
   bmArches = lib.sort (a: b: a < b) (
     lib.unique (
       map (n: if n.arch != null then n.arch else config.fleet.baremetal.arch) (
         lib.attrValues config.fleet.baremetal.nodes
       )
+      ++ lib.optional config.fleet.planes.vm hostArch
     )
   );
   bmDiscoveryArchitectures =
@@ -75,6 +77,9 @@ let
 
     # --- sim behavior ---
     LOCAL_SIMULATION_ENABLED = "true";
+    # only BMCs in the sim BMC network are sushy emulators (http on SIM_REDFISH_PORT); any other BMC
+    # keeps the bridge's real https:443, so a bare-metal machine on the same spoke stays reachable.
+    SIM_BMC_CIDR = config.fleet.network.bmc_cidr;
     # Local dev runs no nginx TLS terminator, so agents dial plaintext gRPC. This is the dedicated
     # knob for that (independent of LOCAL_SIMULATION_ENABLED, which also flips auth-bypass/seeding).
     GRPC_INSECURE = "true";
@@ -82,12 +87,15 @@ let
     BRIDGE_API_VERSION = "0.0.0-dev";
     BROKKR_LIVE_VERSION = "1.1.8";
     # derived from the single asset-origin knob (config.osLayerCache.originHost); no parallel literal.
-    DISCOVERY_BASE_URL = "https://${config.osLayerCache.originHost}/brokkr-live-light";
+    # flavor-less root: the bridge appends -light for the VM image and syncs one tree per flavor.
+    DISCOVERY_BASE_URL = "https://${config.osLayerCache.originHost}/brokkr-live";
+    # the light image only fits the simulated VMs; the bm overlay below adds full for real machines.
+    DISCOVERY_FLAVORS = "light";
     # device fetches OS-layer blobs from {OS_LAYER_URL}/sha256:<hash>; point at the local
     # nginx cache (:8888) so repeat provisions skip the CDN re-pull.
     OS_LAYER_URL = P.urls.osLayer;
     # sim VM arch always equals the host arch, so sync/serve only this host's images.
-    DISCOVERY_ARCHITECTURES = if pkgs.stdenv.isAarch64 then "arm64" else "amd64";
+    DISCOVERY_ARCHITECTURES = hostArch;
     # always all-interfaces, independent of the LAN toggle: the simulated VMs + the device agents
     # reach the bridge (iPXE/TFTP/HTTP, gRPC) at the data-plane gateway IP, so it must bind it.
     GRPC_INTERNAL_HOST = "0.0.0.0";
@@ -120,11 +128,8 @@ let
     TELEGRAF_POLL_INTERVAL = "30s";
     TELEGRAF_HTTP_TIMEOUT = "10s";
   }
-  # Point the network scanner's Redfish probe at the sim's sushy port (8443), not the default 443.
-  # Absent in bm mode so NETWORK_REDFISH_PORT falls back to 443 (the real BMC Redfish port).
-  // lib.optionalAttrs (!bm) {
+  // lib.optionalAttrs config.fleet.planes.vm {
     SIM_REDFISH_PORT = toString P.ports.redfish;
-    NETWORK_REDFISH_PORT = toString P.ports.redfish;
   }
   // lib.optionalAttrs bm {
     DHCP_PROXY_PEER_AUTHORITATIVE = "true";
@@ -132,6 +137,8 @@ let
     BRIDGE_IPXE_BUILDS_STRICT = "true";
     OS_LAYER_URL = "http://${ifaceIp}:${toString P.ports.nginx}/assets";
     DISCOVERY_ARCHITECTURES = bmDiscoveryArchitectures;
+    # light first so the VMs keep booting while the multi-GB full tree downloads.
+    DISCOVERY_FLAVORS = if config.fleet.planes.vm then "light,full" else "full";
     BRIDGE_NODE_BIN = "${config.env.DEVENV_STATE}/baremetal/node";
     BRIDGE_GRPC_DIALBACK_HOST = ifaceIp;
   };
@@ -198,7 +205,7 @@ let
       label = "Discovery/ISO base URL";
       group = "Boot/cache";
       kind = "text";
-      description = "Root of the brokkr-live artifact tree the bridge syncs from: it fetches {base}/{version}/{arch}/manifest.json and every file that manifest lists (vmlinuz, initrd.img, the discovery ISO) into the dir the iPXE chain serves.";
+      description = "Flavor-less root of the brokkr-live artifact tree the bridge syncs from. The full image a real machine boots lives at {base}/{version}/{arch}/ and the light image the simulated VMs boot at {base}-light/{version}/{arch}/; the bridge fetches each manifest.json and every file it lists (vmlinuz, initrd.img, the discovery ISO) into the dir the iPXE chain serves. Which flavors sync follows the planes (DISCOVERY_FLAVORS): light alone for the VM plane, light and full once the bare-metal plane is on.";
     };
     BROKKR_LIVE_VERSION = {
       label = "brokkr-live (ISO) version";
@@ -448,7 +455,9 @@ let
           # below exports it at launch (only the leader consults the token; followers load
           # zone_crypto from this zone's Redis). The marker defaults to /var/lib/... (unwritable on
           # macOS), so pin a per-bridge path under the sim's persistent-storage dir.
-          BROKKR_HUB_URL = P.urls.hubBase;
+          # A dial-out from this box (the bridge POSTs /enroll), so it stays on loopback rather than
+          # following the browser-facing public origin.
+          BROKKR_HUB_URL = P.urls.dial.hubApi;
           BROKKR_REGISTRATION_TOKEN = config.zoneCrypto.tokens.${zone} or "";
           BRIDGE_REGISTRATION_TOKEN_FILE = tokenFileFor zone;
           BRIDGE_ZONE_CRYPTO_MARKER_PATH = "${bridgeStorage}/zone-crypto.lock";
@@ -490,7 +499,7 @@ let
           fi
           BRIDGE_NODE_BIN="''${BRIDGE_NODE_BIN:-node}"
           if [ "$BRIDGE_NODE_BIN" != node ] && [ ! -x "$BRIDGE_NODE_BIN" ]; then
-            echo "capped node binary missing at $BRIDGE_NODE_BIN — run the fleet-mode Apply from the control center (provisions the ambient-cap wrapper)" >&2
+            echo "capped node binary missing at $BRIDGE_NODE_BIN — run the fleet planes Apply from the control center (provisions the ambient-cap wrapper)" >&2
             exit 1
           fi
           # --watch: restart when spoke-watch rewrites dist. Caps survive reloads — the bm
@@ -508,12 +517,15 @@ let
           probe_timeout = 5;
           failure_threshold = 60;
         };
-        # 45s covers the legitimate worst case (telegraf join ≤10s + gRPC force-shutdown 5s +
-        # topology-broadcaster join 5s) without hiding a hang the way a fleet-sized 120s would.
+        # The signal must reach the whole group: with --watch the node parent that pc tracks is not
+        # the bridge, and a live spoke ignored SIGTERM across seven restarts, so the pid never
+        # changed. 10s then SIGKILL: a restart that cannot end the old bridge fails fast instead of
+        # sitting behind the 45s graceful budget, which the lab reads as a failed restart.
         process-compose = {
           shutdown = {
             signal = 15;
-            timeout_seconds = 45;
+            timeout_seconds = 10;
+            parent_only = false;
           };
         };
         restart.on = "on_failure";
@@ -617,10 +629,44 @@ in
         }
         # Build the native afpacket addon (BSD BPF/AF_PACKET) the DHCP server loads; `nest build` skips
         # it, so macOS DHCP silently falls back to the unusable dgram :67 path. pnpm exec keeps it hermetic.
-        if [ ! -f apps/bridge/native/afpacket/build/Release/afpacket.node ]; then
-          ( cd apps/bridge/native/afpacket && pnpm exec node-gyp rebuild ) \
-            || echo "WARN: afpacket addon build failed — macOS network.dhcp mode needs it (bridge DHCP receive)"
-        fi
+        # build/.stamp records what the binary was compiled against: a node upgrade (ABI), an arch switch
+        # or an edit to binding.gyp or any src/ file each leave a .node the bridge cannot load, so any
+        # drift from it rebuilds.
+        afpacket_stamp() { # <addon dir> -> "<node abi>-<uname -m>-<newest source mtime>" for this host and tree
+          local f mtime newest=0
+          for f in "$1"/binding.gyp "$1"/src/*; do
+            mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f")
+            if [ "$mtime" -gt "$newest" ]; then newest=$mtime; fi
+          done
+          printf '%s-%s-%s\n' "$(node -p process.versions.modules)" "$(uname -m)" "$newest"
+        }
+        ensure_afpacket_addon() {
+          local dir=apps/bridge/native/afpacket want have drift
+          local have_abi have_arch have_src want_abi want_arch want_src
+          want=$(afpacket_stamp "$dir")
+          have=$(cat "$dir/build/.stamp" 2>/dev/null || true)
+          if [ -f "$dir/build/Release/afpacket.node" ]; then
+            if [ "$have" = "$want" ]; then
+              return 0
+            fi
+            # one arm per stamp field, in stamp order
+            IFS=- read -r have_abi have_arch have_src <<<"$have"
+            IFS=- read -r want_abi want_arch want_src <<<"$want"
+            if [ -z "$have" ]; then drift="no stamp"
+            elif [ "$have_abi" != "$want_abi" ]; then drift="node abi $have_abi -> $want_abi"
+            elif [ "$have_arch" != "$want_arch" ]; then drift="arch $have_arch -> $want_arch"
+            else drift="source mtime $have_src -> $want_src"
+            fi
+            echo "afpacket addon stale ($drift), rebuilding"
+          fi
+          rm -f "$dir/build/.stamp"
+          if ( cd "$dir" && pnpm exec node-gyp rebuild ); then
+            printf '%s\n' "$want" >"$dir/build/.stamp"
+          else
+            echo "WARN: afpacket addon build failed — macOS network.dhcp mode needs it (bridge DHCP receive)"
+          fi
+        }
+        ensure_afpacket_addon
         mkdir -p "${paths.agent}"
         ln -sf "$PWD/apps/live-agent/dist/main.js" "${paths.agent}/main.js"
         ln -sf "$PWD/apps/live-agent/systemd/brokkr-bridge-agent.service" "${paths.agent}/brokkr-bridge-agent.service"
@@ -738,7 +784,7 @@ in
     # Reuses the hub-side X25519 seal-on-write; idempotent (skipIfLivePresent re-seals only a
     # re-keyed zone). Depends on every spoke process being healthy.
     "zone-crypto:seed-bmc" = {
-      description = "sim self-enroll: re-seal BMC creds into the DB each up — vm mode seals sim Servers (seed:sim-bmc), baremetal mode seals the commissioned box (seed:baremetal-bmc, skipped if no bmc-creds.json). Polls ZoneEnrollment first. Idempotent.";
+      description = "sim self-enroll: re-seal BMC creds into the DB each up — the VM plane seals sim Servers (seed:sim-bmc), the bare-metal plane seals the commissioned box (seed:baremetal-bmc, skipped if no bmc-creds.json). Polls ZoneEnrollment first. Idempotent.";
       # sim:seed (fleet.nix) creates the Server Device rows this seals against; spokes must be up so
       # their async enrollment can complete (the script also polls ZoneEnrollment before sealing).
       after = [
@@ -752,8 +798,8 @@ in
         begin_task_log "zone-crypto:seed-bmc"
         ${cdRepo "HUB_REPO_PATH"}
         ${exportSimTaskEnv}
-        # Both seals self-skip on the wrong mode (parseFleetMode on LOCAL_FLEET_PATH), so this body
-        # needs no mode branch — an eval-time one churns the tasks.json path every command embeds.
+        # Both seals self-skip when their plane's roster in LOCAL_FLEET_PATH is empty, so this body
+        # needs no plane branch — an eval-time one churns the tasks.json path every command embeds.
         pnpm --filter api seed:sim-bmc
         # Only guard the bm seal reads no file for: it throws on a missing bmc-creds.json, which is
         # right for the lab Apply / sim:bm:reconcile paths that write creds first.

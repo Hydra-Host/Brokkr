@@ -106,6 +106,7 @@ export function useApply() {
     readError,
     seeded: body === null ? null : body.seeded,
     gate: ops.gate,
+    hostTokenDialog: ops.hostTokenDialog,
     stream,
   };
 }

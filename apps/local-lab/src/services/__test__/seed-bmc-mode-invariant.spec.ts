@@ -39,12 +39,12 @@ describe('zone-crypto:seed-bmc must stay fleet-mode-invariant at eval time', () 
     }
   });
 
-  it('does not reference the fleet mode anywhere in the task', () => {
+  it('does not read the fleet planes anywhere in the task', () => {
     const code = seedBmcTaskSource()
       .split('\n')
       .filter((line) => !line.trim().startsWith('#'))
       .join('\n');
-    expect(code).not.toContain('config.fleet.mode');
+    expect(code).not.toMatch(/config\.fleet\.(mode|planes)/);
     expect(code).not.toContain('lib.optionalString');
   });
 

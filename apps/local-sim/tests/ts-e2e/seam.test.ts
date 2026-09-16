@@ -5,10 +5,10 @@ import { HubDB } from './hub-db';
 import { selectInventoryDevice } from './lifecycle-helpers';
 
 const FLEET: Fleet = {
-  mode: 'baremetal',
   network: { name: 'brokkr-net', cidr: '192.168.200.0/24', domain: 'sim', bmc_cidr: '192.168.105.0/24' },
   nodes: [],
   baremetal: null,
+  planes: { vm: false, baremetal: false },
 };
 
 function stubHubDb(state: { lifecycleStatus: string | null }): HubDB {

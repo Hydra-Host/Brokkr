@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { redactPayloadCapped } from '../common/redact';
 import type { LifecycleJobDetail, LifecycleJobEventRow, LifecycleJobPage, LifecycleJobRow } from '../contract';
 import { PgService } from '../datastore/pg.service';

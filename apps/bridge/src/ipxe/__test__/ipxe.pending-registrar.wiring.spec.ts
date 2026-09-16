@@ -6,7 +6,9 @@ import { BridgeNetworkModule } from '../../bridge-network/bridge-network.module'
 import { ATOM_FETCHER, type AtomFetcher } from '../../bridge-network/netplan-atom.service';
 import { RedisService } from '../../common/redis/redis.service';
 import {
+  IPXE_CHAIN_HIT_RECORDER,
   IPXE_PENDING_DEVICE_REGISTRAR,
+  type ChainHitRecorder,
   type PendingDeviceFacts,
   type PendingDeviceRegistrar,
 } from '../ipxe.controller';
@@ -164,6 +166,43 @@ describe('IpxeModule wiring IPXE_PENDING_DEVICE_REGISTRAR reaches RedisService.h
     expect(hset).toHaveBeenCalledTimes(1);
     const [key] = hset.mock.calls[0] ?? [];
     expect(key).toBe('discovery:pending:uuid-7');
+    await moduleRef.close();
+  });
+
+  it('binds a chain-hit recorder that writes ipxe:chain:<mac> with a 24 h ttl', async () => {
+    const set = vi.fn(async (_key: string, _value: string, _ttl?: number, _jobId?: string) => 'OK');
+    const redisStub = { set } as unknown as RedisService;
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        TestInfraModule,
+        BridgeNetworkModule.forRoot(),
+        IpxeModule.forRoot({ enqueueRenderRequest: async () => true }),
+      ],
+    })
+      .overrideProvider(RedisService)
+      .useValue(redisStub)
+      .compile();
+
+    const recorder = moduleRef.get<ChainHitRecorder>(IPXE_CHAIN_HIT_RECORDER);
+    expect(typeof recorder).toBe('function');
+
+    const before = Date.now();
+    await recorder('wiring-job-id', '00-11-22-33-44-55', 'abcdef00-0000-0000-0000-000000000002');
+
+    expect(set).toHaveBeenCalledTimes(1);
+    const call = set.mock.calls[0];
+    expect(call).toBeDefined();
+    if (!call) return;
+    const [key, value, ttl, jobId] = call;
+    expect(key).toBe('ipxe:chain:00:11:22:33:44:55');
+    expect(ttl).toBe(86_400);
+    expect(jobId).toBe('wiring-job-id');
+    const parsed: unknown = JSON.parse(value);
+    expect(parsed).toMatchObject({ deviceId: 'abcdef00-0000-0000-0000-000000000002' });
+    expect(parsed).toHaveProperty('atMs');
+    if (typeof parsed !== 'object' || parsed === null || !('atMs' in parsed)) return;
+    expect(parsed.atMs).toBeGreaterThanOrEqual(before);
     await moduleRef.close();
   });
 

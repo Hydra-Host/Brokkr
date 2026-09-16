@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { CollectorContext, CollectorHandler, DeviceMutation, InterfaceUpsert } from '../collector.types';
+import { isUsbIpmiNicName, osInterfaceName } from '../interface-name';
 import { ipASchema, ipInterfaceSchema } from '../ip_a/ip_a.schema';
 import { type GhwNetInput, ghwNetNicSchema, ghwNetSchema } from './ghw_net.schema';
 
@@ -11,7 +12,7 @@ export class GhwNetHandler implements CollectorHandler<GhwNetInput> {
   readonly schema = ghwNetSchema;
 
   async handle(input: GhwNetInput, ctx?: CollectorContext): Promise<DeviceMutation> {
-    const permanentMacs = permanentMacsFromIpA(ctx?.rawBundle.ip_a);
+    const { macs: permanentMacs, osNames } = indexIpA(ctx?.rawBundle.ip_a);
     const interfaces: InterfaceUpsert[] = [];
     const warnings: string[] = [];
 
@@ -22,12 +23,13 @@ export class GhwNetHandler implements CollectorHandler<GhwNetInput> {
         return;
       }
       const nic = parsed.data;
-      if (PSEUDO_NAMES.has(nic.name) || nic.is_virtual) return;
+      if (PSEUDO_NAMES.has(nic.name) || nic.is_virtual || isUsbIpmiNicName(nic.name)) return;
 
       const speedMbps = parseSpeedToMbps(nic.speed);
       const mac = permanentMacs.get(nic.name) ?? nic.mac_address.trim().toLowerCase();
       interfaces.push({
-        name: nic.name,
+        // `ip_a` resolved the udev name already; agreeing with it keeps one NIC on one row
+        name: osNames.get(nic.name) ?? nic.name,
         // omitted rather than null: an unreadable MAC must not erase a known one
         ...(mac ? { macAddress: mac } : {}),
         speed: speedMbps,
@@ -42,18 +44,20 @@ export class GhwNetHandler implements CollectorHandler<GhwNetInput> {
   }
 }
 
-/** NIC name → its own hardware MAC, for members whose MAC a bond has rewritten. */
-function permanentMacsFromIpA(raw: unknown): Map<string, string> {
+// kernel NIC name -> hardware MAC, name -> udev name
+function indexIpA(raw: unknown): { macs: Map<string, string>; osNames: Map<string, string> } {
   const macs = new Map<string, string>();
+  const osNames = new Map<string, string>();
   const ipA = ipASchema.safeParse(raw);
-  if (!ipA.success) return macs;
+  if (!ipA.success) return { macs, osNames };
   for (const entry of ipA.data) {
     const parsed = ipInterfaceSchema.safeParse(entry);
     if (!parsed.success) continue;
     const permaddr = parsed.data.permaddr?.trim().toLowerCase();
     if (permaddr) macs.set(parsed.data.ifname, permaddr);
+    osNames.set(parsed.data.ifname, osInterfaceName(parsed.data.ifname, parsed.data.altnames));
   }
-  return macs;
+  return { macs, osNames };
 }
 
 function parseSpeedToMbps(raw: string): number | null {

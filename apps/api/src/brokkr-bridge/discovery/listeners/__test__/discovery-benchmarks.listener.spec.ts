@@ -22,7 +22,7 @@ const makeCompleted = (overrides: Partial<DiscoveryRunCompletedEvent> = {}): Dis
 });
 
 describe('DiscoveryBenchmarksListener', () => {
-  it('calls runBenchmarks with Device.id (UUID string, not netbox int)', async () => {
+  it('calls runBenchmarks with Device.id (UUID string, not netbox int) and the discovery source', async () => {
     const benchmarkService = {
       runBenchmarks: vi.fn().mockResolvedValue(undefined),
     } as unknown as BenchmarkService;
@@ -30,7 +30,7 @@ describe('DiscoveryBenchmarksListener', () => {
 
     await listener.onRunCompleted(makeCompleted());
 
-    expect(benchmarkService.runBenchmarks).toHaveBeenCalledWith('dev-uuid-1');
+    expect(benchmarkService.runBenchmarks).toHaveBeenCalledWith('dev-uuid-1', 'discovery');
   });
 
   it('swallows benchmark errors — discovery completion must not bubble up failures', async () => {

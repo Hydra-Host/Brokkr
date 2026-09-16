@@ -20,6 +20,26 @@ export function isClientErrorResponse(thrown: unknown): boolean {
   return typeof status === 'number' && status >= 400 && status < 500;
 }
 
+export function responseStatus(thrown: unknown): number | undefined {
+  if (typeof thrown === 'object' && thrown !== null && 'status' in thrown) {
+    const { status } = thrown;
+    if (typeof status === 'number') return status;
+  }
+  return undefined;
+}
+
+export function thrownBody(thrown: unknown): unknown {
+  if (typeof thrown === 'object' && thrown !== null && 'body' in thrown) return thrown.body;
+  return undefined;
+}
+
+export function activeJobsFromBody(body: unknown): number {
+  if (body !== null && typeof body === 'object' && 'activeJobs' in body && typeof body.activeJobs === 'number') {
+    return body.activeJobs;
+  }
+  return 0;
+}
+
 export function errorMessage(thrown: unknown): string | null {
   if (!thrown) return null;
   if (thrown instanceof Error) return thrown.message;

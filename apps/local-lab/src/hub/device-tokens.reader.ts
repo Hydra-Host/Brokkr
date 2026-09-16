@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import type { DeviceTokenEventPage, DeviceTokenPage, DeviceTokenRow } from '../contract';
 import { PgService } from '../datastore/pg.service';
 import { RedisConnectionsService } from '../datastore/redis-connections.service';

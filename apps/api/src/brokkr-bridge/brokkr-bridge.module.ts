@@ -29,8 +29,11 @@ import { DiscoveryEventsService } from './discovery/discovery-events.service';
 import { DiscoveryIngressService } from './discovery/discovery-ingress.service';
 import { DiscoveryOrchestratorService } from './discovery/discovery-orchestrator.service';
 import { DiscoveryRunIssueRecorder } from './discovery/discovery-run-issue.recorder';
+import { DiscoveryRunsController } from './discovery/discovery-runs.controller';
+import { DiscoveryRunsService } from './discovery/discovery-runs.service';
 import { DiscoveryS3UploadService } from './discovery/discovery-s3-upload.service';
 import { DISCOVERY_LISTENERS } from './discovery/listeners';
+import { JobLogWriterModule } from './job-logs/job-log-writer.module';
 import { BridgeCommissioningService } from './lifecycle/commissioning.service';
 import { BridgeDeprovisionService } from './lifecycle/deprovision.service';
 import { BridgeEnrichmentService } from './lifecycle/enrichment.service';
@@ -56,6 +59,7 @@ import { ServerTokenModule } from './server-token/server-token.module';
     DeviceRecordModule,
     DeviceTokensModule,
     DeviceTestRunsModule,
+    JobLogWriterModule,
     NetplanModule,
     RedisModule,
     RenderRequestModule,
@@ -68,6 +72,7 @@ import { ServerTokenModule } from './server-token/server-token.module';
     forwardRef(() => InventoryModule),
     forwardRef(() => LifecycleModule),
   ],
+  controllers: [DiscoveryRunsController],
   providers: [
     BenchmarksRepository,
     BenchmarkService,
@@ -92,6 +97,7 @@ import { ServerTokenModule } from './server-token/server-token.module';
     DeviceRecordDeletedListener,
     DiscoveryEventsService,
     DiscoveryRunIssueRecorder,
+    DiscoveryRunsService,
     DiscoveryOrchestratorService,
     {
       provide: CollectorRegistry,

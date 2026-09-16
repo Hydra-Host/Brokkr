@@ -1,5 +1,7 @@
 import { UnrecoverableError } from 'bullmq';
 
+import { FRESHNESS_WINDOW_MS } from '../zone-crypto/sealed-envelope.types';
+
 export const JOB_NAME = {
   SAGA_RUN: 'saga.run',
   COLLECTION_RUN: 'collection.run',
@@ -30,17 +32,16 @@ export const LOCKLESS_SAGAS: ReadonlySet<string> = new Set([
 ]);
 
 export const AGENT_HANDOFF_REDELAY_SECONDS = 5.0;
-export const DEFERRED_HANDOFF_MAX_AGE_SECONDS = 240;
-export const DEFERRED_HANDOFF_MAX_DELAY_SECONDS = 300;
-
-// A cross-bridge / no-local-gRPC-session reschedule is legit only while the agent is
-// booting (a couple of minutes). Locally-enqueued jobs (e.g. collection.run behind an
-// enrich) are not sealed, so the envelope freshness window never fails them — without a
-// separate deadline they reschedule forever when the device never boots brokkr-live.
-// After this many seconds of continuous "agent not connected" deferral, fail the job.
-export const HANDOFF_ABANDON_DEADLINE_SECONDS = 900;
+export const AGENT_WAIT_REDELAY_SLACK_SECONDS = 60;
+export const HANDOFF_REDELAY_ESCALATION: ReadonlyArray<{ maxElapsedSeconds: number; delaySeconds: number }> = [
+  { maxElapsedSeconds: 60, delaySeconds: AGENT_HANDOFF_REDELAY_SECONDS },
+  { maxElapsedSeconds: 600, delaySeconds: 60 },
+  {
+    maxElapsedSeconds: Number.POSITIVE_INFINITY,
+    delaySeconds: (FRESHNESS_WINDOW_MS / 1_000 - AGENT_WAIT_REDELAY_SLACK_SECONDS) / 2,
+  },
+];
 export const HANDOFF_DEFER_REDIS_KEY_PREFIX = 'handoff-defer';
-export const HANDOFF_DEFER_REDIS_TTL_SECONDS = HANDOFF_ABANDON_DEADLINE_SECONDS + 300;
 export const LOCK_RENEW_MAX_TRANSIENT_FAILURES = 2;
 export const LOCK_RENEW_REDIS_COMMAND_ATTEMPTS = 2;
 export const LOCK_RENEW_SAFETY_MARGIN_SECONDS = 1;
@@ -90,16 +91,14 @@ export class EnvelopeDeferralBudgetExceeded extends UnrecoverableError {
   }
 }
 
-export class HandoffAbandoned extends UnrecoverableError {
+export class AgentWaitExceeded extends UnrecoverableError {
   constructor(
-    readonly elapsedSeconds: number,
+    readonly deviceId: string,
+    readonly elapsed: number,
     readonly attempts: number,
   ) {
-    super(
-      `discovery agent never connected — device did not boot brokkr-live ` +
-        `(${elapsedSeconds.toFixed(0)}s, ${attempts} deferrals)`,
-    );
-    this.name = 'HandoffAbandoned';
+    super(`no agent session for device ${deviceId} after ${elapsed.toFixed(0)}s (${attempts} handoff attempts)`);
+    this.name = 'AgentWaitExceeded';
   }
 }
 

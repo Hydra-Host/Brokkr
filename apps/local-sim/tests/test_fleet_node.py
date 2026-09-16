@@ -20,7 +20,6 @@ _VM_FLEET = {
     ],
 }
 _BM_FLEET = {
-    "mode": "baremetal",
     "network": _NETWORK,
     "nodes": [],
     "baremetal": {
@@ -63,11 +62,11 @@ def _pin_log_streams(monkeypatch):
     return fake_out, fake_err
 
 
-def test_baremetal_mode_exits_nonzero(monkeypatch):
+def test_bare_metal_name_exits_nonzero(monkeypatch):
     monkeypatch.setattr(fleet_mod, "load_fleet", _bm_fleet)
     with pytest.raises(SystemExit) as exc:
         fleet_mod.cmd_node(_args("bm-1", "down"))
-    assert "vm-mode only" in str(exc.value)
+    assert "VM nodes only" in str(exc.value)
     assert exc.value.code != 0
 
 

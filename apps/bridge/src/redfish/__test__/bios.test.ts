@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CallStackEntry, JsonRecord } from '../vendor/base/base.js';
-import { RedfishDevice } from '../vendor/base/base.js';
+import { logger, RedfishDevice } from '../vendor/base/base.js';
 import { RedfishBiosHandler } from '../vendor/base/bios.js';
 
 interface FetchCall {
@@ -14,7 +14,7 @@ interface FetchCall {
 interface HandlerHarness {
   device: RedfishDevice;
   handler: RedfishBiosHandler;
-  queue: (response: JsonRecord, headers?: Record<string, string>) => void;
+  queue: (response: JsonRecord, headers?: Record<string, string>, status?: number) => void;
   calls: FetchCall[];
 }
 
@@ -163,19 +163,19 @@ function buildHarness(opts: BuildOptions = {}): HandlerHarness {
   device.biosRetryAttempts = opts.biosRetryAttempts ?? 3;
 
   const handler = new RedfishBiosHandler(device, 'job-test');
-  const queued: { response: JsonRecord; headers: Record<string, string> }[] = [];
+  const queued: { response: JsonRecord; headers: Record<string, string>; status: number }[] = [];
   const calls: FetchCall[] = [];
 
   vi.spyOn(handler, 'fetch').mockImplementation(async (method, endpoint, payload, headers) => {
     calls.push({ method, endpoint, payload, headers });
-    const next = queued.shift() ?? { response: successResponse(), headers: {} };
+    const next = queued.shift() ?? { response: successResponse(), headers: {}, status: 200 };
     const entry: CallStackEntry = {
       method,
       endpoint,
       request: payload,
       response: next.response,
       responseHeaders: next.headers,
-      status: 200,
+      status: next.status,
     };
     device.callStack.push(entry);
     return next.response;
@@ -184,7 +184,7 @@ function buildHarness(opts: BuildOptions = {}): HandlerHarness {
   return {
     device,
     handler,
-    queue: (response, headers = {}) => queued.push({ response, headers }),
+    queue: (response, headers = {}, status = 200) => queued.push({ response, headers, status }),
     calls,
   };
 }
@@ -212,12 +212,23 @@ describe('setBiosParam guards', () => {
     expect(h.calls).toEqual([]);
   });
 
-  it('single similar prefix match falls through and patches with the caller key', async () => {
+  it('single similar prefix match patches and records the resolved key', async () => {
     const h = buildHarness();
     h.queue(successResponse());
     const result = await h.handler.setBiosParam('Hyperthread', true);
     expect(result).toBe(true);
-    expect(h.calls[0]?.payload).toEqual({ Attributes: { Hyperthread: true } });
+    expect(h.calls[0]?.payload).toEqual({ Attributes: { Hyperthreading: true } });
+    expect(h.device.biosPendingParams).toEqual({ Hyperthreading: true });
+  });
+
+  it('single similar prefix match looks up pending and current values by the resolved key', async () => {
+    const pendingHit = buildHarness({ pending: { Hyperthreading: true } });
+    expect(await pendingHit.handler.setBiosParam('Hyperthread', true)).toBe(true);
+    expect(pendingHit.calls).toEqual([]);
+
+    const currentHit = buildHarness({ params: { Hyperthreading: true } });
+    expect(await currentHit.handler.setBiosParam('Hyperthread', true)).toBe(true);
+    expect(currentHit.calls).toEqual([]);
   });
 
   it('ambiguous prefix returns null', async () => {
@@ -437,6 +448,15 @@ describe('already-set short-circuits', () => {
     expect(h.calls).toEqual([]);
   });
 
+  it('pending echo of a different live value falls through and patches', async () => {
+    const h = buildHarness({ pending: { BootMode: 'Bios' }, params: { BootMode: 'Bios' } });
+    h.queue(successResponse());
+    const result = await h.handler.setBiosParam('BootMode', 'Uefi');
+    expect(result).toBe(true);
+    expect(h.calls.map((c) => c.method)).toEqual(['PATCH']);
+    expect(h.calls[0]?.payload).toEqual({ Attributes: { BootMode: 'Uefi' } });
+  });
+
   it('nested parent already pending', async () => {
     const h = buildHarness({ pending: { SystemBiosSettings: { BootMode: 'Uefi' } } });
     const result = await h.handler.setBiosParam('BootMode', 'Uefi', 'SystemBiosSettings');
@@ -554,11 +574,46 @@ describe('result paths', () => {
     expect(h.device.biosPendingParams).toEqual({});
   });
 
-  it('no messages returns null', async () => {
+  it('message-less 2xx confirmed by pending readback takes the success path', async () => {
     const h = buildHarness();
+    h.queue({});
+    h.queue({ Attributes: { BootMode: 'Uefi' } });
+    const result = await h.handler.setBiosParam('BootMode', 'Uefi');
+    expect(result).toBe(true);
+    expect(h.calls.map((c) => c.method)).toEqual(['PATCH', 'GET']);
+    expect(h.calls[1]?.endpoint).toBe(h.device.biosPatchEndpoint);
+    expect(h.device.rebootNeeded).toBe(true);
+    expect(h.device.biosPendingParams).toEqual({ BootMode: 'Uefi' });
+  });
+
+  it('message-less 2xx whose readback still shows the old value returns null', async () => {
+    const h = buildHarness({ params: { BootMode: 'Bios' } });
+    h.queue({});
+    h.queue({ Attributes: { BootMode: 'Bios' } });
+    const result = await h.handler.setBiosParam('BootMode', 'Uefi');
+    expect(result).toBeNull();
+    expect(h.calls.map((c) => c.method)).toEqual(['PATCH', 'GET']);
+    expect(h.device.rebootNeeded).toBe(false);
+    expect(h.device.biosPendingParams).toEqual({});
+  });
+
+  it('message-less 2xx whose readback lacks the key returns null', async () => {
+    const h = buildHarness();
+    h.queue({});
     h.queue({});
     const result = await h.handler.setBiosParam('BootMode', 'Uefi');
     expect(result).toBeNull();
+    expect(h.calls.map((c) => c.method)).toEqual(['PATCH', 'GET']);
+  });
+
+  it('message-less 4xx returns null without readback and logs the status', async () => {
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    const h = buildHarness();
+    h.queue({}, {}, 400);
+    const result = await h.handler.setBiosParam('BootMode', 'Uefi');
+    expect(result).toBeNull();
+    expect(h.calls.map((c) => c.method)).toEqual(['PATCH']);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('HTTP 400'), expect.anything());
   });
 
   it('other error message returns null', async () => {

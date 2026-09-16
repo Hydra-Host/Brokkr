@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os';
 
+import { intToIpv4, ipv4ToInt } from '@repo/utils';
+
 import type { InterfaceEntry, InterfaceEnumerator } from './leader-election.service';
 
 type ListInterfaces = () => NodeJS.Dict<NetworkInterfaceInfo[]>;
@@ -31,22 +33,6 @@ export function netmaskToPrefix(netmask: string): number | null {
     v = (v << 1) >>> 0;
   }
   return bits;
-}
-
-function ipv4ToInt(ip: string): number | null {
-  const parts = ip.split('.');
-  if (parts.length !== 4) return null;
-  let result = 0;
-  for (const part of parts) {
-    const n = Number(part);
-    if (!Number.isInteger(n) || n < 0 || n > 255) return null;
-    result = (result << 8) | n;
-  }
-  return result >>> 0;
-}
-
-function intToIpv4(value: number): string {
-  return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff].join('.');
 }
 
 export function ipv4Network(ip: string, prefix: number): string | null {

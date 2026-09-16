@@ -8,6 +8,7 @@ import {
   type NetworkInterface,
   type SelfPrimaryInterface,
 } from '../../bridge-network/self-network.js';
+import { logDebug } from '../../logger/logger.service.js';
 import { LIMITED_BROADCAST } from '../broadcast-socket.js';
 import type { DhcpZoneOpsAtomValue } from '../dhcp-atom-value.schema.js';
 import { DhcpServerService } from '../dhcp-manager.service.js';
@@ -26,6 +27,11 @@ import { InMemoryPacketSocket } from '../l2/packet-socket.js';
 import type { LeaseStore } from '../lease-store/lease-store.js';
 import { macToBytes, MAGIC_COOKIE, OPTIONS_OFFSET } from '../protocol.js';
 import { makeAtom as baseAtom, type DhcpAtomValue } from './test-factories.js';
+
+vi.mock('../../logger/logger.service.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../logger/logger.service.js')>();
+  return { ...actual, logDebug: vi.fn(async () => {}) };
+});
 
 const POLL_MS = 1000;
 
@@ -309,6 +315,7 @@ describe('DhcpServerService hot-standby answer-gating', () => {
       put: vi.fn(() => Promise.resolve()),
       delete: vi.fn(() => Promise.resolve()),
       pruneExpired: vi.fn(() => Promise.resolve(0)),
+      takeRevocations: vi.fn(async () => []),
     };
     const sockets: FakeSocket[] = [];
     const replySockets: FakeSocket[] = [];
@@ -712,6 +719,7 @@ describe('DhcpServerService PXE-03 silent-leader-death failover', () => {
       put: vi.fn(() => Promise.resolve()),
       delete: vi.fn(() => Promise.resolve()),
       pruneExpired: vi.fn(() => Promise.resolve(0)),
+      takeRevocations: vi.fn(async () => []),
     };
     const clockMs = (): number => Date.now();
     const service = new DhcpServerService({
@@ -810,6 +818,7 @@ describe('DhcpServerService PXE/proxyDHCP socket lifecycle (atoms-based)', () =>
     const boundPorts = sockets.map((s) => s.bind.mock.calls[0]?.[0]).filter(Boolean);
     expect(boundPorts).toContain(4011);
     expect(boundPorts).toContain(67);
+    expect(service.getStandbyHealth().pxePortBound).toBe(true);
 
     service.stop('job-1');
     await expect(start).resolves.toBeUndefined();
@@ -883,6 +892,7 @@ describe('DhcpServerService PXE/proxyDHCP socket lifecycle (atoms-based)', () =>
     await flush();
 
     expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('engine torn down'), expect.anything());
+    expect(service.getStandbyHealth().pxePortBound).toBe(false);
 
     service.stop('job-1');
     await expect(start).resolves.toBeUndefined();
@@ -2113,5 +2123,95 @@ describe('DhcpServerService zone-ops runtime tuning (refreshRuntimeConfig)', () 
 
     service.stop('job-1');
     await expect(start).resolves.toBeUndefined();
+  });
+});
+
+describe('DhcpServerService primary interface pick and reconcile skip reasons', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function buildUnfilteredService(
+    ifaces: NetworkInterface[],
+    readAtoms?: (jobId: string) => Promise<ReadonlyMap<string, DhcpAtomValue> | null>,
+  ): DhcpServerService {
+    return new DhcpServerService({
+      config: makeRuntimeConfig(),
+      resolvePrimary: resolverFrom(ifaces),
+      resolveInterfaces: () => ifaces,
+      isLeader: () => true,
+      readAtoms,
+      createSocket: () => makeFakeSocket() as unknown as dgram.Socket,
+      createReplySocket: () => makeFakeSocket() as unknown as dgram.Socket,
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+  }
+
+  function debugMessages(): string[] {
+    return vi.mocked(logDebug).mock.calls.map((call) => String(call[0]));
+  }
+
+  it('never picks a loopback alias as the primary interface', async () => {
+    vi.useFakeTimers();
+    const loFirst = [iface('lo', '10.0.0.9'), iface('eth0', '172.16.0.1')];
+    const service = buildUnfilteredService(loFirst, async () => bothSubnetsAtoms());
+
+    const start = service.start('job-1');
+    await flush();
+
+    expect(service.getServerId()).toBe('172.16.0.1');
+    expect(service.getStandbyHealth().primaryInterface).toEqual({ name: 'eth0', ip: '172.16.0.1' });
+
+    service.stop('job-1');
+    await expect(start).resolves.toBeUndefined();
+  });
+
+  it('falls back to the only interface when nothing is client-facing', async () => {
+    vi.useFakeTimers();
+    const brOnly = [iface('br-brokkr', '10.0.0.5')];
+    const service = buildUnfilteredService(brOnly, async () => new Map([['prefix-1', makeAtom()]]));
+
+    const start = service.start('job-1');
+    await flush();
+
+    expect(service.getServerId()).toBe('10.0.0.5');
+    expect(service.getStandbyHealth().primaryInterface).toEqual({ name: 'br-brokkr', ip: '10.0.0.5' });
+
+    service.stop('job-1');
+    await expect(start).resolves.toBeUndefined();
+  });
+
+  it('logs why a reconcile pass did nothing', async () => {
+    vi.useFakeTimers();
+    vi.mocked(logDebug).mockClear();
+
+    const noReader = buildUnfilteredService(INTERFACES);
+    const noReaderStart = noReader.start('job-no-reader');
+    await flush();
+    expect(debugMessages()).toContainEqual(expect.stringContaining('reconcile atom step skipped: no reader'));
+    noReader.stop('job-no-reader');
+    await expect(noReaderStart).resolves.toBeUndefined();
+
+    const readerError = buildUnfilteredService(INTERFACES, async () => null);
+    const readerErrorStart = readerError.start('job-reader-error');
+    await flush();
+    expect(debugMessages()).toContainEqual(expect.stringContaining('reconcile atom step skipped: reader error'));
+    readerError.stop('job-reader-error');
+    await expect(readerErrorStart).resolves.toBeUndefined();
+
+    const unchanged = buildUnfilteredService(INTERFACES, async () => new Map([['prefix-1', makeAtom()]]));
+    const unchangedStart = unchanged.start('job-unchanged');
+    await flush();
+    expect(debugMessages()).not.toContainEqual(
+      expect.stringContaining('reconcile atom step skipped: unchanged fingerprint'),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await flush();
+    expect(debugMessages()).toContainEqual(
+      expect.stringContaining('reconcile atom step skipped: unchanged fingerprint'),
+    );
+    unchanged.stop('job-unchanged');
+    await expect(unchangedStart).resolves.toBeUndefined();
   });
 });

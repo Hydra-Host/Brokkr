@@ -59,6 +59,9 @@ class HealthyInMemoryDriver implements RedisDriver {
   async rpush(): Promise<number> {
     return 0;
   }
+  async xadd(): Promise<string> {
+    return '1-0';
+  }
   async lrange(): Promise<string[]> {
     return [];
   }
@@ -115,6 +118,9 @@ class BrokenInMemoryDriver implements RedisDriver {
     this.fail();
   }
   async rpush(): Promise<number> {
+    this.fail();
+  }
+  async xadd(): Promise<string> {
     this.fail();
   }
   async lrange(): Promise<string[]> {

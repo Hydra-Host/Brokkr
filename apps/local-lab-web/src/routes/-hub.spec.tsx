@@ -458,7 +458,7 @@ describe('the device token audit trail', () => {
     expect(screen.getByTitle(/token it should no longer be able to use/)).toBeDefined();
   });
 
-  it('leaves an ordinary event untoned, so the alarm colour stays a signal', () => {
+  it('leaves an ordinary event untoned, so the alarm color stays a signal', () => {
     state.tokenEvents = { rows: [tokenEvent({ event: 'ISSUED' })], skipped: 0, readError: null };
     show({ tab: 'tokens', tokenId: 'tok-1' });
 

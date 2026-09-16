@@ -8,9 +8,12 @@ import { ConfigDirtyProvider } from '@/lib/config-dirty';
 function ConfigLayout() {
   return (
     <ConfigDirtyProvider>
-      <div className="space-y-4">
+      {/* space-y, not gap: ApplyPanel renders nothing on a clean stack and a gap would still show */}
+      <div className="flex h-full min-h-0 flex-col space-y-4">
         <ApplyPanel />
-        <Outlet />
+        <div className="min-h-0 flex-1">
+          <Outlet />
+        </div>
       </div>
     </ConfigDirtyProvider>
   );

@@ -18,7 +18,7 @@ export class SudoController {
   }
 
   @TsRestHandler(contract.cacheSudo)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'host-exec' })
   cache() {
     return tsRestHandler(contract.cacheSudo, async ({ body }) => {
       const ok = await this.sudo.cache(body.password);

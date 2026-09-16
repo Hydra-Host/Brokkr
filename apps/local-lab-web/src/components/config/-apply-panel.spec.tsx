@@ -13,7 +13,7 @@ const { lab } = vi.hoisted(() => ({
     reloadFails: undefined as unknown,
     redeployCalls: 0,
     opClicks: [] as string[],
-    opIds: ['fleet-apply', 'fleet-mode-apply', 'reinit'],
+    opIds: ['fleet-apply', 'fleet-planes-apply', 'reinit'],
     run: undefined as { status: number; body: unknown } | undefined,
   },
 }));
@@ -60,6 +60,9 @@ vi.mock('@/lib/use-ops', () => ({
     gate: null,
     isPending: false,
   }),
+}));
+vi.mock('@/lib/use-apply-confirm', () => ({
+  useApplyConfirm: () => ({ confirmApply: vi.fn(), prompt: vi.fn() }),
 }));
 
 import { ApplyPanel } from './apply-panel';

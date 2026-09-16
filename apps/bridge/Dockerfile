@@ -178,7 +178,9 @@ FROM node-base AS pnpm-base
 COPY --from=manifests /out/ ./
 RUN pnpm install --frozen-lockfile
 COPY . .
+# api-client imports @repo/database/enums from gitignored generated/client/enums.ts.
 RUN pnpm exec buf generate && \
+    pnpm --filter @repo/database db:generate && \
     pnpm --filter @repo/bridge-agent-protocol build && \
     pnpm --filter @repo/api-client build
 

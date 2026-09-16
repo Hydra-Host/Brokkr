@@ -8,13 +8,15 @@ DEFAULTS = {"cpus": 2, "memory_mb": 4096, "disk_gb": 40, "arch": "x86_64"}
 BM_NODE = {"name": "bm-1", "pxe_mac": "00:00:5e:00:53:a1", "bmc_ip": "10.0.0.20", "bmc_mac": "00:00:5e:00:53:c1"}
 
 
-def _bm(nodes=None) -> Fleet:
+VM_NODE = {"name": "cpu-1", "ipmi_mac": "52:54:00:bc:00:01", "data_mac": "52:54:00:da:00:01"}
+
+
+def _bm(nodes=None, vm_nodes=None) -> Fleet:
     return Fleet.model_validate(
         {
-            "mode": "baremetal",
             "network": NETWORK,
             "defaults": DEFAULTS,
-            "nodes": [],
+            "nodes": vm_nodes or [],
             "baremetal": {"iface": "eno1", "iface_ip": "10.0.0.5", "arch": "amd64", "nodes": nodes or [dict(BM_NODE)]},
         }
     )
@@ -24,19 +26,22 @@ def test_bm_ready_true_when_manifest_matches():
     assert status.bm_ready(_bm(), applied.manifest(_bm())) is True
 
 
+def test_bm_ready_true_when_a_two_plane_manifest_matches():
+    both = _bm(vm_nodes=[dict(VM_NODE)])
+    assert status.bm_ready(both, applied.manifest(both)) is True
+
+
 def test_bm_ready_false_when_never_applied():
     assert status.bm_ready(_bm(), None) is False
 
 
-def test_bm_ready_false_when_manifest_is_vm_mode():
-    vm = Fleet.model_validate(
-        {
-            "network": NETWORK,
-            "defaults": DEFAULTS,
-            "nodes": [{"name": "cpu-1", "ipmi_mac": "52:54:00:bc:00:01", "data_mac": "52:54:00:da:00:01"}],
-        }
-    )
+def test_bm_ready_false_when_the_manifest_carries_only_the_vm_plane():
+    vm = Fleet.model_validate({"network": NETWORK, "defaults": DEFAULTS, "nodes": [dict(VM_NODE)]})
     assert status.bm_ready(_bm(), applied.manifest(vm)) is False
+
+
+def test_bm_ready_false_when_the_vm_plane_joined_since_the_apply():
+    assert status.bm_ready(_bm(vm_nodes=[dict(VM_NODE)]), applied.manifest(_bm())) is False
 
 
 def test_bm_ready_false_when_roster_drifted():

@@ -28,7 +28,6 @@ export class NetplanService {
         id: deviceId,
         OR: [
           { supplierId: organizationId },
-          { organizationId },
           { server: { deployments: { some: { customerId: organizationId, endDate: null } } } },
         ],
       },

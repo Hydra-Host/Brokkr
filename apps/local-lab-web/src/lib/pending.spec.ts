@@ -20,15 +20,15 @@ describe('pendingChangeCount', () => {
     expect(pendingChangeCount({ ...base, summary: { added: 2, removed: 1, changed: 0, unchanged: 0 } })).toBe(3);
     expect(pendingChangeCount({ ...base, network: { changed: true, fields: ['cidr'] } })).toBe(1);
   });
-  it('does NOT count mode-change (stays count-only so the banner headline cannot double-count)', () => {
-    expect(pendingChangeCount({ ...base, severity: 'mode-change' })).toBe(0);
+  it('does NOT count planes-change (stays count-only so the banner headline cannot double-count)', () => {
+    expect(pendingChangeCount({ ...base, severity: 'planes-change' })).toBe(0);
   });
 });
 
 describe('saveToastMessage', () => {
-  it('shows a dedicated mode-change line for a pure mode flip (zero counts, null note)', () => {
-    expect(saveToastMessage({ ...base, severity: 'mode-change' })).toBe(
-      'Saved — fleet mode changed, not yet applied. Apply to take effect.',
+  it('shows a dedicated planes-change line for a pure plane flip (zero counts, null note)', () => {
+    expect(saveToastMessage({ ...base, severity: 'planes-change' })).toBe(
+      'Saved — fleet planes changed, not yet applied. Apply to take effect.',
     );
   });
   it('surfaces the note on degraded drift', () => {

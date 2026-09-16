@@ -5,11 +5,11 @@ import {
   BareMetalConfigWriteSchema,
   BareMetalPowerActionSchema,
   BmcCredsSchema,
+  BootTrailSchema,
   ConsoleLogSchema,
   ExecResultSchema,
   FleetConfigSchema,
   FleetDefaultsSchema,
-  FleetModeSchema,
   FleetNetworkSchema,
   FleetNodeSchema,
   FleetVerifyReportSchema,
@@ -26,18 +26,23 @@ export const fleetRoutes = {
     method: 'GET',
     path: '/api/fleet/machines',
     responses: { 200: z.array(MachineSchema) },
-    summary: 'List fleet VMs with power state',
+    summary: 'List fleet machines with power state',
     description:
-      'Read-only roster of simulated fleet VMs with current power state, used to render the fleet panel; interactive console access is a separate WebSocket at /api/fleet/shell?node=.',
+      'Read-only roster of the active fleet — every enabled VM node and every saved bare-metal machine, with current power state and the plane each row belongs to; interactive console access is a separate WebSocket at /api/fleet/shell?node=.',
   },
   powerMachine: {
     method: 'POST',
     path: '/api/fleet/machines/power',
     body: z.object({ name: z.string(), action: z.enum(['on', 'off', 'cycle']) }),
-    responses: { 200: z.object({ runId: z.string() }), 404: ErrorBodySchema, 409: ErrorBodySchema },
-    summary: 'Power a VM on/off/cycle',
+    responses: {
+      200: z.object({ runId: z.string() }),
+      400: ErrorBodySchema,
+      404: ErrorBodySchema,
+      409: ErrorBodySchema,
+    },
+    summary: 'Power a fleet machine on/off/cycle',
     description:
-      'Drives the power action through the simulated Redfish BMC (exercising the real provisioning path) and returns a runId whose progress streams over SSE. Returns 404 for an unknown VM. Returns 409 while another power/discover op holds this node or a reset/stack fleet op is running. Loopback-only: a valid LAB_API_TOKEN is not sufficient and a remote caller gets 403.',
+      'Drives the action through the plane the machine belongs to — the simulated Redfish BMC for a VM, the real BMC over Redfish for a bare-metal machine (cycle maps to a PowerCycle reset) — and returns a runId whose progress streams over SSE. 400 when the machine has no BMC address or credentials saved; a BMC that rejects the action fails the run (exit 1, reported in the run log). 404 for an unknown machine; 409 while another power/discover op holds it. Loopback-only.',
   },
   discoverMachine: {
     method: 'POST',
@@ -46,7 +51,7 @@ export const fleetRoutes = {
     responses: { 200: z.object({ runId: z.string() }), 404: ErrorBodySchema, 409: ErrorBodySchema },
     summary: 'Force hardware rediscovery on a node',
     description:
-      'Forces inventory_collection on the node so discovery recomposes storageLayouts from its real disks, reflecting the VM as currently configured; returns a runId that streams over SSE. Use after changing a node disk topology. Returns 404 for an unknown VM. Returns 409 while another power/discover op holds this node or a reset/stack fleet op is running. Loopback-only: a valid LAB_API_TOKEN is not sufficient and a remote caller gets 403.',
+      'Forces inventory_collection on the node so discovery recomposes storageLayouts from its real disks, reflecting the VM as currently configured; returns a runId that streams over SSE. Use after changing a node disk topology. Returns 404 for an unknown machine. Returns 409 while another power/discover op holds this node or a reset/stack fleet op is running. Loopback-only: a valid LAB_API_TOKEN is not sufficient and a remote caller gets 403.',
   },
   resetMachine: {
     method: 'POST',
@@ -55,7 +60,7 @@ export const fleetRoutes = {
     responses: { 200: z.object({ runId: z.string() }), 404: ErrorBodySchema, 409: ErrorBodySchema },
     summary: 'Reset a node to clean INVENTORY',
     description:
-      'Destructive: tears the node back to INVENTORY by closing active Reservations + Deployments, setting Server.lifecycleStatus=INVENTORY, deleting Job history, and DEL-ing spoke Redis atoms + BullMQ device-status-effects. Returns a runId that streams progress over SSE. Returns 404 for an unknown VM. Returns 409 while any power/discover/reset op or a fleet-mutating stack op is running (reset is fleet-wide exclusive; independent layer cache/seed runs are not gated). Loopback-only: a valid LAB_API_TOKEN is not sufficient and a remote caller gets 403.',
+      'Destructive: tears the node back to INVENTORY by closing active Reservations + Deployments, setting Server.lifecycleStatus=INVENTORY, deleting Job history, and DEL-ing spoke Redis atoms + BullMQ device-status-effects. Returns a runId that streams progress over SSE. Returns 404 for an unknown machine. Returns 409 while any power/discover/reset op or a fleet-mutating stack op is running (reset is fleet-wide exclusive; independent layer cache/seed runs are not gated). Loopback-only: a valid LAB_API_TOKEN is not sufficient and a remote caller gets 403.',
   },
   execMachine: {
     method: 'POST',
@@ -90,6 +95,15 @@ export const fleetRoutes = {
     summary: "Read a VM's serial-console log",
     description:
       'Read-only: returns the tail of the node serial-console log (the same file `task node:console` tails) so you can watch boot/provision output before the network is up. Returns 404 for an unknown VM.',
+  },
+  getMachineBootTrail: {
+    method: 'GET',
+    path: '/api/fleet/machines/:name/boot-trail',
+    pathParams: z.object({ name: z.string().describe('Fleet node name (e.g. cpu-1)') }),
+    responses: { 200: BootTrailSchema, 404: ErrorBodySchema },
+    summary: 'Boot trail for one fleet machine',
+    description:
+      'Read-only: what the bridge recorded for this machine PXE MAC — the last proxy-DHCP decision and whether iPXE reached the chain route. Null and false mean not recorded; a readError means the bridge Redis could not be read. 404 for an unknown machine or a machine with no PXE MAC.',
   },
   getHost: {
     method: 'GET',
@@ -133,7 +147,7 @@ export const fleetRoutes = {
     },
     summary: 'Power a bare-metal machine via its BMC (Redfish)',
     description:
-      "Issues a chassis power action directly to the node's real BMC over Redfish (credentials resolved server-side from the 0600 secrets file, never sent from the browser). Linux-only and baremetal-mode-only (400 otherwise); 404 for an unknown machine; 502 for a BMC/Redfish error. Loopback-only: a valid LAB_API_TOKEN is not sufficient and a remote caller gets 403.",
+      "Issues a chassis power action directly to the node's real BMC over Redfish (credentials resolved server-side from the 0600 secrets file, never sent from the browser). Linux-only; 400 when no bare-metal machine is saved; 404 for an unknown machine; 502 for a BMC/Redfish error. Loopback-only: a valid LAB_API_TOKEN is not sufficient and a remote caller gets 403.",
   },
   getFleetConfig: {
     method: 'GET',
@@ -172,6 +186,20 @@ export const fleetRoutes = {
     description:
       "Read-only: shells the engine (`python -m local.fleet verify --json`) to check every applied VM node's libvirt domain and BMC daemons (ipmi_sim/sushy) plus fleet-level bindings (loopback aliases, socket_vmnet, bootptab) and orphan domains. A healthy fleet (engine exit 0) and one with findings (exit 2) both map to 200; only a genuine engine failure is 500. Changes nothing.",
   },
+  getFleetBootReadiness: {
+    method: 'GET',
+    path: '/api/fleet/boot-readiness',
+    query: z.object({
+      node: z
+        .string()
+        .optional()
+        .describe('Restrict the node-level checks to this fleet node; fleet-level bridge checks always run'),
+    }),
+    responses: { 200: FleetVerifyReportSchema, 500: ErrorBodySchema },
+    summary: 'Check whether the fleet can network-boot',
+    description:
+      "Read-only: asks every zone bridge its own readiness route and the hub its per-prefix readiness for each roster machine's PXE MAC, and merges both into verify findings of kind boot-readiness, each detail led by the PXE-nnn code and its severity. A bridge or hub that cannot be reached yields PXE-107 (unevaluated) rather than a pass, so a clean report never hides an unanswered check. Changes nothing.",
+  },
   healFleet: {
     method: 'POST',
     path: '/api/fleet/heal',
@@ -196,10 +224,9 @@ export const fleetRoutes = {
     method: 'PUT',
     path: '/api/fleet/config',
     body: z.object({
-      mode: FleetModeSchema.describe('Which fleet mode to persist as active'),
       nodes: z
         .array(FleetNodeSchema)
-        .describe('Full current VM topology (always sent; preserved when saving bare-metal)'),
+        .describe('Full current VM topology (always sent; an empty list turns the vm plane off)'),
       defaults: FleetDefaultsSchema.optional().describe(
         'Fleet-wide fallbacks for node size. A null leaf clears that default, so the engine value applies instead',
       ),
@@ -224,7 +251,7 @@ export const fleetRoutes = {
         rejected: z
           .array(RejectedEntrySchema)
           .describe(
-            'Parts of the request the overlay did not write as sent — a pinned fleet.mode, or a removed node the overlay holds out as a tombstone instead of dropping. Empty when the whole request landed.',
+            'Parts of the request the overlay did not write as sent — a removed node the overlay holds out as a tombstone instead of dropping. Empty when the whole request landed.',
           ),
       }),
       400: ErrorBodySchema,
@@ -234,7 +261,7 @@ export const fleetRoutes = {
     },
     summary: 'Write the fleet topology overlay',
     description:
-      'Persists both the VM and bare-metal topologies plus the active mode to the gitignored stack.local.nix overlay (BMC creds go to a separate 0600 secrets file). The client always sends its full view of both sections; the server preserves whichever is absent. Inert until applied. Returns 400 for an invalid topology. Loopback-only: a valid LAB_API_TOKEN is not sufficient and a remote caller gets 403.',
+      'Persists both rosters to the gitignored stack.local.nix overlay; the planes follow from them (BMC creds go to a separate 0600 secrets file). The client always sends its full view of both sections; the server preserves whichever is absent. Inert until applied. Returns 400 for an invalid topology. Loopback-only: a valid LAB_API_TOKEN is not sufficient and a remote caller gets 403.',
   },
   getLayersDefaultUrl: {
     method: 'GET',

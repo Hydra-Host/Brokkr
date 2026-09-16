@@ -8,7 +8,7 @@ import {
 import frontendPluginsConfig from '@hydrahost/plugins-config/frontend';
 import { createApiClient } from '@repo/api-client';
 
-import { type PublicRouteRegistryEntry } from './public-routes';
+import { type CorePathMatcher, type PublicRouteRegistryEntry, validatePublicPluginRoutes } from './public-routes';
 
 const api = createApiClient({ baseUrl: '' });
 
@@ -51,7 +51,7 @@ export const EMPTY_PLUGIN_REGISTRY: PluginRegistry = {
   publicRoutes: [],
 };
 
-export async function loadPluginRegistry(): Promise<PluginRegistry> {
+export async function loadPluginRegistry(isCorePath: CorePathMatcher): Promise<PluginRegistry> {
   const slots: PluginRegistry['slots'] = new Map();
   const routes: PluginRegistry['routes'] = new Map();
   const publicRoutes: PublicRouteRegistryEntry[] = [];
@@ -95,5 +95,29 @@ export async function loadPluginRegistry(): Promise<PluginRegistry> {
     }
   }
 
-  return { slots, routes, publicRoutes };
+  const validation = validatePublicPluginRoutes(publicRoutes, isCorePath);
+  for (const error of validation.errors) {
+    console.error(`[plugin-host] ${error}; affected plugin disabled`);
+  }
+  if (validation.invalidPluginIds.size === 0) {
+    return { slots, routes, publicRoutes };
+  }
+
+  for (const [slot, contributions] of slots) {
+    const validContributions = contributions.filter(({ pluginId }) => !validation.invalidPluginIds.has(pluginId));
+    if (validContributions.length === 0) {
+      slots.delete(slot);
+    } else {
+      slots.set(slot, validContributions);
+    }
+  }
+  for (const pluginId of validation.invalidPluginIds) {
+    routes.delete(pluginId);
+  }
+
+  return {
+    slots,
+    routes,
+    publicRoutes: publicRoutes.filter(({ pluginId }) => !validation.invalidPluginIds.has(pluginId)),
+  };
 }

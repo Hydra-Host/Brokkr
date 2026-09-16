@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import type { BridgeLocalPlanPersister } from '../../saga-framework/plan-manager-holder';
 import { resetBullmqConfigForTests } from '../bullmq.config';
 import { makeJobId } from '../job-id';
 import {
@@ -294,6 +295,85 @@ describe('enqueueSagaJob', () => {
     expect(client.closed).toBe(1);
     await service.getLifecycleQueue();
     expect(createCount()).toBe(2);
+  });
+});
+
+class FakePlanManager implements BridgeLocalPlanPersister {
+  readonly persisted: string[] = [];
+  readonly existing = new Set<string>();
+  fail = false;
+
+  async persistInitialPlan(planId: string): Promise<boolean> {
+    if (this.fail) throw new Error('redis down');
+    if (this.existing.has(planId)) return true;
+    this.persisted.push(planId);
+    this.existing.add(planId);
+    return true;
+  }
+}
+
+describe('enqueueSagaJob — bridge-local plan persistence', () => {
+  function serviceWith(pm: FakePlanManager | undefined, queue: BullmqQueue): BullmqQueueService {
+    const { factory } = makeFactory(queue);
+    return new BullmqQueueService(factory, undefined, undefined, pm === undefined ? undefined : () => pm);
+  }
+
+  const bridgeLocalArgs = {
+    planId: 'plan-bl',
+    sagaName: 'inventory_collection',
+    payload: { device_id: 9 },
+    deviceId: 9,
+    bridgeLocal: true,
+  } as const;
+
+  it('persists the plan before adding the job', async () => {
+    const queue = new FakeQueue();
+    const pm = new FakePlanManager();
+    let addedCountWhenPersisted = -1;
+    const persist = pm.persistInitialPlan.bind(pm);
+    pm.persistInitialPlan = async (planId: string) => {
+      addedCountWhenPersisted = queue.added.length;
+      return persist(planId);
+    };
+
+    const result = await serviceWith(pm, queue).enqueueSagaJob({ ...bridgeLocalArgs });
+
+    expect(result).toBe(true);
+    expect(pm.persisted).toEqual(['plan-bl']);
+    expect(addedCountWhenPersisted).toBe(0);
+    expect(queue.added).toHaveLength(1);
+  });
+
+  it('does not recreate an already-persisted plan', async () => {
+    const queue = new FakeQueue();
+    const pm = new FakePlanManager();
+    pm.existing.add('plan-bl');
+
+    const result = await serviceWith(pm, queue).enqueueSagaJob({ ...bridgeLocalArgs });
+
+    expect(result).toBe(true);
+    expect(pm.persisted).toEqual([]);
+    expect(queue.added).toHaveLength(1);
+  });
+
+  it('refuses to enqueue when no PlanManager is wired', async () => {
+    const queue = new FakeQueue();
+
+    const result = await serviceWith(undefined, queue).enqueueSagaJob({ ...bridgeLocalArgs });
+
+    expect(result).toBe(false);
+    expect(queue.added).toHaveLength(0);
+  });
+
+  it('does not enqueue when plan persistence fails', async () => {
+    const queue = new FakeQueue();
+    const pm = new FakePlanManager();
+    pm.fail = true;
+
+    const result = await serviceWith(pm, queue).enqueueSagaJob({ ...bridgeLocalArgs });
+
+    expect(result).toBe(false);
+    expect(queue.added).toHaveLength(0);
   });
 });
 

@@ -100,7 +100,7 @@ describe('AuditView', () => {
     expect(table().getByText('system')).toBeDefined();
   });
 
-  it('colours each outcome from the status palette', () => {
+  it('colors each outcome from the status palette', () => {
     returns([event({ id: 1, outcome: 'ok' }), event({ id: 2, outcome: 'error' }), event({ id: 3, outcome: 'denied' })]);
     show();
     expect(table().getByText('ok').className).toContain('text-status-online');

@@ -6,6 +6,7 @@ import { isRecord } from '@repo/utils';
 
 import { loadRedisConfig } from '../common/redis/redis-client';
 import { ContextLogger } from '../logger/logger.service';
+import { PLAN_PERSISTER_PROVIDER, type PlanPersisterProvider } from '../saga-framework/plan-manager-holder';
 import { ZoneCryptoService } from '../zone-crypto/zone-crypto.service';
 
 import { sealBridgeLocalJob } from './bridge-local-sig';
@@ -84,6 +85,7 @@ export class BullmqQueueService implements OnModuleDestroy {
     @Optional() @Inject(BULLMQ_QUEUE_FACTORY) private readonly factory?: BullmqQueueFactory,
     @Optional() logger?: ContextLogger,
     @Optional() private readonly zoneCrypto?: ZoneCryptoService,
+    @Optional() @Inject(PLAN_PERSISTER_PROVIDER) private readonly planPersisterProvider?: PlanPersisterProvider,
   ) {
     this.logger = logger ?? new ContextLogger();
   }
@@ -261,6 +263,17 @@ export class BullmqQueueService implements OnModuleDestroy {
           if (!isNotFoundError(error)) throw error;
         }
       }
+      // A bridge-local saga's worker fails closed if its plan isn't already in Redis (it refuses to
+      // rebuild device-mutating steps), so persist the plan before the job becomes consumable.
+      if (args.bridgeLocal) {
+        const persisted = await this.ensureBridgeLocalPlanPersisted(
+          args.planId,
+          args.sagaName,
+          deviceId,
+          config.bullmqQueueName,
+        );
+        if (!persisted) return false;
+      }
       await queue.add(JOB_NAME.SAGA_RUN, data, {
         jobId,
         attempts: config.bullmqRetries + 1,
@@ -273,6 +286,33 @@ export class BullmqQueueService implements OnModuleDestroy {
       await this.resetSharedOpsStateOnConnectionError(exc);
       void this.logger.warning(
         `Failed to enqueue saga '${args.sagaName}' for device ${args.deviceId}: ${getErrorMessage(exc)}`,
+      );
+      return false;
+    }
+  }
+
+  private async ensureBridgeLocalPlanPersisted(
+    planId: string,
+    sagaName: string,
+    deviceId: string,
+    queueName: string,
+  ): Promise<boolean> {
+    const pm = this.planPersisterProvider?.() ?? null;
+    if (pm === null) {
+      void this.logger.warning(
+        `No PlanManager wired; cannot persist bridge-local plan ${planId} for '${sagaName}' — skipping enqueue to avoid a fail-closed job`,
+      );
+      return false;
+    }
+    try {
+      const persisted = await pm.persistInitialPlan(planId, sagaName, deviceId, queueName);
+      if (!persisted) {
+        void this.logger.warning(`Could not persist bridge-local plan ${planId} for '${sagaName}' — skipping enqueue`);
+      }
+      return persisted;
+    } catch (exc) {
+      void this.logger.warning(
+        `Failed to persist bridge-local plan ${planId} for '${sagaName}': ${getErrorMessage(exc)}`,
       );
       return false;
     }

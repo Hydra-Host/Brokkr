@@ -1124,7 +1124,6 @@ describe('NetplanService', () => {
       expect(where.id).toBe('device-1');
       expect(where.OR).toEqual([
         { supplierId: CALLER_ORG_ID },
-        { organizationId: CALLER_ORG_ID },
         { server: { deployments: { some: { customerId: CALLER_ORG_ID, endDate: null } } } },
       ]);
     });
@@ -1139,7 +1138,7 @@ describe('NetplanService', () => {
       );
 
       await expect(service.renderForUserDevice('device-1')).resolves.toContain('network:');
-      expect(mockDeviceFindUnique.mock.calls[0][0].where.OR).toContainEqual({ organizationId: CALLER_ORG_ID });
+      expect(mockDeviceFindUnique.mock.calls[0][0].where.OR).toContainEqual({ supplierId: CALLER_ORG_ID });
     });
 
     it('allows the customer org of an active deployment to render', async () => {

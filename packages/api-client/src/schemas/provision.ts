@@ -187,6 +187,14 @@ export const provisionDiskLayoutSchema = z.object({
     .describe('Filesystem mount point (absolute path; no shell metacharacters or whitespace)'),
   diskType: z.string().min(1).describe('Type of disk (e.g. NVMe, SSD, HDD)'),
   disks: z.array(z.string().min(1)).describe('List of disk device names'),
+  size: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "Requested usable size in bytes for this disk group's filesystem (binary units). Omit for the full disk. RAID/LVM groups derive per-disk partition sizes from this value; must be at least 8 GiB for the root group and 1 GiB for other groups, must not exceed the group's usable capacity, and cannot be combined with encrypt or with wipe=false.",
+    ),
   encrypt: z
     .boolean()
     .optional()

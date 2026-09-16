@@ -18,6 +18,7 @@ import { deviceModelsRoutes } from './device-models';
 import { deviceSecretRoutes } from './device-secrets';
 import { deviceTokensRoutes } from './device-tokens';
 import { devicesNetplanRoutes } from './devices-netplan';
+import { discoveryRunsRoutes } from './discovery-runs';
 import { prefixDnsRoutes, zoneDnsRoutes } from './dns';
 import { dnsRecordsRoutes } from './dns-records';
 import { eventLogRoutes } from './event-log';
@@ -26,6 +27,8 @@ import { interruptibleEvictionsRoutes } from './interruptible-evictions';
 import { inventoryRoutes } from './inventory';
 import { ipamRoutes } from './ipam';
 import { ipamRolesRoutes } from './ipam-roles';
+import { jobLogsRoutes } from './job-logs';
+import { jobsRoutes } from './jobs';
 import { organizationRoutes } from './organizations';
 import { pduRoutes } from './pdus';
 import { pluginsRoutes } from './plugins';
@@ -101,7 +104,10 @@ const platformContract = c.router(
     ...vlanGroupsRoutes,
     ...webhooksRoutes,
     ...eventLogRoutes,
+    ...jobLogsRoutes,
+    ...jobsRoutes,
     ...deviceSecretRoutes,
+    ...discoveryRunsRoutes,
     ...dnsRecordsRoutes,
     ...zoneCryptoRoutes,
     ...zonesRoutes,

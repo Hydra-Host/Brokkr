@@ -52,7 +52,6 @@ export const DeviceSpecColumnsSchema = z.object({
     .object({ name: z.string(), region: z.object({ name: z.string() }).nullable() })
     .nullable()
     .optional(),
-  organizationId: z.string().nullable(),
   supplierId: z.string().nullable(),
   deviceModelId: z.string().nullable(),
 

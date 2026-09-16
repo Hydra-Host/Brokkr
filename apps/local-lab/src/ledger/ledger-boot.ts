@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { RunLedgerService } from './run-ledger.service';
 import { RunRetentionService } from './run-retention.service';
 import { StateDirLock } from './state-dir-lock';

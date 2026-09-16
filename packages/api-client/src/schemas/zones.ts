@@ -1,5 +1,7 @@
+import { ZoneAddressType, ZoneContactType, ZoneNetworkType } from '@repo/database/enums';
 import { z } from 'zod';
 import { DhcpModeSchema, IpamRoleSchema } from './ipam';
+import { zodEnumFromPrisma } from './prisma-enum';
 
 export const E164PhoneSchema = z
   .string()
@@ -24,7 +26,7 @@ export const ZoneAddressSchema = z.object({
 export type ZoneAddress = z.infer<typeof ZoneAddressSchema>;
 
 export const ZoneAddressPersistenceSchema = ZoneAddressSchema.extend({
-  type: z.enum(['PRIMARY', 'SHIPPING']).describe('Address role for the zone'),
+  type: zodEnumFromPrisma(ZoneAddressType).describe('Address role for the zone'),
 });
 
 export type ZoneAddressPersistence = z.infer<typeof ZoneAddressPersistenceSchema>;
@@ -33,9 +35,11 @@ export function toZoneAddress({ type: _, ...address }: ZoneAddressPersistence): 
   return address;
 }
 
-export const ZoneContactTypeSchema = z.enum(['Main', 'Technical']).describe('Role category of the contact');
+export const ZoneContactTypeSchema = zodEnumFromPrisma(ZoneContactType).describe('Role category of the contact');
+export type { ZoneContactType };
 
-export type ZoneContactType = z.infer<typeof ZoneContactTypeSchema>;
+export const ZoneNetworkTypeSchema = zodEnumFromPrisma(ZoneNetworkType);
+export type { ZoneNetworkType };
 
 export const ZoneContactSchema = z.object({
   id: z.string().describe('Unique identifier for the contact'),

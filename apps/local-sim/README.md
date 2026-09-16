@@ -78,7 +78,7 @@ ssh ubuntu@192.168.200.10                       # provisioned customer OS
 
 The **web cockpit** that drives the stack — power/console the VMs, run the lifecycle tests, review results — runs as **devenv processes** (`lab` :3002, `lab-web` :5175). It comes up with everything else under `task up`; you don't bring it up separately. It drives the stack over the process-compose REST API + direct sim-engine calls (not by shelling out to `task`).
 
-The web + API bind all interfaces (`0.0.0.0`) by default — reach the cockpit over LAN/Tailscale at `http://<host-ip>:5175` (locally, `http://localhost:5175`). `HUB_REPO_PATH` is read from the repo-root `.env` (or `.envrc.local`) and defaults to this checkout. See the repo-root `README.md` for how the cockpit is wired.
+The web and the API bind loopback (`127.0.0.1`) by default, so the cockpit answers at `http://localhost:5175` and nowhere else. The `lan.mode` knob is what moves those listeners onto the network, and each mode carries a different cost — see the [security posture](../local-lab/README.md#security-posture-read-this) before you change it. `HUB_REPO_PATH` is read from the repo-root `.env` (or `.envrc.local`) and defaults to this checkout. See the repo-root `README.md` for how the cockpit is wired.
 
 ## How the stack lays out
 

@@ -36,7 +36,7 @@ export function useFleetTopology(): { model: TopologyModel; isPending: boolean }
         : unready(zones.data, zones.error, 'zone config'),
     fleet:
       fleet.data?.status === 200
-        ? { state: 'ready', value: { nodes: fleet.data.body.nodes } }
+        ? { state: 'ready', value: { nodes: fleet.data.body.nodes, baremetal: fleet.data.body.baremetal } }
         : unready(fleet.data, fleet.error, 'fleet config'),
     machines:
       machines.data?.status === 200

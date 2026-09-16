@@ -21,6 +21,7 @@ const bridge = (over: Partial<ZoneBridge> = {}): ZoneBridge => ({
   plugins: null,
   port: 8000,
   grpcPort: 9082,
+  http: null,
   readError: null,
   ...over,
 });

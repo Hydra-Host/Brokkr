@@ -6,7 +6,6 @@ import {
   NotFoundException,
   StreamableFile,
 } from '@nestjs/common';
-import { createHash } from 'node:crypto';
 import {
   createReadStream,
   existsSync,
@@ -21,8 +20,8 @@ import { basename, join } from 'node:path';
 import { EMPTY, Subject, type Observable } from 'rxjs';
 import { z } from 'zod';
 
-import { getErrorMessage } from '../common/errors';
-import { hubApiFetch, hubApiSignIn, simDeviceUuid } from '../common/hub-client';
+import { getErrorMessage } from '@repo/utils';
+import { hubApiFetch, hubApiSignIn } from '../common/hub-client';
 import { isSafeRunId } from '../common/run-id';
 import {
   DiskLayoutsSchema,
@@ -45,6 +44,7 @@ import {
 import { PgService } from '../datastore/pg.service';
 import * as db from '../db/db';
 import { FleetExecService } from '../fleet/fleet-exec.service';
+import { resolveRoster, type RosterNode } from '../fleet/fleet-roster';
 import { FleetTopologyService } from '../fleet/fleet-topology.service';
 import { RunLedgerService } from '../ledger/run-ledger.service';
 import { PORTS, URLS } from '../ports';
@@ -55,8 +55,6 @@ import { OverlayStoreService } from '../services/overlay-store';
 import { ProcessComposeClient } from '../services/process-compose.client';
 import { RosterService } from '../services/roster.service';
 import { planCatalog, planForScenario } from './test-plan';
-
-const LOCAL_NS = '5d4e0c4a-1f7c-4f4e-9c4e-1d8d2a3b4c5d';
 
 const HubServerCatalogSchema = z
   .object({
@@ -119,19 +117,6 @@ function caseStatus(raw: string): ResultStatus {
   }
 }
 
-export function bmDeviceUuid(mac: string): string {
-  const nsBytes = Buffer.from(LOCAL_NS.replace(/-/g, ''), 'hex');
-  const hash = createHash('sha1')
-    .update(nsBytes)
-    .update(Buffer.from(`baremetal:${mac.toLowerCase()}`, 'utf8'))
-    .digest();
-  const b = hash.subarray(0, 16);
-  b[6] = (b[6] & 0x0f) | 0x50;
-  b[8] = (b[8] & 0x3f) | 0x80;
-  const hex = b.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 interface ScenarioDef extends TestScenario {
   vitestFile: string;
   live?: boolean;
@@ -157,7 +142,7 @@ const SCENARIOS: ScenarioDef[] = [
     id: 'smoke',
     label: 'Smoke (fast)',
     description:
-      'Fast E2E checks against the live stack, branched on the fleet mode. VM mode: seeded nodes + Device rows, per-VM agent, BMC simulators, chain endpoint. Bare-metal mode: the box’s hub identity, a read-only BMC probe, iPXE assets, the operator-set proxy-DHCP preconditions, the spoke’s DHCP sockets, base-OS artifact and chain endpoint. Excludes the slow lifecycle.',
+      'Fast E2E checks against the live stack, branched on the planes the roster carries. VM plane: seeded nodes + Device rows, per-VM agent, BMC simulators, chain endpoint. Bare-metal plane: the box’s hub identity, a read-only BMC probe, iPXE assets, the operator-set proxy-DHCP preconditions, the spoke’s DHCP sockets, base-OS artifact and chain endpoint. Excludes the slow lifecycle.',
     pinNode: false,
     destructive: false,
     vitestFile: `${TS_E2E}/test-smoke.test.ts`,
@@ -329,10 +314,10 @@ export class TestService {
   }
 
   private vmOnlyBlock(scenarioId: string): { disabled: true; disabledReason: string } | null {
-    if (!VM_ONLY_SCENARIOS.has(scenarioId) || this.overlay.fleetMode() !== 'baremetal') return null;
+    if (!VM_ONLY_SCENARIOS.has(scenarioId) || this.overlay.planes().vm) return null;
     return {
       disabled: true,
-      disabledReason: 'Requires the VM simulator fleet (multi-spoke HA / VRRP); the stack is in bare-metal mode',
+      disabledReason: 'Requires the VM simulator fleet (multi-spoke HA / VRRP); the vm plane is off',
     };
   }
 
@@ -455,24 +440,22 @@ export class TestService {
     }
   }
 
-  private resolveNode(nodeIndex: number): { nodeName: string; deviceId: string; pxeMac: string | null } {
-    if (this.overlay.fleetMode() === 'baremetal') {
-      const bmNodes = this.fleet.baremetalNodes();
-      if (nodeIndex < 0 || nodeIndex >= bmNodes.length)
-        throw new BadRequestException(
-          `node index ${nodeIndex} out of range (bare-metal fleet has ${bmNodes.length} machines)`,
-        );
-      const node = bmNodes[nodeIndex]!;
-      return { nodeName: node.name, deviceId: bmDeviceUuid(node.pxeMac), pxeMac: node.pxeMac };
-    }
-    const names = this.fleet.nodeNames();
-    if (nodeIndex < 0 || nodeIndex >= names.length)
-      throw new BadRequestException(`node index ${nodeIndex} out of range (fleet has ${names.length} nodes)`);
-    return { nodeName: names[nodeIndex]!, deviceId: simDeviceUuid(nodeIndex), pxeMac: null };
+  private fleetRoster(): RosterNode[] {
+    return resolveRoster({
+      vmNodeNames: () => this.fleet.nodeNames(),
+      baremetalNodes: () => this.fleet.baremetalView().nodes,
+    });
+  }
+
+  private resolveNode(nodeIndex: number): RosterNode {
+    const roster = this.fleetRoster();
+    if (nodeIndex < 0 || nodeIndex >= roster.length)
+      throw new BadRequestException(`node index ${nodeIndex} out of range (fleet has ${roster.length} machines)`);
+    return roster[nodeIndex];
   }
 
   async layerCatalogNative(nodeIndex: number): Promise<LayerCatalog> {
-    const { nodeName, deviceId } = this.resolveNode(nodeIndex);
+    const { name: nodeName, deviceId } = this.resolveNode(nodeIndex);
     const hubBase = URLS.hubBase;
 
     try {
@@ -514,7 +497,7 @@ export class TestService {
   }
 
   async diskLayoutsNative(nodeIndex: number): Promise<DiskLayouts> {
-    const { nodeName, deviceId } = this.resolveNode(nodeIndex);
+    const { name: nodeName, deviceId } = this.resolveNode(nodeIndex);
 
     const layouts = await this.pg.getStorageLayouts(deviceId);
     if (!layouts)
@@ -564,33 +547,30 @@ export class TestService {
     if (blocked) throw new BadRequestException(blocked.disabledReason);
 
     let target = nodeIndex;
-    if (sc.pinNode && target == null && this.overlay.fleetMode() === 'baremetal') {
-      const bmNodes = this.fleet.baremetalNodes();
-      if (bmNodes.length === 1) target = 0;
+    if (sc.pinNode && target == null && !this.overlay.planes().vm) {
+      const machines = this.fleetRoster().length;
+      if (machines === 1) target = 0;
       else
         throw new BadRequestException(
-          `bare-metal mode: pick the target machine explicitly (${bmNodes.length} in the fleet) — 'Auto' selects only from the VM roster`,
+          `the vm plane is off: pick the target machine explicitly (${machines} in the fleet) — 'Auto' selects only from the VM roster`,
         );
     }
 
     const pinned = sc.pinNode && target != null;
-    let nodeName: string | undefined;
-    let bmPxeMac: string | null = null;
+    let pinnedNode: RosterNode | null = null;
     if (pinned) {
-      const resolved = this.resolveNode(target!);
-      nodeName = resolved.nodeName;
-      bmPxeMac = resolved.pxeMac;
+      pinnedNode = this.resolveNode(target!);
       // One test per node: concurrent runs would race for the device lock, fleet VM, and qualify state machine.
       const conflict = this.runs.active('test').find((r) => r.nodeIndex === target);
       if (conflict) {
         throw new ConflictException(
-          `node '${nodeName}' (index ${target}) already has a running test ` +
+          `node '${pinnedNode.name}' (index ${target}) already has a running test ` +
             `(runId=${conflict.runId}, ${conflict.label}). Cancel it first.`,
         );
       }
     }
     const layerSummary = opts?.customizations ? Object.values(opts.customizations).flat().join('+') : '';
-    const base = pinned ? `${sc.label} [${nodeName}]` : sc.label;
+    const base = pinnedNode ? `${sc.label} [${pinnedNode.name}]` : sc.label;
     const label =
       sc.picker === 'layers' && (opts?.base || layerSummary)
         ? `${base} . ${opts?.base ?? ''} ${layerSummary}`.trim()
@@ -612,9 +592,9 @@ export class TestService {
     };
     if (pinned) {
       env.SIM_LC_DEVICE_INDEX = String(target);
-      if (bmPxeMac) {
-        env.SIM_LC_DEVICE_ID = bmDeviceUuid(bmPxeMac);
-        env.SIM_LC_BOOT_MAC = bmPxeMac;
+      if (pinnedNode?.pxeMac) {
+        env.SIM_LC_DEVICE_ID = pinnedNode.deviceId;
+        env.SIM_LC_BOOT_MAC = pinnedNode.pxeMac;
       }
     }
     env.SIM_LC_BASE = opts?.base ?? '';
@@ -656,9 +636,9 @@ export class TestService {
         this.finish(run, null);
         return;
       }
-      if (pinned && nodeName) {
-        this.runner.emit(run, `[pre-test reset] ${nodeName} -> INVENTORY\r\n`);
-        const resetCode = await this.runner.spawn(run, 'python', ['-m', 'local.reset_device', nodeName]);
+      if (pinnedNode) {
+        this.runner.emit(run, `[pre-test reset] ${pinnedNode.name} -> INVENTORY\r\n`);
+        const resetCode = await this.runner.spawn(run, 'python', ['-m', 'local.reset_device', pinnedNode.name]);
         if (resetCode !== 0) {
           this.runner.emit(run, `\r\n[pre-test reset] FAILED (exit ${resetCode}) -- aborting test\r\n`);
           this.finish(run, resetCode);

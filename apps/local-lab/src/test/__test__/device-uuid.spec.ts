@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { simDeviceUuid } from '../../common/hub-client';
-import { bmDeviceUuid } from '../test.service';
+import { bmDeviceUuid, simDeviceUuid } from '../../common/hub-client';
 
 describe('device-uuid derivation (lockstep with local-sim + hub seed)', () => {
   describe('bmDeviceUuid', () => {

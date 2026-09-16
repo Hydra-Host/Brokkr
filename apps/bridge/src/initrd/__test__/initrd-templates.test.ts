@@ -87,6 +87,21 @@ describe('brokkr-discovery templates', () => {
     expect(out).toContain('  - address: "bridge-zone-1:9083"');
   });
 
+  it('set grpc_dialback_host with tls emits an https grpc_address preserving each entry gRPC port', async () => {
+    const out = await render('brokkr-discovery/brokkr/opt/brokkr/agent.yaml.njk', {
+      device_id: 'dev-1',
+      zone_id: 'zone-1',
+      bridges: ['bridge-zone-0:9082', 'bridge-zone-1:9083'],
+      insecure: false,
+      agent_token: 't',
+      grpc_dialback_host: '192.168.1.50',
+    });
+    expect(out).toContain('insecure: false');
+    expect(out).toContain('grpc_address: "https://192.168.1.50:9082"');
+    expect(out).toContain('grpc_address: "https://192.168.1.50:9083"');
+    expect(out).not.toContain('grpc_address: "http://');
+  });
+
   it('renders the hosts file with bridge ip, hostname, and registry entries', async () => {
     const out = await render('brokkr-discovery/brokkr/etc/hosts.njk', {
       device_id: 'dev-1',

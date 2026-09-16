@@ -1,0 +1,116 @@
+{
+  "/redfish/v1": {
+    "@odata.id": "/redfish/v1",
+    "RedfishVersion": "1.15.0",
+    "Vendor": "Supermicro",
+    "Systems": {
+      "@odata.id": "/redfish/v1/Systems"
+    },
+    "Managers": {
+      "@odata.id": "/redfish/v1/Managers"
+    },
+    "Chassis": {
+      "@odata.id": "/redfish/v1/Chassis"
+    },
+    "Registries": {
+      "@odata.id": "/redfish/v1/Registries"
+    }
+  },
+  "/redfish/v1/Systems": {
+    "@odata.id": "/redfish/v1/Systems",
+    "Members": [
+      {
+        "@odata.id": "/redfish/v1/Systems/1"
+      }
+    ]
+  },
+  "/redfish/v1/Systems/1": {
+    "@odata.id": "/redfish/v1/Systems/1",
+    "Manufacturer": "Supermicro",
+    "Model": "SYS-X13-ASSUMED",
+    "SystemType": "Physical",
+    "PowerState": "On",
+    "Bios": {
+      "@odata.id": "/redfish/v1/Systems/1/Bios"
+    },
+    "Links": {
+      "ManagedBy": [
+        {
+          "@odata.id": "/redfish/v1/Managers/1"
+        }
+      ],
+      "Chassis": [
+        {
+          "@odata.id": "/redfish/v1/Chassis/1"
+        }
+      ]
+    },
+    "Actions": {
+      "#ComputerSystem.Reset": {
+        "target": "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset",
+        "ResetType@Redfish.AllowableValues": ["On", "ForceOff", "GracefulShutdown", "GracefulRestart", "ForceRestart"]
+      }
+    }
+  },
+  "/redfish/v1/Managers/1": {
+    "@odata.id": "/redfish/v1/Managers/1",
+    "Model": "AST2600",
+    "ManagerType": "BMC",
+    "Bios": null
+  },
+  "/redfish/v1/Chassis/1": {
+    "@odata.id": "/redfish/v1/Chassis/1",
+    "Model": "X13-ASSUMED",
+    "PowerState": "On"
+  },
+  "/redfish/v1/Systems/1/Bios": {
+    "@odata.id": "/redfish/v1/Systems/1/Bios",
+    "AttributeRegistry": "BiosAttributeRegistry.v1_0_0",
+    "@Redfish.Settings": {
+      "@odata.type": "#Settings.v1_3_3.Settings",
+      "SettingsObject": {
+        "@odata.id": "/redfish/v1/Systems/1/Bios/SD"
+      }
+    },
+    "Attributes": {
+      "LimitCPUPAto46Bits": "Enabled",
+      "MemoryEncryption_TME_": "Disabled",
+      "TotalMemoryEncryptionMulti_Tenant_TME_MT_": "Disabled",
+      "TotalMemoryEncryption_TME_Bypass": "Disabled",
+      "TrustDomainExtension_TDX_": "Disabled",
+      "TDXSecureArbitrationModeLoader_SEAMLoader_": "Disabled",
+      "TME_MT_TDXKeySplit": 1,
+      "SWGuardExtensions_SGX_": "Disabled",
+      "SGXPackageInfoIn_BandAccess": "Disabled",
+      "SGXFactoryReset": "Disabled"
+    }
+  },
+  "/redfish/v1/Systems/1/Bios/SD": {
+    "@odata.id": "/redfish/v1/Systems/1/Bios/SD",
+    "@Redfish.SettingsApplyTime": null,
+    "Attributes": {}
+  },
+  "/redfish/v1/Registries": {
+    "@odata.id": "/redfish/v1/Registries",
+    "Members": [
+      {
+        "@odata.id": "/redfish/v1/Registries/BiosAttributeRegistry"
+      },
+      {
+        "@odata.id": "/redfish/v1/Registries/Base"
+      }
+    ]
+  },
+  "/redfish/v1/Registries/BiosAttributeRegistry": {
+    "@odata.id": "/redfish/v1/Registries/BiosAttributeRegistry",
+    "Id": "BiosAttributeRegistry",
+    "Registry": "BiosAttributeRegistry.1.0.0",
+    "Languages": ["en"],
+    "Location": [
+      {
+        "Language": "en",
+        "Uri": "/registries/BiosAttributeRegistry.1.0.0.json"
+      }
+    ]
+  }
+}

@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
 
-import { getErrorMessage } from '../common/errors';
-import { hubApiFetch, hubApiSignIn, simDeviceIndex, simDeviceUuid } from '../common/hub-client';
+import type { NodeKind } from '@repo/local-lab-contract';
+import { getErrorMessage } from '@repo/utils';
+import { hubApiFetch, hubApiSignIn } from '../common/hub-client';
 import { sleep } from '../common/sleep';
 import { RedisConnectionsService } from '../datastore/redis-connections.service';
 import { URLS } from '../ports';
@@ -19,7 +20,7 @@ import type { RunState } from '../runner/runner.service';
 import { RunnerService } from '../runner/runner.service';
 import { type FleetOpLease, FleetOpRegistry } from './fleet-op-registry';
 import { FleetPowerService } from './fleet-power.service';
-import { FleetTopologyService } from './fleet-topology.service';
+import type { RosterNode } from './fleet-roster';
 
 const HubServerStorageSchema = z
   .object({
@@ -46,18 +47,14 @@ export class FleetResetService {
   constructor(
     private readonly runner: RunnerService,
     private readonly queueReader: QueueReaderService,
-    private readonly topology: FleetTopologyService,
     private readonly power: FleetPowerService,
     private readonly opRegistry: FleetOpRegistry,
     private readonly connections: RedisConnectionsService,
   ) {}
 
-  discoverNative(nodeIndex: number, lease?: FleetOpLease): string {
-    const names = this.topology.nodeNames();
-    if (nodeIndex < 0 || nodeIndex >= names.length)
-      throw new BadRequestException(`node index ${nodeIndex} out of range (fleet has ${names.length} nodes)`);
-    const nodeName = names[nodeIndex];
-    const deviceId = simDeviceUuid(nodeIndex);
+  discoverNative(node: RosterNode, lease?: FleetOpLease): string {
+    const nodeName = node.name;
+    const deviceId = node.deviceId;
     const hubBase = URLS.hubBase;
 
     const run = this.runner.create({ section: 'fleet', opId: 'discover', label: `discover ${nodeName}` });
@@ -152,13 +149,18 @@ export class FleetResetService {
     return { total, groups };
   }
 
+  private rosterNode(name: string): RosterNode {
+    const node = this.power.roster().find((n) => n.name === name);
+    if (!node) throw new NotFoundException(`unknown node '${name}'`);
+    return node;
+  }
+
   discover(name: string): string {
-    const names = this.topology.nodeNames();
-    if (!names.includes(name)) throw new NotFoundException(`unknown node '${name}'`);
+    const node = this.rosterNode(name);
     // acquire before runner.create so a 409 never leaves an orphan run behind.
     const lease = this.opRegistry.acquire({ kind: 'node', name }, `discover ${name}`);
     try {
-      return this.discoverNative(names.indexOf(name), lease);
+      return this.discoverNative(node, lease);
     } catch (e) {
       lease.release();
       throw e;
@@ -167,9 +169,7 @@ export class FleetResetService {
 
   /** Ordering: discover affected devices → power-cycle them (clears stale brokkr-live) → reset Postgres → reset Redis → commit Postgres only after Redis succeeds. */
   reset(name: string): string {
-    const names = this.topology.nodeNames();
-    if (!names.includes(name)) throw new NotFoundException(`unknown node '${name}'`);
-    const nodeIndex = names.indexOf(name);
+    const node = this.rosterNode(name);
     // acquire before runner.create so a 409 never leaves an orphan run behind.
     const lease = this.opRegistry.acquire({ kind: 'fleet' }, `reset ${name}`);
     let run: RunState;
@@ -181,7 +181,7 @@ export class FleetResetService {
       throw e;
     }
     this.log.log(`fleet reset: ${name}`);
-    void this.resetDeviceNative(nodeIndex, run)
+    void this.resetDeviceNative(node, run)
       .then(() => this.runner.finalize(run, 0))
       .catch((err) => {
         this.runner.emit(run, `\r\n[error] ${getErrorMessage(err)}\r\n`);
@@ -192,7 +192,7 @@ export class FleetResetService {
   }
 
   async resetDeviceNative(
-    nodeIndex: number,
+    node: RosterNode,
     run: RunState,
   ): Promise<{
     deployments_closed: number;
@@ -204,12 +204,8 @@ export class FleetResetService {
     bull_effects_deleted: number;
     saga_jobs_deleted: number;
   }> {
-    const names = this.topology.nodeNames();
-    if (nodeIndex < 0 || nodeIndex >= names.length) {
-      throw new Error(`node index ${nodeIndex} out of range (fleet has ${names.length} nodes)`);
-    }
-    const nodeName = names[nodeIndex];
-    const deviceId = simDeviceUuid(nodeIndex);
+    const nodeName = node.name;
+    const deviceId = node.deviceId;
 
     this.runner.emit(run, `\r\n[reset] ${nodeName} (${deviceId.slice(-4)}) -> clean INVENTORY\r\n`);
 
@@ -224,32 +220,40 @@ export class FleetResetService {
         throw new Error(`device ${deviceId} has no Server row (run sim:seed first)`);
       }
 
-      const cycleNames: string[] = [];
+      const roster = this.power.roster();
+      const cycleNodes: RosterNode[] = [];
       for (const { deviceId: dId } of affected) {
-        const idx = simDeviceIndex(dId);
-        if (idx === null) {
-          this.log.warn(`skipping non-sim device id ${dId} — not a deterministic fleet uuid, cannot map to a node`);
+        const sibling = roster.find((n) => n.deviceId === dId);
+        if (!sibling) {
+          this.log.warn(`skipping device id ${dId} — not in the active fleet roster, cannot map to a node`);
           continue;
         }
-        if (idx < names.length && !cycleNames.includes(names[idx])) {
-          cycleNames.push(names[idx]);
-        }
+        if (!cycleNodes.includes(sibling)) cycleNodes.push(sibling);
       }
 
       if (affected.length > 1) {
         this.runner.emit(run, `[reset] co-reserved siblings will also reset: ${affected.length - 1} device(s)\r\n`);
       }
-      if (cycleNames.length === 0) {
+      if (cycleNodes.length === 0) {
         throw new Error(
           `no fleet nodes resolved for affected devices [${affected.map((a) => a.deviceId).join(', ')}] -- hub seed is out of sync with the current fleet.yml? (re-run sim:seed)`,
         );
       }
 
-      for (const name of cycleNames) {
-        this.runner.emit(run, `[reset] power-cycle ${name} (clears stale brokkr-live session)\r\n`);
-        const rc = await this.power.powerCycleRedfish(name);
+      for (const cycleNode of cycleNodes) {
+        this.runner.emit(run, `[reset] power-cycle ${cycleNode.name} (clears stale brokkr-live session)\r\n`);
+        const cycle: Record<NodeKind, () => Promise<number>> = {
+          vm: () => this.power.powerCycleRedfish(cycleNode.name),
+          baremetal: async () => {
+            await this.power.baremetalPower(cycleNode.name, 'powercycle');
+            return 0;
+          },
+        };
+        const rc = await cycle[cycleNode.kind]();
         if (rc !== 0) {
-          throw new Error(`power-cycle for ${name} failed (exit ${rc}) -- reset aborted (hub/redis untouched)`);
+          throw new Error(
+            `power-cycle for ${cycleNode.name} failed (exit ${rc}) -- reset aborted (hub/redis untouched)`,
+          );
         }
       }
 

@@ -4,6 +4,7 @@ import type { TopologyModel, TopologyNode, TopologyZone } from './fleet-topology
 import { LANE_GAP, LANE_WIDTH, layoutTopology } from './topology-layout';
 
 const node = (name: string, zone: string): TopologyNode => ({
+  kind: 'vm',
   name,
   zone,
   cpus: 4,
@@ -11,6 +12,16 @@ const node = (name: string, zone: string): TopologyNode => ({
   diskGb: 40,
   arch: null,
   power: 'on',
+  deviceId: null,
+});
+
+const metal = (name: string, zone: string): TopologyNode => ({
+  kind: 'baremetal',
+  name,
+  zone,
+  arch: null,
+  bmcIp: null,
+  power: null,
   deviceId: null,
 });
 
@@ -64,6 +75,15 @@ describe('layoutTopology', () => {
     const ys = out.zones[0].nodes.map((n) => n.y);
     expect(new Set(ys).size).toBe(4);
     for (let i = 1; i < ys.length; i += 1) expect(ys[i]).toBeGreaterThan(ys[i - 1]);
+  });
+
+  it('stacks a bare-metal tile below the vm tiles in the same lane', () => {
+    const lane = zone('sim-zone', 0, ['cpu-1', 'cpu-2']);
+    const out = layoutTopology(model([{ ...lane, nodes: [...lane.nodes, metal('metal-1', 'sim-zone')] }]));
+
+    const tiles = out.zones[0].nodes;
+    expect(tiles.map((tile) => tile.key)).toEqual(['node-cpu-1', 'node-cpu-2', 'node-metal-1']);
+    expect(tiles[2].y).toBeGreaterThan(tiles[1].y);
   });
 
   it('grows the canvas to the deepest lane, not the first one', () => {

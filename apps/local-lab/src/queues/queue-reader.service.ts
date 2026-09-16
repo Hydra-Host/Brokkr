@@ -3,7 +3,7 @@ import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { z } from 'zod';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { probe } from '../common/probe';
 import type { QueueCounts, QueueRef, QueueSummary } from '../contract';
 import { RedisConnectionsService } from '../datastore/redis-connections.service';
@@ -157,7 +157,7 @@ export class QueueReaderService implements OnModuleDestroy {
     );
   }
 
-  /** The fleet-mode-flip guard: a positive total blocks the flip, so an under-count strands in-flight sagas. */
+  /** The fleet-planes-apply guard: a positive total blocks the flip, so an under-count strands in-flight sagas. */
   async inFlightCount(): Promise<number> {
     const zoneIds = await this.zoneRegistry.listZoneIds();
     if (zoneIds.length === 0) return 0;
@@ -167,7 +167,7 @@ export class QueueReaderService implements OnModuleDestroy {
     let r: Redis | null = null;
     try {
       // the guard must always count the bridge's redis, where sagas actually live — never wherever the
-      // datastore view happens to be pointed, or a mid-saga mode flip proceeds on someone else's counts.
+      // datastore view happens to be pointed, or a mid-saga plane flip proceeds on someone else's counts.
       const url = this.connections.url('bridge');
       r = new Redis(url, { lazyConnect: false, maxRetriesPerRequest: 2, connectTimeout: 5_000 });
       r.on('error', (error) => this.log.debug(`saga guard redis error: ${getErrorMessage(error)}`));

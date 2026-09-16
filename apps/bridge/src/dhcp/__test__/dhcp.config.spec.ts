@@ -29,4 +29,10 @@ describe('ipToInt / intToIp', () => {
     expect(ipToInt('255.255.255.255')).toBe(0xffffffff);
     expect(ipToInt('10.0.0.20') - ipToInt('10.0.0.10')).toBe(10);
   });
+
+  it('throws on a malformed address', () => {
+    for (const ip of ['', '10.0.0', '10.0.0.256', '010.0.0.1', 'not-an-ip']) {
+      expect(() => ipToInt(ip)).toThrow(TypeError);
+    }
+  });
 });

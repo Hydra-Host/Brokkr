@@ -8,7 +8,7 @@ import { Backoff } from './backoff';
 import { deriveGrpcAddress } from './grpc-address';
 import { mergeHostsEntries, parseHostsFileContent, writeBridgeHostsBlock, type HostsEntry } from './hosts-file';
 import { LogShipper } from './log-shipper';
-import { createTransportPool, type AgentServiceClient, type TransportPool } from './pool';
+import { createSiblingTransportPool, createTransportPool, type AgentServiceClient, type TransportPool } from './pool';
 import { createResultReporter, type ResultReporter } from './result-reporter';
 import { runSession } from './session';
 import { sleepWithAbort } from './sleep';
@@ -52,6 +52,8 @@ interface SessionTask {
 
 export class GrpcConnectionManager {
   private readonly pool: TransportPool;
+  // Log/trace shipping only -- see createSiblingTransportPool.
+  private readonly telemetryPool: TransportPool;
   private readonly reporter: ResultReporter;
   private readonly sessions = new Map<string, SessionTask>();
   private readonly permanentlyRejected = new Set<string>();
@@ -66,17 +68,20 @@ export class GrpcConnectionManager {
 
   constructor(private readonly config: AgentConfig) {
     this.pool = createTransportPool(config);
+    this.telemetryPool = createSiblingTransportPool(this.pool, config);
+    // Result reporting stays on the session pool: it is request/response, low
+    // volume, and not amplified by session failure the way log shipping is.
     this.reporter = createResultReporter(this.pool);
     this.logShipper = new LogShipper({
       deviceId: config.device_id,
-      pool: this.pool,
+      pool: this.telemetryPool,
     });
     this.tokenRenewer = new TokenRenewer({
       deviceId: config.device_id,
       pool: this.pool,
       intervalMs: config.agent.token_renew_interval_ms,
     });
-    this.traceSender = createTraceSender({ deviceId: config.device_id, pool: this.pool });
+    this.traceSender = createTraceSender({ deviceId: config.device_id, pool: this.telemetryPool });
   }
 
   start(): void {
@@ -122,6 +127,7 @@ export class GrpcConnectionManager {
         task.abort.abort();
         this.sessions.delete(addr);
         this.pool.removeBridge(addr);
+        this.telemetryPool.removeBridge(addr);
       }
     }
 
@@ -187,6 +193,7 @@ export class GrpcConnectionManager {
             this.permanentlyRejected.add(bridgeAddr);
             this.sessions.delete(bridgeAddr);
             this.pool.removeBridge(bridgeAddr);
+            this.telemetryPool.removeBridge(bridgeAddr);
             break;
           }
 

@@ -86,9 +86,27 @@
   # it. Off by default; the exporter env renders at eval time, so a flip needs a hub-api restart.
   # telemetry.enable = true;
 
-  # Binds the otherwise loopback-only datastores and services on 0.0.0.0 for LAN/Tailscale reach.
-  # The local stack has no auth in front of Postgres or Redis — only on a network you trust.
-  # lan.expose = true;
+  # How this stack is reached. `direct` binds the otherwise loopback-only datastores and services on
+  # the LAN in cleartext — only on a network you trust. `fronted` keeps every listener on loopback
+  # for a terminator you run yourself (tailscale serve, ssh -L, caddy) and makes EVERY caller present
+  # the control-center token, loopback included: behind a front door a loopback peer is whoever the
+  # front door serves. `lan.expose = true` still works and means `direct`.
+  # lan.mode = "direct";
+
+  # One address for the `direct` listeners instead of every interface. An IP literal only — this value
+  # reaches a socket, and a name resolves to several addresses and binds one of them twice.
+  # lan.bindAddress = "192.168.1.50";
+
+  # The name a browser reaches this stack at. It never reaches a socket, so unlike the bind address it
+  # takes a name: the one a `fronted` terminator serves, or the one a `direct` LAN client types.
+  # lan.publicHost = "dev-box.local";
+
+  # On by default: under `direct`, off-loopback datastore clients must present a credential
+  # (Postgres scram, Redis requirepass, Mailpit basic auth) and Thanos receive stays on loopback.
+  # Set false to keep the old credential-free LAN posture.
+  # lan.datastoreAuth = false;
+  # identity.redis.password = "...";
+  # identity.mailpit.password = "...";
 
   ## Sim harnesses #############################################################################
   # Per-zone Redis ACL users are ON by default (the sim exercises the rule self-hosters get).

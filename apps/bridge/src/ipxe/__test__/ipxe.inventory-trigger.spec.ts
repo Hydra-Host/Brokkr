@@ -15,6 +15,7 @@ import {
   type SharedOpsClient,
 } from '../../bullmq/queue.service';
 import { RedisService } from '../../common/redis/redis.service';
+import { PLAN_PERSISTER_PROVIDER } from '../../saga-framework/plan-manager-holder';
 import { ZoneCryptoService } from '../../zone-crypto/zone-crypto.service';
 
 import { IPXE_INVENTORY_TRIGGER, type InventoryTrigger } from '../chain.service';
@@ -22,14 +23,16 @@ import { IpxeModule } from '../ipxe.module';
 
 const stubAtomFetcher: AtomFetcher = { getAtom: async () => null };
 const stubRedis = { get: async () => null, delete: async () => 0 } as unknown as RedisService;
+const persistInitialPlan = vi.fn(async () => true);
 
 @Global()
 @Module({
   providers: [
     { provide: ATOM_FETCHER, useValue: stubAtomFetcher },
     { provide: RedisService, useValue: stubRedis },
+    { provide: PLAN_PERSISTER_PROVIDER, useValue: () => ({ persistInitialPlan }) },
   ],
-  exports: [ATOM_FETCHER, RedisService],
+  exports: [ATOM_FETCHER, RedisService, PLAN_PERSISTER_PROVIDER],
 })
 class TestInfraModule {}
 
@@ -111,6 +114,12 @@ describe('IpxeModule wiring IPXE_INVENTORY_TRIGGER seals bridge-local jobs', () 
     const trigger = moduleRef.get<InventoryTrigger>(IPXE_INVENTORY_TRIGGER);
     await trigger('device-1', 'job-1');
 
+    expect(persistInitialPlan).toHaveBeenCalledWith(
+      expect.any(String),
+      'inventory_collection',
+      'device-1',
+      expect.any(String),
+    );
     expect(queue.added).toHaveLength(1);
     const { data, opts } = queue.added[0];
     expect(data.__bridge_local).toBe(true);

@@ -19,6 +19,7 @@ export const HEALTH_UI: Record<string, HealthUi> = {
   // oneshot init-task states; no ProcHealth value collides with them.
   running: { dot: 'bg-status-info animate-pulse', text: 'text-status-info', note: 'running' },
   completed: { dot: 'bg-status-online', text: 'text-status-online', note: 'done' },
+  cached: { dot: 'bg-status-online/70', text: 'text-status-online/80', note: 'cached' },
   pending: { dot: 'bg-text-label', text: 'text-text-dim', note: 'not run' },
 };
 // ProcHealth values only — the server never sends UP_NO_PROBE, so it has no place here.

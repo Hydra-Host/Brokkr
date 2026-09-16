@@ -64,6 +64,12 @@ const pylonOpsContactEmail =
   process.env.PYLON_OPS_CONTACT_EMAIL || process.env.HYDRAHOST_OPS_CONTACT_EMAIL || 'ops@example.com';
 const pylonBrokkrHostTemplate = process.env.PYLON_BROKKR_HOST_TEMPLATE ?? 'brokkr.{env}.example.com';
 
+// Commerce enables on credentials alone: both the origin and the platform API key must be set.
+const commerceApiBaseUrl = process.env.COMMERCE_API_BASE_URL ?? '';
+const commerceApiKey = process.env.COMMERCE_API_KEY ?? '';
+const commerceConfigured = commerceApiBaseUrl !== '' && commerceApiKey !== '';
+const commerceWebBaseUrl = process.env.WEB_BASE_URL?.trim() || process.env.BASE_URL?.trim() || undefined;
+
 const clickhouseHost = process.env.CLICKHOUSE_HOST ?? '';
 const clickhouseUser = process.env.CLICKHOUSE_USER ?? '';
 const clickhousePassword = process.env.CLICKHOUSE_PASSWORD ?? '';
@@ -186,6 +192,17 @@ export function loadOptionalPluginEntries(requireFn: RequireFn = createRequire(i
   });
   loadOptionalManifest(requireFn, '@hydrahost/plugin-operator-hub', 'operatorHubManifest', (plugin) => {
     entries.push({ plugin, enabled: true, settings: {} });
+  });
+  loadOptionalManifest(requireFn, '@hydrahost/plugin-commerce', 'commerceManifest', (plugin) => {
+    entries.push({
+      plugin,
+      enabled: commerceConfigured,
+      settings: {
+        apiBaseUrl: commerceApiBaseUrl,
+        apiKey: commerceApiKey,
+        ...(commerceWebBaseUrl !== undefined ? { webBaseUrl: commerceWebBaseUrl } : {}),
+      },
+    });
   });
   // Nomad is opt-in via NOMAD_PLUGIN_ENABLED (never auto-enabled from NOMAD_ADDR
   // alone); disabled short-circuits configSchema so empty addr/token don't throw.

@@ -1,17 +1,18 @@
 import { BadRequestException, HttpException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { Agent, request } from 'undici';
 
-import { type BareMetalPowerAction } from '@repo/local-lab-contract';
-import { getErrorMessage } from '../common/errors';
-import { simDeviceUuid } from '../common/hub-client';
-import type { Machine } from '../contract';
+import { type BareMetalPowerAction, type NodeKind, NodeKindSchema } from '@repo/local-lab-contract';
+import { getErrorMessage } from '@repo/utils';
+import { type BmcProbe, contract, type Machine } from '../contract';
 import { STACK_SLOT } from '../ports';
 import type { RunState } from '../runner/runner.service';
 import { RunnerService } from '../runner/runner.service';
 import { OverlayStoreService } from '../services/overlay-store';
 import { FleetOpRegistry } from './fleet-op-registry';
+import { resolveRoster, type RosterNode } from './fleet-roster';
 import { FleetTopologyService } from './fleet-topology.service';
 import { managedTagForSlot } from './managed-tag';
 
@@ -24,9 +25,37 @@ const LIBVIRT_URI =
 // GET /api/status for as long as it takes to recover.
 const VIRSH_TIMEOUT_MS = 5_000;
 
-const REDFISH_VERB: Record<string, string> = { on: 'power-on', off: 'power-off', cycle: 'power-cycle' };
+const FLEET_ACTIONS = contract.powerMachine.body.shape.action.options;
+type FleetPowerAction = (typeof FLEET_ACTIONS)[number];
+const isFleetPowerAction = (action: string): action is FleetPowerAction => FLEET_ACTIONS.some((a) => a === action);
+
+const REDFISH_VERB: Record<FleetPowerAction, string> = { on: 'power-on', off: 'power-off', cycle: 'power-cycle' };
+const BAREMETAL_ACTION: Record<FleetPowerAction, BareMetalPowerAction> = { on: 'on', off: 'off', cycle: 'powercycle' };
+
+// a listing must not stall on one wedged BMC, so each read is bounded and the fleet is probed in waves.
+export const BMC_PROBE_TIMEOUT_MS = 15_000;
+export const BMC_PROBE_CONCURRENCY = 8;
+
+// a BMC locks the account after a few rejected logins, so a rejected credential is held rather than replayed per poll.
+export const AUTH_FAILED_BACKOFF_MS = 5 * 60_000;
+
+type BmcCred = NonNullable<ReturnType<FleetTopologyService['resolveBmcCred']>>;
+// hashed so the plaintext password never sits in a long-lived map key.
+const authFailedKey = (name: string, cred: BmcCred): string =>
+  `${name}\n${cred.user}\n${createHash('sha256').update(cred.pass).digest('hex')}`;
+
+// every other Redfish PowerState is transient or absent, and a guess there would read as a fact.
+const REDFISH_POWER: Record<string, Machine['power'] | undefined> = { On: 'on', Off: 'off' };
 
 export class RedfishError extends Error {}
+export class RedfishHttpError extends RedfishError {
+  constructor(
+    readonly statusCode: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 const RESET_TYPES: Record<BareMetalPowerAction, string[]> = {
   on: ['On'],
@@ -38,6 +67,7 @@ const RESET_TYPES: Record<BareMetalPowerAction, string[]> = {
 @Injectable()
 export class FleetPowerService {
   private readonly log = new Logger(FleetPowerService.name);
+  private readonly authFailedUntil = new Map<string, number>();
 
   constructor(
     private readonly runner: RunnerService,
@@ -50,8 +80,7 @@ export class FleetPowerService {
     name: string,
     action: BareMetalPowerAction,
   ): Promise<{ powerState: string; action: BareMetalPowerAction; resetType: string }> {
-    if (this.overlay.fleetMode() !== 'baremetal')
-      throw new BadRequestException('bare-metal power is only available in bare-metal mode');
+    if (!this.overlay.planes().baremetal) throw new BadRequestException('no bare-metal machine is saved');
     if (this.topology.hostFacts().os !== 'linux')
       throw new BadRequestException('bare-metal power requires a Linux host');
     const node = this.topology.baremetalView().nodes.find((n) => n.name === name);
@@ -102,7 +131,8 @@ export class FleetPowerService {
   ): Promise<Record<string, unknown>> {
     const res = await request(`${base}${path}`, { method: 'GET', headers, dispatcher });
     const text = await res.body.text();
-    if (res.statusCode >= 400) throw new RedfishError(`GET ${path} → ${res.statusCode}: ${text.slice(0, 200)}`);
+    if (res.statusCode >= 400)
+      throw new RedfishHttpError(res.statusCode, `GET ${path} → ${res.statusCode}: ${text.slice(0, 200)}`);
     let json: unknown = {};
     if (text) {
       try {
@@ -232,26 +262,114 @@ export class FleetPowerService {
     });
   }
 
+  roster(): RosterNode[] {
+    return resolveRoster({
+      vmNodeNames: () => this.topology.nodeNames(),
+      baremetalNodes: () => this.topology.baremetalView().nodes,
+    });
+  }
+
   async machines(): Promise<Machine[]> {
-    const [names, states] = await Promise.all([Promise.resolve(this.topology.nodeNames()), this.powerStates()]);
-    const configured: Machine[] = names.map((name, index) => ({
-      name,
-      power: states.get(name) ?? 'unknown',
+    const roster = this.roster();
+    const arms: Record<NodeKind, (nodes: RosterNode[]) => Promise<Machine[]>> = {
+      vm: (n) => this.vmMachines(n),
+      baremetal: (n) => this.baremetalMachines(n),
+    };
+    const lists = await Promise.all(
+      NodeKindSchema.options.map((kind) => arms[kind](roster.filter((n) => n.kind === kind))),
+    );
+    return lists.flat();
+  }
+
+  private async vmMachines(roster: RosterNode[]): Promise<Machine[]> {
+    if (roster.length === 0) return [];
+    const states = await this.powerStates();
+    const configured: Machine[] = roster.map((n) => ({
+      name: n.name,
+      kind: n.kind,
+      power: states.get(n.name) ?? 'unknown',
       configured: true,
-      deviceId: simDeviceUuid(index),
+      deviceId: n.deviceId,
+      bmc: null,
     }));
+    const names = roster.map((n) => n.name);
     const orphanCandidates = [...states.entries()].filter(([n]) => !names.includes(n));
     const orphanFlags = await Promise.all(orphanCandidates.map(([n]) => this.isBrokkrManaged(n)));
     const orphans: Machine[] = orphanCandidates
       .filter((_, i) => orphanFlags[i])
-      .map(([name, power]) => ({ name, power, configured: false, deviceId: null }));
+      .map(([name, power]) => ({ name, kind: 'vm', power, configured: false, deviceId: null, bmc: null }));
     return [...configured, ...orphans];
   }
 
+  /** No orphan lane: a bare-metal machine the operator has not registered has no BMC address to read. */
+  private async baremetalMachines(roster: RosterNode[]): Promise<Machine[]> {
+    if (roster.length === 0) return [];
+    const dispatcher = new Agent({
+      connect: { rejectUnauthorized: false, timeout: BMC_PROBE_TIMEOUT_MS },
+      headersTimeout: BMC_PROBE_TIMEOUT_MS,
+      bodyTimeout: BMC_PROBE_TIMEOUT_MS,
+    });
+    try {
+      const probes = await runWithConcurrency(
+        roster.map((n) => () => this.probeBmc(n, dispatcher)),
+        BMC_PROBE_CONCURRENCY,
+      );
+      return roster.map((n, i) => {
+        const probe = probes[i];
+        return {
+          name: n.name,
+          kind: n.kind,
+          power: probe.powerState === null ? 'unknown' : (REDFISH_POWER[probe.powerState] ?? 'unknown'),
+          configured: true,
+          deviceId: n.deviceId,
+          bmc: probe,
+        };
+      });
+    } finally {
+      void dispatcher.close();
+    }
+  }
+
+  private async probeBmc(node: RosterNode, dispatcher: Agent): Promise<BmcProbe> {
+    const cred = node.bmcIp ? this.topology.resolveBmcCred(node.name) : null;
+    if (!node.bmcIp || !cred) return { reachable: 'unconfigured', powerState: null };
+    const backoffKey = authFailedKey(node.name, cred);
+    if ((this.authFailedUntil.get(backoffKey) ?? 0) > Date.now()) {
+      this.log.debug(`bare-metal probe skipped for ${node.name}: credential rejected, holding auth-failed`);
+      return { reachable: 'auth-failed', powerState: null };
+    }
+    const base = `https://${node.bmcIp}`;
+    const headers = {
+      authorization: 'Basic ' + Buffer.from(`${cred.user}:${cred.pass}`).toString('base64'),
+      'content-type': 'application/json',
+    };
+    try {
+      const systemPath = await this.resolveRedfishSystem(base, headers, dispatcher, node.systemId ?? null);
+      const powerState = await this.redfishPowerState(base, systemPath, headers, dispatcher);
+      this.authFailedUntil.delete(backoffKey);
+      return { reachable: 'ok', powerState };
+    } catch (e) {
+      // a failed probe costs its own row's bmc outcome and nothing else — never the row, never the list.
+      this.log.debug(`bare-metal probe failed for ${node.name}: ${getErrorMessage(e)}`);
+      const authFailed = e instanceof RedfishHttpError && (e.statusCode === 401 || e.statusCode === 403);
+      if (authFailed) this.authFailedUntil.set(backoffKey, Date.now() + AUTH_FAILED_BACKOFF_MS);
+      return { reachable: authFailed ? 'auth-failed' : 'unreachable', powerState: null };
+    }
+  }
+
   power(name: string, action: string): string {
-    if (!this.topology.nodeNames().includes(name)) throw new NotFoundException(`unknown node '${name}'`);
-    const verb = REDFISH_VERB[action];
-    if (!verb) throw new NotFoundException(`unknown power action '${action}'`);
+    const node = this.roster().find((n) => n.name === name);
+    if (!node) throw new NotFoundException(`unknown node '${name}'`);
+    if (!isFleetPowerAction(action)) throw new NotFoundException(`unknown power action '${action}'`);
+    // a missing address or credential is the caller's 400; a BMC that rejects the action fails the run instead.
+    const precheck: Record<NodeKind, (n: RosterNode) => void> = {
+      vm: () => undefined,
+      baremetal: (n) => {
+        if (!n.bmcIp || !this.topology.resolveBmcCred(n.name))
+          throw new BadRequestException(`no BMC address or credentials saved for '${n.name}'`);
+      },
+    };
+    precheck[node.kind](node);
     // acquire before runner.create so a 409 never leaves an orphan run behind.
     const lease = this.opRegistry.acquire({ kind: 'node', name }, `power ${name} ${action}`);
     let run: RunState;
@@ -262,8 +380,12 @@ export class FleetPowerService {
       lease.release();
       throw e;
     }
-    this.log.log(`fleet power: ${name} ${verb}`);
-    void this.runPower(run, name, action, verb)
+    this.log.log(`fleet power: ${name} ${action} (${node.kind})`);
+    const arms: Record<NodeKind, () => Promise<void>> = {
+      vm: () => this.runPower(run, name, action, REDFISH_VERB[action]),
+      baremetal: () => this.runBaremetalPower(run, node, BAREMETAL_ACTION[action]),
+    };
+    void arms[node.kind]()
       .catch((e) => {
         this.runner.emit(run, `\r\n[power] error: ${getErrorMessage(e)}\r\n`);
         this.runner.finalize(run, 1);
@@ -272,7 +394,13 @@ export class FleetPowerService {
     return run.runId;
   }
 
-  private async runPower(run: RunState, name: string, action: string, verb: string): Promise<void> {
+  private async runBaremetalPower(run: RunState, node: RosterNode, action: BareMetalPowerAction): Promise<void> {
+    const result = await this.baremetalPower(node.name, action);
+    this.runner.emit(run, `[power] ${node.name}: ${result.resetType} → ${result.powerState}\r\n`);
+    this.runner.finalize(run, 0);
+  }
+
+  private async runPower(run: RunState, name: string, action: FleetPowerAction, verb: string): Promise<void> {
     const bmc = await this.runner.spawn(run, 'bash', ['scripts/tasks/redfish.sh', name, verb]);
     if (bmc !== 0)
       this.runner.emit(run, `\n[power] BMC ${verb} exited ${bmc ?? 'null'} — verifying and enforcing via virsh\n`);
@@ -314,4 +442,15 @@ export class FleetPowerService {
       return err.code ?? 1;
     }
   }
+}
+
+// Same wave-worker shape as apps/bridge's device-sensors probe pool; that copy is module-private there.
+async function runWithConcurrency<T>(tasks: ReadonlyArray<() => Promise<T>>, limit: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (let i = next++; i < tasks.length; i = next++) results[i] = await tasks[i]();
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), tasks.length) }, () => worker()));
+  return results;
 }

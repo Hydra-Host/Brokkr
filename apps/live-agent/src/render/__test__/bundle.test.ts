@@ -187,6 +187,77 @@ describe('renderCloudInitBundle', () => {
     expect(userData['write_files']).toBeUndefined();
   });
 
+  it('adds cloud.cfg.d/03-brokkr-infiniband.cfg when infiniband.enabled=true (user-data untouched)', () => {
+    const out = renderCloudInitBundle({
+      ...baseInput(),
+      infiniband: { enabled: true, nodeDesc: 'compute-42' },
+    });
+    expect(out.map((f) => f.path)).toContain('etc/cloud/cloud.cfg.d/03-brokkr-infiniband.cfg');
+    const byPath = Object.fromEntries(out.map((f) => [f.path, f.content]));
+    const ibCfg = yaml.load(byPath['etc/cloud/cloud.cfg.d/03-brokkr-infiniband.cfg']!) as Record<string, unknown>;
+    const writeFiles = ibCfg['write_files'] as { path: string; content: string }[];
+    expect(ibCfg['runcmd']).toBeUndefined();
+    expect(writeFiles.map((f) => f.path)).toContain('/etc/udev/rules.d/99-infiniband-node-desc.rules');
+    expect(writeFiles.map((f) => f.path)).toContain('/etc/systemd/system/brokkr-ib-node-desc.service');
+    expect(writeFiles.map((f) => f.path)).toContain('/usr/local/sbin/brokkr-ib-node-desc.sh');
+    expect(writeFiles.some((f) => f.content.includes('compute-42'))).toBe(true);
+    const userData = yaml.load(byPath['var/lib/cloud/seed/nocloud/user-data']!) as Record<string, unknown>;
+    expect(userData['users']).toBeDefined();
+    expect(userData['write_files']).toBeUndefined();
+  });
+
+  it('merges the infiniband write_files into the seed user-data when the customer mapping carries write_files, and omits the fragment', () => {
+    const customer = [
+      '#cloud-config',
+      'write_files:',
+      '  - path: /etc/motd',
+      '    content: hello',
+      '    permissions: "0644"',
+    ].join('\n');
+    const out = renderCloudInitBundle({
+      ...baseInput(),
+      cloudInit: { ...baseInput().cloudInit, customUserDataYaml: customer } as never,
+      infiniband: { enabled: true, nodeDesc: 'compute-42' },
+    });
+    const byPath = Object.fromEntries(out.map((f) => [f.path, f.content]));
+
+    expect(byPath['etc/cloud/cloud.cfg.d/03-brokkr-infiniband.cfg']).toBeUndefined();
+    const userData = yaml.load(byPath['var/lib/cloud/seed/nocloud/user-data']!) as Record<string, unknown>;
+    const writeFiles = userData['write_files'] as { path: string; content: string }[];
+    expect(writeFiles.map((f) => f.path)).toEqual([
+      '/etc/udev/rules.d/99-infiniband-node-desc.rules',
+      '/etc/systemd/system/brokkr-ib-node-desc.service',
+      '/usr/local/sbin/brokkr-ib-node-desc.sh',
+      '/var/lib/cloud/scripts/per-instance/50-brokkr-ib-node-desc.sh',
+      '/etc/motd',
+    ]);
+    expect(writeFiles.some((f) => f.content.includes('compute-42'))).toBe(true);
+  });
+
+  it('keeps the infiniband fragment when the customer mapping has no write_files key', () => {
+    const customer = ['#cloud-config', 'packages:', '  - vim'].join('\n');
+    const out = renderCloudInitBundle({
+      ...baseInput(),
+      cloudInit: { ...baseInput().cloudInit, customUserDataYaml: customer } as never,
+      infiniband: { enabled: true, nodeDesc: 'compute-42' },
+    });
+    const byPath = Object.fromEntries(out.map((f) => [f.path, f.content]));
+
+    expect(byPath['etc/cloud/cloud.cfg.d/03-brokkr-infiniband.cfg']).toBeDefined();
+    const userData = yaml.load(byPath['var/lib/cloud/seed/nocloud/user-data']!) as Record<string, unknown>;
+    expect(userData['write_files']).toBeUndefined();
+  });
+
+  it('omits the infiniband fragment when infiniband is disabled or absent', () => {
+    const disabled = renderCloudInitBundle({
+      ...baseInput(),
+      infiniband: { enabled: false, nodeDesc: '' },
+    });
+    expect(disabled.map((f) => f.path)).not.toContain('etc/cloud/cloud.cfg.d/03-brokkr-infiniband.cfg');
+    const absent = renderCloudInitBundle(baseInput());
+    expect(absent.map((f) => f.path)).not.toContain('etc/cloud/cloud.cfg.d/03-brokkr-infiniband.cfg');
+  });
+
   it('throws clearly when phoneHomeCreds is missing', () => {
     expect(() =>
       renderCloudInitBundle({

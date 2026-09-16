@@ -10,3 +10,6 @@ THIRD-PARTY-LICENSES.md
 
 # Helm templates: Go templating, not parseable YAML
 deploy/helm/*/templates/**
+
+# sha256-pinned cross-language test corpora; reformatting breaks the pinned digest.
+**/test-vectors/**

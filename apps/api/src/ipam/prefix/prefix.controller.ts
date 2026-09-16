@@ -2,12 +2,16 @@ import { Controller, UseGuards } from '@nestjs/common';
 import { contract } from '@repo/api-client';
 import { TsRestHandler, tsRestHandler } from '@ts-rest/nest';
 import { SupplyOrganizationGuard } from 'src/auth/guards/supply-organization.guard';
+import { PrefixBootReadinessService } from './prefix-boot-readiness.service';
 import { PrefixService } from './prefix.service';
 
 @UseGuards(SupplyOrganizationGuard)
 @Controller()
 export class PrefixController {
-  constructor(private readonly prefixService: PrefixService) {}
+  constructor(
+    private readonly prefixService: PrefixService,
+    private readonly prefixBootReadinessService: PrefixBootReadinessService,
+  ) {}
 
   @TsRestHandler(contract.getPrefix)
   async getById() {
@@ -190,6 +194,14 @@ export class PrefixController {
     return tsRestHandler(contract.getPrefixDhcpServing, async ({ params }) => ({
       status: 200 as const,
       body: await this.prefixService.getDhcpServing(params.id),
+    }));
+  }
+
+  @TsRestHandler(contract.getPrefixBootReadiness)
+  async getPrefixBootReadiness() {
+    return tsRestHandler(contract.getPrefixBootReadiness, async ({ params, query }) => ({
+      status: 200 as const,
+      body: await this.prefixBootReadinessService.check(params.id, query),
     }));
   }
 }

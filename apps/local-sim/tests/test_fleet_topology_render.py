@@ -32,9 +32,7 @@ def _render(overlay_nix: str | None = None) -> str:
     return out.stdout
 
 
-_BM_OVERLAY = """
-{
-  fleet.mode = "baremetal";
+_BM_MACHINES = """
   fleet.baremetal.iface = "eno1";
   fleet.baremetal.ifaceIp = "10.0.0.5";
   fleet.baremetal.arch = "amd64";
@@ -44,11 +42,23 @@ _BM_OVERLAY = """
     };
     "bm-1" = {
       pxe_mac = "00:00:5e:00:53:a1"; bmc_ip = "10.0.0.20"; bmc_mac = "00:00:5e:00:53:c1";
-      arch = "arm64"; system_id = "1"; index = 1;
+      arch = "arm64"; system_id = "1"; network_type = "public"; index = 1;
     };
   };
-}
 """
+
+_NO_VM_NODES = """
+  fleet.zones."sim-zone".nodes = {
+    cpu-1.enable = false; cpu-2.enable = false; cpu-3.enable = false; cpu-4.enable = false;
+  };
+"""
+
+_BM_OVERLAY = "{" + _BM_MACHINES + "}"
+_BM_ONLY_OVERLAY = "{" + _NO_VM_NODES + _BM_MACHINES + "}"
+_EMPTY_OVERLAY = "{" + _NO_VM_NODES + "}"
+
+_VM_NAMES = ["cpu-1", "cpu-2", "cpu-3", "cpu-4"]
+_BM_NAMES = ["bm-1", "bm-2"]
 
 
 @_skip
@@ -69,18 +79,47 @@ def test_vm_default_render_has_no_mode_or_baremetal_key():
 
 
 @_skip
-def test_baremetal_render_roundtrips_through_schema():
+def test_baremetal_machines_render_beside_the_vm_nodes_without_a_mode_key():
     doc = json.loads(_render(_BM_OVERLAY))
-    assert doc["mode"] == "baremetal"
-    assert doc["nodes"] == []
+    assert "mode" not in doc
+    assert [n["name"] for n in doc["nodes"]] == _VM_NAMES
+    assert [n["name"] for n in doc["baremetal"]["nodes"]] == _BM_NAMES
     assert "bmc" not in doc["baremetal"]
     for n in doc["baremetal"]["nodes"]:
         assert "username" not in n and "password" not in n
         assert "enable" not in n and "index" not in n
     fleet = Fleet.model_validate(doc)
-    assert [n.name for n in fleet.bm_nodes] == ["bm-1", "bm-2"]
+    assert (fleet.has_vm, fleet.has_bm) == (True, True)
+    assert [n.name for n in fleet.bm_nodes] == _BM_NAMES
     assert fleet.bm_nodes[0].arch == "arm64"
     assert fleet.bm_nodes[1].arch == "amd64"
+
+
+@_skip
+def test_baremetal_machine_network_type_renders_only_when_set():
+    doc = json.loads(_render(_BM_OVERLAY))
+    by_name = {n["name"]: n for n in doc["baremetal"]["nodes"]}
+    assert by_name["bm-1"]["network_type"] == "public"
+    assert "network_type" not in by_name["bm-2"]
+    fleet = Fleet.model_validate(doc)
+    assert fleet.bm_nodes[0].network_type == "public"
+    assert fleet.bm_nodes[1].network_type is None
+
+
+@_skip
+def test_tombstoning_every_vm_node_renders_an_empty_roster_beside_the_machines():
+    doc = json.loads(_render(_BM_ONLY_OVERLAY))
+    assert "mode" not in doc
+    assert doc["nodes"] == []
+    assert [n["name"] for n in doc["baremetal"]["nodes"]] == _BM_NAMES
+    fleet = Fleet.model_validate(doc)
+    assert (fleet.has_vm, fleet.has_bm) == (False, True)
+
+
+@_skip
+def test_tombstoning_every_node_without_a_machine_fails_evaluation():
+    with pytest.raises(AssertionError, match="no enabled node in either plane"):
+        _render(_EMPTY_OVERLAY)
 
 
 @_skip

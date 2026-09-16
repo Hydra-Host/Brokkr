@@ -1,11 +1,12 @@
 import type { InitTask } from '@/contract';
-import { initAggregateState, initFocusTask } from '@/contract';
+import { initAggregateState, initFocusTask, initTaskDone } from '@/contract';
 
 import { healthUi } from './health-ui';
 import { SummaryRow } from './summary-row';
 
 export const INIT_STATE_HINT: Record<InitTask['state'], string> = {
-  pending: 'did not run this bring-up — already cached, or gated by its status predicate',
+  pending: 'did not run this bring-up and has no earlier success on disk',
+  cached: 'skipped this bring-up by its status predicate — the last run exited 0',
   running: 'the log is still growing and no exit status has landed',
   completed: 'exited 0 during this bring-up',
   failed: 'exited non-zero during this bring-up',
@@ -22,7 +23,7 @@ const rowTitle = (task: InitTask): string => `${task.name} — ${INIT_STATE_HINT
 
 export function initSummary(tasks: InitTask[]): string {
   const focus = initFocusTask(tasks);
-  const done = tasks.filter((t) => t.state === 'completed').length;
+  const done = tasks.filter(initTaskDone).length;
   if (focus) return `${focus.name} ${stateNote(focus)} · ${done}/${tasks.length}`;
   return done === tasks.length ? `${done} completed` : `${done}/${tasks.length} completed`;
 }

@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { of, Subject, type Observable } from 'rxjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { FleetPlanes } from '@repo/local-lab-contract';
+
 import { type RunSection } from '../../contract';
 import { NULL_RUN_SINK } from '../../runner/run-sink';
 import { RunnerService, type RunInfo, type RunState } from '../../runner/runner.service';
@@ -12,6 +14,10 @@ import { swapDiffSet } from '../../services/mode-drift';
 import { StackService } from '../stack.service';
 
 vi.mock('../../services/mode-drift', () => ({ swapDiffSet: vi.fn() }));
+
+const VM_ONLY: FleetPlanes = { vm: true, baremetal: false };
+const BM_ONLY: FleetPlanes = { vm: false, baremetal: true };
+const BOTH: FleetPlanes = { vm: true, baremetal: true };
 
 function makeService() {
   const createdRuns: RunState[] = [];
@@ -53,6 +59,10 @@ function makeService() {
     stop: vi.fn(() => Promise.resolve()),
     restart: vi.fn(() => Promise.resolve()),
     restartAndWait: vi.fn((_name: string): Promise<boolean> => Promise.resolve(true)),
+    waitUntilDepReady: vi.fn((_name: string): Promise<boolean> => Promise.resolve(true)),
+    tailError: vi.fn((_name: string): string | undefined => undefined),
+    taskLogFile: vi.fn((name: string): string => `/logs/${name}.log`),
+    tailFileLast: vi.fn((_path: string): string | undefined => undefined),
     processInfo: vi.fn(
       (): Promise<{ environment: string[] }> => Promise.resolve({ environment: ['BROKKR_HUB_PRIVATE_KEY=zone-key'] }),
     ),
@@ -79,7 +89,7 @@ function makeService() {
   vi.mocked(swapDiffSet).mockReset().mockResolvedValue(['spoke', 'hub-api', 'fleet']);
   const overlay = {
     labBridges: vi.fn((): { proc: string }[] => [{ proc: 'spoke' }]),
-    fleetMode: vi.fn((): 'vm' | 'baremetal' => 'baremetal'),
+    planes: vi.fn((): FleetPlanes => BM_ONLY),
     bmUplink: vi.fn((): { iface: string; ip: string } | null => ({ iface: 'eth0', ip: '10.0.0.5' })),
     clearSatisfiedBy: vi.fn(),
   };
@@ -107,7 +117,8 @@ function makeService() {
       }),
     ),
     invalidatePending: vi.fn(),
-    modeChangePending: vi.fn((): boolean => true),
+    planesChangePending: vi.fn((): boolean => true),
+    isIpxeBakedFor: vi.fn((_chainBase: string): boolean => false),
   };
   const fleetReset = {
     countActiveSagaJobs: vi.fn((): Promise<number> => Promise.resolve(0)),
@@ -121,6 +132,9 @@ function makeService() {
   const stackRestart = {
     restartStackDetached: vi.fn((_run: RunState, _opts: { reason: string; wipe?: string }) => Promise.resolve()),
   };
+  const uplinkPrefix = {
+    configure: vi.fn((_run: RunState, _emit: (text: string) => void): Promise<number> => Promise.resolve(0)),
+  };
   const svc = new StackService(
     runner as unknown as RunnerService,
     redeploy as never,
@@ -133,6 +147,7 @@ function makeService() {
     repoBranch as never,
     sudo as never,
     stackRestart as never,
+    uplinkPrefix as never,
   );
   return {
     svc,
@@ -146,14 +161,15 @@ function makeService() {
     repoBranch,
     sudo,
     stackRestart,
+    uplinkPrefix,
     createdRuns,
     swapDiffSet: vi.mocked(swapDiffSet),
   };
 }
 
-function commitAfterAnchor(fleet: { modeChangePending: ReturnType<typeof vi.fn> }): void {
+function commitAfterAnchor(fleet: { planesChangePending: ReturnType<typeof vi.fn> }): void {
   let calls = 0;
-  fleet.modeChangePending.mockImplementation(() => calls++ === 0);
+  fleet.planesChangePending.mockImplementation(() => calls++ === 0);
 }
 const READY_ALL = [
   { name: 'spoke', status: 'Running', is_ready: 'Ready' },
@@ -449,9 +465,9 @@ describe('StackService fleet-apply op', () => {
     expect(() => svc.start('fleet-rebuild')).toThrow();
   });
 
-  it('blocks fleet-apply (exit 1, no engine spawn) while a fleet-mode change is pending', async () => {
+  it('blocks fleet-apply (exit 1, no engine spawn) while a fleet plane change is pending', async () => {
     const { svc, runner, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(true);
+    fleet.planesChangePending.mockReturnValue(true);
 
     svc.start('fleet-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
@@ -463,7 +479,7 @@ describe('StackService fleet-apply op', () => {
     );
     expect(spawnedApply).toBe(false);
     const log = runner.emit.mock.calls.map((c) => c[1]).join('');
-    expect(log).toMatch(/fleet-mode change is pending/);
+    expect(log).toMatch(/fleet plane change is pending/);
   });
 });
 
@@ -486,8 +502,8 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
   it('runs the bm host steps (seal), restarts the spoke, journals done, busts the cache', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
-    overlay.fleetMode.mockReturnValue('baremetal');
-    fleet.modeChangePending.mockReturnValue(false);
+    overlay.planes.mockReturnValue(BM_ONLY);
+    fleet.planesChangePending.mockReturnValue(false);
     pc.listAll.mockResolvedValue([{ name: 'spoke', status: 'Running', is_ready: 'Ready' }]);
     const journal = journalSpy(svc);
     spyNoopPlan(svc);
@@ -502,11 +518,27 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
     expect(fleet.invalidatePending).toHaveBeenCalled();
   });
 
+  it('runs the bm host steps on fleet-apply when both planes are on', async () => {
+    const { svc, runner, pc, overlay, rendered, fleet } = makeService();
+    rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
+    overlay.planes.mockReturnValue(BOTH);
+    fleet.planesChangePending.mockReturnValue(false);
+    pc.listAll.mockResolvedValue([{ name: 'spoke', status: 'Running', is_ready: 'Ready' }]);
+    spyNoopPlan(svc);
+
+    svc.start('fleet-apply');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(runner.finalize.mock.calls[0][1]).toBe(0);
+    expect(runner.spawn.mock.calls.some((c) => c[1] === 'pnpm' && c[2].includes('seed:baremetal-bmc'))).toBe(true);
+    expect(pc.restartAndWait).toHaveBeenCalledWith('spoke');
+  });
+
   it('passes the sim-gate env to the seal, which refuses to run without it', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
-    overlay.fleetMode.mockReturnValue('baremetal');
-    fleet.modeChangePending.mockReturnValue(false);
+    overlay.planes.mockReturnValue(BM_ONLY);
+    fleet.planesChangePending.mockReturnValue(false);
     pc.listAll.mockResolvedValue([{ name: 'spoke', status: 'Running', is_ready: 'Ready' }]);
     spyNoopPlan(svc);
 
@@ -526,8 +558,8 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
     vi.stubEnv('BROKKR_HUB_PRIVATE_KEY', '');
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
-    overlay.fleetMode.mockReturnValue('baremetal');
-    fleet.modeChangePending.mockReturnValue(false);
+    overlay.planes.mockReturnValue(BM_ONLY);
+    fleet.planesChangePending.mockReturnValue(false);
     pc.listAll.mockResolvedValue([{ name: 'spoke', status: 'Running', is_ready: 'Ready' }]);
     spyNoopPlan(svc);
 
@@ -543,8 +575,8 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
     vi.stubEnv('BROKKR_HUB_PRIVATE_KEY', '');
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
-    overlay.fleetMode.mockReturnValue('baremetal');
-    fleet.modeChangePending.mockReturnValue(false);
+    overlay.planes.mockReturnValue(BM_ONLY);
+    fleet.planesChangePending.mockReturnValue(false);
     pc.listAll.mockResolvedValue([{ name: 'spoke', status: 'Running', is_ready: 'Ready' }]);
     pc.processInfo.mockResolvedValue({ environment: [] });
     spyNoopPlan(svc);
@@ -559,8 +591,8 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
   it('converges bare-metal roster drift when the engine defers with exit 3', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
-    overlay.fleetMode.mockReturnValue('baremetal');
-    fleet.modeChangePending.mockReturnValue(false);
+    overlay.planes.mockReturnValue(BM_ONLY);
+    fleet.planesChangePending.mockReturnValue(false);
     pc.listAll.mockResolvedValue([{ name: 'spoke', status: 'Running', is_ready: 'Ready' }]);
     spyNoopPlan(svc);
     vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
@@ -577,11 +609,11 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
     expect(runner.emit.mock.calls.map((c) => String(c[1])).join('')).toMatch(/bare-metal roster applied/);
   });
 
-  const rosterDriftService = () => {
+  const rosterDriftService = (planes: FleetPlanes = BM_ONLY) => {
     const ctx = makeService();
     ctx.rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
-    ctx.overlay.fleetMode.mockReturnValue('baremetal');
-    ctx.fleet.modeChangePending.mockReturnValue(false);
+    ctx.overlay.planes.mockReturnValue(planes);
+    ctx.fleet.planesChangePending.mockReturnValue(false);
     ctx.pc.listAll.mockResolvedValue([{ name: 'spoke', status: 'Running', is_ready: 'Ready' }]);
     spyNoopPlan(ctx.svc);
     ctx.runner.spawnPty.mockImplementation((_r: RunState, _cmd: string, args: string[]) =>
@@ -589,6 +621,19 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
     );
     return ctx;
   };
+
+  it('converges bare-metal roster drift on exit 3 when both planes are on', async () => {
+    const { svc, runner, pc } = rosterDriftService(BOTH);
+    vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
+
+    svc.start('fleet-apply');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(runner.finalize.mock.calls[0][1]).toBe(0);
+    expect(runner.spawn.mock.calls.some((c) => c[1] === 'bash' && String(c[2]).includes('sql-seed-run.sh'))).toBe(true);
+    expect(pc.stopAndWait).toHaveBeenCalledWith('fleet');
+    expect(runner.emit.mock.calls.map((c) => String(c[1])).join('')).toMatch(/bare-metal roster applied/);
+  });
 
   it('aborts the roster convergence when the fleet anchor will not stop', async () => {
     const { svc, runner, pc, fleet } = rosterDriftService();
@@ -674,11 +719,11 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
     }
   });
 
-  it('leaves a vm-mode engine exit 3 as a failure instead of converging it', async () => {
+  it('leaves a vm-only engine exit 3 as a failure instead of converging it', async () => {
     const { svc, runner, overlay, rendered, fleet } = makeService();
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
-    overlay.fleetMode.mockReturnValue('vm');
-    fleet.modeChangePending.mockReturnValue(false);
+    overlay.planes.mockReturnValue(VM_ONLY);
+    fleet.planesChangePending.mockReturnValue(false);
     spyNoopPlan(svc);
     runner.spawnPty.mockResolvedValue(3);
 
@@ -692,8 +737,8 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
   it('aborts with a clear message when the spoke will not stop, instead of health-gating a dead process', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
-    overlay.fleetMode.mockReturnValue('baremetal');
-    fleet.modeChangePending.mockReturnValue(false);
+    overlay.planes.mockReturnValue(BM_ONLY);
+    fleet.planesChangePending.mockReturnValue(false);
     pc.restartAndWait.mockResolvedValue(false);
     spyNoopPlan(svc);
 
@@ -704,11 +749,11 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
     expect(runner.emit.mock.calls.map((c) => String(c[1])).join('')).toMatch(/spoke restart failed/);
   });
 
-  it('runs NONE of the bm host steps on a vm-mode apply', async () => {
+  it('runs NONE of the bm host steps on a vm-only apply', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
-    overlay.fleetMode.mockReturnValue('vm');
-    fleet.modeChangePending.mockReturnValue(false);
+    overlay.planes.mockReturnValue(VM_ONLY);
+    fleet.planesChangePending.mockReturnValue(false);
     spyNoopPlan(svc);
 
     svc.start('fleet-apply');
@@ -719,11 +764,11 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
     expect(pc.restartAndWait).not.toHaveBeenCalled();
   });
 
-  it('blocks fleet-apply entirely when a mode flip is still pending (desired bm, applied vm)', async () => {
+  it('blocks fleet-apply entirely when a plane flip is still pending (desired bm, applied vm)', async () => {
     const { svc, runner, overlay, rendered, fleet } = makeService();
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
-    overlay.fleetMode.mockReturnValue('baremetal');
-    fleet.modeChangePending.mockReturnValue(true);
+    overlay.planes.mockReturnValue(BM_ONLY);
+    fleet.planesChangePending.mockReturnValue(true);
     spyNoopPlan(svc);
 
     svc.start('fleet-apply');
@@ -732,14 +777,14 @@ describe('StackService fleet-apply — within-bm roster steps (F3)', () => {
     expect(runner.finalize.mock.calls[0][1]).toBe(1);
     expect(rendered.refreshFleetYaml).not.toHaveBeenCalled();
     const log = runner.emit.mock.calls.map((c) => c[1]).join('');
-    expect(log).toMatch(/fleet-mode change is pending/);
+    expect(log).toMatch(/fleet plane change is pending/);
   });
 
   it('leaves the pending cache intact (retry path) + journals failed when a bm host step fails', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
-    overlay.fleetMode.mockReturnValue('baremetal');
-    fleet.modeChangePending.mockReturnValue(false);
+    overlay.planes.mockReturnValue(BM_ONLY);
+    fleet.planesChangePending.mockReturnValue(false);
     runner.spawn.mockImplementation((_r, cmd: string) => Promise.resolve(cmd === 'pnpm' ? 1 : 0));
     const journal = journalSpy(svc);
     spyNoopPlan(svc);
@@ -819,7 +864,7 @@ describe('StackService fleet drift-cache invalidation', () => {
 
   it('fleet-rebuild busts the pending cache even when the nuke phase fails', async () => {
     const { svc, runner, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(false);
+    fleet.planesChangePending.mockReturnValue(false);
     rendered.refreshFleetYaml.mockResolvedValue('/tmp/fleet.yaml');
     runner.spawnPty.mockResolvedValue(2);
     svc.start('fleet-rebuild');
@@ -832,7 +877,7 @@ describe('StackService fleet drift-cache invalidation', () => {
 describe('StackService fleet apply/rebuild — abort on refresh failure', () => {
   it('aborts fleet-apply (exit 1, no engine spawn) when the fleet config cannot be refreshed', async () => {
     const { svc, runner, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(false);
+    fleet.planesChangePending.mockReturnValue(false);
     rendered.refreshFleetYaml.mockResolvedValue(null);
     svc.start('fleet-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
@@ -842,7 +887,7 @@ describe('StackService fleet apply/rebuild — abort on refresh failure', () => 
 
   it('aborts fleet-rebuild (exit 1, no engine spawn) when the fleet config cannot be refreshed', async () => {
     const { svc, runner, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(false);
+    fleet.planesChangePending.mockReturnValue(false);
     rendered.refreshFleetYaml.mockResolvedValue(null);
     svc.start('fleet-rebuild');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
@@ -850,7 +895,7 @@ describe('StackService fleet apply/rebuild — abort on refresh failure', () => 
     expect(runner.spawnPty).not.toHaveBeenCalled();
   });
 
-  it('blocks fleet-rebuild (exit 1) while a fleet-mode change is pending — before any refresh/spawn', async () => {
+  it('blocks fleet-rebuild (exit 1) while a fleet plane change is pending — before any refresh/spawn', async () => {
     const { svc, runner, rendered } = makeService();
     svc.start('fleet-rebuild');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
@@ -877,7 +922,7 @@ describe('StackService fleet-apply — data-loss authorization (plan recomputed 
 
   it('aborts (exit 1, no apply spawn) when the recomputed plan wipes a disk but data loss was not authorized', async () => {
     const { svc, runner, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(false);
+    fleet.planesChangePending.mockReturnValue(false);
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
     spyPlan(svc);
     svc.start('fleet-apply');
@@ -888,7 +933,7 @@ describe('StackService fleet-apply — data-loss authorization (plan recomputed 
 
   it('runs the destructive apply with --allow-data-loss when the user authorized it', async () => {
     const { svc, runner, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(false);
+    fleet.planesChangePending.mockReturnValue(false);
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
     spyPlan(svc);
     svc.start('fleet-apply', true);
@@ -921,7 +966,7 @@ describe('StackService fleet-apply — full-rebuild authorization (plan recomput
 
   it('aborts (exit 1, no seed/apply spawn) when the recomputed plan forces a full rebuild but it was not confirmed', async () => {
     const { svc, runner, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(false);
+    fleet.planesChangePending.mockReturnValue(false);
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
     spyPlan(svc);
     svc.start('fleet-apply');
@@ -933,7 +978,7 @@ describe('StackService fleet-apply — full-rebuild authorization (plan recomput
 
   it('runs the full rebuild (seed then apply) when the user confirmed the destructive apply', async () => {
     const { svc, runner, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(false);
+    fleet.planesChangePending.mockReturnValue(false);
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yml');
     spyPlan(svc);
     svc.start('fleet-apply', true);
@@ -943,10 +988,10 @@ describe('StackService fleet-apply — full-rebuild authorization (plan recomput
   });
 });
 
-describe('StackService fleet-mode-apply op — registration + dual-lane contention', () => {
-  it('exposes a non-destructive fleet-mode-apply op in the fleet section (sections is internal)', () => {
+describe('StackService fleet-planes-apply op — registration + dual-lane contention', () => {
+  it('exposes a non-destructive fleet-planes-apply op in the fleet section (sections is internal)', () => {
     const { svc } = makeService();
-    const op = svc.ops().find((o) => o.id === 'fleet-mode-apply');
+    const op = svc.ops().find((o) => o.id === 'fleet-planes-apply');
     expect(op).toBeDefined();
     expect(op?.section).toBe('fleet');
     expect(op?.destructive).toBe(false);
@@ -960,18 +1005,18 @@ describe('StackService fleet-mode-apply op — registration + dual-lane contenti
   it('is blocked by a running STACK-lane op (dual-lane: it contends on the stack lane too)', () => {
     const { svc } = makeService();
     svc.start('reconcile');
-    expect(() => svc.start('fleet-mode-apply')).toThrow(ConflictException);
+    expect(() => svc.start('fleet-planes-apply')).toThrow(ConflictException);
   });
 
   it('is blocked by a running FLEET-lane op', () => {
     const { svc } = makeService();
     svc.start('fleet-up');
-    expect(() => svc.start('fleet-mode-apply')).toThrow(ConflictException);
+    expect(() => svc.start('fleet-planes-apply')).toThrow(ConflictException);
   });
 
   it('while running, blocks BOTH a stack op and a fleet op (occupies both lanes)', () => {
     const { svc } = makeService();
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     expect(() => svc.start('reconcile')).toThrow(ConflictException);
     expect(() => svc.start('fleet-up')).toThrow(ConflictException);
   });
@@ -981,31 +1026,50 @@ describe('StackService startRun — active-saga preflight 409', () => {
   it('409s (with the job count) when jobs are in flight and force is not set', async () => {
     const { svc, fleetReset } = makeService();
     fleetReset.countActiveSagaJobs.mockResolvedValue(3);
-    await expect(svc.startRun('fleet-mode-apply')).rejects.toBeInstanceOf(ConflictException);
-    await expect(svc.startRun('fleet-mode-apply')).rejects.toThrow(/3 in-flight/);
+    await expect(svc.startRun('fleet-planes-apply')).rejects.toBeInstanceOf(ConflictException);
+    await expect(svc.startRun('fleet-planes-apply')).rejects.toThrow(/3 in-flight/);
   });
 
   it('starts the run (does not 409) when force overrides the active-saga preflight', async () => {
     const { svc, fleetReset } = makeService();
     fleetReset.countActiveSagaJobs.mockResolvedValue(3);
-    await expect(svc.startRun('fleet-mode-apply', false, true)).resolves.toBeTruthy();
+    await expect(svc.startRun('fleet-planes-apply', false, true)).resolves.toBeTruthy();
   });
 
   it('starts the run when there are zero in-flight jobs', async () => {
     const { svc, fleetReset } = makeService();
     fleetReset.countActiveSagaJobs.mockResolvedValue(0);
-    const runId = await svc.startRun('fleet-mode-apply');
+    const runId = await svc.startRun('fleet-planes-apply');
     expect(runId).toBeTruthy();
   });
 
-  it('skips the async preflight count when no mode change is pending', async () => {
+  it('skips the async preflight count when no plane change is pending', async () => {
     const { svc, fleet, fleetReset } = makeService();
-    fleet.modeChangePending.mockReturnValue(false);
+    fleet.planesChangePending.mockReturnValue(false);
     fleetReset.countActiveSagaJobs.mockResolvedValue(9);
-    vi.spyOn(svc as unknown as { fleetModeApply: () => Promise<number> }, 'fleetModeApply').mockResolvedValue(0);
-    const runId = await svc.startRun('fleet-mode-apply');
+    vi.spyOn(svc as unknown as { fleetPlanesApply: () => Promise<number> }, 'fleetPlanesApply').mockResolvedValue(0);
+    const runId = await svc.startRun('fleet-planes-apply');
     expect(runId).toBeTruthy();
     expect(fleetReset.countActiveSagaJobs).not.toHaveBeenCalled();
+  });
+});
+
+describe('StackService baremetal-uplink-prefix', () => {
+  it('dispatches baremetal-uplink-prefix to UplinkPrefixService.configure and finalizes with its exit code', async () => {
+    const { svc, runner, uplinkPrefix, createdRuns } = makeService();
+    uplinkPrefix.configure.mockImplementation((_run, emit) => {
+      emit('[uplink-prefix] hello\n');
+      return Promise.resolve(3);
+    });
+
+    svc.start('baremetal-uplink-prefix');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(uplinkPrefix.configure).toHaveBeenCalledTimes(1);
+    expect(uplinkPrefix.configure.mock.calls[0][0]).toBe(createdRuns[0]);
+    expect(runner.emit).toHaveBeenCalledWith(createdRuns[0], '[uplink-prefix] hello\n');
+    expect(runner.finalize).toHaveBeenCalledWith(createdRuns[0], 3);
+    expect(runner.spawn).not.toHaveBeenCalled();
   });
 });
 
@@ -1150,21 +1214,21 @@ describe('StackService startRun — needsSudo preflight gate', () => {
   });
 });
 
-describe('StackService fleet-mode-apply orchestration — §6.1 sequence', () => {
-  it('no-ops (exit 0, no swap) when no mode change is pending', async () => {
+describe('StackService fleet-planes-apply orchestration — §6.1 sequence', () => {
+  it('no-ops (exit 0, no swap) when no plane change is pending', async () => {
     const { svc, runner, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(false);
-    svc.start('fleet-mode-apply');
+    fleet.planesChangePending.mockReturnValue(false);
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
     expect(runner.finalize.mock.calls[0][1]).toBe(0);
     expect(rendered.applyOverlay).not.toHaveBeenCalled();
   });
 
-  it('no-ops (exit 0) when no mode change is pending, even with active saga jobs', async () => {
+  it('no-ops (exit 0) when no plane change is pending, even with active saga jobs', async () => {
     const { svc, runner, rendered, fleet, fleetReset } = makeService();
-    fleet.modeChangePending.mockReturnValue(false);
+    fleet.planesChangePending.mockReturnValue(false);
     fleetReset.countActiveSagaJobs.mockResolvedValue(3);
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
     expect(runner.finalize.mock.calls[0][1]).toBe(0);
     expect(fleetReset.countActiveSagaJobs).not.toHaveBeenCalled();
@@ -1174,7 +1238,7 @@ describe('StackService fleet-mode-apply orchestration — §6.1 sequence', () =>
   it('blocks the run (exit 1, no swap) when jobs are active and not forced', async () => {
     const { svc, runner, rendered, fleetReset } = makeService();
     fleetReset.countActiveSagaJobs.mockResolvedValue(2);
-    svc.start('fleet-mode-apply', false, false);
+    svc.start('fleet-planes-apply', false, false);
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
     expect(runner.finalize.mock.calls[0][1]).toBe(1);
     expect(rendered.applyOverlay).not.toHaveBeenCalled();
@@ -1187,7 +1251,7 @@ describe('StackService fleet-mode-apply orchestration — §6.1 sequence', () =>
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yaml');
     pc.listAll.mockResolvedValue(READY_ALL);
     vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
-    svc.start('fleet-mode-apply', false, true);
+    svc.start('fleet-planes-apply', false, true);
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
     expect(pc.stopAndWait).toHaveBeenCalledWith('fleet');
     expect(rendered.refreshFleetYaml).toHaveBeenCalled();
@@ -1198,20 +1262,20 @@ describe('StackService fleet-mode-apply orchestration — §6.1 sequence', () =>
   it('aborts (exit 1, no swap) when the staged fleet.yml cannot be refreshed', async () => {
     const { svc, runner, rendered } = makeService();
     rendered.refreshFleetYaml.mockResolvedValue(null);
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
     expect(runner.finalize.mock.calls[0][1]).toBe(1);
     expect(rendered.applyOverlay).not.toHaveBeenCalled();
   });
 
-  it('stops hub-api and spoke before starting either, so the pair never straddles two modes', async () => {
+  it('stops hub-api and spoke before starting either, so the pair never straddles two plane sets', async () => {
     const { svc, runner, pc, rendered, fleet } = makeService();
     commitAfterAnchor(fleet);
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yaml');
     pc.listAll.mockResolvedValue(READY_ALL);
     vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     const lastStop = Math.max(
@@ -1221,30 +1285,42 @@ describe('StackService fleet-mode-apply orchestration — §6.1 sequence', () =>
         .map((c) => c.order),
     );
     const firstStart = Math.min(
-      ...pc.start.mock.calls
-        .map((c, i) => ({ name: c[0], order: pc.start.mock.invocationCallOrder[i] }))
+      ...pc.restartAndWait.mock.calls
+        .map((c, i) => ({ name: c[0], order: pc.restartAndWait.mock.invocationCallOrder[i] }))
         .filter((c) => c.name === 'hub-api' || c.name === 'spoke')
         .map((c) => c.order),
     );
-    expect(pc.stopAndWait).toHaveBeenCalledWith('hub-api');
-    expect(pc.stopAndWait).toHaveBeenCalledWith('spoke');
+    expect(pc.stopAndWait).toHaveBeenCalledWith('hub-api', undefined, { absentIsStopped: false });
+    expect(pc.stopAndWait).toHaveBeenCalledWith('spoke', undefined, { absentIsStopped: false });
     expect(lastStop).toBeLessThan(firstStart);
   });
 
-  it('aborts the flip with recovery guidance when a start is rejected after the overlay applied', async () => {
+  it('aborts the flip with recovery guidance when a restarted process never reaches dep-ready', async () => {
     const { svc, runner, pc, rendered } = makeService();
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yaml');
-    pc.start.mockImplementation((name: string) =>
-      name === 'hub-api' ? Promise.reject(new Error('pc 400')) : Promise.resolve(),
-    );
+    pc.waitUntilDepReady.mockImplementation((name: string) => Promise.resolve(name !== 'hub-api'));
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(runner.finalize.mock.calls[0][1]).toBe(1);
+    expect(pc.restartAndWait).toHaveBeenCalledWith('hub-api');
     const log = runner.emit.mock.calls.map((c) => String(c[1])).join('');
-    expect(log).toMatch(/hub-api failed to start/);
+    expect(log).toMatch(/hub-api did not reach Ready after restart/);
     expect(log).toMatch(/run Reconcile/);
+  });
+
+  it('aborts the flip when the restart itself fails, before the dep-ready wait', async () => {
+    const { svc, runner, pc, rendered } = makeService();
+    rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yaml');
+    pc.restartAndWait.mockImplementation((name: string) => Promise.resolve(name !== 'hub-api'));
+
+    svc.start('fleet-planes-apply');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(runner.finalize.mock.calls[0][1]).toBe(1);
+    expect(pc.waitUntilDepReady).not.toHaveBeenCalledWith('hub-api');
+    expect(runner.emit.mock.calls.map((c) => String(c[1])).join('')).toMatch(/hub-api could not be restarted/);
   });
 
   it('aborts the flip (exit 1) when hub-api will not stop', async () => {
@@ -1252,11 +1328,12 @@ describe('StackService fleet-mode-apply orchestration — §6.1 sequence', () =>
     rendered.refreshFleetYaml.mockResolvedValue('/repo/fleet.yaml');
     pc.stopAndWait.mockImplementation((name: string) => Promise.resolve(name !== 'hub-api'));
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(runner.finalize.mock.calls[0][1]).toBe(1);
-    expect(pc.start).not.toHaveBeenCalledWith('spoke');
+    expect(pc.stopAndWait).toHaveBeenCalledWith('hub-api', undefined, { absentIsStopped: false });
+    expect(pc.restartAndWait).not.toHaveBeenCalled();
     expect(runner.emit.mock.calls.map((c) => String(c[1])).join('')).toMatch(/hub-api did not stop in time/);
   });
 
@@ -1269,28 +1346,32 @@ describe('StackService fleet-mode-apply orchestration — §6.1 sequence', () =>
         { name: 'spoke', status: 'Running', is_ready: 'Not Ready' },
         { name: 'hub-api', status: 'Pending', is_ready: 'Not Ready' },
       ]);
-      svc.start('fleet-mode-apply');
+      svc.start('fleet-planes-apply');
       await vi.advanceTimersByTimeAsync(121_000);
       await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
       expect(rendered.applyOverlay).toHaveBeenCalled();
       expect(runner.finalize.mock.calls[0][1]).toBe(1);
+      expect(runner.emit).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('hub-api: Pending / Not Ready'),
+      );
     } finally {
       vi.useRealTimers();
     }
   });
 });
 
-describe('StackService fleet-mode-apply — W2 forced render threaded end-to-end', () => {
+describe('StackService fleet-planes-apply — W2 forced render threaded end-to-end', () => {
   it('force-renders with refresh-eval-cache and threads that single path to refreshFleetYaml/applyOverlay', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     commitAfterAnchor(fleet);
-    overlay.fleetMode.mockReturnValue('vm');
+    overlay.planes.mockReturnValue(VM_ONLY);
     rendered.buildRenderedConfig.mockResolvedValue('/nix/store/forced-cfg.yaml');
     rendered.refreshFleetYaml.mockResolvedValue('/state/fleet.yaml');
     pc.listAll.mockResolvedValue(READY_ALL);
     vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(rendered.buildRenderedConfig).toHaveBeenCalledWith({ refreshEvalCache: true });
@@ -1303,10 +1384,10 @@ describe('StackService fleet-mode-apply — W2 forced render threaded end-to-end
 
   it('aborts pre-mutation (exit 1, no swap) when the forced render fails', async () => {
     const { svc, runner, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(true);
+    fleet.planesChangePending.mockReturnValue(true);
     rendered.buildRenderedConfig.mockRejectedValue(new Error('nix eval failed'));
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(runner.finalize.mock.calls[0][1]).toBe(1);
@@ -1315,16 +1396,16 @@ describe('StackService fleet-mode-apply — W2 forced render threaded end-to-end
   });
 });
 
-describe('StackService fleet-mode-apply — W4 bm preflight ordering', () => {
-  it('runs guard → cap-ensure → bake BEFORE any stop, in order (bm direction)', async () => {
+describe('StackService fleet-planes-apply — W4 bm preflight ordering', () => {
+  it('flips into the bare-metal plane through cap, bake and the pair restart', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     commitAfterAnchor(fleet);
-    overlay.fleetMode.mockReturnValue('baremetal');
+    overlay.planes.mockReturnValue(BM_ONLY);
     rendered.refreshFleetYaml.mockResolvedValue('/state/fleet.yaml');
     pc.listAll.mockResolvedValue(READY_ALL);
     vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     const capCall = runner.spawn.mock.calls.find((c) => c[2]?.[0] === 'scripts/tasks/bm-cap-ensure.sh');
@@ -1338,15 +1419,15 @@ describe('StackService fleet-mode-apply — W4 bm preflight ordering', () => {
     expect(capInvoke).toBeLessThan(stopInvoke);
   });
 
-  it('skips cap-ensure and bake on the bm→vm direction', async () => {
+  it('skips cap and bake when the bare-metal plane turns off', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     commitAfterAnchor(fleet);
-    overlay.fleetMode.mockReturnValue('vm');
+    overlay.planes.mockReturnValue(VM_ONLY);
     rendered.refreshFleetYaml.mockResolvedValue('/state/fleet.yaml');
     pc.listAll.mockResolvedValue(READY_ALL);
     vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(runner.spawn.mock.calls.some((c) => c[2]?.[0] === 'scripts/tasks/bm-cap-ensure.sh')).toBe(false);
@@ -1356,13 +1437,13 @@ describe('StackService fleet-mode-apply — W4 bm preflight ordering', () => {
 
   it('aborts pre-mutation when cap-ensure fails (with the sudo:setup hint, no stop, no swap)', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(true);
-    overlay.fleetMode.mockReturnValue('baremetal');
+    fleet.planesChangePending.mockReturnValue(true);
+    overlay.planes.mockReturnValue(BM_ONLY);
     runner.spawn.mockImplementation((_run: RunState, _cmd: string, args: string[]) =>
       Promise.resolve(args[0] === 'scripts/tasks/bm-cap-ensure.sh' ? 3 : 0),
     );
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(runner.finalize.mock.calls[0][1]).toBe(3);
@@ -1372,11 +1453,11 @@ describe('StackService fleet-mode-apply — W4 bm preflight ordering', () => {
 
   it('aborts pre-mutation when the bm uplink is unresolved (no NIC/IPv4)', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(true);
-    overlay.fleetMode.mockReturnValue('baremetal');
+    fleet.planesChangePending.mockReturnValue(true);
+    overlay.planes.mockReturnValue(BM_ONLY);
     overlay.bmUplink.mockReturnValue(null);
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(runner.finalize.mock.calls[0][1]).toBe(1);
@@ -1386,14 +1467,14 @@ describe('StackService fleet-mode-apply — W4 bm preflight ordering', () => {
   });
 });
 
-describe('StackService fleet-mode-apply — W3 drift guard', () => {
+describe('StackService fleet-planes-apply — W3 drift guard', () => {
   it('aborts (exit 1) naming the offenders and stops before applyOverlay when the stack has drifted', async () => {
     const { svc, runner, pc, swapDiffSet, overlay, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(true);
-    overlay.fleetMode.mockReturnValue('vm');
+    fleet.planesChangePending.mockReturnValue(true);
+    overlay.planes.mockReturnValue(VM_ONLY);
     swapDiffSet.mockResolvedValue(['spoke', 'hub-api', 'fleet', 'nginx', 'lab']);
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(runner.finalize.mock.calls[0][1]).toBe(1);
@@ -1407,14 +1488,14 @@ describe('StackService fleet-mode-apply — W3 drift guard', () => {
 
   it('force does NOT bypass the drift guard (force overrides only the active-saga preflight)', async () => {
     const { svc, runner, pc, swapDiffSet, overlay, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(true);
-    overlay.fleetMode.mockReturnValue('vm');
+    fleet.planesChangePending.mockReturnValue(true);
+    overlay.planes.mockReturnValue(VM_ONLY);
     swapDiffSet.mockResolvedValue(['spoke', 'hub-api', 'fleet', 'nginx']);
     rendered.refreshFleetYaml.mockResolvedValue('/state/fleet.yaml');
     pc.listAll.mockResolvedValue(READY_ALL);
     vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
 
-    svc.start('fleet-mode-apply', false, true);
+    svc.start('fleet-planes-apply', false, true);
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(runner.finalize.mock.calls[0][1]).toBe(1);
@@ -1427,10 +1508,10 @@ describe('StackService fleet-mode-apply — W3 drift guard', () => {
   it('aborts (exit 1, no swap) when swapDiffSet throws — drift unknown, fail-closed', async () => {
     const { svc, runner, swapDiffSet, overlay, rendered, fleet } = makeService();
     commitAfterAnchor(fleet);
-    overlay.fleetMode.mockReturnValue('vm');
+    overlay.planes.mockReturnValue(VM_ONLY);
     swapDiffSet.mockRejectedValue(new Error('pc unreachable'));
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(runner.finalize.mock.calls[0][1]).toBe(1);
@@ -1440,7 +1521,7 @@ describe('StackService fleet-mode-apply — W3 drift guard', () => {
   });
 });
 
-describe('StackService fleet-mode-apply — W7 phase journal', () => {
+describe('StackService fleet-planes-apply — W7 phase journal', () => {
   const stateDirs: string[] = [];
   afterEach(() => {
     delete process.env.DEVENV_STATE;
@@ -1467,12 +1548,12 @@ describe('StackService fleet-mode-apply — W7 phase journal', () => {
     const dir = withState();
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     commitAfterAnchor(fleet);
-    overlay.fleetMode.mockReturnValue('baremetal');
+    overlay.planes.mockReturnValue(BM_ONLY);
     rendered.refreshFleetYaml.mockResolvedValue('/state/fleet.yaml');
     pc.listAll.mockResolvedValue(READY_ALL);
     vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     const phases = journalLines(dir).map((r) => r.phase);
@@ -1487,12 +1568,12 @@ describe('StackService fleet-mode-apply — W7 phase journal', () => {
     const dir = withState();
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     commitAfterAnchor(fleet);
-    overlay.fleetMode.mockReturnValue('vm');
+    overlay.planes.mockReturnValue(VM_ONLY);
     rendered.refreshFleetYaml.mockResolvedValue('/state/fleet.yaml');
     pc.listAll.mockResolvedValue(READY_ALL);
     vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     const phases = journalLines(dir).map((r) => r.phase);
@@ -1505,11 +1586,11 @@ describe('StackService fleet-mode-apply — W7 phase journal', () => {
   it('journals a terminal failed on an aborting flip', async () => {
     const dir = withState();
     const { svc, runner, overlay, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(true);
-    overlay.fleetMode.mockReturnValue('vm');
+    fleet.planesChangePending.mockReturnValue(true);
+    overlay.planes.mockReturnValue(VM_ONLY);
     rendered.refreshFleetYaml.mockResolvedValue(null);
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     const phases = journalLines(dir).map((r) => r.phase);
@@ -1519,9 +1600,9 @@ describe('StackService fleet-mode-apply — W7 phase journal', () => {
   it('does NOT journal the no-op P3-gate path (post-success re-Apply)', async () => {
     const dir = withState();
     const { svc, runner, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(false);
+    fleet.planesChangePending.mockReturnValue(false);
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(journalLines(dir)).toHaveLength(0);
@@ -1541,35 +1622,35 @@ describe('StackService onApplicationBootstrap — W7 boot hook', () => {
   };
 
   it('surfaces an unfinished trailing journal entry as a synthetic failed run', () => {
-    seedJournal({ runId: 'r1', opId: 'fleet-mode-apply', phase: 'seed', ts: 1 });
+    seedJournal({ runId: 'r1', opId: 'fleet-planes-apply', phase: 'seed', ts: 1 });
 
     const { svc, runner } = makeService();
     svc.onApplicationBootstrap();
 
-    expect(runner.create.mock.calls.some((c) => c[0].opId === 'fleet-mode-apply')).toBe(true);
+    expect(runner.create.mock.calls.some((c) => c[0].opId === 'fleet-planes-apply')).toBe(true);
     expect(runner.finalize.mock.calls.some((c) => c[1] === 1)).toBe(true);
     const log = runner.emit.mock.calls.map((c) => c[1]).join('');
     expect(log).toMatch(/restarted mid-flip at phase seed/);
   });
 
   it('does not surface a clean (terminal) journal on boot', () => {
-    seedJournal({ runId: 'r1', opId: 'fleet-mode-apply', phase: 'done', ts: 1 });
+    seedJournal({ runId: 'r1', opId: 'fleet-planes-apply', phase: 'done', ts: 1 });
 
     const { svc, runner } = makeService();
     svc.onApplicationBootstrap();
 
-    expect(runner.create.mock.calls.some((c) => c[0].opId === 'fleet-mode-apply')).toBe(false);
+    expect(runner.create.mock.calls.some((c) => c[0].opId === 'fleet-planes-apply')).toBe(false);
   });
 });
 
-describe('StackService fleet-mode-apply — D1.2 deterministic stop-fleet', () => {
+describe('StackService fleet-planes-apply — D1.2 deterministic stop-fleet', () => {
   it('aborts pre-mutation (exit 1, no refresh/swap) when the fleet never reaches a terminal state', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(true);
-    overlay.fleetMode.mockReturnValue('vm');
+    fleet.planesChangePending.mockReturnValue(true);
+    overlay.planes.mockReturnValue(VM_ONLY);
     pc.stopAndWait.mockResolvedValue(false);
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(runner.finalize.mock.calls[0][1]).toBe(1);
@@ -1577,10 +1658,10 @@ describe('StackService fleet-mode-apply — D1.2 deterministic stop-fleet', () =
     expect(rendered.applyOverlay).not.toHaveBeenCalled();
   });
 
-  it('runs the explicit old-mode engine down (no LOCAL_FLEET_PATH override) after the stop settles', async () => {
+  it('runs the explicit prior-planes engine down (no LOCAL_FLEET_PATH override) after the stop settles', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     commitAfterAnchor(fleet);
-    overlay.fleetMode.mockReturnValue('vm');
+    overlay.planes.mockReturnValue(VM_ONLY);
     rendered.refreshFleetYaml.mockResolvedValue('/state/fleet.yaml');
     pc.listAll.mockResolvedValue(READY_ALL);
     vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
@@ -1592,7 +1673,7 @@ describe('StackService fleet-mode-apply — D1.2 deterministic stop-fleet', () =
       return Promise.resolve(0);
     });
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(downExtraEnv).toBeDefined();
@@ -1601,13 +1682,13 @@ describe('StackService fleet-mode-apply — D1.2 deterministic stop-fleet', () =
 
   it('aborts (exit 1, no swap) when the explicit engine down fails', async () => {
     const { svc, runner, overlay, rendered, fleet } = makeService();
-    fleet.modeChangePending.mockReturnValue(true);
-    overlay.fleetMode.mockReturnValue('vm');
+    fleet.planesChangePending.mockReturnValue(true);
+    overlay.planes.mockReturnValue(VM_ONLY);
     runner.spawn.mockImplementation((_run: RunState, _cmd: string, args: string[]) =>
       Promise.resolve(Array.isArray(args) && args.includes('local.fleet') && args.includes('down') ? 4 : 0),
     );
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(runner.finalize.mock.calls[0][1]).toBe(4);
@@ -1615,48 +1696,71 @@ describe('StackService fleet-mode-apply — D1.2 deterministic stop-fleet', () =
   });
 });
 
-describe('StackService fleet-mode-apply — D1.4 F3 pre-anchor re-assert', () => {
+describe('StackService fleet-planes-apply — D1.4 F3 pre-anchor re-assert', () => {
   const stateDirs: string[] = [];
   afterEach(() => {
     delete process.env.DEVENV_STATE;
   });
 
-  it('re-stages from the rendered config when the staged file drifted to the wrong mode', async () => {
+  const stagedFile = (yaml: string): string => {
     const dir = mkdtempSync(join(tmpdir(), 'lab-f3-'));
     stateDirs.push(dir);
     const stagedPath = join(dir, 'fleet.yaml');
-    writeFileSync(stagedPath, 'mode: vm\nnodes: []\n');
+    writeFileSync(stagedPath, yaml);
+    return stagedPath;
+  };
 
+  const flipWithStaged = async (stagedPath: string, desired: FleetPlanes) => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     commitAfterAnchor(fleet);
-    overlay.fleetMode.mockReturnValue('baremetal');
+    overlay.planes.mockReturnValue(desired);
     rendered.refreshFleetYaml.mockResolvedValue(stagedPath);
     pc.listAll.mockResolvedValue(READY_ALL);
     vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
 
-    svc.start('fleet-mode-apply', false, true);
+    svc.start('fleet-planes-apply', false, true);
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+    return { rendered, log: runner.emit.mock.calls.map((c) => c[1]).join('') };
+  };
+
+  it('re-stages from the rendered config when the staged file lacks a desired plane', async () => {
+    const { rendered, log } = await flipWithStaged(stagedFile('nodes:\n  - name: cpu-1\n'), BOTH);
 
     expect(rendered.refreshFleetYaml.mock.calls.length).toBeGreaterThanOrEqual(2);
-    const log = runner.emit.mock.calls.map((c) => c[1]).join('');
     expect(log).toMatch(/clobbered mid-flip/);
+  });
+
+  it('re-stages when the staged file still carries a plane that should be off', async () => {
+    const both = 'nodes:\n  - name: cpu-1\nbaremetal:\n  nodes:\n    - name: metal-1\n';
+    const { rendered, log } = await flipWithStaged(stagedFile(both), BM_ONLY);
+
+    expect(rendered.refreshFleetYaml.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(log).toMatch(/clobbered mid-flip/);
+  });
+
+  it('leaves a staged file alone when its rosters match the desired planes', async () => {
+    const both = 'nodes:\n  - name: cpu-1\nbaremetal:\n  nodes:\n    - name: metal-1\n';
+    const { rendered, log } = await flipWithStaged(stagedFile(both), BOTH);
+
+    expect(rendered.refreshFleetYaml).toHaveBeenCalledTimes(1);
+    expect(log).not.toMatch(/clobbered mid-flip/);
   });
 });
 
-describe('StackService fleet-mode-apply — D1.5 post-anchor post-condition', () => {
+describe('StackService fleet-planes-apply — D1.5 post-anchor post-condition', () => {
   it('fails loudly (exit 1) when the anchor never commits the applied manifest (still pending)', async () => {
     vi.useFakeTimers();
     try {
       const { svc, runner, pc, overlay, rendered, fleet } = makeService();
-      fleet.modeChangePending.mockReturnValue(true);
-      overlay.fleetMode.mockReturnValue('vm');
+      fleet.planesChangePending.mockReturnValue(true);
+      overlay.planes.mockReturnValue(VM_ONLY);
       rendered.refreshFleetYaml.mockResolvedValue('/state/fleet.yaml');
       pc.listAll.mockResolvedValue(READY_ALL);
       vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(
         0,
       );
 
-      svc.start('fleet-mode-apply');
+      svc.start('fleet-planes-apply');
       await vi.advanceTimersByTimeAsync(241_000);
       await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
@@ -1672,18 +1776,18 @@ describe('StackService fleet-mode-apply — D1.5 post-anchor post-condition', ()
   it('succeeds (exit 0) when the anchor commits the applied manifest within the bound', async () => {
     const { svc, runner, pc, overlay, rendered, fleet } = makeService();
     commitAfterAnchor(fleet);
-    overlay.fleetMode.mockReturnValue('vm');
+    overlay.planes.mockReturnValue(VM_ONLY);
     rendered.refreshFleetYaml.mockResolvedValue('/state/fleet.yaml');
     pc.listAll.mockResolvedValue(READY_ALL);
     vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
 
-    svc.start('fleet-mode-apply');
+    svc.start('fleet-planes-apply');
     await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
 
     expect(rendered.applyOverlay).toHaveBeenCalled();
     expect(runner.finalize.mock.calls[0][1]).toBe(0);
     const log = runner.emit.mock.calls.map((c) => c[1]).join('');
-    expect(log).toMatch(/flip to vm complete/);
+    expect(log).toMatch(/flip complete — vm=true baremetal=false/);
   });
 });
 
@@ -1845,5 +1949,78 @@ describe('StackService.zoneSeed — the order is the whole point', () => {
     expect(runner.finalize.mock.calls[0][1]).toBe(1);
     expect(devenvArgs(runner)).toEqual([]);
     expect(runner.emit.mock.calls.map((c) => c[1]).join('')).toContain('socket closed');
+  });
+});
+
+describe('StackService applyBmRebake short-circuit', () => {
+  const CHAIN_BASE = 'http://10.0.0.5:8000';
+  const BAKE_ARGS = ['-m', 'local.ipxe_build', '--chain-base-url', CHAIN_BASE];
+
+  const bakeCalls = (runner: ReturnType<typeof makeService>['runner']) =>
+    runner.spawnPty.mock.calls.filter((c) => c[2].includes('local.ipxe_build'));
+
+  const runFlip = (baked: boolean) => {
+    const { svc, runner, pc, rendered, fleet } = makeService();
+    commitAfterAnchor(fleet);
+    fleet.isIpxeBakedFor.mockReturnValue(baked);
+    rendered.refreshFleetYaml.mockResolvedValue('/state/fleet.yaml');
+    pc.listAll.mockResolvedValue(READY_ALL);
+    vi.spyOn(svc as unknown as { startFleetProcess: () => Promise<number> }, 'startFleetProcess').mockResolvedValue(0);
+    svc.start('fleet-planes-apply');
+    return { runner, fleet };
+  };
+
+  it('skips the rebake when the topology reports iPXE baked for the desired chain url', async () => {
+    const { runner, fleet } = runFlip(true);
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(fleet.isIpxeBakedFor).toHaveBeenCalledWith(CHAIN_BASE);
+    expect(bakeCalls(runner)).toHaveLength(0);
+    expect(runner.emit.mock.calls.map((c) => String(c[1])).join('')).toContain(
+      `iPXE already baked for ${CHAIN_BASE} — skipping the rebuild`,
+    );
+    expect(runner.finalize.mock.calls[0][1]).toBe(0);
+  });
+
+  it('rebakes when the topology reports iPXE not baked for the desired chain url', async () => {
+    const { runner } = runFlip(false);
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(bakeCalls(runner)).toHaveLength(1);
+    expect(bakeCalls(runner)[0][2]).toEqual(BAKE_ARGS);
+  });
+
+  it('names the Docker Hub resolver when the bake fails on a refused lookup', async () => {
+    const { svc, runner, fleet } = makeService();
+    fleet.planesChangePending.mockReturnValue(true);
+    runner.spawnPty.mockImplementation((run: RunState, _cmd: string, args: string[]) => {
+      if (args.includes('local.ipxe_build'))
+        run.lines.push('failed to solve: lookup registry-1.docker.io on 127.0.0.53:53: no such host\n');
+      return Promise.resolve(1);
+    });
+
+    svc.start('fleet-planes-apply');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    expect(runner.finalize.mock.calls[0][1]).toBe(1);
+    const log = runner.emit.mock.calls.map((c) => String(c[1])).join('');
+    expect(log).toContain('iPXE rebake needs Docker Hub — the resolver refused; fix DNS or pre-pull docker/dockerfile:1');
+    expect(log).toContain('iPXE rebake failed (exit 1)');
+  });
+
+  it('keeps the plain failure line when the bake fails for another reason', async () => {
+    const { svc, runner, fleet } = makeService();
+    fleet.planesChangePending.mockReturnValue(true);
+    runner.spawnPty.mockImplementation((run: RunState) => {
+      run.lines.push('make: *** [bin/snponly.efi] Error 2\n');
+      return Promise.resolve(2);
+    });
+
+    svc.start('fleet-planes-apply');
+    await vi.waitFor(() => expect(runner.finalize).toHaveBeenCalled());
+
+    const log = runner.emit.mock.calls.map((c) => String(c[1])).join('');
+    expect(log).not.toContain('needs Docker Hub');
+    expect(log).toContain('iPXE rebake failed (exit 2)');
   });
 });

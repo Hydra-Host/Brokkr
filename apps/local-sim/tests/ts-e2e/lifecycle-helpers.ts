@@ -95,6 +95,15 @@ const execFileP = promisify(execFile);
 // 210s so Node never SIGKILLs a BMC that would still eventually succeed.
 const BM_POWER_TIMEOUT_MS = 210_000;
 
+// a VM is back on sshd inside a minute; a real box re-POSTs, re-inits its BMC and walks firmware
+// device discovery first, so bare metal gets 15 minutes before a missing OS is called a failure.
+export const VM_OS_RETURN_TIMEOUT_MS = 240_000;
+export const BM_OS_RETURN_TIMEOUT_MS = 900_000;
+
+export function osReturnTimeoutMs(bareMetal: boolean): number {
+  return bareMetal ? BM_OS_RETURN_TIMEOUT_MS : VM_OS_RETURN_TIMEOUT_MS;
+}
+
 export async function powerBmIntoDiscovery(bootMac: string, expectedUuid: string): Promise<void> {
   step(`bare-metal: setting PXE boot + powering box into brokkr-live for discovery (${bootMac})...`);
   try {
@@ -429,6 +438,28 @@ export async function classifyBoot(ip: string, slug: string = OS_SLUG): Promise<
   return 'unknown';
 }
 
+export interface PowerCycleOptions {
+  /** Bare-metal target -- the run's device selection, not the fleet plane (a mixed stack has both). */
+  bareMetal?: boolean;
+  /** Read only once a wait has already failed, and never allowed to fail the step. */
+  bootTrail?: () => Promise<string | null>;
+}
+
+async function osReturnFailureSuffix(
+  state: string,
+  startedAtMs: number,
+  bootTrail?: () => Promise<string | null>,
+): Promise<string> {
+  const elapsedSeconds = Math.round((Date.now() - startedAtMs) / 1_000);
+  let trail: string | null = null;
+  try {
+    trail = (await bootTrail?.()) ?? null;
+  } catch (error) {
+    trail = `unreadable (${error instanceof Error ? error.message : String(error)})`;
+  }
+  return ` -- last state '${state}', ${elapsedSeconds}s elapsed, boot trail: ${trail ?? 'unavailable'}`;
+}
+
 /**
  * Reboot the PROVISIONED device and require it back as the INSTALLED OS.
  *
@@ -443,21 +474,24 @@ export async function powerCycle(
   hubDb: HubDB,
   dataIp: string,
   deviceId: string,
+  opts: PowerCycleOptions = {},
 ): Promise<void> {
   const ip = dataIp;
 
   step('--- power-cycle ---');
   step(`confirming installed OS on ${ip}...`);
+  const preBootStartedAt = Date.now();
   const preBoot = await pollUntil(
     () => classifyBoot(ip),
     (s) => s === 'os' || s === 'brokkr-live',
-    { timeout: 240_000, interval: 10_000 },
+    { timeout: osReturnTimeoutMs(opts.bareMetal ?? false), interval: 10_000 },
   );
+  const preBootSuffix = preBoot === 'os' ? '' : await osReturnFailureSuffix(preBoot, preBootStartedAt, opts.bootTrail);
   expect(
     preBoot,
     `device ${deviceId} is running '${preBoot}', not the installed OS, before power-cycle -- ` +
       `provisioning never booted the OS (device_record atom stuck pre-PROVISIONED -> ` +
-      `chain -> brokkr-live)`,
+      `chain -> brokkr-live)${preBootSuffix}`,
   ).toBe('os');
 
   const osVm = new VMClient(ip, userForSlug(OS_SLUG));
@@ -471,6 +505,7 @@ export async function powerCycle(
   expect(response.status, `reboot rejected: ${JSON.stringify(response.body)}`).toBe(200);
 
   step('awaiting fresh boot (new boot_id on installed OS)...');
+  const rebootStartedAt = Date.now();
   const probeResult = await pollUntil(
     async () => {
       const st = await classifyBoot(ip);
@@ -482,7 +517,7 @@ export async function powerCycle(
       return { st, boot };
     },
     (r) => (r.st === 'os' && r.boot !== '' && r.boot !== before) || r.st === 'brokkr-live',
-    { timeout: 240_000, interval: 10_000 },
+    { timeout: osReturnTimeoutMs(opts.bareMetal ?? false), interval: 10_000 },
   );
 
   expect(
@@ -490,7 +525,11 @@ export async function powerCycle(
     `device ${deviceId} rebooted into brokkr-live, not the installed OS -- ` +
       `device_record atom not re-published on PROVISIONED`,
   ).not.toBe('brokkr-live');
-  expect(probeResult.st).toBe('os');
+  const rebootSuffix =
+    probeResult.st === 'os' ? '' : await osReturnFailureSuffix(probeResult.st, rebootStartedAt, opts.bootTrail);
+  expect(probeResult.st, `device ${deviceId} never came back as the installed OS after reboot${rebootSuffix}`).toBe(
+    'os',
+  );
   expect(probeResult.boot).toBeTruthy();
   expect(
     probeResult.boot,

@@ -1,4 +1,6 @@
+import { DeviceDiagnosticsType } from '@repo/database/enums';
 import { z } from 'zod';
+import { zodEnumFromPrisma } from './prisma-enum';
 
 export const PhoneHomeResponseSchema = z.object({
   message: z.string().describe('Human-readable response message from the phone-home handler'),
@@ -7,26 +9,10 @@ export const PhoneHomeResponseSchema = z.object({
 
 export type PhoneHomeResponse = z.infer<typeof PhoneHomeResponseSchema>;
 
-export const DeviceDiagnosticsTypeSchema = z
-  .enum([
-    'Driver',
-    'Gpu',
-    'Nvlink',
-    'Lspci',
-    'Services',
-    'Kernel',
-    'System',
-    'Infiniband',
-    'Storage',
-    'Thermal',
-    'Cuda',
-    'AllDiagnostics',
-    'Health',
-    'Fabric',
-    'Ecc',
-  ])
-  .describe('Category of device diagnostics to collect or report');
-export type DeviceDiagnosticsTypeEnum = z.infer<typeof DeviceDiagnosticsTypeSchema>;
+export const DeviceDiagnosticsTypeSchema = zodEnumFromPrisma(DeviceDiagnosticsType).describe(
+  'Category of device diagnostics to collect or report',
+);
+export type DeviceDiagnosticsTypeEnum = DeviceDiagnosticsType;
 
 export const CreateDeviceDiagnosticsRequestSchema = z.object({
   type: DeviceDiagnosticsTypeSchema.describe('Type of diagnostics being reported'),

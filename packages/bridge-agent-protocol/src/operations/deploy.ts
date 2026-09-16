@@ -135,6 +135,18 @@ export const RoceVars = z.object({
 });
 export type RoceVars = z.infer<typeof RoceVars>;
 
+export const NODE_DESC_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
+
+export const InfinibandVars = z.object({
+  enabled: z.boolean().describe('Whether the device is configured for InfiniBand east-west networking.'),
+  node_desc: z
+    .string()
+    .describe(
+      'Value written to /sys/class/infiniband/<dev>/node_desc as "<node_desc> <dev>". Empty when enabled=false.',
+    ),
+});
+export type InfinibandVars = z.infer<typeof InfinibandVars>;
+
 export const mountChroot = {
   input: z.object({
     target_path: TargetPath.default('/target').describe('Directory hosting the mounted chroot. Must already exist.'),
@@ -422,6 +434,9 @@ export const deployOS = {
       .default(false)
       .describe('When true, the rekey script skips the initial luksAddKey call.'),
     roce: RoceVars.describe('RoCE east-west fabric configuration (typed-vars cutover).'),
+    infiniband: InfinibandVars.optional().describe(
+      'InfiniBand east-west fabric configuration. Absent means disabled (payloads from older bridges).',
+    ),
   }),
   output: z.object({
     deployed: z.literal(true).describe('Always true — the op throws rather than returning deployed=false.'),

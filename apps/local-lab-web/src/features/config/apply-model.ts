@@ -167,8 +167,20 @@ function stackRows(pending: StackPending, dirtyDomain: ApplyDomain | null): Appl
   return rows;
 }
 
+/** Which stack op clears each severity. Total over the contract enum, so a severity added there is a
+ *  type error here rather than a silent fall-through to the plain fleet apply. */
+const FLEET_OP: Record<FleetPending['severity'], 'fleet-apply' | 'fleet-planes-apply'> = {
+  'in-sync': 'fleet-apply',
+  'hot-appliable': 'fleet-apply',
+  'needs-full-rebuild': 'fleet-apply',
+  'planes-change': 'fleet-planes-apply',
+  // the fleet apply's rebake step re-bakes on a stale chain stamp; the planes apply short-circuits on a matching plane set
+  'stale-bake': 'fleet-apply',
+};
+
 function fleetRow(fleet: FleetPending, dirtyDomain: ApplyDomain | null): ApplyRow {
-  const modeChange = fleet.severity === 'mode-change';
+  const planesChange = fleet.severity === 'planes-change';
+  const staleBake = fleet.severity === 'stale-bake';
   const n = pendingChangeCount(fleet);
   const parts = [
     fleet.summary.added && `${fleet.summary.added} added`,
@@ -177,19 +189,23 @@ function fleetRow(fleet: FleetPending, dirtyDomain: ApplyDomain | null): ApplyRo
     fleet.network.changed && 'network',
   ].filter(Boolean);
   return {
-    id: modeChange ? 'fleet-mode' : 'fleet',
+    id: planesChange ? 'fleet-planes' : staleBake ? 'fleet-bake' : 'fleet',
     domain: 'fleet',
-    detail: modeChange
-      ? 'the desired fleet mode differs from the applied one'
-      : parts.join(', ') || fleet.note || `${n} pending`,
+    detail: planesChange
+      ? 'the desired fleet planes differ from the applied ones'
+      : staleBake
+        ? (fleet.note ?? 'the baked boot binaries no longer name this stack')
+        : parts.join(', ') || fleet.note || `${n} pending`,
     cost:
       fleet.severity === 'needs-full-rebuild'
         ? 'needs a full rebuild of the changed nodes'
-        : modeChange
-          ? 'needs the fleet-mode apply, which needs sudo'
-          : COST['fleet-op'],
-    action: { kind: 'stack-op', opId: modeChange ? 'fleet-mode-apply' : 'fleet-apply' },
-    destructive: fleet.severity === 'needs-full-rebuild' || modeChange,
+        : planesChange
+          ? 'needs the fleet-planes apply, which needs sudo'
+          : staleBake
+            ? 'needs a fleet apply, which re-bakes iPXE'
+            : COST['fleet-op'],
+    action: { kind: 'stack-op', opId: FLEET_OP[fleet.severity] },
+    destructive: fleet.severity === 'needs-full-rebuild' || planesChange,
     blockedBy: blockOf('fleet', dirtyDomain),
     steps: [],
   };

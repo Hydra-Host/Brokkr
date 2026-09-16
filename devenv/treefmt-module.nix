@@ -46,6 +46,7 @@
     # byte-compared test data — never reformat
     "**/__fixtures__/**"
     "**/fixtures/**"
+    "**/test-vectors/**"
     "**/__test__/**"
     "**/__tests__/**"
     # CI-sensitive YAML: GitLab !reference custom tags

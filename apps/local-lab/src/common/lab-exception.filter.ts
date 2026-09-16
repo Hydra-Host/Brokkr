@@ -1,8 +1,7 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { getErrorMessage } from '@repo/utils';
 import { RequestValidationError } from '@ts-rest/nest';
 import type { Response } from 'express';
-
-import { getErrorMessage } from './errors';
 
 // Global catch-all rendering every escaped exception as the contract's { error: string } body:
 // HttpExceptions keep their own status, everything else becomes a 500.

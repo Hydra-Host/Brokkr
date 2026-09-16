@@ -129,7 +129,7 @@ export function registerHubTools(server: McpServer, ctx: LabContext): void {
 
   server.tool(
     'lab_get_zone_runtime',
-    'Per-zone bridge runtime: leader election (authoritative key vs self-reported flag), bridge presence, VRRP desired-vs-observed, zone-crypto presence, recent agent work. Fields read null when a probe failed — distinct from a measured zero/false/empty.',
+    'Per-zone bridge runtime: leader election (authoritative key vs self-reported flag), bridge presence, bridge HTTP status (DHCP answering, PXE socket, readiness error count), VRRP desired-vs-observed, zone-crypto presence, recent agent work. Fields read null when a probe failed — distinct from a measured zero/false/empty.',
     {},
     () =>
       call(ctx, async (client) => {

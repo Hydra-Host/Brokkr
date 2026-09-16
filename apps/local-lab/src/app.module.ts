@@ -12,6 +12,7 @@ import { DatastoreModule } from './datastore/datastore.module';
 import { DbModule } from './db/db.module';
 import { DocsModule } from './docs/docs.module';
 import { FleetModule } from './fleet/fleet.module';
+import { HealthModule } from './health/health.module';
 import { HubModule } from './hub/hub.module';
 import { LayersModule } from './layers/layers.module';
 import { LedgerModule } from './ledger/ledger.module';
@@ -52,6 +53,7 @@ const staticImports = process.env.NODE_ENV === 'production' ? [ServeStaticModule
     StorageModule,
     DocsModule,
     AuditModule,
+    HealthModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: LabAuthGuard },

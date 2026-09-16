@@ -4,29 +4,39 @@ import type { PgResult } from '@/contract';
 import { ErrorBanner } from '@/features/datastore/shared';
 import { tsr } from '@/lib/api';
 import { bodyError, thrownBodyError } from '@/lib/errors';
+import { useHostToken } from '@/lib/use-host-token';
 
 import { ResultTable } from './result-table';
 
 export function SqlRunner() {
   const [sql, setSql] = useState('SELECT * FROM "Device" LIMIT 50;');
   const run = tsr.runPgQuery.useMutation();
+  const gate = useHostToken('The SQL console');
   const [result, setResult] = useState<PgResult | null>(null);
   const [error, setError] = useState('');
 
   const exec = () => {
     setError('');
+    if (gate.blocked) {
+      gate.ask();
+      return;
+    }
     run.mutate(
-      { body: { sql } },
+      // overrides the injected token for this call only: the query runs as the stack owner, and
+      // `extraHeaders` is what outranks the client's baseHeaders.
+      { body: { sql }, extraHeaders: { 'x-lab-token': gate.token } },
       {
         onSuccess: (res) => {
           if (res.status === 200) {
             setResult(res.body);
           } else {
             setResult(null);
+            gate.noteRefusal(res.status, res.body);
             setError(bodyError(res.body) ?? `query failed (${res.status})`);
           }
         },
         onError: (err: unknown) => {
+          gate.noteThrownRefusal(err);
           setError(thrownBodyError(err) ?? 'query failed');
           setResult(null);
         },
@@ -36,6 +46,7 @@ export function SqlRunner() {
 
   return (
     <div className="border-border-dim space-y-2 border-t px-3 pt-3 pb-3">
+      {gate.dialog}
       <textarea
         value={sql}
         onChange={(e) => setSql(e.target.value)}

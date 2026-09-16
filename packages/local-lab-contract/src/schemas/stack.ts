@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isIpv4 } from '../ipv4';
 import { ProcHealthSchema, StackSlotSchema } from './common';
 import { FleetPendingSchema } from './fleet';
 import { ZoneStepSchema } from './zones';
@@ -47,9 +48,9 @@ export const InitTaskSchema = z.object({
   name: z.string().describe('devenv task name, colons included (e.g. "hub:init")'),
   label: z.string().describe('Display name; falls back to the raw task name for an unmapped task'),
   state: z
-    .enum(['pending', 'running', 'completed', 'failed'])
+    .enum(['pending', 'cached', 'running', 'completed', 'failed'])
     .describe(
-      'pending = did not run this bring-up (cached or gated); running = the log is fresh with no result yet; completed/failed = this bring-up’s exit-status sidecar',
+      'pending = did not run this bring-up and left no exit-0 sidecar behind; cached = its status predicate skipped it this bring-up and its last sidecar exited 0; running = the log is fresh with no result yet; completed/failed = this bring-up’s exit-status sidecar',
     ),
   exitCode: z.number().nullable().describe('Exit code from the status sidecar; null unless the task finished'),
   detail: z.string().nullable().describe('One-line human status — the log tail on a failure, else null'),
@@ -62,8 +63,14 @@ export type InitTask = z.infer<typeof InitTaskSchema>;
 export const initFocusTask = (tasks: InitTask[]): InitTask | undefined =>
   tasks.find((t) => t.state === 'failed') ?? tasks.find((t) => t.state === 'running');
 
-export const initAggregateState = (tasks: InitTask[]): InitTask['state'] =>
-  initFocusTask(tasks)?.state ?? (tasks.some((t) => t.state === 'completed') ? 'completed' : 'pending');
+/** Satisfied this bring-up: exited 0 now, or skipped by its predicate on the strength of an earlier exit 0. */
+export const initTaskDone = (t: InitTask): boolean => t.state === 'completed' || t.state === 'cached';
+
+export const initAggregateState = (tasks: InitTask[]): Exclude<InitTask['state'], 'cached'> => {
+  const focus = initFocusTask(tasks)?.state;
+  if (focus === 'failed' || focus === 'running') return focus;
+  return tasks.length > 0 && tasks.every(initTaskDone) ? 'completed' : 'pending';
+};
 
 export const DatastoreStatusSchema = z.object({
   id: z.string().describe('postgres | redis | nginx | thanos'),
@@ -99,7 +106,7 @@ export const BringupStepSchema = z
 export const FleetHealthSchema = z
   .enum(['ready', 'degraded', 'coming-up', 'stopped', 'failed', 'disabled', 'idle'])
   .describe(
-    'Fleet health: ready=all VMs running and the boot chain serving; degraded=VMs running but a spoke that serves them is down; coming-up=building/powering on; stopped=down (Start to bring up); failed=crashed; disabled=autoStart off; idle=never started.',
+    'Fleet health: ready=all machines running and the boot chain serving; degraded=machines running but a spoke that serves them is down; coming-up=building/powering on; stopped=down (Start to bring up); failed=crashed; disabled=autoStart off; idle=never started.',
   );
 // Mirrors local.host_os.Accel. libvirt has no `<domain type='tcg'>` — the engine renders software
 // emulation as type='qemu', so 'tcg' names the accelerator here and never the domain type.
@@ -256,7 +263,7 @@ export const ConfigTreeEntrySchema = z.object({
   path: z
     .string()
     .describe(
-      'Canonical Nix path — `stackDefaults.hub.LOG_LEVEL`, `ports.postgres`, `lan.expose`. It resolves in `devenv eval`, it is the key putStackConfig writes, and BROKKR_CFG_ derives its variable name from it by replacing each dot with a double underscore.',
+      'Canonical Nix path — `stackDefaults.hub.LOG_LEVEL`, `ports.postgres`, `lan.mode`. It resolves in `devenv eval`, it is the key putStackConfig writes, and BROKKR_CFG_ derives its variable name from it by replacing each dot with a double underscore.',
     ),
   label: z.string().describe('Human name for the knob, declared beside the option in Nix'),
   group: z.string().describe('UI sub-section the knob declares (Datastores, Logging, Fleet, …)'),
@@ -342,7 +349,7 @@ export const StackPendingSchema = z.object({
   ),
   rebindArmed: z
     .boolean()
-    .describe('A port or lan.expose change armed the recreate latch, so a plain reload cannot pick it up'),
+    .describe('A port or lan.* change armed the recreate latch, so a plain reload cannot pick it up'),
   restart: RestartStateSchema.describe('The detached-restart marker, so a failed or stale restart never reads as idle'),
   resetRequired: z
     .array(z.string())
@@ -391,12 +398,91 @@ export const ServicePortSchema = z.object({
 export const IdentityConfigSchema = z.object({
   pg: z.object({ user: z.string(), password: z.string(), db: z.string() }),
   orgId: z.string(),
+  redis: z
+    .object({
+      password: z
+        .string()
+        .describe(
+          'Redis `default`-user password, applied as requirepass and carried in every derived REDIS_URL. Masked on read like identity.pg.password.',
+        ),
+    })
+    .describe('Redis credential lan.datastoreAuth turns on. Only consulted under lan.mode "direct".'),
+  mailpit: z
+    .object({
+      password: z
+        .string()
+        .describe(
+          'Mailpit UI/API password, as HTTP basic auth for the user `brokkr`. Masked on read like identity.pg.password.',
+        ),
+    })
+    .describe('Mailpit credential lan.datastoreAuth turns on. Only consulted under lan.mode "direct".'),
 });
 export const OsLayerCacheSchema = z.object({ originHost: z.string(), resolvers: z.string() });
+/** One DNS label: alphanumeric with internal hyphens, at most 63 chars. */
+const LABEL = '[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?';
+const HOSTNAME_RE = new RegExp(`^(?=.{1,253}\\.?$)${LABEL}(?:\\.${LABEL})*\\.?$`);
+
+export const isHostname = (s: string): boolean => {
+  if (!HOSTNAME_RE.test(s)) return false;
+  // RFC 1123: the last label may not be all digits, which is what keeps 256.1.1.1 from passing here
+  // as a hostname after isIpv4 has already refused it.
+  const labels = s.replace(/\.$/, '').split('.');
+  return !/^\d+$/.test(labels.at(-1) ?? '');
+};
+
+/** Accepts the compressed, full and IPv4-tailed forms. No zone id: `%eth0` is legal in a URL host
+ *  but never in a bind address, and the `%` would survive into a shell word. */
+export const isIpv6 = (s: string): boolean => {
+  if (!/^[0-9a-fA-F:.]+$/.test(s) || s.includes(':::')) return false;
+  const halves = s.split('::');
+  if (halves.length > 2) return false;
+  const groups = halves.flatMap((half) => (half === '' ? [] : half.split(':')));
+  if (groups.some((g) => g === '')) return false;
+  const tail = groups[groups.length - 1];
+  const tailIsIpv4 = tail !== undefined && tail.includes('.');
+  if (groups.slice(0, -1).some((g) => g.includes('.'))) return false;
+  if (tailIsIpv4 && !isIpv4(tail)) return false;
+  const hextets = tailIsIpv4 ? groups.slice(0, -1) : groups;
+  if (hextets.some((g) => !/^[0-9a-fA-F]{1,4}$/.test(g))) return false;
+  const width = hextets.length + (tailIsIpv4 ? 2 : 0);
+  return halves.length === 2 ? width <= 7 : width === 8;
+};
+
+/** Empty means every interface under `direct`. A literal only: a name resolves to several addresses,
+ *  one of which the loopback entry beside it then binds twice. */
+export const isBindAddress = (s: string): boolean => s === '' || isIpv4(s) || isIpv6(s);
+
+/** The browser-facing name, which never reaches a socket and so may be a hostname. */
+export const isPublicHost = (s: string): boolean => s === '' || isIpv4(s) || isIpv6(s) || isHostname(s);
+
+export const LanModeSchema = z
+  .enum(['loopback', 'direct', 'fronted'])
+  .describe(
+    'How this stack is reached. `loopback` binds 127.0.0.1 and trusts loopback callers. `direct` binds the LAN in cleartext and makes off-loopback callers present a token. `fronted` keeps every listener on loopback for a terminator you run yourself and makes every caller present a token, loopback included.',
+  );
+export type LanMode = z.infer<typeof LanModeSchema>;
 export const LanConfigSchema = z.object({
+  mode: LanModeSchema.describe('Effective config.lan.mode — the knob that decides both the bind host and the trust'),
+  bindAddress: z
+    .string()
+    .describe(
+      'Single address the `direct` listeners bind instead of every interface. An IPv4 or IPv6 literal only, because it reaches a socket. Empty means 0.0.0.0 under `direct`, and nothing binds outward under `fronted` or `loopback`.',
+    ),
+  publicHost: z
+    .string()
+    .describe(
+      'Host a browser reaches this stack at under `direct` or `fronted`. It never reaches a socket, so unlike bindAddress it takes a name. It shapes the browser-facing URLs and the dev servers Host allowlist. Empty falls back to bindAddress, then to localhost.',
+    ),
+  datastoreAuth: z
+    .boolean()
+    .describe(
+      'Whether off-loopback datastore clients must present a credential under `direct`: Postgres scram-sha-256, a Redis requirepass, Mailpit basic auth, and Thanos receive pinned back to loopback. Only Postgres keeps loopback trust, because pg_hba is per-source; a Redis requirepass is connection-global and has no per-source form.',
+    ),
   expose: z
     .boolean()
-    .describe('Bind sim services to 0.0.0.0 (+ relax Vite allowedHosts) for LAN reach; default false (loopback)'),
+    .describe(
+      'Deprecated alias kept so an existing stack.local.nix still evaluates: true implies mode "direct". Readable and writable, but set mode instead — it also reaches the `fronted` posture this boolean cannot express.',
+    ),
 });
 export const TelemetryConfigSchema = z.object({
   enable: z
@@ -426,7 +512,9 @@ export const StackConfigSchema = z.object({
   slot: StackSlotSchema,
   identity: IdentityConfigSchema,
   osLayerCache: OsLayerCacheSchema,
-  lan: LanConfigSchema.describe('LAN exposure toggle — bind sim services to 0.0.0.0 for LAN reach (default off)'),
+  lan: LanConfigSchema.describe(
+    'Network posture — the mode, the bind address, the datastore-credential flag, and the deprecated expose alias',
+  ),
   telemetry: TelemetryConfigSchema.describe('Local OTEL sink toggle + Grafana quick-link (config.telemetry.enable)'),
 });
 export type StackConfig = z.infer<typeof StackConfigSchema>;

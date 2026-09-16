@@ -162,7 +162,7 @@ task up
 | :8000 · :9082                     | Spoke (bridge) HTTP · gRPC                                |
 | :5432 · :6379 · :8888             | Postgres · Redis · nginx OS-layer cache                   |
 
-Ports are declared once in `devenv/modules/ports.nix`. The web/API bind `0.0.0.0`, so the control center is reachable over LAN/Tailscale (and is mobile-responsive). Open **http://localhost:5175** and drive everything — process supervision, fleet power/console, the e2e test suite — from the UI.
+Ports are declared once in `devenv/modules/ports.nix`. By default the control-center web and API bind `127.0.0.1`, so nothing off this box reaches them. The hub API, the admin API, the spoke and the nginx cache bind every interface in every mode. To reach the control center from another device, read [Reaching the stack from another device](#reaching-the-stack-from-another-device) first. Open **http://localhost:5175** and drive everything — process supervision, fleet power/console, the e2e test suite — from the UI. The cockpit is mobile-responsive.
 
 ### First-time login
 
@@ -216,6 +216,28 @@ The same control surface is available to an AI agent over MCP. Registration is a
 Destructive tools are not registered unless you set `LAB_MCP_ALLOW_DESTRUCTIVE=1`, and every mutation lands in the audit log. See [`apps/local-lab-mcp/README.md`](./apps/local-lab-mcp/README.md).
 
 For configuration (override layers, fleet topology, ports), the secrets contract, platform specifics, and troubleshooting, see the operator guide: [`devenv/README.md`](./devenv/README.md).
+
+### Reaching the stack from another device
+
+The `lan.mode` knob decides how this stack is reached. Set it from the control center's **Stack knobs** page, or by hand in `stack.local.nix`.
+
+| `lan.mode`           | Listeners bind                  | Loopback trusted | Who presents a token         |
+| -------------------- | ------------------------------- | ---------------- | ---------------------------- |
+| `loopback` (default) | `127.0.0.1`                     | Yes              | Nobody                       |
+| `direct`             | `0.0.0.0`, or `lan.bindAddress` | Yes              | Off-loopback callers         |
+| `fronted`            | `127.0.0.1`                     | **No**           | Everybody, loopback included |
+
+**This stack has no TLS and mints no certificate.** Under `direct` the credentials of every caller cross the network in cleartext. Use `direct` only on a network you trust.
+
+To reach the stack from another device safely, put a terminator of your own in front of it and set `lan.mode = "fronted"`. A terminator dials `127.0.0.1`, so every caller it serves arrives as a loopback peer. `fronted` therefore turns the loopback grant off and makes every caller present a token.
+
+The dev servers also check the `Host` header of each request. An address always passes, and so does `localhost` or any `*.localhost` subdomain. Any other name passes only if `lan.publicHost` names it. A request under an unknown name gets a `403`, so set `lan.publicHost` to the name the browser will use.
+
+`lan.bindAddress` and `lan.publicHost` are different knobs on purpose. The bind address decides what listens, so it takes an IPv4 or IPv6 literal only. A name there resolves to several addresses, one of which the stack then binds twice, which crash-loops redis. The public host never reaches a socket, so it takes the name. If a checkout sets a name in `lan.bindAddress` today, move it to `lan.publicHost`: the evaluation refuses the name until you do, and it names the knob to move it to.
+
+**Never expose this stack to the public internet.** It holds a root-equivalent control API over the dev box.
+
+For the capability model, both tokens, the terminator recipes and the datastore credentials, see [`apps/local-lab/README.md`](./apps/local-lab/README.md#security-posture-read-this).
 
 ### Troubleshooting (first run)
 

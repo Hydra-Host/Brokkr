@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 
 import { DatastoreModule } from '../datastore/datastore.module';
 import { ServicesModule } from '../services/services.module';
+import { HttpProbeService } from '../status/http-probe.service';
 import { AgentWorkReaderService } from './agent-work.reader';
+import { BridgeStatusReader } from './bridge-status.reader';
 import { LeaderReaderService } from './leader.reader';
 import { RuntimeController } from './runtime.controller';
 import { VrrpShimReaderService } from './vrrp-shim.reader';
@@ -19,6 +21,8 @@ import { ZoneRuntimeService } from './zone-runtime.service';
     VrrpShimReaderService,
     ZoneCryptoReaderService,
     AgentWorkReaderService,
+    HttpProbeService,
+    BridgeStatusReader,
     ZoneRuntimeService,
   ],
   exports: [ZoneRuntimeService],

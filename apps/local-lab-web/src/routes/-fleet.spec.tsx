@@ -35,7 +35,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => ({
 }));
 
 function machine(over: Partial<Machine> = {}): Machine {
-  return { name: 'cpu-1', power: 'on', configured: true, deviceId: 'dev-1', ...over };
+  return { name: 'cpu-1', kind: 'vm', power: 'on', configured: true, deviceId: 'dev-1', bmc: null, ...over };
 }
 
 function renderCard(over: Partial<Machine> = {}) {

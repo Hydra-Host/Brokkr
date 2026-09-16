@@ -1,7 +1,12 @@
 import { DeviceRole, DeviceStatus, Prisma } from '@repo/database';
 import { AuthType, IdentityContext } from 'src/auth/identity-context';
 import { DeviceAggregate } from 'src/common/device.types';
-import { mockDeployment, mockReservationInvite, mockSupplyOrganization } from 'src/prisma/fixtures';
+import {
+  mockDeployment,
+  mockReservationInvite,
+  mockServersInReservationInvite,
+  mockSupplyOrganization,
+} from 'src/prisma/fixtures';
 import { InventoryListingContext, InventoryPresenter } from '../inventory.presenter';
 import { mockBaseLayers, mockComponentsByBase } from './fixtures';
 
@@ -221,6 +226,169 @@ describe('InventoryPresenter', () => {
     it('returns null for an anonymous viewer (no identity)', () => {
       const result = InventoryPresenter.toResponse(ctxWithInvite);
       expect(result.activeReservationInvite).toBeNull();
+    });
+  });
+
+  describe('isListedOrInvitee', () => {
+    const buyerOrgId = 'buyer-org';
+    const buyerEmail = 'buyer@test.com';
+    const otherOrgId = 'other-org';
+    const otherEmail = 'other@test.com';
+
+    const identityForOrg = (organizationId: string, email: string): IdentityContext =>
+      ({
+        authType: AuthType.Session,
+        organizationId,
+        session: { user: { email } },
+      }) as IdentityContext;
+
+    function contextWith(
+      isListed: boolean,
+      invite?: {
+        orgId: string | null;
+        email: string | null;
+        dateAccepted?: Date | null;
+        dateDeleted?: Date | null;
+        dateExpires?: Date;
+      },
+    ) {
+      const serversInReservationInvite = invite
+        ? [
+            {
+              ...mockServersInReservationInvite,
+              reservationInvite: {
+                ...mockReservationInvite,
+                inviteeOrganizationId: invite.orgId,
+                inviteeEmail: invite.email,
+                inviteeOrganization: mockSupplyOrganization,
+                dateAccepted: invite.dateAccepted ?? null,
+                dateDeleted: invite.dateDeleted ?? null,
+                dateExpires: invite.dateExpires ?? new Date(Date.now() + 86_400_000),
+              },
+            },
+          ]
+        : [];
+
+      return createMockContext({
+        device: {
+          ...mockDevice,
+          server: {
+            ...mockDevice.server,
+            isListed,
+            serversInReservationInvite,
+          },
+        },
+      });
+    }
+
+    const caller = identityForOrg(buyerOrgId, buyerEmail);
+
+    it('denies unlisted hosts with no invite', () => {
+      expect(InventoryPresenter.isListedOrInvitee(contextWith(false), caller)).toBe(false);
+    });
+
+    it('allows unlisted hosts when the caller is the invitee', () => {
+      expect(
+        InventoryPresenter.isListedOrInvitee(contextWith(false, { orgId: buyerOrgId, email: buyerEmail }), caller),
+      ).toBe(true);
+    });
+
+    it('allows listed hosts with no invite', () => {
+      expect(InventoryPresenter.isListedOrInvitee(contextWith(true), caller)).toBe(true);
+    });
+
+    it('denies listed hosts when the pending invite belongs to someone else', () => {
+      expect(
+        InventoryPresenter.isListedOrInvitee(contextWith(true, { orgId: otherOrgId, email: otherEmail }), caller),
+      ).toBe(false);
+    });
+
+    it('allows listed hosts when the pending invite belongs to the caller', () => {
+      expect(InventoryPresenter.isListedOrInvitee(contextWith(true, { orgId: buyerOrgId, email: null }), caller)).toBe(
+        true,
+      );
+    });
+
+    it('allows unlisted hosts when invitee email differs only by case or whitespace', () => {
+      expect(
+        InventoryPresenter.isListedOrInvitee(contextWith(false, { orgId: null, email: ' Buyer@Test.com ' }), caller),
+      ).toBe(true);
+    });
+
+    it('denies unlisted hosts when the invitee email does not match', () => {
+      expect(InventoryPresenter.isListedOrInvitee(contextWith(false, { orgId: null, email: otherEmail }), caller)).toBe(
+        false,
+      );
+    });
+
+    it('allows unlisted hosts when the caller is the supplier party', () => {
+      const supplier = identityForOrg(mockSupplyOrganization.id, 'inviter@example.com');
+      expect(
+        InventoryPresenter.isListedOrInvitee(contextWith(false, { orgId: buyerOrgId, email: buyerEmail }), supplier),
+      ).toBe(true);
+    });
+
+    it('allows unlisted hosts when the caller matches the inviter email', () => {
+      const inviter = identityForOrg('not-the-supplier', mockReservationInvite.inviterEmail);
+      expect(
+        InventoryPresenter.isListedOrInvitee(contextWith(false, { orgId: otherOrgId, email: otherEmail }), inviter),
+      ).toBe(true);
+    });
+
+    it('denies unlisted hosts when the pending invite is expired', () => {
+      expect(
+        InventoryPresenter.isListedOrInvitee(
+          contextWith(false, {
+            orgId: buyerOrgId,
+            email: buyerEmail,
+            dateExpires: new Date(Date.now() - 1_000),
+          }),
+          caller,
+        ),
+      ).toBe(false);
+    });
+
+    it('denies unlisted hosts when the invite was deleted', () => {
+      expect(
+        InventoryPresenter.isListedOrInvitee(
+          contextWith(false, { orgId: buyerOrgId, email: buyerEmail, dateDeleted: new Date() }),
+          caller,
+        ),
+      ).toBe(false);
+    });
+
+    it('denies unlisted hosts when the invite was accepted', () => {
+      expect(
+        InventoryPresenter.isListedOrInvitee(
+          contextWith(false, { orgId: buyerOrgId, email: buyerEmail, dateAccepted: new Date() }),
+          caller,
+        ),
+      ).toBe(false);
+    });
+
+    it('allows listed hosts when a leftover invite is no longer active', () => {
+      expect(
+        InventoryPresenter.isListedOrInvitee(
+          contextWith(true, {
+            orgId: otherOrgId,
+            email: otherEmail,
+            dateExpires: new Date(Date.now() - 1_000),
+          }),
+          caller,
+        ),
+      ).toBe(true);
+    });
+
+    it('allows unlisted hosts for ApiKey callers matched by user email', () => {
+      const apiKeyCaller = {
+        authType: AuthType.ApiKey,
+        organizationId: buyerOrgId,
+        user: { email: buyerEmail },
+      } as IdentityContext;
+
+      expect(
+        InventoryPresenter.isListedOrInvitee(contextWith(false, { orgId: null, email: buyerEmail }), apiKeyCaller),
+      ).toBe(true);
     });
   });
 

@@ -123,7 +123,7 @@ afterEach(() => {
 describe('lab sqlite migration ladder', () => {
   it('brings a fresh database up to the latest version', () => {
     const db = getDb();
-    expect(userVersion(db)).toBe(3);
+    expect(userVersion(db)).toBe(4);
     expect(objectNames(db, 'table')).toEqual(
       expect.arrayContaining(['test_runs', 'test_events', 'runs', 'run_events', 'audit_events']),
     );
@@ -173,6 +173,10 @@ describe('lab sqlite migration ladder', () => {
     ]);
   });
 
+  it('gives audit_events the origin principal migration 4 adds', () => {
+    expect(columnNames(getDb(), 'audit_events')).toContain('origin_principal');
+  });
+
   it('migrates a legacy user_version 0 database without losing rows', () => {
     seedLegacyDb();
     const before = new Database(dbFile());
@@ -180,7 +184,7 @@ describe('lab sqlite migration ladder', () => {
     before.close();
 
     const db = getDb();
-    expect(userVersion(db)).toBe(3);
+    expect(userVersion(db)).toBe(4);
     expect(db.prepare<[], { c: number }>(`SELECT COUNT(*) AS c FROM test_runs`).get()?.c).toBe(2);
     expect(db.prepare<[], { c: number }>(`SELECT COUNT(*) AS c FROM test_events`).get()?.c).toBe(1);
     expect(
@@ -233,7 +237,7 @@ describe('lab sqlite migration ladder', () => {
     closeDb();
 
     const db = getDb();
-    expect(userVersion(db)).toBe(3);
+    expect(userVersion(db)).toBe(4);
     expect(db.prepare<[], { c: number }>(`SELECT COUNT(*) AS c FROM test_runs`).get()?.c).toBe(2);
     expect(db.prepare<[], { c: number }>(`SELECT COUNT(*) AS c FROM test_events`).get()?.c).toBe(1);
     expect(db.prepare<[], { c: number }>(`SELECT COUNT(*) AS c FROM runs`).get()?.c).toBe(2);
@@ -282,12 +286,14 @@ describe('lab sqlite migration ladder', () => {
 
     getDb();
 
-    expect(info).toHaveBeenCalledWith('applying migration 1 of 3');
+    expect(info).toHaveBeenCalledWith('applying migration 1 of 4');
     expect(info).toHaveBeenCalledWith(expect.stringMatching(/^migration 1 applied in \d+ms, schema now at version 1$/));
-    expect(info).toHaveBeenCalledWith('applying migration 2 of 3');
+    expect(info).toHaveBeenCalledWith('applying migration 2 of 4');
     expect(info).toHaveBeenCalledWith(expect.stringMatching(/^migration 2 applied in \d+ms, schema now at version 2$/));
-    expect(info).toHaveBeenCalledWith('applying migration 3 of 3');
+    expect(info).toHaveBeenCalledWith('applying migration 3 of 4');
     expect(info).toHaveBeenCalledWith(expect.stringMatching(/^migration 3 applied in \d+ms, schema now at version 3$/));
+    expect(info).toHaveBeenCalledWith('applying migration 4 of 4');
+    expect(info).toHaveBeenCalledWith(expect.stringMatching(/^migration 4 applied in \d+ms, schema now at version 4$/));
   });
 
   it('stays quiet on an open that applies nothing', () => {
@@ -299,6 +305,6 @@ describe('lab sqlite migration ladder', () => {
     getDb();
 
     expect(info).not.toHaveBeenCalled();
-    expect(debug).toHaveBeenCalledWith('schema already at version 3');
+    expect(debug).toHaveBeenCalledWith('schema already at version 4');
   });
 });

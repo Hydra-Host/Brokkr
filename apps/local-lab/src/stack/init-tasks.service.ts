@@ -5,8 +5,8 @@ import type { Observable } from 'rxjs';
 import { z } from 'zod';
 
 import type { InitStatus, InitTask } from '@repo/local-lab-contract';
-import { initAggregateState, initFocusTask } from '@repo/local-lab-contract';
-import { getErrorMessage } from '../common/errors';
+import { initAggregateState, initFocusTask, initTaskDone } from '@repo/local-lab-contract';
+import { getErrorMessage } from '@repo/utils';
 import { ProcessComposeClient } from '../services/process-compose.client';
 
 // devenv task names, colons included; anything else in the log dir is not a task artifact.
@@ -42,15 +42,18 @@ export interface InitTaskFacts {
 }
 
 /** Epoch-first, and that order is load-bearing: a task skipped by its status/execIfModified predicate
- *  never enters the log helper, so last bring-up's `.status = 0` would read as completed. */
+ *  never enters the log helper, so last bring-up's `.status = 0` must read as cached, never completed. */
 export function deriveInitTask(facts: InitTaskFacts, socketMtimeMs: number | null): InitTask {
   const label = DECLARED_TASKS.get(facts.name)?.label ?? facts.name;
   const updatedAt = Math.max(facts.logMtimeMs, facts.statusMtimeMs ?? 0) || null;
   const base = { name: facts.name, label, updatedAt };
   const fresh = (mtime: number | null): boolean => socketMtimeMs !== null && mtime !== null && mtime >= socketMtimeMs;
 
-  if (!fresh(facts.logMtimeMs) && !fresh(facts.statusMtimeMs))
+  if (!fresh(facts.logMtimeMs) && !fresh(facts.statusMtimeMs)) {
+    if (socketMtimeMs !== null && facts.statusCode === 0)
+      return { ...base, state: 'cached', exitCode: 0, detail: null };
     return { ...base, state: 'pending', exitCode: null, detail: null };
+  }
 
   if (fresh(facts.statusMtimeMs)) {
     if (facts.malformedStatus)
@@ -84,7 +87,7 @@ export class InitTasksService {
     return {
       state: initAggregateState(tasks),
       total: tasks.length,
-      completed: tasks.filter((t) => t.state === 'completed').length,
+      completed: tasks.filter(initTaskDone).length,
       failed: tasks.filter((t) => t.state === 'failed').length,
       current: initFocusTask(tasks)?.label ?? null,
     };

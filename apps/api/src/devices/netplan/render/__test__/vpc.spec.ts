@@ -1,7 +1,8 @@
 /** Golden tests for `vpc-native` (upstream `netplan-vpc-trinity.j2`), six-space base offset.
  * Emit assembly only — resolution/metrics in vpc-planner.spec.ts, lifecycle in vpc-lifecycle.spec.ts. */
+import { Logger } from '@nestjs/common';
 import { DeviceRole, InterfaceType, ServerLifecycleStatus, TagObjectType } from '@repo/database';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { DeviceContext } from '../../../device-context/device-context.types';
 import type { NetplanPhase } from '../../netplan.service';
 import { renderVpc } from '../vpc';
@@ -116,6 +117,33 @@ function buildContext(fix: {
 const render = (fix: Parameters<typeof buildContext>[0], phase: NetplanPhase = 'deploy'): string =>
   renderVpc(buildContext(fix), phase, { offset: 6, roce: false });
 
+function netplanStructure(yaml: string, offset = 6) {
+  const base = offset + 2;
+  const ethernets: string[] = [];
+  const bondMembers: string[] = [];
+  const vlanLinks: string[] = [];
+  let section: string | null = null;
+  let inBondInterfaces = false;
+  for (const line of yaml.split('\n')) {
+    const text = line.trim();
+    if (text === '') continue;
+    const indent = line.length - line.trimStart().length;
+    if (indent === base) {
+      section = text.replace(/:$/, '');
+      inBondInterfaces = false;
+    } else if (section === 'ethernets' && indent === base + 2 && text.endsWith(':')) {
+      ethernets.push(text.slice(0, -1));
+    } else if (section === 'bonds' && indent === base + 4) {
+      inBondInterfaces = text === 'interfaces:';
+    } else if (section === 'bonds' && inBondInterfaces && indent === base + 6 && text.startsWith('- ')) {
+      bondMembers.push(text.slice(2));
+    } else if (section === 'vlans' && text.startsWith('link: ')) {
+      vlanLinks.push(text.slice('link: '.length));
+    }
+  }
+  return { ethernets, bondMembers, vlanLinks };
+}
+
 describe('vpc-native generator', () => {
   it('renders a plain configured interface at the six-space offset', () => {
     const yaml = render({
@@ -147,6 +175,83 @@ describe('vpc-native generator', () => {
         '',
       ].join('\n'),
     );
+  });
+
+  it('emits one ethernets entry per mac and warns about the duplicate', () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const yaml = render({
+      interfaces: [
+        { name: 'eno2', mac: 'AA:BB:CC:DD:EE:FF' },
+        { name: 'eno1', mac: 'aa:bb:cc:dd:ee:ff', ips: ['10.0.0.5/24'] },
+        { name: 'eno3', mac: 'aa:bb:cc:dd:ee:00' },
+      ],
+      prefixes: [{ id: 'p1', cidr: '10.0.0.0/24', gatewayIp: '10.0.0.1', roleSlug: 'primary' }],
+    });
+
+    expect(yaml).toContain(`${O}    eno1:`);
+    expect(yaml).toContain(`${O}    eno3:`);
+    expect(yaml).not.toContain(`${O}    eno2:`);
+    expect(yaml.match(/macaddress: aa:bb:cc:dd:ee:ff/g)).toHaveLength(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('eno2'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('d1'));
+    warn.mockRestore();
+  });
+
+  it('keeps the duplicate-mac interface that carries an address even when it sorts later by name', () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const yaml = render({
+      interfaces: [
+        { name: 'eno1', mac: 'aa:bb:cc:dd:ee:ff' },
+        { name: 'eno2', mac: 'AA:BB:CC:DD:EE:FF', ips: ['10.0.0.5/24'] },
+      ],
+      prefixes: [{ id: 'p1', cidr: '10.0.0.0/24', gatewayIp: '10.0.0.1', roleSlug: 'primary' }],
+    });
+
+    expect(yaml).toContain(`${O}    eno2:`);
+    expect(yaml).toContain(`${O}        - 10.0.0.5/24`);
+    expect(yaml).not.toContain(`${O}    eno1:`);
+    expect(yaml.match(/macaddress: aa:bb:cc:dd:ee:ff/g)).toHaveLength(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('eno1 (aa:bb:cc:dd:ee:ff already on eno2)'));
+    warn.mockRestore();
+  });
+
+  it('keeps a duplicate-mac bond member so every bond0 member has an ethernets entry', () => {
+    const yaml = render({
+      interfaces: [
+        { name: 'eno1', northSouth: true, mac: 'aa:bb:cc:dd:ee:ff', ips: ['10.0.0.5/24'] },
+        { name: 'eno2', northSouth: true, mac: 'AA:BB:CC:DD:EE:FF', ips: ['10.0.0.6/24'] },
+      ],
+      prefixes: [{ id: 'p1', cidr: '10.0.0.0/24', gatewayIp: '10.0.0.1', roleSlug: 'primary' }],
+    });
+
+    const { ethernets, bondMembers } = netplanStructure(yaml);
+
+    expect(bondMembers).toEqual(['eno1', 'eno2']);
+    expect(ethernets).toContain('eno1');
+    expect(ethernets).toContain('eno2');
+    expect(bondMembers.filter((m) => !ethernets.includes(m))).toEqual([]);
+  });
+
+  it('keeps a duplicate-mac vlan parent so every vlan link resolves', () => {
+    const yaml = render({
+      role: DeviceRole.Hypervisor,
+      interfaces: [
+        { name: 'eno1', mac: 'aa:bb:cc:dd:ee:ff', ips: ['10.0.0.5/24'] },
+        { name: 'eno2', mac: 'AA:BB:CC:DD:EE:FF', ips: ['10.0.100.5/24'] },
+      ],
+      prefixes: [
+        { id: 'p1', cidr: '10.0.0.0/24', gatewayIp: '10.0.0.1', roleSlug: 'primary' },
+        { id: 'p2', cidr: '10.0.100.0/24', gatewayIp: '10.0.100.1', vlanVid: 100, roleSlug: 'primary' },
+      ],
+    });
+
+    const { ethernets, vlanLinks } = netplanStructure(yaml);
+
+    expect(vlanLinks).toEqual(['eno2']);
+    expect(ethernets).toContain('eno2');
+    expect(vlanLinks.filter((l) => !ethernets.includes(l))).toEqual([]);
   });
 
   it('emits the wildcard DHCP fallback when nothing resolves, at the same offset', () => {

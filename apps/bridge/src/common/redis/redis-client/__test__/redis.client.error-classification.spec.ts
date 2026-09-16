@@ -65,6 +65,9 @@ class FlakyGetDriver implements RedisDriver {
   async rpush(): Promise<number> {
     throw new Error('not used');
   }
+  async xadd(): Promise<string> {
+    throw new Error('not used');
+  }
   async lrange(): Promise<string[]> {
     throw new Error('not used');
   }

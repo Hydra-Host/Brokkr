@@ -41,6 +41,10 @@ export interface PendingDeviceFacts {
 
 export type PendingDeviceRegistrar = (jobId: string, facts: PendingDeviceFacts) => Promise<boolean>;
 
+export const IPXE_CHAIN_HIT_RECORDER = Symbol('IpxeChainHitRecorder');
+
+export type ChainHitRecorder = (jobId: string, mac: string, deviceId: string | null) => Promise<void>;
+
 const APP_CLASS_NAME = 'routes-chain';
 
 @Controller()
@@ -53,6 +57,9 @@ export class IpxeController {
     @Optional()
     @Inject(BULLMQ_RESULTS_SERVICE)
     private readonly results?: ResultsService,
+    @Optional()
+    @Inject(IPXE_CHAIN_HIT_RECORDER)
+    private readonly recordChainHit?: ChainHitRecorder,
   ) {}
 
   @Post('api/chain')
@@ -102,6 +109,17 @@ export class IpxeController {
       // renderFacts feed the hub's placeholder atom; they never reach discovery:pending — the enrichment write below is what the commissioning grid reads.
       const renderFacts = { ip: params.ip, ipmi_ip: params.ipmi_ip, manufacturer: params.manufacturer };
       const record = await this.chain.resolveRecord(identifiers, params.buildarch, jobId, renderFacts);
+
+      if (params.mac && this.recordChainHit) {
+        try {
+          await this.recordChainHit(jobId, params.mac, isResolveOutcome(record) ? null : record.id);
+        } catch (error) {
+          await logWarning(`ipxe:chain marker write failed for ${params.mac}: ${getErrorMessage(error)}`, {
+            jobId,
+            appClassName: APP_CLASS_NAME,
+          });
+        }
+      }
 
       const hasIdentifier = Boolean(params.mac || params.system_uuid || params.serial);
       const notYetRealDevice =

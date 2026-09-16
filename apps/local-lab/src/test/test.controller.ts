@@ -17,7 +17,7 @@ export class TestController {
   }
 
   @TsRestHandler(contract.startTest)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   start() {
     return tsRestHandler(contract.startTest, async ({ body }) => {
       const runId = this.tests.start(body.scenarioId, body.nodeIndex, {
@@ -60,7 +60,7 @@ export class TestController {
   }
 
   @TsRestHandler(contract.purgeTestRuns)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   purge() {
     return tsRestHandler(contract.purgeTestRuns, async ({ body }) => ({
       status: 200 as const,
@@ -85,6 +85,7 @@ export class TestController {
   }
 
   @Sse('api/tests/runs/:runId/events/stream')
+  @LabRoute({ capability: 'operate' })
   eventStream(@Param('runId') runId: string): Observable<{ data: TestEvent | StreamDoneEvent }> {
     const { backlog, live$ } = this.tests.eventStream(runId);
     return concat(

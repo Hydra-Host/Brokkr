@@ -68,6 +68,7 @@ export type {
   PluginReprovisionDiskLayout,
   PluginReprovisionRequest,
   PluginRequestSource,
+  PluginRetryAttribution,
 } from './lifecycle-requests';
 export { PLUGIN_NETPLAN_RENDERER } from './netplan-renderer';
 export type {
@@ -108,6 +109,8 @@ export { EXTENSION_SLOTS, defineFrontendModule } from './slots';
 export type {
   AddressAutocompleteContribution,
   AddressAutocompleteSlotProps,
+  AppBannerSlotContribution,
+  AppBannerSlotProps,
   DashboardWidgetContribution,
   ExtensionSlot,
   InventoryItemCtaContribution,

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import types
 
 import pytest
-from local import applied
+from local import applied, verify, verify_baremetal
 from local import fleet as fleetmod
-from local.fleet import BareMetalOps, VmOps, _ops_for
+from local.fleet import BareMetalOps
 from local.schema import Fleet
 from local.stores import SimDevice
 
@@ -14,7 +15,6 @@ BM_NODE = {"name": "bm-1", "pxe_mac": "00:00:5e:00:53:a1", "bmc_ip": "10.0.0.20"
 BM_NODE_2 = {"name": "bm-2", "pxe_mac": "00:00:5e:00:53:a2", "bmc_ip": "10.0.0.21", "bmc_mac": "00:00:5e:00:53:c2"}
 NETWORK = {"name": "brokkr-net", "cidr": "192.168.200.0/24", "domain": "sim.local", "bmc_cidr": "192.168.105.0/24"}
 VALID_BM = {
-    "mode": "baremetal",
     "network": NETWORK,
     "defaults": {"cpus": 2, "memory_mb": 4096, "disk_gb": 40, "arch": "x86_64"},
     "nodes": [],
@@ -34,18 +34,6 @@ def _bm(overrides=None) -> Fleet:
 
 def _vm() -> Fleet:
     return Fleet.model_validate(VALID_VM)
-
-
-def test_ops_for_baremetal_picks_baremetal_ops():
-    assert isinstance(_ops_for(_bm()), BareMetalOps)
-
-
-def test_ops_for_vm_picks_vm_ops():
-    assert isinstance(_ops_for(_vm()), VmOps)
-
-
-def test_ops_for_none_defaults_to_vm_ops():
-    assert isinstance(_ops_for(None), VmOps)
 
 
 def test_bm_preflight_ok_when_iface_up_with_ip_and_docker(monkeypatch):
@@ -158,12 +146,39 @@ def test_cmd_up_bm_writes_applied_manifest_and_no_vm_ops(monkeypatch, tmp_path):
     monkeypatch.setattr(fleetmod, "ensure_sudo_cached", lambda: None)
     monkeypatch.setattr(fleetmod, "ensure_state_dirs", lambda: None)
     monkeypatch.setattr(fleetmod, "render_xmls", lambda: pytest.fail("bm must not render XMLs"))
-    writes: list[str] = []
-    monkeypatch.setattr(applied, "write", lambda f: writes.append(f.mode) or True)
+    writes: list[tuple[bool, bool]] = []
+    monkeypatch.setattr(applied, "write", lambda f: writes.append((f.has_vm, f.has_bm)) or True)
 
     rc = fleetmod.cmd_up(argparse.Namespace(supervise=False))
     assert rc == 0
-    assert writes == ["baremetal"]
+    assert writes == [(False, True)]
+
+
+def test_verify_cli_defaults_the_probe_budget(monkeypatch):
+    seen: list[argparse.Namespace] = []
+    monkeypatch.setattr(fleetmod, "cmd_verify", lambda args: seen.append(args) or 0)
+    monkeypatch.setattr(sys, "argv", ["local.fleet", "verify"])
+
+    assert fleetmod.main() == 0
+    assert seen[0].probe_budget_seconds == 120.0
+
+
+def test_cmd_verify_forwards_an_explicit_probe_budget_to_the_collector(monkeypatch):
+    monkeypatch.setattr(fleetmod, "load_fleet", _bm)
+    monkeypatch.setattr(applied, "read", lambda: applied.manifest(_bm()))
+    monkeypatch.setattr(verify, "host_os", lambda: "linux")
+    budgets: list[float] = []
+    monkeypatch.setattr(
+        verify_baremetal,
+        "collect_baremetal_live_state",
+        lambda m, *, probe_budget_seconds: (
+            budgets.append(probe_budget_seconds) or verify_baremetal.BareMetalLiveState()
+        ),
+    )
+
+    fleetmod.cmd_verify(argparse.Namespace(heal=False, json=False, probe_budget_seconds=7.5))
+
+    assert budgets == [7.5]
 
 
 def test_cmd_down_bm_is_noop(monkeypatch, tmp_path):
@@ -204,14 +219,14 @@ def test_cmd_ensure_bridge_vm_creates_data_plane_bridge(monkeypatch):
     assert len(called) == 1
 
 
-def test_cmd_apply_cross_mode_routes_to_op_not_full_rebuild(monkeypatch, tmp_path):
+def test_cmd_apply_plane_change_routes_to_op_not_full_rebuild(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCAL_STATE", str(tmp_path))
     monkeypatch.setattr(fleetmod, "load_fleet", _bm)
     monkeypatch.setattr(fleetmod, "bm_preflight", lambda fleet: None)
     monkeypatch.setattr(fleetmod, "ensure_sudo_cached", lambda: None)
     monkeypatch.setattr(fleetmod, "ensure_state_dirs", lambda: None)
     monkeypatch.setattr(applied, "read", lambda: applied.manifest(_vm()))
-    monkeypatch.setattr(fleetmod, "_full_rebuild", lambda *a, **k: pytest.fail("mode change must not full-rebuild"))
+    monkeypatch.setattr(fleetmod, "_full_rebuild", lambda *a, **k: pytest.fail("a plane change must not full-rebuild"))
 
     rc = fleetmod.cmd_apply(argparse.Namespace(plan=False, source=None, allow_data_loss=False))
     assert rc == 3

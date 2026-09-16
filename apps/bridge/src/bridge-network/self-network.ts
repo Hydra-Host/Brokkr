@@ -1,7 +1,6 @@
 export {
   deriveDefaultPool,
   discoverIpv4Interfaces,
-  ipInCidr,
   resolveServiceInterfaces,
   selfInterfaces,
   selfPrimary,

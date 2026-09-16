@@ -1,4 +1,5 @@
 import { GpuVendor } from '@repo/database';
+import { formatMacAddress } from '@repo/database/extensions/mac-address';
 import type { LoggerService } from 'src/logger/logger.service';
 import type { PrismaClient } from 'src/prisma/prisma.client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,16 +15,53 @@ const silentLogger = {
 
 const DEVICE_ID = 'device-uuid-1';
 
+interface IfaceRow {
+  id: string;
+  name: string;
+  macAddress: string | null;
+}
+
+interface IfaceWhere {
+  name?: string;
+  macAddress?: { equals: string };
+  id?: { not: string };
+}
+
 const makeHarness = ({
   drivesRemoved = 0,
   gpusRemoved = 0,
   edgesRemoved = 0,
-}: { drivesRemoved?: number; gpusRemoved?: number; edgesRemoved?: number } = {}) => {
+  interfaces = [],
+}: { drivesRemoved?: number; gpusRemoved?: number; edgesRemoved?: number; interfaces?: IfaceRow[] } = {}) => {
   const storageDriveUpsert = vi.fn();
   const storageDriveDeleteMany = vi.fn().mockResolvedValue({ count: drivesRemoved });
   const gpuUpsert = vi.fn();
   const gpuDeleteMany = vi.fn().mockResolvedValue({ count: gpusRemoved });
   const nvlinkDeleteMany = vi.fn().mockResolvedValue({ count: edgesRemoved });
+
+  const ifaceRows = interfaces.map((row) => ({ ...row }));
+  let ifaceSeq = 0;
+  const storedMac = (mac: string | null | undefined) => (typeof mac === 'string' ? formatMacAddress(mac) : null);
+  const interfaceFindFirst = vi.fn(async ({ where }: { where: IfaceWhere }) => {
+    const row = ifaceRows.find(
+      (r) =>
+        (where.name === undefined || r.name === where.name) &&
+        (where.macAddress === undefined || r.macAddress?.toLowerCase() === where.macAddress.equals.toLowerCase()) &&
+        (where.id === undefined || r.id !== where.id.not),
+    );
+    return row ? { id: row.id, name: row.name } : null;
+  });
+  const interfaceUpdate = vi.fn(async ({ where, data }: { where: { id: string }; data: Partial<IfaceRow> }) => {
+    const row = ifaceRows.find((r) => r.id === where.id);
+    if (row && data.name !== undefined) row.name = data.name;
+    if (row && data.macAddress !== undefined) row.macAddress = storedMac(data.macAddress);
+    return { id: where.id };
+  });
+  const interfaceCreate = vi.fn(async ({ data }: { data: { name: string; macAddress?: string | null } }) => {
+    const row = { id: `iface-${++ifaceSeq}`, name: data.name, macAddress: storedMac(data.macAddress) };
+    ifaceRows.push(row);
+    return { id: row.id };
+  });
 
   const tx = {
     device: { update: vi.fn() },
@@ -32,6 +70,7 @@ const makeHarness = ({
     nvlinkEdge: { upsert: vi.fn(), deleteMany: nvlinkDeleteMany },
     storageDrive: { upsert: storageDriveUpsert, deleteMany: storageDriveDeleteMany },
     memoryConfig: { upsert: vi.fn() },
+    interface: { findFirst: interfaceFindFirst, update: interfaceUpdate, create: interfaceCreate },
   };
 
   const prisma = {
@@ -45,6 +84,9 @@ const makeHarness = ({
     gpuUpsert,
     gpuDeleteMany,
     nvlinkDeleteMany,
+    interfaceCreate,
+    interfaceUpdate,
+    ifaceRows,
     driveRemoveArgs: () => storageDriveDeleteMany.mock.calls.map((call) => (call[0] as { where: unknown }).where),
     gpuRemoveArgs: () => gpuDeleteMany.mock.calls.map((call) => (call[0] as { where: unknown }).where),
   };
@@ -180,5 +222,82 @@ describe('applyMutations — Gpu reconciliation', () => {
     await applyMutations(harness.prisma, DEVICE_ID, { upserts: { gpus: [] } }, silentLogger);
 
     expect(harness.nvlinkDeleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('applyMutations — Interface reconciliation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('updates a renamed live row carrying the same MAC in place, under the live name', async () => {
+    const harness = makeHarness({ interfaces: [{ id: 'if-1', name: 'eth0', macAddress: 'aa:bb:cc:dd:ee:01' }] });
+
+    await applyMutations(
+      harness.prisma,
+      DEVICE_ID,
+      { upserts: { interfaces: [{ name: 'eno1', macAddress: 'AA-BB-CC-DD-EE-01' }] } },
+      silentLogger,
+    );
+
+    expect(harness.interfaceCreate).not.toHaveBeenCalled();
+    expect(harness.interfaceUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'if-1' }, data: expect.objectContaining({ name: 'eno1' }) }),
+    );
+    expect(harness.ifaceRows.map((row) => row.name)).toEqual(['eno1']);
+    expect(silentLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it('stores a second interface reporting an already-written MAC without one and warns', async () => {
+    const harness = makeHarness();
+
+    await applyMutations(
+      harness.prisma,
+      DEVICE_ID,
+      {
+        upserts: {
+          interfaces: [
+            { name: 'bond0', macAddress: 'aa:bb:cc:dd:ee:01' },
+            { name: 'eth0', macAddress: 'aa:bb:cc:dd:ee:01' },
+          ],
+        },
+      },
+      silentLogger,
+    );
+
+    expect(harness.interfaceUpdate).not.toHaveBeenCalled();
+    expect(harness.ifaceRows).toEqual([
+      { id: 'iface-1', name: 'bond0', macAddress: 'aa:bb:cc:dd:ee:01' },
+      { id: 'iface-2', name: 'eth0', macAddress: null },
+    ]);
+    expect(silentLogger.warn).toHaveBeenCalledTimes(1);
+    expect(silentLogger.warn).toHaveBeenCalledWith(expect.stringContaining('bond0 and eth0'));
+    expect(silentLogger.warn).toHaveBeenCalledWith(expect.stringContaining('aa:bb:cc:dd:ee:01'));
+  });
+
+  it('leaves the MAC on the live row that already holds it when a name-matched interface reports it', async () => {
+    const harness = makeHarness({
+      interfaces: [
+        { id: 'if-1', name: 'eth0', macAddress: 'aa:bb:cc:dd:ee:01' },
+        { id: 'if-2', name: 'eth1', macAddress: 'aa:bb:cc:dd:ee:02' },
+      ],
+    });
+
+    await applyMutations(
+      harness.prisma,
+      DEVICE_ID,
+      { upserts: { interfaces: [{ name: 'eth1', macAddress: 'aa:bb:cc:dd:ee:01' }] } },
+      silentLogger,
+    );
+
+    expect(harness.interfaceCreate).not.toHaveBeenCalled();
+    expect(harness.interfaceUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'if-2' },
+        data: expect.objectContaining({ name: 'eth1', macAddress: null }),
+      }),
+    );
+    expect(harness.ifaceRows.find((row) => row.id === 'if-1')?.macAddress).toBe('aa:bb:cc:dd:ee:01');
+    expect(silentLogger.warn).toHaveBeenCalledWith(expect.stringContaining('eth0 and eth1'));
   });
 });

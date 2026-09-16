@@ -16,7 +16,7 @@ export class DiscoveryBenchmarksListener {
   @OnEvent(DiscoveryEvent.RunCompleted)
   async onRunCompleted(event: DiscoveryRunCompletedEvent): Promise<void> {
     try {
-      await this.benchmarkService.runBenchmarks(event.deviceId);
+      await this.benchmarkService.runBenchmarks(event.deviceId, 'discovery');
     } catch (error) {
       this.logger.error(
         `Benchmark scheduling failed for device ${event.deviceId} (runId=${event.runId}): ${getErrorMessage(error)}`,

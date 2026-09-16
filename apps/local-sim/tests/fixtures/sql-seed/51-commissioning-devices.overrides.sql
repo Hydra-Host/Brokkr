@@ -8,25 +8,25 @@ ALTER TABLE "Device" DISABLE TRIGGER device_role_write_once;
 -- commission-1 id=00000000-0000-0000-0000-000000000003 (role=null commissioning, dhcp) ipmi=192.168.105.12
 UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()
 WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' AND name = 'commission-1'
-  AND id <> '00000000-0000-0000-0000-000000000003' AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
+  AND id <> '00000000-0000-0000-0000-000000000003' AND "supplierId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
 DELETE FROM "DeviceSecret"
 WHERE "deviceId" = '00000000-0000-0000-0000-000000000003' AND "zoneId" <> '00000000-0000-0000-0000-111111111111';
 INSERT INTO "Device" (
     id, name, status, role, "deviceType",
     "zoneId", "networkType",
-    "supplierId", "organizationId",
+    "supplierId",
     architecture, "netplanOverride", "updatedAt"
 ) VALUES (
     '00000000-0000-0000-0000-000000000003', 'commission-1', 'PLANNED'::"DeviceStatus", NULL, 'Baremetal'::"DeviceType",
     '00000000-0000-0000-0000-111111111111', 'Public'::"DeviceNetworkType",
-    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'), (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
+    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
     'amd64', NULL, NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, status = EXCLUDED.status, role = EXCLUDED.role,
     "deviceType" = EXCLUDED."deviceType",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
-    "supplierId" = EXCLUDED."supplierId", "organizationId" = EXCLUDED."organizationId",
+    "supplierId" = EXCLUDED."supplierId",
     architecture = EXCLUDED.architecture, "netplanOverride" = NULL,
     "deletedAt" = NULL, "updatedAt" = NOW();
 DO $$ BEGIN
@@ -64,6 +64,9 @@ ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
     "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();
 DELETE FROM "IpAddress" WHERE "interfaceId" IN
     (SELECT id FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000000003' AND name = 'IPMI' AND "deletedAt" IS NULL);
+DELETE FROM "IpAddress"
+WHERE address = '192.168.105.12'::inet AND "organizationId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111')
+    AND "vrfId" IS NULL AND "deletedAt" IS NULL;
 INSERT INTO "IpAddress"
     (id, address, status, "organizationId", "interfaceId", "assignedObjectType", "assignedObjectId", "updatedAt")
 SELECT gen_random_uuid(), '192.168.105.12'::inet, 'ACTIVE'::"IpStatus", (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),

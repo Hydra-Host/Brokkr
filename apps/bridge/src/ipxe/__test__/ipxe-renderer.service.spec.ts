@@ -29,7 +29,8 @@ function writeJsonEchoTemplates(dir: string): void {
       '"job_id":{{ job_id | dump }},' +
       '"kernel_network":{{ kernel_network | dump }},' +
       '"platform_type":{{ platform_type | dump }},' +
-      '"pci_realloc_off":{{ pci_realloc_off | dump }}}',
+      '"pci_realloc_off":{{ pci_realloc_off | dump }},' +
+      '"flavor":{{ flavor | dump }}}',
     'disk.ipxe.njk':
       '{"platform":{{ platform | dump }},"arch":{{ arch | dump }},' +
       '"bridge_url":{{ bridge_url | dump }},"job_id":{{ job_id | dump }}}',
@@ -96,11 +97,30 @@ describe('IpxeTemplateRenderer', () => {
           job_id: 'j',
           kernel_network: [],
           pci_realloc_off: false,
+          flavor: 'full',
         }),
       );
       expect(out.discovery_initrd_id).toBe('12121212-1212-1212-1212-121212121212');
       expect(out.device_id).toBe('12121212-1212-1212-1212-121212121212');
       expect(out.bridge_url).toBe('https://bridge');
+      expect(out.flavor).toBe('full');
+    });
+
+    it('passes the light flavor through to the template', async () => {
+      const out = JSON.parse(
+        await renderer.render_discovery({
+          arch: 'arm64',
+          platform: 'efi-arm64',
+          platform_type: 'inventory',
+          device_id: '12121212-1212-1212-1212-121212121212',
+          serial_port: null,
+          job_id: 'j',
+          kernel_network: [],
+          pci_realloc_off: false,
+          flavor: 'light',
+        }),
+      );
+      expect(out.flavor).toBe('light');
     });
 
     it('placeholder uses mac-keyed initrd', async () => {
@@ -114,6 +134,7 @@ describe('IpxeTemplateRenderer', () => {
           job_id: 'j',
           kernel_network: [],
           pci_realloc_off: false,
+          flavor: 'full',
           mac: 'AA:BB:CC:DD:EE:FF',
           is_placeholder_device: true,
         }),

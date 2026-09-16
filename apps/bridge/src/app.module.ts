@@ -51,6 +51,7 @@ import { RpcExceptionFilter } from './common/errors/rpc-exception.filter.js';
 import { HttpSessionModule } from './common/http-session.module.js';
 import { JobIdModule } from './common/job-id.module.js';
 import { AccessLogMiddleware } from './common/middleware/access-log.middleware.js';
+import { ClientIpMiddleware } from './common/middleware/client-ip.middleware.js';
 import { JobIdMiddleware } from './common/middleware/job-id.middleware.js';
 import { ResponseTimingMiddleware } from './common/middleware/response-timing.middleware.js';
 import { BufferRedisModule } from './common/redis/buffer-redis.module.js';
@@ -110,6 +111,7 @@ import { NetplanAtomService } from './device-record/netplan/netplan-atom.service
 import { NetplanModule } from './device-record/netplan/netplan.module.js';
 import { createDeviceService } from './devices/device.service.js';
 import { DevicesModule } from './devices/devices.module.js';
+import { DiagnosticsModule } from './diagnostics/diagnostics.module.js';
 import { DocsModule } from './docs/docs.module.js';
 import { DiscoveryModule } from './download/discovery.module.js';
 import { GrubModule } from './download/grub.module.js';
@@ -117,6 +119,7 @@ import { OsImageModule } from './download/os-image.module.js';
 import { EnrichViaPxeModule } from './enrich-via-pxe/enrich-via-pxe.module.js';
 import { InitrdModule } from './initrd/initrd.module.js';
 import { IpxeModule } from './ipxe/ipxe.module.js';
+import { JobLogSinkModule } from './job-logs/job-log-sink.module.js';
 import { getLeaderConfig } from './leader-election/leader-election.config.js';
 import { LeaderElectionModule } from './leader-election/leader-election.module.js';
 import { LifecycleDeployModule } from './lifecycle-deploy/lifecycle-deploy.module.js';
@@ -137,6 +140,7 @@ import { resolveBridgePluginBackends } from './plugin-host/resolve-plugin-backen
 import { PowerOpsModule } from './power-ops/power-ops.module.js';
 import { ProvisionModule } from './provision/provision.module.js';
 import { RedfishWorkflowModule } from './redfish-workflow/redfish-workflow.module.js';
+import { getPlanManager, PLAN_PERSISTER_PROVIDER } from './saga-framework/plan-manager-holder.js';
 import { PlanManagerService, type RedisLike } from './saga-framework/plan-manager.service.js';
 import { SagaFrameworkModule } from './saga-framework/saga-framework.module.js';
 import { getSagaDef } from './saga-framework/saga-registry.js';
@@ -279,12 +283,19 @@ const bullmqQueueFactoryProvider: Provider = {
   imports: [ZoneCryptoModule],
   providers: [
     bullmqQueueFactoryProvider,
+    { provide: PLAN_PERSISTER_PROVIDER, useValue: getPlanManager },
     BullmqQueueService,
     renderRequestEnqueuerProvider,
     collectionJobEnqueuerProvider,
     realAtomFetcherProvider,
   ],
-  exports: [BullmqQueueService, BULLMQ_RENDER_REQUEST_ENQUEUER, BULLMQ_COLLECTION_JOB_ENQUEUER, ATOM_FETCHER],
+  exports: [
+    BullmqQueueService,
+    PLAN_PERSISTER_PROVIDER,
+    BULLMQ_RENDER_REQUEST_ENQUEUER,
+    BULLMQ_COLLECTION_JOB_ENQUEUER,
+    ATOM_FETCHER,
+  ],
 })
 class BullmqProducersModule {}
 
@@ -511,11 +522,13 @@ class AgentUpgradeServiceModule {}
     BufferRedisModule,
     JobIdModule,
     RedisModule.forRoot(buildRedisModuleOptions()),
+    JobLogSinkModule,
     BridgePluginHostModule,
     BmcSecretSourceBindingModule,
     CacheBindingModule,
     LeaderElectionCompositionModule,
     BridgeStatusModule,
+    DiagnosticsModule,
     CronsModule,
     TftpServerModule,
     AdminModule.forRoot({ cronSupervisor: () => getCronSupervisor() }),
@@ -604,7 +617,7 @@ class AgentUpgradeServiceModule {}
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     consumer
-      .apply(JobIdMiddleware, ResponseTimingMiddleware, AccessLogMiddleware)
+      .apply(JobIdMiddleware, ClientIpMiddleware, ResponseTimingMiddleware, AccessLogMiddleware)
       .forRoutes({ path: '*', method: RequestMethod.ALL });
   }
 

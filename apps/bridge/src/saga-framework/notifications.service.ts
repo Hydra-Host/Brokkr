@@ -26,6 +26,7 @@ function defaultLogger(name: string): SagaLoggerLike {
 }
 
 export const LOCK_WAIT_STEP_NAME = 'lock_wait';
+export const AGENT_WAIT_STEP_NAME = 'agent_wait';
 export type EventType = 'job_failed' | 'job_completed' | 'job_blocked' | 'stage_changed';
 type NotificationStatus = JobStatus | `${JobStatus}`;
 

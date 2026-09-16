@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { parse as yamlLoad } from 'yaml';
+
+import { intToIpv4 } from '@repo/utils';
+
 import { getErrorMessage } from '../common/error-utils';
 
 export class NetplanToKernelParamsError extends Error {
@@ -288,10 +291,6 @@ function parsePrefix(prefixPart: string): number {
   const prefix = Number.parseInt(prefixPart, 10);
   if (prefix < 0 || prefix > 32) throw new Error(`${prefixPart} is not a valid prefix length`);
   return prefix;
-}
-
-function intToIpv4(value: number): string {
-  return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff].join('.');
 }
 
 function splitSlashPair(value: string): [string, string] {

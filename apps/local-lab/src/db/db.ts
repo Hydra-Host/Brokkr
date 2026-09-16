@@ -152,7 +152,18 @@ function m003OrphanedStatus(db: Database.Database): void {
   `);
 }
 
-const MIGRATIONS: ReadonlyArray<(db: Database.Database) => void> = [m001Legacy, m002Ledger, m003OrphanedStatus];
+// which token authorized the request, so an audit reader can separate the injected api token from the
+// host token; NULL on every pre-existing row and on any request the address granted
+function m004AuditPrincipal(db: Database.Database): void {
+  db.exec(`ALTER TABLE audit_events ADD COLUMN origin_principal TEXT;`);
+}
+
+const MIGRATIONS: ReadonlyArray<(db: Database.Database) => void> = [
+  m001Legacy,
+  m002Ledger,
+  m003OrphanedStatus,
+  m004AuditPrincipal,
+];
 
 function userVersion(db: Database.Database): number {
   const raw = db.pragma('user_version', { simple: true });
@@ -245,6 +256,7 @@ export interface AuditEventRow {
   origin_ip: string | null;
   origin_loopback: number | null;
   origin_token: number | null;
+  origin_principal: string | null;
   params: string | null;
   error: string | null;
 }
@@ -290,6 +302,7 @@ const auditEventRowSchema = z.object({
   origin_ip: z.string().nullable(),
   origin_loopback: z.number().nullable(),
   origin_token: z.number().nullable(),
+  origin_principal: z.string().nullable(),
   params: z.string().nullable(),
   error: z.string().nullable(),
 }) satisfies z.ZodType<AuditEventRow>;
@@ -487,9 +500,9 @@ export function insertAuditEvent(row: Omit<AuditEventRow, 'id'>): void {
     .prepare(
       `
     INSERT INTO audit_events (ts, method, path, handler, outcome, status_code, duration_ms, run_id,
-                              origin_ip, origin_loopback, origin_token, params, error)
+                              origin_ip, origin_loopback, origin_token, origin_principal, params, error)
     VALUES (@ts, @method, @path, @handler, @outcome, @status_code, @duration_ms, @run_id,
-            @origin_ip, @origin_loopback, @origin_token, @params, @error)
+            @origin_ip, @origin_loopback, @origin_token, @origin_principal, @params, @error)
   `,
     )
     .run(row);

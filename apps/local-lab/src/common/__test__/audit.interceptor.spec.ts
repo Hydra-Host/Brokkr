@@ -17,7 +17,7 @@ class FixtureController {
   @LabRoute({ audit: false })
   quiet(): void {}
 
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'host-exec' })
   sharp(): void {}
 
   plain(): void {}
@@ -273,13 +273,23 @@ describe('AuditInterceptor origin columns', () => {
     });
     await pending;
 
-    expect(onlyRow()).toMatchObject({ origin_ip: '127.0.0.1', origin_loopback: 1, origin_token: 0 });
+    expect(onlyRow()).toMatchObject({
+      origin_ip: '127.0.0.1',
+      origin_loopback: 1,
+      origin_token: 0,
+      origin_principal: null,
+    });
   });
 
   it('writes the null triple when there is no request origin in scope', async () => {
     await invoke(FixtureController.prototype.plain);
 
-    expect(onlyRow()).toMatchObject({ origin_ip: null, origin_loopback: null, origin_token: null });
+    expect(onlyRow()).toMatchObject({
+      origin_ip: null,
+      origin_loopback: null,
+      origin_token: null,
+      origin_principal: null,
+    });
   });
 });
 

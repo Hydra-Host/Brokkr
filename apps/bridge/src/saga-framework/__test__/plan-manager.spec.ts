@@ -9,6 +9,7 @@ import {
   transitionPlanStep,
 } from '../plan-manager.service';
 import type { LifecyclePlan, LifecyclePlanStep } from '../plan.types';
+import { registerSagaDef } from '../saga-registry';
 import { JobStatus } from '../state.types';
 
 interface CacheCall {
@@ -503,5 +504,48 @@ describe('plan-manager Pattern B: serialize round-trip', () => {
     const reparsed = parsePlan(json);
     const json2 = JSON.stringify(serializeLifecyclePlan(reparsed));
     expect(json2).toBe(json);
+  });
+});
+
+describe('plan-manager persistInitialPlan: bridge-local durability gate', () => {
+  const SAGA = 'test_bridge_local_saga';
+  registerSagaDef({ name: SAGA, steps: [{ name: 'step_one', operation: 'Step one', execute: async () => ({}) }] });
+
+  it('returns false and touches Redis not at all for an unknown saga', async () => {
+    const { cache, calls } = makeScriptedCache([]);
+
+    expect(await makeManager(cache).persistInitialPlan('plan-1', 'no_such_saga', 42, 'q')).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('returns true without a second write when the plan is already persisted', async () => {
+    const existing = JSON.stringify(serializeLifecyclePlan(buildPlan([buildStep('step_one')])));
+    const { cache, calls } = makeScriptedCache([{ op: 'get', expectedArgs: { key: KEY }, returns: existing }]);
+
+    expect(await makeManager(cache).persistInitialPlan('plan-1', SAGA, 42, 'q')).toBe(true);
+    expect(calls.filter((c) => c.op === 'set')).toHaveLength(0);
+  });
+
+  it('writes the plan and confirms the key is readable back', async () => {
+    const { cache, calls } = makeScriptedCache([
+      { op: 'get', expectedArgs: { key: KEY }, returns: null },
+      { op: 'set', expectedArgs: { key: KEY } },
+      { op: 'get', expectedArgs: { key: KEY }, returns: '{"plan_id":"plan-1"}' },
+    ]);
+
+    expect(await makeManager(cache).persistInitialPlan('plan-1', SAGA, 42, 'q')).toBe(true);
+    expect(calls.map((c) => c.op)).toEqual(['get', 'set', 'get']);
+  });
+
+  // The whole point of the gate: persistPlan swallows the write error and getPlan would
+  // still succeed off the in-memory copy, so only a direct read-back catches this.
+  it('returns false when the Redis write fails, so the caller skips the enqueue', async () => {
+    const { cache } = makeScriptedCache([
+      { op: 'get', expectedArgs: { key: KEY }, returns: null },
+      { op: 'set', raises: new Error('redis down') },
+      { op: 'get', expectedArgs: { key: KEY }, returns: null },
+    ]);
+
+    expect(await makeManager(cache).persistInitialPlan('plan-1', SAGA, 42, 'q')).toBe(false);
   });
 });

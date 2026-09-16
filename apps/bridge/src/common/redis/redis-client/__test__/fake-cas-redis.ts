@@ -5,9 +5,17 @@ interface Entry {
   expiresAt: number | null;
 }
 
+interface StreamEntry {
+  id: string;
+  fields: Record<string, string>;
+}
+
 export class FakeCasRedis implements RedisDriver {
   private readonly store = new Map<string, Entry>();
   private readonly hashes = new Map<string, Map<string, string>>();
+  private readonly streams = new Map<string, StreamEntry[]>();
+  private readonly streamExpiry = new Map<string, number>();
+  private seq = 0;
   now = 0;
   failNextCommand: Error | null = null;
   failNextEval: Error | null = null;
@@ -25,6 +33,22 @@ export class FakeCasRedis implements RedisDriver {
       return undefined;
     }
     return entry;
+  }
+
+  private liveStream(key: string): StreamEntry[] | undefined {
+    const entries = this.streams.get(key);
+    if (!entries) return undefined;
+    const expiresAt = this.streamExpiry.get(key);
+    if (expiresAt !== undefined && expiresAt <= this.now) {
+      this.streams.delete(key);
+      this.streamExpiry.delete(key);
+      return undefined;
+    }
+    return entries;
+  }
+
+  streamEntries(key: string): StreamEntry[] {
+    return this.liveStream(key) ?? [];
   }
 
   private maybeFailCommand(): void {
@@ -69,22 +93,30 @@ export class FakeCasRedis implements RedisDriver {
 
   async del(key: string): Promise<number> {
     this.maybeFailCommand();
-    const existed = this.live(key) !== undefined;
+    const existed = this.live(key) !== undefined || this.liveStream(key) !== undefined;
     this.store.delete(key);
+    this.streams.delete(key);
+    this.streamExpiry.delete(key);
     return existed ? 1 : 0;
   }
 
   async exists(key: string): Promise<number> {
     this.maybeFailCommand();
-    return this.live(key) ? 1 : 0;
+    return this.live(key) || this.liveStream(key) ? 1 : 0;
   }
 
   async expire(key: string, seconds: number): Promise<number> {
     this.maybeFailCommand();
     const entry = this.live(key);
-    if (!entry) return 0;
-    entry.expiresAt = this.now + seconds;
-    return 1;
+    if (entry) {
+      entry.expiresAt = this.now + seconds;
+      return 1;
+    }
+    if (this.liveStream(key)) {
+      this.streamExpiry.set(key, this.now + seconds);
+      return 1;
+    }
+    return 0;
   }
 
   async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
@@ -150,6 +182,18 @@ export class FakeCasRedis implements RedisDriver {
     this.maybeFailCommand();
     void key;
     return values.length;
+  }
+
+  async xadd(key: string, fields: Record<string, string>, maxlen?: number): Promise<string> {
+    this.maybeFailCommand();
+    const id = `${++this.seq}-0`;
+    const entries = this.liveStream(key) ?? [];
+    entries.push({ id, fields });
+    if (maxlen !== undefined && entries.length > maxlen) {
+      entries.splice(0, entries.length - maxlen);
+    }
+    this.streams.set(key, entries);
+    return id;
   }
 
   async lrange(): Promise<string[]> {

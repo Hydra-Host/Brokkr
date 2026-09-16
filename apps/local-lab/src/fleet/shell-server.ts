@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { WS_TOKEN_PROTOCOL } from '@repo/local-lab-contract';
 import * as pty from 'node-pty';
 import type { IncomingMessage, Server } from 'node:http';
 import { join } from 'node:path';
@@ -6,17 +7,12 @@ import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import { z } from 'zod';
 
+import { getErrorMessage } from '@repo/utils';
 import { engineRoot } from '../common/engine-root';
-import { getErrorMessage } from '../common/errors';
-import { type LabOrigin, originColumns } from '../common/lab-context';
-import { exposureAllowed } from '../common/lab-exposure';
-import {
-  effectiveClientAddress,
-  extractToken,
-  isConnectionAuthorized,
-  isLoopbackAddress,
-  tokenMatches,
-} from '../common/lab-net';
+import { AuthBackoff } from '../common/lab-auth';
+import { capabilityAllowed, type Principal } from '../common/lab-capability';
+import { auditOriginColumns, type LabOrigin } from '../common/lab-context';
+import { effectiveClientAddress, isLoopbackAddress, resolvePrincipal } from '../common/lab-net';
 import { serializeAuditParams } from '../common/redact';
 import type { AuditOutcome } from '../db/db';
 import type { AuditStore } from '../ledger/audit-store';
@@ -151,6 +147,22 @@ function onTestTerm(ws: WebSocket, req: IncomingMessage, runner: RunnerService):
   ws.on('close', () => sub.unsubscribe());
 }
 
+// the token itself is never echoed back: a selected subprotocol is repeated in the response
+function selectTokenProtocol(protocols: Set<string>): string | false {
+  return protocols.has(WS_TOKEN_PROTOCOL) ? WS_TOKEN_PROTOCOL : false;
+}
+
+function subprotocolToken(header: string | string[] | undefined): string | undefined {
+  const raw = Array.isArray(header) ? header.join(',') : header;
+  if (raw === undefined) return undefined;
+  const offered = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const marker = offered.indexOf(WS_TOKEN_PROTOCOL);
+  return marker === -1 ? undefined : offered[marker + 1];
+}
+
 const WS_HANDLERS: Record<string, string> = {
   '/api/fleet/shell': 'WebSocket.fleetShell',
   '/api/tests/term': 'WebSocket.testTerm',
@@ -159,14 +171,15 @@ const WS_HANDLERS: Record<string, string> = {
 const upgradeLog = new Logger('WsUpgrade');
 
 // no AsyncLocalStorage here: an upgrade never enters nest, so the origin comes off the raw socket
-function upgradeOrigin(req: IncomingMessage, pathname: string, tokenAuth: boolean): LabOrigin {
+function upgradeOrigin(req: IncomingMessage, pathname: string, principal: Principal | null): LabOrigin {
   const peer = req.socket.remoteAddress;
   const forwardedFor = req.headers['x-forwarded-for'];
   const address = effectiveClientAddress(peer, forwardedFor);
   return {
     ip: address ?? null,
     loopback: isLoopbackAddress(address),
-    tokenAuth,
+    tokenAuth: principal !== null,
+    principal: principal?.id ?? null,
     method: 'WS',
     path: pathname,
   };
@@ -178,10 +191,11 @@ function recordUpgrade(
   audit: AuditStore,
   req: IncomingMessage,
   url: URL,
-  tokenAuth: boolean,
+  principal: Principal | null,
   outcome: AuditOutcome,
   reason: string | null,
 ): void {
+  const origin = upgradeOrigin(req, url.pathname, principal);
   try {
     audit.insert({
       ts: Date.now(),
@@ -193,7 +207,7 @@ function recordUpgrade(
       duration_ms: null,
       run_id: null,
       params: serializeAuditParams(Object.fromEntries(url.searchParams)),
-      ...originColumns(upgradeOrigin(req, url.pathname, tokenAuth)),
+      ...auditOriginColumns(origin),
       error: reason,
     });
   } catch (error) {
@@ -201,26 +215,43 @@ function recordUpgrade(
   }
 }
 
+/** Its own instance rather than the guard's: an upgrade never enters LabAuthGuard, which holds its
+ *  budget privately. */
+const upgradeBackoff = new AuthBackoff();
+
 /** One `upgrade` router over `noServer` instances — multiple `{ server, path }` WebSocketServers don't coexist (the first path mismatch aborts the handshake with 400). */
 export function attachWebSockets(server: Server, runner: RunnerService, audit: AuditStore): void {
-  const fleetWss = new WebSocketServer({ noServer: true });
-  const testWss = new WebSocketServer({ noServer: true });
+  const fleetWss = new WebSocketServer({ noServer: true, handleProtocols: selectTokenProtocol });
+  const testWss = new WebSocketServer({ noServer: true, handleProtocols: selectTokenProtocol });
   fleetWss.on('connection', (ws, req) => onFleetShell(ws, req));
   testWss.on('connection', (ws, req) => onTestTerm(ws, req, runner));
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const url = new URL(req.url ?? '', 'http://localhost');
-    const token = extractToken(req.headers.authorization, req.headers['x-lab-token'], url.searchParams.get('token'));
+    const provided = subprotocolToken(req.headers['sec-websocket-protocol']);
+    const principal = resolvePrincipal(provided);
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const address = effectiveClientAddress(req.socket.remoteAddress, forwardedFor) ?? 'unknown';
     const record = (outcome: AuditOutcome, reason: string | null) =>
-      recordUpgrade(audit, req, url, tokenMatches(token), outcome, reason);
-    if (!isConnectionAuthorized(req.socket.remoteAddress, token, req.headers['x-forwarded-for'])) {
-      record('denied', 'no valid LAB_API_TOKEN for a non-loopback upgrade');
+      recordUpgrade(audit, req, url, principal, outcome, reason);
+    const cooldown = upgradeBackoff.remainingSeconds(address);
+    if (cooldown > 0) {
+      record('denied', `too many rejected lab tokens; retry in ${cooldown}s`);
+      socket.destroy();
+      return;
+    }
+    // a query-string token lands in every access log on the way here, and a subprotocol does not
+    if (url.searchParams.has('token')) {
+      record('denied', `send the ws token as the '${WS_TOKEN_PROTOCOL}' subprotocol, not a query parameter`);
       socket.destroy();
       return;
     }
     // both ws surfaces are interactive terminals (vm serial console, host test-run pty) — sharp either way.
-    if (!exposureAllowed('loopback-only', req.socket.remoteAddress, req.headers['x-forwarded-for'])) {
-      record('denied', 'ws terminals are loopback-only');
+    if (!capabilityAllowed('host-exec', principal, req.socket.remoteAddress, forwardedFor)) {
+      // only an unrecognised token is a guess: a blank one is not an attempt, and a valid token that
+      // merely lacks the ceiling is not guessing either.
+      if (principal === null && provided) upgradeBackoff.reject(address);
+      record('denied', 'ws terminals require the host-exec capability');
       socket.destroy();
       return;
     }

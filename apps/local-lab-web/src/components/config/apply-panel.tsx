@@ -17,7 +17,7 @@ export function ApplyPanel() {
 
   if (apply.readError) {
     return (
-      <div className={WARN}>
+      <div className={`${WARN} shrink-0`}>
         The pending state could not be read ({apply.readError}), so this panel cannot say whether anything is waiting on
         an apply. An empty panel here would be a guess.
       </div>
@@ -25,7 +25,7 @@ export function ApplyPanel() {
   }
   if (apply.seeded === false) {
     return (
-      <div className={BAD}>
+      <div className={`${BAD} shrink-0`}>
         The devenv eval seed failed, so every field below is a bare default and saving is refused.
       </div>
     );
@@ -33,7 +33,7 @@ export function ApplyPanel() {
   if (apply.rows.length === 0 && apply.applyingOf === null) return null;
 
   return (
-    <div className="space-y-2">
+    <div className="shrink-0 space-y-2">
       {apply.rows.length > 0 && (
         <div className={`${WARN} space-y-1.5`}>
           <div className="text-status-warning text-[10px] tracking-wide uppercase">saved, not applied</div>
@@ -52,6 +52,7 @@ export function ApplyPanel() {
           />
         </div>
       )}
+      {apply.hostTokenDialog}
       {apply.gate && <GateModal gate={apply.gate} />}
     </div>
   );

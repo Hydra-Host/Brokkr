@@ -14,7 +14,6 @@ _EXPECTED_UUID = "0e8c9981-6781-5e20-9d8e-a84ccf7f548a"
 def _bm_fleet() -> Fleet:
     return Fleet.model_validate(
         {
-            "mode": "baremetal",
             "network": {
                 "name": "brokkr",
                 "cidr": "192.168.200.0/24",
@@ -42,7 +41,6 @@ def _bm_fleet() -> Fleet:
 def _vm_fleet() -> Fleet:
     return Fleet.model_validate(
         {
-            "mode": "vm",
             "network": {
                 "name": "brokkr",
                 "cidr": "192.168.200.0/24",
@@ -103,6 +101,53 @@ def test_main_dispatches_to_bm_branch(monkeypatch):
 def test_main_dispatches_to_vm_branch(monkeypatch):
     called: dict[str, object] = {}
     monkeypatch.setattr(rd, "load_fleet", lambda: _vm_fleet())
+    monkeypatch.setattr(rd, "_main_baremetal", lambda fleet, arg: called.setdefault("bm", arg))
+    monkeypatch.setattr(rd, "_main_vm", lambda fleet, arg: called.setdefault("vm", arg))
+    rd.main(["gpu-1"])
+    assert called == {"vm": "gpu-1"}
+
+
+def _two_plane_fleet() -> Fleet:
+    return Fleet.model_validate(
+        {
+            "network": {
+                "name": "brokkr",
+                "cidr": "192.168.200.0/24",
+                "domain": "brokkr.local",
+                "bmc_cidr": "192.168.105.0/24",
+            },
+            "nodes": [
+                {"name": "gpu-1", "ipmi_mac": "52:54:00:00:00:01", "data_mac": "52:54:00:00:01:01"},
+            ],
+            "baremetal": {
+                "iface": "eno1",
+                "iface_ip": "198.51.100.1",
+                "arch": "amd64",
+                "nodes": [
+                    {
+                        "name": "bench-1",
+                        "pxe_mac": _PXE_MAC,
+                        "bmc_ip": "198.51.100.250",
+                        "bmc_mac": "aa:bb:cc:dd:ee:ff",
+                    }
+                ],
+            },
+        }
+    )
+
+
+def test_main_routes_a_bare_metal_name_in_a_two_plane_fleet(monkeypatch):
+    called: dict[str, object] = {}
+    monkeypatch.setattr(rd, "load_fleet", lambda: _two_plane_fleet())
+    monkeypatch.setattr(rd, "_main_baremetal", lambda fleet, arg: called.setdefault("bm", arg))
+    monkeypatch.setattr(rd, "_main_vm", lambda fleet, arg: called.setdefault("vm", arg))
+    rd.main(["bench-1"])
+    assert called == {"bm": "bench-1"}
+
+
+def test_main_routes_a_vm_name_in_a_two_plane_fleet(monkeypatch):
+    called: dict[str, object] = {}
+    monkeypatch.setattr(rd, "load_fleet", lambda: _two_plane_fleet())
     monkeypatch.setattr(rd, "_main_baremetal", lambda fleet, arg: called.setdefault("bm", arg))
     monkeypatch.setattr(rd, "_main_vm", lambda fleet, arg: called.setdefault("vm", arg))
     rd.main(["gpu-1"])

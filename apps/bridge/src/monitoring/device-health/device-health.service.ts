@@ -1,3 +1,4 @@
+import http from 'node:http';
 import https from 'node:https';
 import { getBullmqConfig } from '../../bullmq/bullmq.config';
 import { sealOutboundPayload, type SealedEnvelope, type ZoneCryptoState } from '../../bullmq/seal-outbound-payload';
@@ -9,6 +10,7 @@ import { getCipherForDevice } from '../../oob/ipmi/cipher';
 import { createIpmiDevice, withCipher, type IPMIDevice } from '../../oob/ipmi/device';
 import { power } from '../../oob/ipmi/handlers/power';
 import { ipmiPing } from '../../oob/ipmi/ping';
+import { bmcCoordinates } from '../../redfish/bmc-coordinates.js';
 import {
   isTlsCertVerificationError,
   redfishRejectUnauthorized,
@@ -294,8 +296,10 @@ export class DeviceHealthService {
     const MAX_REDIRECTS = 10;
     const TOTAL_TIMEOUT_MS = 3000;
     const deadline = Date.now() + TOTAL_TIMEOUT_MS;
+    const coords = bmcCoordinates(bmcIp);
     const rejectUnauthorized = redfishRejectUnauthorized();
-    if (!rejectUnauthorized) warnRedfishTlsVerificationDisabledOnce((m) => void logWarning(m), bmcIp);
+    if (coords.protocol === 'https' && !rejectUnauthorized)
+      warnRedfishTlsVerificationDisabledOnce((m) => void logWarning(m), bmcIp);
 
     const requestOnce = (url: URL, remainingMs: number): Promise<{ status: number; location: string | null }> =>
       new Promise((resolve, reject) => {
@@ -306,14 +310,16 @@ export class DeviceHealthService {
           fn();
         };
         try {
-          const req = https.request(
+          const isHttps = url.protocol === 'https:';
+          const transport = isHttps ? https : http;
+          const req = transport.request(
             {
               host: url.hostname,
-              port: url.port ? Number(url.port) : 443,
+              port: url.port ? Number(url.port) : undefined,
               path: `${url.pathname}${url.search}`,
               method: 'GET',
               timeout: remainingMs,
-              rejectUnauthorized,
+              ...(isHttps ? { rejectUnauthorized } : {}),
             },
             (res) => {
               const status = res.statusCode ?? 0;
@@ -337,7 +343,7 @@ export class DeviceHealthService {
       });
 
     try {
-      let url = new URL(`https://${bmcIp}/redfish/v1/`);
+      let url = new URL(`${coords.protocol}://${bmcIp}:${coords.port}/redfish/v1/`);
       for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
         const remaining = deadline - Date.now();
         if (remaining <= 0) return false;

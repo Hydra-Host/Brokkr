@@ -105,12 +105,12 @@ describe('isAlarmingState', () => {
 });
 
 describe('stateTone', () => {
-  it('tones delayed away from the failure colour', () => {
+  it('tones delayed away from the failure color', () => {
     expect(stateTone('delayed')).not.toBe(stateTone('failed'));
     expect(stateTone('delayed')).not.toContain('status-offline');
   });
 
-  it('tones failed and stalled with the failure colour', () => {
+  it('tones failed and stalled with the failure color', () => {
     expect(stateTone('failed')).toContain('status-offline');
     expect(stateTone('stalled')).toContain('status-offline');
   });

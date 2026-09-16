@@ -1,5 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { DeviceSecretAuditEventType, DeviceSecretActorType, DeviceSecretKind, DeviceSecretPurpose } from '@repo/database';
+import {
+  DeviceSecretActorType,
+  DeviceSecretAuditEventType,
+  DeviceSecretKind,
+  DeviceSecretPurpose,
+} from '@repo/database';
 import { Buffer } from 'node:buffer';
 import { REDIS_CLIENT, REDIS_CONFIG } from 'src/common/redis';
 import { SealedEnvelopeService } from 'src/crypto/sealed-envelope.service';
@@ -13,6 +18,7 @@ import { ZoneCryptoConfig } from 'src/zone-crypto/zone-crypto.config';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { DeviceRecordPublisher } from '../../device-record/device-record-publisher.service';
 import { DiscoveryIngressService } from '../../discovery/discovery-ingress.service';
+import { JobLogWriterService } from '../../job-logs/job-log-writer.service';
 import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../../lifecycle/qualify-orchestration.service';
 import { RenderRequestDispatcher } from '../../render-request/render-request-dispatcher.service';
@@ -42,7 +48,11 @@ describe('BridgeResultsConsumer — secret.revealed audit', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         { provide: BridgeResultsConsumer, useClass: TestableConsumer },
-        { provide: SealedEnvelopeService, useValue: { isZoneEnrolled: vi.fn().mockResolvedValue(false), openBridgeToHub: vi.fn() } },
+        { provide: JobLogWriterService, useValue: { write: vi.fn() } },
+        {
+          provide: SealedEnvelopeService,
+          useValue: { isZoneEnrolled: vi.fn().mockResolvedValue(false), openBridgeToHub: vi.fn() },
+        },
         {
           provide: PrismaClient,
           useValue: {
@@ -55,7 +65,10 @@ describe('BridgeResultsConsumer — secret.revealed audit', () => {
           useValue: { host: 'localhost', port: 6379, password: '', tls: false, url: '', username: '' },
         },
         { provide: REDIS_CLIENT, useValue: { set: redisSet, get: vi.fn(), del: vi.fn() } },
-        { provide: ZoneCryptoConfig, useValue: { privateKey: Buffer.from('0123456789abcdef0123456789abcdef', 'utf8') } },
+        {
+          provide: ZoneCryptoConfig,
+          useValue: { privateKey: Buffer.from('0123456789abcdef0123456789abcdef', 'utf8') },
+        },
         { provide: DiscoveryIngressService, useValue: { handleDiscoveryComplete: vi.fn() } },
         { provide: BridgeNetworkScanService, useValue: { storeScanResult: vi.fn() } },
         { provide: DeviceTestRunsService, useValue: { update: vi.fn() } },
@@ -71,7 +84,14 @@ describe('BridgeResultsConsumer — secret.revealed audit', () => {
         { provide: DeviceSecretAuditService, useValue: { record: auditRecord } },
         {
           provide: 'LoggerServiceBridgeResultsConsumer',
-          useValue: { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), verbose: vi.fn(), setContext: vi.fn().mockReturnThis() },
+          useValue: {
+            log: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+            debug: vi.fn(),
+            verbose: vi.fn(),
+            setContext: vi.fn().mockReturnThis(),
+          },
         },
       ],
     }).compile();

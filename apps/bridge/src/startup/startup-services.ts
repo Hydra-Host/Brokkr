@@ -1,7 +1,6 @@
-import { access } from 'node:fs/promises';
-
 import type { CronStateSnapshot } from '../admin/cron-state.js';
 import { getErrorMessage } from '../common/error-utils';
+import { setBootReadinessFindings } from '../composition/boot-readiness-holder.js';
 import type { DhcpRuntimeConfig } from '../dhcp/dhcp.config.js';
 import type { DnsConfig } from '../dns/dns.config.js';
 import { getDiscoveryFileConfig } from '../download/discovery.config.js';
@@ -10,13 +9,14 @@ import {
   type DeviceCredentialResolver,
   configureDeviceCredentialResolver,
 } from '../monitoring/common/device-credential-resolver.service.js';
-import { isLocalSimulationEnabled } from '../redfish/redfish.config.js';
 import { getStorageConfig } from '../sync/sync.config.js';
 
 import { IPXE_VALID_ARCHES } from '../tftp/tftp-dyn-file.js';
+import { getTftpConfig } from '../tftp/tftp.config.js';
 
 import { assertChainReachability } from './chain-reachability-assert.js';
 import { assertDiscoveryImages } from './discovery-image-assert.js';
+import { realFileExists, realReadTextFile } from './fs-io.js';
 import { assertIpxeBuilds } from './ipxe-build-assert.js';
 import { resolveListenHost } from './listen-target.js';
 import type { BackgroundService, StartupOrchestrator } from './orchestrator.js';
@@ -126,7 +126,7 @@ export function registerStartupTasks(jobId: string, args: BuildStartupOrchestrat
   orchestrator.addPreludeBlockingTask({
     name: 'assert_chain_reachability',
     run: async (taskJobId: string): Promise<void> => {
-      assertChainReachability(
+      const findings = assertChainReachability(
         {
           bridgeUrl: getIpxeConfig().bridgeUrl,
           listenHost: resolveListenHost(),
@@ -145,29 +145,29 @@ export function registerStartupTasks(jobId: string, args: BuildStartupOrchestrat
           jobId: taskJobId,
         },
       );
+      setBootReadinessFindings('chain_reachability', findings);
     },
   });
 
   orchestrator.addPreludeBlockingTask({
     name: 'assert_ipxe_builds',
     run: async (taskJobId: string): Promise<void> => {
-      await assertIpxeBuilds(
+      const findings = await assertIpxeBuilds(
         {
           finalBuildsDir: getIpxeConfig().finalBuildsDir,
           architectures: [...IPXE_VALID_ARCHES],
+          bridgeUrl: getIpxeConfig().bridgeUrl,
         },
-        async (path) =>
-          access(path).then(
-            () => true,
-            () => false,
-          ),
+        realFileExists,
+        realReadTextFile,
         logger,
         {
           strict: (process.env.BRIDGE_IPXE_BUILDS_STRICT ?? '').trim().toLowerCase() === 'true',
           jobId: taskJobId,
-          localSimulation: isLocalSimulationEnabled(),
+          tftpEnabled: getTftpConfig().tftpEnabled,
         },
       );
+      setBootReadinessFindings('ipxe_builds', findings);
     },
   });
 
@@ -180,22 +180,20 @@ export function registerStartupTasks(jobId: string, args: BuildStartupOrchestrat
   });
 
   const runDiscoveryImageAssert = async (taskJobId: string): Promise<void> => {
-    await assertDiscoveryImages(
+    const findings = await assertDiscoveryImages(
       {
         discoveryDir: getStorageConfig().brokkrLiveHttpsDir,
+        flavors: getDiscoveryFileConfig().flavors,
         architectures: getDiscoveryFileConfig().architectures,
       },
-      async (path) =>
-        access(path).then(
-          () => true,
-          () => false,
-        ),
+      realFileExists,
       logger,
       {
         strict: (process.env.BRIDGE_DISCOVERY_IMAGES_STRICT ?? '').trim().toLowerCase() === 'true',
         jobId: taskJobId,
       },
     );
+    setBootReadinessFindings('discovery_images', findings);
   };
 
   if (sync.appConfig.bridgeSyncEnabled) {

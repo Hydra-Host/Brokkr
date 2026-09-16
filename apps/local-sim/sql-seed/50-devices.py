@@ -7,6 +7,7 @@ via subqueries against the ``Zone`` row (seeded by ``45-zone``)."""
 from __future__ import annotations
 
 import ipaddress
+import uuid
 
 from local.config import get_settings
 from local.derived import effective_bmc_ip, effective_node_ip, node_serial, node_wwn, sim_device_uuid
@@ -21,6 +22,7 @@ from local.seed.interfaces import (
 )
 from local.seed.netplan import sim_dhcp_netplan, sim_static_netplan
 from local.seed.storage import build_storage_layouts
+from local.seed.tags import emit_tag, emit_tag_assign
 from local.sqlemit import header, logs_to_stderr, q, qj
 from local.zones import zone_uuid
 
@@ -33,6 +35,11 @@ def _gateway_ip(data_cidr: str) -> str:
 # outside address the DCIM list renders blank (a NAT device shows its public IP, not the private one).
 NAT_PUBLIC_CIDR = "198.51.100.0/24"
 
+# The bridge boots the light brokkr-live image for a device tagged discovery-light; a simulated
+# VM cannot boot the full image, so the seed tags every VM.
+DISCOVERY_LIGHT_TAG = "discovery-light"
+DISCOVERY_LIGHT_TAG_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "brokkr-sim:platform-tag:discovery-light"))
+
 
 def generate() -> str:
     s = get_settings()
@@ -42,10 +49,8 @@ def generate() -> str:
     sol_port = "ttyAMA0" if host_arch == "arm64" else "ttyS0"
 
     fleet = require_fleet()
-    if fleet.mode == "baremetal":
-        return header("50-devices.py") + "-- mode == baremetal: sim VM devices seeded by 52-baremetal-devices.py.\n"
-    if not fleet.nodes:
-        raise RuntimeError("fleet.yml has no nodes")
+    if not fleet.has_vm:
+        return header("50-devices.py") + "-- no VM nodes: sim VM devices are not seeded.\n"
     network = fleet.network
     gateway = _gateway_ip(network.cidr)
     data_prefixlen = ipaddress.ip_network(network.cidr, strict=False).prefixlen
@@ -55,7 +60,12 @@ def generate() -> str:
     cpu_arch = "aarch64" if host_arch == "arm64" else "x86_64"
     cpu_model = "QEMU Virtual CPU" if host_arch != "arm64" else "QEMU Virtual aarch64 CPU"
 
-    out: list[str] = [header("50-devices.py"), "BEGIN;\n", emit_role_trigger(on=False)]
+    out: list[str] = [
+        header("50-devices.py"),
+        "BEGIN;\n",
+        emit_role_trigger(on=False),
+        emit_tag(DISCOVERY_LIGHT_TAG_ID, DISCOVERY_LIGHT_TAG, DISCOVERY_LIGHT_TAG, "#38bdf8", s.sim.hydrahost_org_id),
+    ]
 
     for i, n in enumerate(fleet.nodes):
         if not n.seed_as_server:
@@ -65,9 +75,7 @@ def generate() -> str:
         # from the node's `zone` field. supplier/org come from that zone's row (45-zone) via subqueries.
         zone_id = zone_uuid(fleet.zone_for(n.zone).index)
         sup = f'(SELECT "organizationId" FROM "Zone" WHERE id = {q(zone_id)})'
-        # organizationId is the org-ownership FK (Device.organization) and MUST
-        # equal zone.organizationId; same source as supplierId here.
-        org = f'(SELECT "organizationId" FROM "Zone" WHERE id = {q(zone_id)})'
+        org = sup
         name = n.name
         ipmi = effective_bmc_ip(n, network.bmc_cidr, i)
         primary = effective_node_ip(n, network.cidr, i)
@@ -87,6 +95,7 @@ def generate() -> str:
         # into NAT via `network_type: nat` in fleet.yml to exercise the NAT-aware display path.
         network_type = "NAT" if n.network_type == "nat" else "Public"
         public_ip = str(ipaddress.ip_network(NAT_PUBLIC_CIDR).network_address + 10 + i)
+        serial = node_serial(n.ipmi_mac)
 
         out.append(
             f"-- {name} id={device_id} ipmi={ipmi} primary={primary} net={network_type} arch={host_arch} zone={zone_id}"
@@ -96,24 +105,25 @@ def generate() -> str:
         out.append(
             f"""INSERT INTO "Device" (
     id, name, status, role, "deviceType",
-    "systemSerial", "chassisSerial",
+    serial, "systemSerial", "chassisSerial", "baseboardSerial",
     "zoneId", "networkType",
-    "supplierId", "organizationId",
+    "supplierId",
     architecture, "updatedAt"
 ) VALUES (
     {q(device_id)}, {q(name)}, 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
-    {q(node_serial(n.ipmi_mac))}, {q(node_serial(n.ipmi_mac))},
+    {q(serial)}, {q(serial)}, {q(serial)}, {q(serial)},
     {q(zone_id)}, {q(network_type)}::"DeviceNetworkType",
-    {sup}, {org},
+    {sup},
     {q(host_arch)}, NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, status = EXCLUDED.status, role = EXCLUDED.role,
     "deviceType" = EXCLUDED."deviceType",
+    serial = EXCLUDED.serial,
     "systemSerial" = EXCLUDED."systemSerial", "chassisSerial" = EXCLUDED."chassisSerial",
+    "baseboardSerial" = EXCLUDED."baseboardSerial",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",
-    "organizationId" = EXCLUDED."organizationId",
     architecture = EXCLUDED.architecture,
     "deletedAt" = NULL, "updatedAt" = NOW();"""
         )
@@ -138,7 +148,7 @@ WHERE "deviceId" = {q(device_id)};"""
         out.append(
             f"""INSERT INTO "StorageDrive" (id, name, type, serial, wwn, "sizeBytes", "deviceId", "updatedAt")
 VALUES (gen_random_uuid(), 'sda', 'SSD'::"StorageDriveType",
-    {q(node_serial(n.ipmi_mac))}, {q(node_wwn(n.ipmi_mac))}, {size_bytes}, {q(device_id)}, NOW());"""
+    {q(serial)}, {q(node_wwn(n.ipmi_mac))}, {size_bytes}, {q(device_id)}, NOW());"""
         )
         # Hardware inventory for admin Hardware tab (CPU / memory / firmware / GPU).
         # Derived from fleet defaults so sizes stay coherent with the qemu domain.
@@ -270,6 +280,7 @@ ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
     "linkOperUp" = EXCLUDED."linkOperUp", "linkPhysicalUp" = EXCLUDED."linkPhysicalUp",
     "markConnected" = EXCLUDED."markConnected", "updatedAt" = NOW();"""
         )
+        out.append(emit_tag_assign(DISCOVERY_LIGHT_TAG_ID, "DEVICE", q(device_id)))
         out.extend(emit_ip_on_interface(device_id, IPMI_NIC, ipmi, org))
         # The device's reachable IPv4 comes from the first IpAddress on a non-mgmtOnly interface
         # (DeviceSpecHelper.firstDataIp), not the decommissioned Device.primaryIp4 scalar. Attach it to eth0.

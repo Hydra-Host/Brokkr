@@ -1,6 +1,12 @@
 import { z } from 'zod';
+import { deploymentsRoutes } from '../../contract/deployments';
 import { ProvisionServerRequestSchema } from '../baremetal';
-import { ReprovisionDeploymentRequestSchema, ReprovisionDiskLayoutSchema } from '../deployments';
+import {
+  DeploymentActionResponseSchema,
+  ReprovisionDeploymentRequestSchema,
+  ReprovisionDiskLayoutSchema,
+  RescueModeActionResponseSchema,
+} from '../deployments';
 import { ProvisionRequestSchema as InventoryProvisionRequestSchema } from '../inventory';
 import { provisionCommonFields, provisionDiskLayoutSchema } from '../provision';
 
@@ -37,6 +43,27 @@ describe('provision/reprovision disk-layout parity', () => {
     const badLayout = { ...VALID_LAYOUT, disks: [''] };
     expect(ReprovisionDiskLayoutSchema.safeParse(badLayout).success).toBe(false);
     expect(provisionDiskLayoutSchema.safeParse(badLayout).success).toBe(false);
+  });
+
+  describe('size field', () => {
+    it('both layout schemas accept a positive integer size', () => {
+      const withSize = { ...VALID_LAYOUT, size: 10 * 1024 ** 3 };
+      expect(ReprovisionDiskLayoutSchema.safeParse(withSize).success).toBe(true);
+      expect(provisionDiskLayoutSchema.safeParse(withSize).success).toBe(true);
+    });
+
+    it('both layout schemas accept an omitted size', () => {
+      expect(ReprovisionDiskLayoutSchema.safeParse(VALID_LAYOUT).success).toBe(true);
+      expect(provisionDiskLayoutSchema.safeParse(VALID_LAYOUT).success).toBe(true);
+    });
+
+    it('both layout schemas reject zero, negative, fractional, and non-numeric sizes', () => {
+      for (const size of [0, -1, 1.5, '10']) {
+        const bad = { ...VALID_LAYOUT, size };
+        expect(ReprovisionDiskLayoutSchema.safeParse(bad).success).toBe(false);
+        expect(provisionDiskLayoutSchema.safeParse(bad).success).toBe(false);
+      }
+    });
   });
 
   describe('mountpoint / format hardening (shell-injection boundary)', () => {
@@ -143,5 +170,19 @@ describe('provision/reprovision disk-layout parity', () => {
         expect(schema.safeParse({ ...VALID_REQUEST, tee: 'yes' }).success).toBe(false);
       }
     });
+  });
+});
+
+describe('deployment action response schemas', () => {
+  it('rescue-mode endpoints use the rescue-specific response schema', () => {
+    expect(deploymentsRoutes.activateRescueMode.responses[200]).toBe(RescueModeActionResponseSchema);
+    expect(deploymentsRoutes.deactivateRescueMode.responses[200]).toBe(RescueModeActionResponseSchema);
+  });
+
+  it('lifecycle-job-producing endpoints keep the lifecycle-job response schema', () => {
+    expect(deploymentsRoutes.reprovisionDeployment.responses[200]).toBe(DeploymentActionResponseSchema);
+    expect(deploymentsRoutes.powerCycleDeployment.responses[200]).toBe(DeploymentActionResponseSchema);
+    expect(deploymentsRoutes.powerControlDeployment.responses[200]).toBe(DeploymentActionResponseSchema);
+    expect(deploymentsRoutes.deprovisionDeployment.responses[200]).toBe(DeploymentActionResponseSchema);
   });
 });

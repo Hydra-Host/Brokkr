@@ -64,7 +64,7 @@ ON CONFLICT (id) DO UPDATE SET
     "updatedAt" = NOW();
 -- Unattached gateway IP (no interface → not a reservation)
 INSERT INTO "IpAddress" (id, address, status, "organizationId", "updatedAt")
-VALUES ('fb2f4b4b-131a-52c5-bf31-7c04fd138436', '192.168.105.2/24'::inet, 'ACTIVE'::"IpStatus", (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'), NOW())
+VALUES ('fb2f4b4b-131a-52c5-bf31-7c04fd138436', '192.168.105.1/24'::inet, 'ACTIVE'::"IpStatus", (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'), NOW())
 ON CONFLICT (id) DO UPDATE SET
     address = EXCLUDED.address, status = EXCLUDED.status,
     "organizationId" = EXCLUDED."organizationId", "updatedAt" = NOW();

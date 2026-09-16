@@ -1,10 +1,20 @@
+import { LayerRelationType, LayerSelectionType } from '@repo/database/enums';
 import { z } from 'zod';
+import { zodEnumFromPrisma } from './prisma-enum';
+
+export const LayerRelationTypeSchema = zodEnumFromPrisma(LayerRelationType).describe(
+  'Relation type: CONFLICTS disables the related option, REQUIRES demands it',
+);
+export type { LayerRelationType };
+
+export const LayerSelectionTypeSchema = zodEnumFromPrisma(LayerSelectionType).describe(
+  'Whether the user picks one option or many',
+);
+export type { LayerSelectionType };
 
 export const CustomizationOptionRelationSchema = z.object({
   relatedOptionValue: z.string().describe('The value of the related option in another layer'),
-  type: z
-    .enum(['CONFLICTS', 'REQUIRES'])
-    .describe('Relation type: CONFLICTS disables the related option, REQUIRES demands it'),
+  type: LayerRelationTypeSchema,
   groupId: z
     .string()
     .nullable()
@@ -48,7 +58,7 @@ export type CustomizationOption = z.infer<typeof CustomizationOptionSchema>;
 export const CustomizationLayerSchema = z.object({
   slug: z.string().describe('Layer key used in the customizations record'),
   name: z.string().describe('Human-readable layer name'),
-  selectionType: z.enum(['SINGLE_SELECT', 'MULTI_SELECT']).describe('Whether the user picks one option or many'),
+  selectionType: LayerSelectionTypeSchema,
   options: z.array(CustomizationOptionSchema).describe('Available options within this layer'),
 });
 export type CustomizationLayer = z.infer<typeof CustomizationLayerSchema>;

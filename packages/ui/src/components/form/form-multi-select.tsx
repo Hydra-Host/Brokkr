@@ -132,6 +132,8 @@ function FormMultiSelect<T extends FieldValues>({
                   <div className="flex flex-1 flex-wrap gap-1">
                     {selectedValues.length === 0 ? (
                       <span className="text-text-dim">{placeholder}</span>
+                    ) : selectedValues.length > 8 ? (
+                      <span>{selectedValues.length} selected</span>
                     ) : (
                       selectedValues.map((val) => {
                         const opt = allOptions.find((o) => o.value === val);

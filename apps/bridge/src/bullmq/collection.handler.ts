@@ -23,7 +23,11 @@ export interface CollectionRegistryLike {
 export interface CollectionResultsLike {
   clearCollectionData(deviceId: string): Promise<boolean>;
   getCollectionFieldCount(deviceId: string): number | null;
-  enqueueDiscoveryComplete(args: { deviceId: string; jobId?: string | null }): Promise<boolean>;
+  enqueueDiscoveryComplete(args: {
+    deviceId: string;
+    jobId?: string | null;
+    succeededSteps?: number;
+  }): Promise<boolean>;
 }
 
 export interface CollectionCacheLike {
@@ -120,6 +124,7 @@ export class CollectionJobHandler {
       await this.results.enqueueDiscoveryComplete({
         deviceId: deviceIdStr,
         jobId: effectiveJobId ?? undefined,
+        succeededSteps: agentSuccesses,
       });
 
       const durationMs = summary.total_duration_ms;

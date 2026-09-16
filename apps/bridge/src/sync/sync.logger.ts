@@ -1,9 +1,23 @@
+import type { LogLevel } from '../logger/log-levels.js';
+import { syncLogDebug, syncLogError, syncLogInfo, syncLogWarning } from '../logger/sync-log.js';
+
 export interface LogContext {
   appClassName?: string;
   jobId?: string;
 }
 
-function emit(_level: 'debug' | 'info' | 'warning' | 'error', _message: string, _context?: LogContext): void {}
+type SyncSink = (message: string, jobId: string, appClassName: string) => void;
+
+const SINKS: Record<LogLevel, SyncSink> = {
+  debug: syncLogDebug,
+  info: syncLogInfo,
+  warning: syncLogWarning,
+  error: syncLogError,
+};
+
+function emit(level: LogLevel, message: string, context?: LogContext): void {
+  SINKS[level](message, context?.jobId ?? '', context?.appClassName ?? 'main');
+}
 
 export function logDebug(message: string, context?: LogContext): void {
   emit('debug', message, context);

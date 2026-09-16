@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type Redis from 'ioredis';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import type { ZoneAgentWork } from '../contract';
 import { RedisConnectionsService } from '../datastore/redis-connections.service';
 import { workDispatchPattern, workProgressPattern } from './runtime-keys';

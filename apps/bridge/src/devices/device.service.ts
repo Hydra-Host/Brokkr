@@ -4,7 +4,7 @@ import type { ZodType, ZodTypeDef } from 'zod';
 import { isRecord } from '@repo/utils';
 
 import { RedisOperationError } from '../common/redis/redis-client';
-import { deviceNetplanPhase, deviceRecord, discoveryPending } from '../common/redis/redis-keys';
+import { deviceNetplanPhase, deviceRecord, discoveryPending, normalizeDiscoveryMac } from '../common/redis/redis-keys';
 import { type DeviceRecord, deviceRecordSchema } from '../device-record/device-record.schema';
 import { type NetplanAtom, netplanAtomSchema } from '../device-record/netplan/netplan.schema';
 import { pythonFalsy } from '../saga-framework/truthiness';
@@ -245,7 +245,7 @@ export class DeviceService {
       let key: string;
       let normalized: DeviceData;
       if (hasMac) {
-        const mac = rawMac.replace(/-/g, ':').toLowerCase();
+        const mac = normalizeDiscoveryMac(rawMac);
         key = discoveryPending(mac);
         normalized = { ...facts, mac };
       } else {

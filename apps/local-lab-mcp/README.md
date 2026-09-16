@@ -69,7 +69,7 @@ That block is separate from the JSON payload, which stays the last block and sta
 
 To confirm which stack answers, call `lab_list_stacks` (every slot registered on the host with its owning checkout) or read `selfSlot` and `labTarget` from `lab_get_status`. `labTarget` reports the slot this server decided on and the reason (`registry`, `tool`, `env-slot`, `env-url`, `explicit`), so `labTarget.slot` disagreeing with `selfSlot` means the target is stale. `selfSlot` is `null` when the serving slot could not be read — the stacks route is loopback-only, so a remote lab refuses it.
 
-**Token limitation.** The token comes from this session's `LAB_API_TOKEN`, not from the targeted checkout. Loopback is trusted unconditionally today, so a cross-checkout target works without one. That changes once the lab requires a token.
+**Token limitation.** Tokens come from this session's environment, not from the targeted checkout. Loopback is trusted unconditionally, so a same-host target works without any token set. A lab reached off loopback needs both: `LAB_API_TOKEN` for ordinary routes, and `LAB_HOST_TOKEN` for the two `host-exec` tools (`lab_pg_query`, `lab_fleet_exec`) — the api token cannot reach those, whoever issued it.
 
 ## Configuration
 
@@ -78,13 +78,17 @@ To confirm which stack answers, call `lab_list_stacks` (every slot registered on
 | `LAB_MCP_URL`               | unset — the slot registry resolves it | Control-center base URL; pins the server to one stack                                                                                                          |
 | `LAB_MCP_SLOT`              | unset — the slot registry resolves it | Host slot number; pins the server to that slot's stack, resolved through the registry. Overridden by `LAB_MCP_URL` and by `lab_use_stack`                      |
 | `LAB_API_TOKEN`             | unset                                 | Sent as `x-lab-token`; unneeded on loopback (trusted unconditionally)                                                                                          |
+| `LAB_API_TOKEN_FILE`        | unset                                 | Path to a file holding the api token; read when `LAB_API_TOKEN` is unset or empty. The stack writes one and exports this                                       |
+| `LAB_HOST_TOKEN`            | unset — falls back to the api token   | Sent as `x-lab-token` by `lab_pg_query` and `lab_fleet_exec` only; the `host-exec` routes refuse the api token                                                 |
+| `LAB_HOST_TOKEN_FILE`       | unset                                 | Path to a file holding the host token; read when `LAB_HOST_TOKEN` is unset or empty                                                                            |
 | `LAB_MCP_ALLOW_DESTRUCTIVE` | unset                                 | Set to `1` to register the destructive tools (stack nuke/reset/purge ops, fleet reset, storage wipe, queue drain/clean/remove, config writes, branch checkout) |
 
 ## Default-deny gates
 
-Destructive tools are **not registered** unless `LAB_MCP_ALLOW_DESTRUCTIVE=1` — an agent cannot call what it cannot see. Three tools take an id or a staged config rather than a fixed blast radius, so registration-time gating cannot cover them. They check at call time instead:
+Destructive tools are **not registered** unless `LAB_MCP_ALLOW_DESTRUCTIVE=1` — an agent cannot call what it cannot see. Four tools take an id or a staged config rather than a fixed blast radius, so registration-time gating cannot cover them. They check at call time instead:
 
 - `lab_run_stack_op` refuses an op whose catalog `destructive` flag is set.
+- `lab_fleet_power` refuses a machine whose roster `kind` is `baremetal` — its power actions reach a real BMC over Redfish. A VM row needs no flag.
 - `lab_run_test` refuses a scenario whose catalog `destructive` flag is set. Twelve of the fifteen scenarios are destructive; `smoke`, `redis-acl` and `vrrp-failover` are not, and stay reachable without the flag.
 - `lab_redeploy_stack` refuses when the redeploy would migrate this checkout to another slot — the staged stack-config slot differs from the serving `selfSlot`. A slot migration releases the registry entry and wipes slot-bound state. The ordinary same-slot redeploy needs no flag. The tool also refuses when it cannot tell the two apart, which is the case while the stack-config eval is unseeded.
 

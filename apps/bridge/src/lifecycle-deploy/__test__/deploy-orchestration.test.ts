@@ -365,9 +365,8 @@ describe('deployOs', () => {
       deployment_os_token: 'test-os-token-fixture',
       endpoint: 'https://hub/api/v1/bmc/phone-home',
     });
-    const customUserData = cloudInit['custom_user_data_yaml'] as string;
-    expect(customUserData).toContain('99-infiniband-node-desc.rules');
-    expect(customUserData).toContain('gpu-7');
+    expect('custom_user_data_yaml' in cloudInit).toBe(false);
+    expect(record['infiniband']).toEqual({ enabled: true, node_desc: 'gpu-7' });
   });
 
   it('mixed new+preserved encryption: rekey targets ONLY new volumes (data-loss guard)', async () => {

@@ -1,9 +1,11 @@
+import { DeviceSecretActorType, DeviceSecretAuditEventType, DeviceSecretPurpose } from '@repo/database/enums';
 import { z } from 'zod';
 import { PaginationQuerySchema, createPaginatedResponseSchema } from './pagination';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const DeviceSecretPurposeSchema = z
-  .enum(['BMC', 'CONSOLE'])
-  .describe('What the secret authenticates to (scales: SWITCH, PDU…).');
+export const DeviceSecretPurposeSchema = zodEnumFromPrisma(DeviceSecretPurpose).describe(
+  'What the secret authenticates to (scales: SWITCH, PDU…).',
+);
 
 export const DeviceSecretKindSchema = z
   .enum(['USER', 'KEY', 'TOKEN', 'CERT'])
@@ -77,13 +79,13 @@ export const DeviceSecretRevealStatusResponseSchema = z
   ])
   .describe('Reveal-status result; `secret` is populated only on the ready variant.');
 
-export const DeviceSecretAuditEventTypeSchema = z
-  .enum(['WRITE', 'UPDATE', 'REVEAL_REQUESTED', 'REVEAL_DELIVERED', 'DISPATCH', 'INVALIDATED'])
-  .describe('The audited device-secret lifecycle event; REVEAL_DELIVERED is the disclosure point.');
+export const DeviceSecretAuditEventTypeSchema = zodEnumFromPrisma(DeviceSecretAuditEventType).describe(
+  'The audited device-secret lifecycle event; REVEAL_DELIVERED is the disclosure point.',
+);
 
-export const DeviceSecretAuditActorTypeSchema = z
-  .enum(['USER', 'BRIDGE', 'SYSTEM'])
-  .describe('Who performed the audited action.');
+export const DeviceSecretAuditActorTypeSchema = zodEnumFromPrisma(DeviceSecretActorType).describe(
+  'Who performed the audited action.',
+);
 
 export const DeviceSecretAuditEventSchema = z.object({
   id: z.string().describe('UUID of the audit event row.'),

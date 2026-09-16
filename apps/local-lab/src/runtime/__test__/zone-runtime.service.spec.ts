@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ZoneRuntimeSchema } from '../../contract';
+import { type BridgeHttpStatus, ZoneRuntimeSchema } from '../../contract';
 import { ZoneRuntimeService } from '../zone-runtime.service';
 
 const ZONE = '00000000-0000-0000-0000-111111111111';
@@ -49,6 +49,12 @@ function makeDeps() {
         Promise.resolve({ dispatchesInFlight: 0, lastActivityAtMs: null, scanCapped: false, readError: null }),
       ),
     },
+    bridgeStatusReader: {
+      read: vi.fn(
+        (): Promise<BridgeHttpStatus | null> =>
+          Promise.resolve({ answering: true, pxePortBound: true, readinessErrorCount: 0 }),
+      ),
+    },
   };
 }
 
@@ -62,6 +68,7 @@ const makeService = () =>
     deps.vrrpReader as never,
     deps.cryptoReader as never,
     deps.agentWorkReader as never,
+    deps.bridgeStatusReader as never,
   );
 
 beforeEach(() => {
@@ -100,6 +107,22 @@ describe('ZoneRuntimeService', () => {
       port: 8000,
       grpcPort: 9082,
     });
+  });
+
+  it('carries the http status read on the configured bridge port onto its row', async () => {
+    const [zone] = await makeService().list();
+
+    expect(deps.bridgeStatusReader.read).toHaveBeenCalledWith(8000);
+    expect(zone.bridges.rows[0].http).toEqual({ answering: true, pxePortBound: true, readinessErrorCount: 0 });
+  });
+
+  it('leaves the http status null when the bridge status route could not be read', async () => {
+    deps.bridgeStatusReader.read = vi.fn(() => Promise.resolve(null));
+
+    const [zone] = await makeService().list();
+
+    expect(zone.bridges.rows[0].http).toBeNull();
+    expect(zone.bridges.readError).toBeNull();
   });
 
   it('does not report another zone\'s bridge as holding this zone\'s vip', async () => {

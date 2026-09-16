@@ -1,0 +1,565 @@
+{
+  "RegistryVersion": "1.0.0",
+  "attributeCount": 1337,
+  "RegistryEntries": {
+    "Attributes": [
+      {
+        "AttributeName": "LimitCPUPAto46bits_F319",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "Limit CPU PA to 46 bits",
+        "GrayOut": false,
+        "HelpText": "Limit CPU physical address to 46 bits to support older Hyper-v. If enabled, automatically disables TME-MT and limits the maximum MMIOH Base setup option to 60T",
+        "Hidden": true,
+        "MenuPath": "./Advanced/Chipset Configuration/Uncore Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "HostMemoryFrequency",
+        "CurrentValue": "Auto",
+        "DefaultValue": "Auto",
+        "DisplayName": "Host Memory Frequency",
+        "GrayOut": false,
+        "HelpText": "Maximum Host DDR Memory Frequency Selections in MT/s. If the \"AUTO\" option has been selected, a frequency is chosen automatically based on the minimum tCK given by the SPD. If Enforce POR is disabled, user will be able to run at higher frequencies than the memory support (limited by processor support). Note: For MRDIMM, DDR DRAM frequency is half of Host frequency",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Memory Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Auto",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "3200",
+            "ValueName": "1"
+          },
+          {
+            "ValueDisplayName": "3600",
+            "ValueName": "3"
+          },
+          {
+            "ValueDisplayName": "4000",
+            "ValueName": "5"
+          },
+          {
+            "ValueDisplayName": "4400",
+            "ValueName": "7"
+          },
+          {
+            "ValueDisplayName": "4800",
+            "ValueName": "8"
+          },
+          {
+            "ValueDisplayName": "5200",
+            "ValueName": "9"
+          },
+          {
+            "ValueDisplayName": "5600",
+            "ValueName": "10"
+          },
+          {
+            "ValueDisplayName": "6000",
+            "ValueName": "11"
+          },
+          {
+            "ValueDisplayName": "6400",
+            "ValueName": "12"
+          },
+          {
+            "ValueDisplayName": "6800",
+            "ValueName": "13"
+          },
+          {
+            "ValueDisplayName": "7200",
+            "ValueName": "14"
+          },
+          {
+            "ValueDisplayName": "7200",
+            "ValueName": "14"
+          },
+          {
+            "ValueDisplayName": "8000",
+            "ValueName": "16"
+          },
+          {
+            "ValueDisplayName": "7200",
+            "ValueName": "14"
+          },
+          {
+            "ValueDisplayName": "8000",
+            "ValueName": "16"
+          },
+          {
+            "ValueDisplayName": "8800",
+            "ValueName": "18"
+          }
+        ]
+      },
+      {
+        "AttributeName": "Intel_R_FlatMemoryModeSupport",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "Intel(R) Flat Memory Mode Support",
+        "GrayOut": false,
+        "HelpText": "Enable or disable Intel(R) Flat Memory Mode support",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Memory Configuration/Memory Map",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "MemoryEncryption_TME_",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "Memory Encryption (TME)",
+        "GrayOut": false,
+        "HelpText": "Enable/Disable Memory Encryption (TME)",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "TotalMemoryEncryptionMulti_Tenant_TME_MT_",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "Total Memory Encryption Multi-Tenant(TME-MT)",
+        "GrayOut": false,
+        "HelpText": "Enable/Disable Total Memory Encryption - Multi-Tenant (TME-MT). Can be enabled only if Socket Configuration -> Processor Configuration -> Limit CPU PA to 46 bits = Disable",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "MemoryIntegrity",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "Memory Integrity",
+        "GrayOut": false,
+        "HelpText": "Enable/Disable memory Integrity",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "TMEEncryptionAlgorithm",
+        "CurrentValue": "AES-XTS-256",
+        "DefaultValue": "AES-XTS-256",
+        "DisplayName": "TME Encryption Algorithm",
+        "GrayOut": false,
+        "HelpText": "Choose Encryption Algorithm to be used for Total Memory Encryption (TME)",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "AES-XTS-128",
+            "ValueName": "3"
+          },
+          {
+            "ValueDisplayName": "AES-XTS-256",
+            "ValueName": "12"
+          }
+        ]
+      },
+      {
+        "AttributeName": "TrustDomainExtensions_TDX_",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "Trust Domain Extensions (TDX)",
+        "GrayOut": false,
+        "HelpText": "Enable/Disable Trust Domain Extensions (TDX)",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "TrustDomainExtensions_Connect_TDXConnect_",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "Trust Domain Extensions - Connect (TDX Connect)",
+        "GrayOut": true,
+        "HelpText": "Enable/Disable Trust Domain Extensions - Connect (TDX Connect)",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "TDXSecureArbitrationModeLoader_SEAMLoader_",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "TDX Secure Arbitration Mode Loader (SEAM Loader)",
+        "GrayOut": true,
+        "HelpText": "Enable/Disable TDX Secure Arbitration Mode Loader (SEAM Loader)",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "TME_MT_TDXKeySplit_F31D",
+        "CurrentValue": 1,
+        "DefaultValue": 1,
+        "DisplayName": "TME-MT/TDX Key Split",
+        "GrayOut": false,
+        "HelpText": "Designate number of bits for TDX usage. The rest will be used by TME-MT.",
+        "Hidden": true,
+        "LowerBound": 1,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "ScalarIncrement": 1,
+        "Type": "Integer",
+        "UpperBound": 11
+      },
+      {
+        "AttributeName": "SGXFactoryReset",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "SGX Factory Reset",
+        "GrayOut": false,
+        "HelpText": "Perform SGX Factory Reset, on subsequent boot: delete all registration data, if SGX enabled will force Initial Platform Establishment flow.",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "SWGuardExtensions_SGX_",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "SW Guard Extensions (SGX)",
+        "GrayOut": false,
+        "HelpText": "Enable/Disable Software Guard Extensions (SGX)",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "SGXPackageInfoIn_BandAccess",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "SGX Package Info In-Band Access",
+        "GrayOut": false,
+        "HelpText": "Enable/Disable Software Guard Extensions (SGX) Package Info In-Band Access",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "SGXPRMRRSizeRequested",
+        "CurrentValue": "Auto",
+        "DefaultValue": "Auto",
+        "DisplayName": "SGX PRMRR Size Requested",
+        "GrayOut": true,
+        "HelpText": "SGX PRMRR Size per domain",
+        "Hidden": false,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Auto",
+            "ValueName": "2"
+          },
+          {
+            "ValueDisplayName": "128M",
+            "ValueName": "134217728"
+          },
+          {
+            "ValueDisplayName": "256M",
+            "ValueName": "268435456"
+          },
+          {
+            "ValueDisplayName": "512M",
+            "ValueName": "536870912"
+          },
+          {
+            "ValueDisplayName": "1G",
+            "ValueName": "1073741824"
+          },
+          {
+            "ValueDisplayName": "2G",
+            "ValueName": "-2147483648"
+          },
+          {
+            "ValueDisplayName": "4G",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "8G",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "16G",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "32G",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "64G",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "128G",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "256G",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "512G",
+            "ValueName": "0"
+          }
+        ]
+      },
+      {
+        "AttributeName": "SGXQoS_F30C",
+        "CurrentValue": "Enabled",
+        "DefaultValue": "Enabled",
+        "DisplayName": "SGX QoS",
+        "GrayOut": false,
+        "HelpText": "Enable/Disable SGX Quality of Service",
+        "Hidden": true,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "SGXLEPUBKEYHASHxWriteEnable_F310",
+        "CurrentValue": "Enabled",
+        "DefaultValue": "Enabled",
+        "DisplayName": "SGXLEPUBKEYHASHx Write Enable",
+        "GrayOut": false,
+        "HelpText": "Enable writes to SGXLEPUBKEYHASH[3..0] from OS/SW",
+        "Hidden": true,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      },
+      {
+        "AttributeName": "SGXLEPUBKEYHASH0_F311",
+        "CurrentValue": 0,
+        "DefaultValue": 0,
+        "DisplayName": "SGXLEPUBKEYHASH0",
+        "GrayOut": false,
+        "HelpText": "SGX Launch Enclave Public Key Hash byte 7-0",
+        "Hidden": true,
+        "LowerBound": 0,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "ScalarIncrement": 1,
+        "Type": "Integer",
+        "UpperBound": 9223372036854775807
+      },
+      {
+        "AttributeName": "SGXLEPUBKEYHASH1_F312",
+        "CurrentValue": 0,
+        "DefaultValue": 0,
+        "DisplayName": "SGXLEPUBKEYHASH1",
+        "GrayOut": false,
+        "HelpText": "SGX Launch Enclave Public Key Hash byte 15-8",
+        "Hidden": true,
+        "LowerBound": 0,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "ScalarIncrement": 1,
+        "Type": "Integer",
+        "UpperBound": 9223372036854775807
+      },
+      {
+        "AttributeName": "SGXLEPUBKEYHASH2_F313",
+        "CurrentValue": 0,
+        "DefaultValue": 0,
+        "DisplayName": "SGXLEPUBKEYHASH2",
+        "GrayOut": false,
+        "HelpText": "SGX Launch Enclave Public Key Hash byte 23-16",
+        "Hidden": true,
+        "LowerBound": 0,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "ScalarIncrement": 1,
+        "Type": "Integer",
+        "UpperBound": 9223372036854775807
+      },
+      {
+        "AttributeName": "SGXLEPUBKEYHASH3_F314",
+        "CurrentValue": 0,
+        "DefaultValue": 0,
+        "DisplayName": "SGXLEPUBKEYHASH3",
+        "GrayOut": false,
+        "HelpText": "SGX Launch Enclave Public Key Hash byte 31-24",
+        "Hidden": true,
+        "LowerBound": 0,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "ScalarIncrement": 1,
+        "Type": "Integer",
+        "UpperBound": 9223372036854775807
+      },
+      {
+        "AttributeName": "SGXAutoMPRegistration_F316",
+        "CurrentValue": "Disabled",
+        "DefaultValue": "Disabled",
+        "DisplayName": "SGX Auto MP Registration",
+        "GrayOut": false,
+        "HelpText": "Enable/Disable automatic registration in OS MPA agent",
+        "Hidden": true,
+        "MenuPath": "./Advanced/Chipset Configuration/Security Configuration",
+        "ReadOnly": false,
+        "Type": "Enumeration",
+        "Value": [
+          {
+            "ValueDisplayName": "Disabled",
+            "ValueName": "0"
+          },
+          {
+            "ValueDisplayName": "Enabled",
+            "ValueName": "1"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -96,6 +96,7 @@ export class ProvisionOperation {
       throw new NotFoundException('One or more SSH keys not found');
     }
     this.provisionValidator.validateDiskGroupHomogeneity(input.diskLayouts, storageDrives);
+    this.provisionValidator.validateDiskGroupSizeLimits(input.diskLayouts, storageDrives);
     return { pubkeys };
   }
 
@@ -116,6 +117,7 @@ export class ProvisionOperation {
       );
     }
     this.provisionValidator.validateDiskGroupHomogeneity(input.diskLayouts, device.storageDrives);
+    this.provisionValidator.validateDiskGroupSizeLimits(input.diskLayouts, device.storageDrives);
 
     return { baseLayerId: baseLayer.id, pubkeys: sshKeys.map((key) => key.key) };
   }

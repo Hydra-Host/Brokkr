@@ -18,7 +18,8 @@
     "test:integration": "vitest run src/__test__/composition-root-integration.test.ts",
     "test:live": "vitest run --config vitest.live.config.ts",
     "lint": "eslint \"src/**/*.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.live.json",
+    "typecheck:live": "tsc --noEmit -p tsconfig.live.json"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.12.4",

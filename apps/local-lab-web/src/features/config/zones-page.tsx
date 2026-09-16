@@ -45,6 +45,10 @@ export const dirtyZoneCount = (rows: Row[], before: Zone[]): number => {
   return removed + touched;
 };
 
+/** A bare-metal machine has no per-node card on the fleet page, so its roster section is the anchor. */
+const hashFor = (name: string, nodes: TopologyNode[]): string =>
+  nodes.find((node) => node.name === name)?.kind === 'baremetal' ? 'BAREMETAL' : `node-${name}`;
+
 /** Only one rename can ride a save, because the desired set cannot express two. */
 const renameOf = (rows: Row[]): { from: string; to: string } | undefined => {
   const changed = rows.filter((row) => row.was !== null && row.was !== row.name);
@@ -129,7 +133,7 @@ export function ConfigZonesPage() {
   const readError = errorMessage(cfg.error);
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:h-[calc(100dvh-7rem)] lg:grid-cols-[260px_1fr]">
+    <div className="grid grid-cols-1 gap-6 lg:h-full lg:grid-cols-[260px_1fr]">
       <UnsavedNavGate dirty={dirty} what="zone" />
       <SectionRail
         items={rail}
@@ -187,7 +191,15 @@ export function ConfigZonesPage() {
           <FleetGraph
             model={topology.model}
             onSelectZone={(name) => scrollToSection(`zone-${rows.find((row) => row.was === name)?.index ?? 0}`)}
-            onSelectNode={(name) => void navigate({ to: '/config/fleet', hash: `node-${name}` })}
+            onSelectNode={(name) =>
+              void navigate({
+                to: '/config/fleet',
+                hash: hashFor(name, [
+                  ...topology.model.zones.flatMap((zone) => zone.nodes),
+                  ...topology.model.orphanNodes,
+                ]),
+              })
+            }
           />
         </div>
 
@@ -293,7 +305,7 @@ function ZoneCard({
                   <Link
                     key={node.name}
                     to="/config/fleet"
-                    hash={`node-${node.name}`}
+                    hash={hashFor(node.name, nodes)}
                     className="border-border-dim text-text-muted hover:bg-hover-bg rounded border px-1.5 font-mono"
                   >
                     {node.name}

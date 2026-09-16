@@ -1,7 +1,9 @@
+import { BgpSessionStatus } from '@repo/database/enums';
 import { z } from 'zod';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const BgpSessionStatusSchema = z.enum(['ACTIVE', 'PLANNED', 'OFFLINE', 'DECOMMISSIONING']);
-export type BgpSessionStatus = z.infer<typeof BgpSessionStatusSchema>;
+export const BgpSessionStatusSchema = zodEnumFromPrisma(BgpSessionStatus);
+export type { BgpSessionStatus };
 
 export const BgpPeerGroupSchema = z.object({
   id: z.string().uuid().describe('BGP peer group UUID'),

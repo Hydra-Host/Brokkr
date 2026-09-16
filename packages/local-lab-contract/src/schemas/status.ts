@@ -53,7 +53,11 @@ export const InitStatusSchema = z.object({
     .enum(['pending', 'running', 'completed', 'failed'])
     .describe('Aggregate of the init-DAG roster: a failed task outranks a task still running'),
   total: z.number().describe('Init tasks discovered from the log artifacts; pending ones may predate this bring-up'),
-  completed: z.number().describe('Tasks exited 0 this bring-up'),
+  completed: z
+    .number()
+    .describe(
+      'Tasks satisfied this bring-up: exited 0 now, or cached from an earlier exit 0 by their status predicate',
+    ),
   failed: z.number().describe('Tasks exited non-zero, or with an unreadable exit-status sidecar'),
   current: z
     .string()

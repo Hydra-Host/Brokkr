@@ -3,11 +3,12 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FleetGraph } from './fleet-graph';
-import type { TopologyModel, TopologyNode, TopologyZone } from './fleet-topology';
+import type { TopologyBareMetalNode, TopologyModel, TopologyVmNode, TopologyZone } from './fleet-topology';
 
 afterEach(cleanup);
 
-const node = (name: string, over: Partial<TopologyNode> = {}): TopologyNode => ({
+const node = (name: string, over: Partial<TopologyVmNode> = {}): TopologyVmNode => ({
+  kind: 'vm',
   name,
   zone: 'sim-zone',
   cpus: 4,
@@ -15,6 +16,17 @@ const node = (name: string, over: Partial<TopologyNode> = {}): TopologyNode => (
   diskGb: 40,
   arch: 'amd64',
   power: 'on',
+  deviceId: null,
+  ...over,
+});
+
+const metal = (name: string, over: Partial<TopologyBareMetalNode> = {}): TopologyBareMetalNode => ({
+  kind: 'baremetal',
+  name,
+  zone: 'sim-zone',
+  arch: 'amd64',
+  bmcIp: '192.168.1.50',
+  power: 'off',
   deviceId: null,
   ...over,
 });
@@ -78,6 +90,12 @@ describe('FleetGraph', () => {
     expect(screen.getByText(/a rename leaves this behind/)).toBeTruthy();
   });
 
+  it('names a node that carries no zone at all without a dangling arrow', () => {
+    render(<FleetGraph model={model({ orphanNodes: [metal('metal-1', { zone: '' })] })} />);
+
+    expect(screen.getByRole('button', { name: 'metal-1' })).toBeTruthy();
+  });
+
   it('names a running domain the config does not carry', () => {
     render(<FleetGraph model={model({ adoptable: ['stray'] })} />);
 
@@ -121,6 +139,62 @@ describe('FleetGraph', () => {
     fireEvent.click(screen.getByText('old-1 → gone'));
 
     expect(onSelectNode).toHaveBeenCalledWith('old-1');
+  });
+});
+
+describe('FleetGraph — bare-metal tiles', () => {
+  const dashOf = (label: RegExp): string | null | undefined =>
+    screen.getByRole('button', { name: label }).querySelector('rect')?.getAttribute('stroke-dasharray');
+
+  it('marks a bare-metal tile and names its bmc', () => {
+    render(<FleetGraph model={model({ zones: [zone({ nodes: [node('cpu-1'), metal('metal-1')] })] })} />);
+
+    expect(screen.getByLabelText('node metal-1 in zone sim-zone, bare metal')).toBeTruthy();
+    expect(screen.getByText('bare metal')).toBeTruthy();
+    expect(screen.getByText('bmc 192.168.1.50 · amd64')).toBeTruthy();
+  });
+
+  it('draws the bare-metal tile dashed and the vm tile solid', () => {
+    render(<FleetGraph model={model({ zones: [zone({ nodes: [node('cpu-1'), metal('metal-1')] })] })} />);
+
+    expect(dashOf(/^node metal-1/)).toBe('3 2');
+    expect(dashOf(/^node cpu-1/)).toBeNull();
+  });
+
+  it('does not call a lane with only bare-metal nodes empty', () => {
+    render(<FleetGraph model={model({ zones: [zone({ nodes: [metal('metal-1')] })] })} />);
+
+    expect(screen.queryByText(/no nodes — add one below/)).toBeNull();
+  });
+
+  it('reads a bare-metal power state from its dot', () => {
+    render(<FleetGraph model={model({ zones: [zone({ nodes: [metal('metal-1', { power: 'off' })] })] })} />);
+
+    expect(screen.getByLabelText('metal-1: power off')).toBeTruthy();
+  });
+
+  it('says when a bare-metal machine has no bmc address yet', () => {
+    render(<FleetGraph model={model({ zones: [zone({ nodes: [metal('metal-1', { bmcIp: null })] })] })} />);
+
+    expect(screen.getByText('bmc unset · amd64')).toBeTruthy();
+  });
+
+  it('hands a bare-metal node name back when its tile is activated', () => {
+    const onSelectNode = vi.fn();
+    render(<FleetGraph model={model({ zones: [zone({ nodes: [metal('metal-1')] })] })} onSelectNode={onSelectNode} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /^node metal-1/ }));
+
+    expect(onSelectNode).toHaveBeenCalledWith('metal-1');
+  });
+
+  it('keeps the vm tile line as it was', () => {
+    render(<FleetGraph model={model()} />);
+
+    expect(screen.getByLabelText('node cpu-1 in zone sim-zone')).toBeTruthy();
+    expect(screen.getByText('4c · 8G · 40G · amd64')).toBeTruthy();
+    expect(dashOf(/^node cpu-1/)).toBeNull();
+    expect(screen.queryByText('bare metal')).toBeNull();
   });
 });
 

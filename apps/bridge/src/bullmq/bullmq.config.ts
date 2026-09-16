@@ -1,8 +1,9 @@
 import { z } from 'zod';
 
+import { envInt, STRICT_INT_PATTERN } from '../common/env-utils';
+
 import { FRESHNESS_WINDOW_MS } from '../zone-crypto/sealed-envelope.types';
 import {
-  DEFERRED_HANDOFF_MAX_AGE_SECONDS,
   LOCK_LOST_REDELAY_SECONDS,
   LOCK_RENEW_MAX_TRANSIENT_FAILURES,
   LOCK_RENEW_REDIS_COMMAND_ATTEMPTS,
@@ -14,22 +15,8 @@ import {
 
 export { LOCK_WAIT_REDIS_TTL_BUFFER_SECONDS, LOCK_WAIT_REDIS_TTL_DEFAULT_SECONDS } from './bullmq.types';
 
-const STRICT_INT_PATTERN = /^\s*[+-]?\d+(?:_\d+)*\s*$/;
 const STRICT_NUMBER_PATTERN = /^\s*[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?\s*$/;
 const ENVELOPE_FRESHNESS_WINDOW_SECONDS = FRESHNESS_WINDOW_MS / 1_000;
-
-const envInt = (def: number) =>
-  z
-    .union([z.string(), z.undefined()])
-    .transform((value, ctx) => {
-      if (value === undefined) return def;
-      if (!STRICT_INT_PATTERN.test(value)) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `invalid integer: ${JSON.stringify(value)}` });
-        return z.NEVER;
-      }
-      return Number.parseInt(value.replace(/_/g, ''), 10);
-    })
-    .pipe(z.number().int());
 
 const optionalEnvInt = z
   .string()
@@ -73,7 +60,7 @@ const envSchema = z
     LOCK_LOST_REDELAY_SECONDS: optionalEnvInt,
     LOCK_WAIT_WARNING_SECONDS: envInt(60),
     LOCK_WAIT_HARD_CAP_SECONDS: envInt(LOCK_WAIT_HARD_CAP_SECONDS),
-    DEFERRED_HANDOFF_MAX_AGE_SECONDS: envInt(DEFERRED_HANDOFF_MAX_AGE_SECONDS),
+    AGENT_WAIT_HARD_CAP_SECONDS: envInt(3_600),
     // MUST stay well below the 300s zone-crypto envelope freshness window (failover re-opens the same hub envelope after lock expiry) and above lockRenewTime so long sagas never stall.
     BULLMQ_LOCK_DURATION_MS: envInt(120_000),
     BULLMQ_LOCK_RENEW_TIME_MS: envInt(60_000),
@@ -131,10 +118,20 @@ const envSchema = z
         message: `LOCK_WAIT_HARD_CAP_SECONDS (${env.LOCK_WAIT_HARD_CAP_SECONDS}) must be non-negative`,
       });
     }
-    if (env.DEFERRED_HANDOFF_MAX_AGE_SECONDS <= 0) {
+    if (env.AGENT_WAIT_HARD_CAP_SECONDS < 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `DEFERRED_HANDOFF_MAX_AGE_SECONDS (${env.DEFERRED_HANDOFF_MAX_AGE_SECONDS}) must be positive`,
+        message: `AGENT_WAIT_HARD_CAP_SECONDS (${env.AGENT_WAIT_HARD_CAP_SECONDS}) must be non-negative`,
+      });
+    }
+    const brokkrLiveBootWindowSeconds = env.BROKKR_LIVE_INITIAL_DELAY_SECONDS + env.BROKKR_LIVE_WAIT_SECONDS;
+    if (env.AGENT_WAIT_HARD_CAP_SECONDS > 0 && env.AGENT_WAIT_HARD_CAP_SECONDS <= brokkrLiveBootWindowSeconds) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `AGENT_WAIT_HARD_CAP_SECONDS (${env.AGENT_WAIT_HARD_CAP_SECONDS}) must exceed the brokkr-live boot window ` +
+          `(BROKKR_LIVE_INITIAL_DELAY_SECONDS + BROKKR_LIVE_WAIT_SECONDS = ${brokkrLiveBootWindowSeconds}) ` +
+          'so slow-post hardware is not terminally failed while legitimately booting',
       });
     }
     if (env.LOCK_WAIT_HARD_CAP_SECONDS >= ENVELOPE_FRESHNESS_WINDOW_SECONDS) {
@@ -150,14 +147,6 @@ const envSchema = z
         code: z.ZodIssueCode.custom,
         message:
           `LOCK_LOST_REDELAY_SECONDS (${lockLostRedelaySeconds}) must be less than ` +
-          `the envelope freshness window (${ENVELOPE_FRESHNESS_WINDOW_SECONDS})`,
-      });
-    }
-    if (env.DEFERRED_HANDOFF_MAX_AGE_SECONDS >= ENVELOPE_FRESHNESS_WINDOW_SECONDS) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          `DEFERRED_HANDOFF_MAX_AGE_SECONDS (${env.DEFERRED_HANDOFF_MAX_AGE_SECONDS}) must be less than ` +
           `the envelope freshness window (${ENVELOPE_FRESHNESS_WINDOW_SECONDS})`,
       });
     }
@@ -205,7 +194,6 @@ export interface BullmqConfig {
   lockLostRedelaySeconds?: number;
   lockWaitWarningSeconds?: number;
   lockWaitHardCapSeconds?: number;
-  deferredHandoffMaxAgeSeconds?: number;
 
   bullmqLockDurationMs: number;
   bullmqLockRenewTimeMs: number;
@@ -228,7 +216,7 @@ export interface BullmqLockPolicyConfig {
   lockWaitWarningSeconds: number;
   lockWaitHardCapSeconds: number;
   lockWaitRedisTtlSeconds: number;
-  deferredHandoffMaxAgeSeconds: number;
+  agentWaitHardCapSeconds: number;
 }
 
 export interface BullmqTimingConfig {
@@ -268,7 +256,7 @@ export function buildBullmqConfig(env: NodeJS.ProcessEnv = process.env): Resolve
       LOCK_WAIT_REDIS_TTL_DEFAULT_SECONDS,
       parsed.LOCK_WAIT_HARD_CAP_SECONDS + LOCK_WAIT_REDIS_TTL_BUFFER_SECONDS,
     ),
-    deferredHandoffMaxAgeSeconds: parsed.DEFERRED_HANDOFF_MAX_AGE_SECONDS,
+    agentWaitHardCapSeconds: parsed.AGENT_WAIT_HARD_CAP_SECONDS,
     bullmqLockDurationMs: parsed.BULLMQ_LOCK_DURATION_MS,
     bullmqLockRenewTimeMs: parsed.BULLMQ_LOCK_RENEW_TIME_MS,
     bullmqMaxStalledCount: parsed.BULLMQ_MAX_STALLED_COUNT,

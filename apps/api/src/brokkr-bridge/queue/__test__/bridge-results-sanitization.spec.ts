@@ -11,8 +11,9 @@ import { ZoneCryptoConfig } from 'src/zone-crypto/zone-crypto.config';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { DeviceRecordPublisher } from '../../device-record/device-record-publisher.service';
 import { DiscoveryIngressService } from '../../discovery/discovery-ingress.service';
-import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
+import { JobLogWriterService } from '../../job-logs/job-log-writer.service';
 import { BridgeCommissioningService } from '../../lifecycle/commissioning.service';
+import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../../lifecycle/qualify-orchestration.service';
 import { RenderRequestDispatcher } from '../../render-request/render-request-dispatcher.service';
 import { BridgeResultsConsumer } from '../bridge-results.consumer';
@@ -87,6 +88,7 @@ describe('BridgeResultsConsumer — sanitization report persistence', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BridgeResultsConsumer,
+        { provide: JobLogWriterService, useValue: { write: vi.fn() } },
         { provide: PrismaClient, useValue: prisma },
         {
           provide: REDIS_CONFIG,
@@ -218,7 +220,9 @@ describe('BridgeResultsConsumer — sanitization report persistence', () => {
 
   it('swallows a persist failure so sibling step-result work is not aborted', async () => {
     sanitization.createFromStepResult.mockRejectedValue(new Error('prisma boom'));
-    await expect(processResult(makeWipeJob({ step_name: 'disk_wipe', action_type: 'commission' }))).resolves.not.toThrow();
+    await expect(
+      processResult(makeWipeJob({ step_name: 'disk_wipe', action_type: 'commission' })),
+    ).resolves.not.toThrow();
     expect(logger.error).toHaveBeenCalled();
   });
 });

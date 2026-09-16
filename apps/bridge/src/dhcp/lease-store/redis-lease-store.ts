@@ -1,5 +1,5 @@
 import { getErrorMessage } from '../../common/error-utils.js';
-import { dhcpLease, dhcpLeasePattern } from '../../common/redis/redis-keys.js';
+import { dhcpLease, dhcpLeasePattern, dhcpLeaseRevoke, dhcpLeaseRevokePattern } from '../../common/redis/redis-keys.js';
 
 import type { LeaseRecord } from './lease-record.js';
 import { leaseRecordSchema } from './lease-record.schema.js';
@@ -56,6 +56,24 @@ export class RedisLeaseStore implements LeaseStore {
 
   async delete(lease: LeaseRecord): Promise<void> {
     await this.redis().delete(dhcpLease(lease.ip));
+  }
+
+  async takeRevocations(): Promise<string[]> {
+    const keys = await this.redis().scan(dhcpLeaseRevokePattern());
+    if (keys.length === 0) return [];
+    const ips: string[] = [];
+    for (const key of keys) {
+      const ip = key.slice(key.lastIndexOf(':') + 1);
+      // Clear the marker before acting: a revocation replayed after the address has
+      // been handed to a new client would evict that client's live lease instead.
+      if (dhcpLeaseRevoke(ip) !== key) {
+        this.logger.warn(`DHCP revocation ${key}: unparseable key, dropping`);
+      } else {
+        ips.push(ip);
+      }
+      await this.redis().delete(key);
+    }
+    return ips;
   }
 
   async pruneExpired(nowSeconds: number): Promise<number> {

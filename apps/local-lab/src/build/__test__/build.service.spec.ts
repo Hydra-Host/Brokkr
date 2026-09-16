@@ -34,8 +34,8 @@ function makeService(uplink: { iface: string; ip: string } | null) {
   return { svc, runner, overlay, repoBranch };
 }
 
-describe('BuildService.buildIpxe — W6 mode-appropriate chain URL', () => {
-  it('passes --chain-base-url (uplink IP + spoke base port) in bare-metal mode', () => {
+describe('BuildService.buildIpxe — the chain URL follows the uplink', () => {
+  it('passes --chain-base-url (uplink IP + spoke base port) when a bare-metal uplink is bound', () => {
     const { svc, runner } = makeService({ iface: 'eth0', ip: '10.0.0.5' });
 
     svc.buildIpxe();
@@ -44,7 +44,7 @@ describe('BuildService.buildIpxe — W6 mode-appropriate chain URL', () => {
     expect(args).toEqual(['-m', 'local.ipxe_build', '--force', '--chain-base-url', 'http://10.0.0.5:8000']);
   });
 
-  it('passes only --force in vm mode (no uplink)', () => {
+  it('passes only --force without an uplink', () => {
     const { svc, runner } = makeService(null);
 
     svc.buildIpxe();

@@ -1,10 +1,12 @@
+import { CircuitStatus, CircuitTerminationSide } from '@repo/database/enums';
 import { z } from 'zod';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const CircuitStatusSchema = z.enum(['ACTIVE', 'PLANNED', 'OFFLINE', 'DEPROVISIONING', 'DECOMMISSIONED']);
-export type CircuitStatus = z.infer<typeof CircuitStatusSchema>;
+export const CircuitStatusSchema = zodEnumFromPrisma(CircuitStatus);
+export type { CircuitStatus };
 
-export const CircuitTerminationSideSchema = z.enum(['A', 'Z']);
-export type CircuitTerminationSide = z.infer<typeof CircuitTerminationSideSchema>;
+export const CircuitTerminationSideSchema = zodEnumFromPrisma(CircuitTerminationSide);
+export type { CircuitTerminationSide };
 
 export const ProviderSchema = z.object({
   id: z.string().uuid().describe('Provider UUID'),

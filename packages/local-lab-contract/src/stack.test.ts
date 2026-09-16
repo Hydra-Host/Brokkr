@@ -6,6 +6,9 @@ import {
   APPLY_CLASS_RANK,
   ApplyClassSchema,
   ConfigTreeEntrySchema,
+  initAggregateState,
+  initTaskDone,
+  InitTaskSchema,
   RESTART_STALE_AFTER_LABEL,
   RESTART_STALE_AFTER_MS,
   RestartStatusSchema,
@@ -13,6 +16,7 @@ import {
   StackConfigSchema,
   StackKnobSchema,
   StackPendingSchema,
+  type InitTask,
 } from './schemas/stack';
 
 describe('RESTART_STALE_AFTER_MS', () => {
@@ -287,5 +291,57 @@ describe('ConfigTreeEntrySchema — the widget the page needs', () => {
   it('carries the choices a select needs and an empty list for every other kind', () => {
     expect(ConfigTreeEntrySchema.parse({ ...base, kind: 'select', choices: ['a', 'b'] }).choices).toEqual(['a', 'b']);
     expect(ConfigTreeEntrySchema.parse(base).choices).toEqual([]);
+  });
+});
+
+const initTask = (state: InitTask['state']): InitTask => ({
+  name: 'hub:init',
+  label: 'Hub build',
+  state,
+  exitCode: state === 'completed' || state === 'cached' ? 0 : null,
+  detail: null,
+  updatedAt: 1,
+});
+
+describe('InitTaskSchema', () => {
+  it('accepts a cached task', () => {
+    expect(InitTaskSchema.safeParse(initTask('cached')).success).toBe(true);
+  });
+});
+
+describe('initTaskDone', () => {
+  it('is satisfied by completed and cached only', () => {
+    expect(InitTaskSchema.shape.state.options.filter((s) => initTaskDone(initTask(s)))).toEqual([
+      'cached',
+      'completed',
+    ]);
+  });
+});
+
+describe('initAggregateState', () => {
+  it('reads completed when a cached task sits beside a completed one', () => {
+    expect(initAggregateState([initTask('cached'), initTask('completed')])).toBe('completed');
+  });
+
+  it('reads completed for a roster that is entirely cached', () => {
+    expect(initAggregateState([initTask('cached')])).toBe('completed');
+  });
+
+  it('reads pending while a cached task sits beside a pending one', () => {
+    expect(initAggregateState([initTask('cached'), initTask('pending')])).toBe('pending');
+  });
+
+  it('reads pending for an empty roster', () => {
+    expect(initAggregateState([])).toBe('pending');
+  });
+
+  it('lets a running task outrank a cached one', () => {
+    expect(initAggregateState([initTask('cached'), initTask('running')])).toBe('running');
+  });
+
+  it('never reports cached itself', () => {
+    for (const state of InitTaskSchema.shape.state.options) {
+      expect(initAggregateState([initTask(state)])).not.toBe('cached');
+    }
   });
 });

@@ -47,7 +47,7 @@ function service(queue: BullmqQueue, zoneCrypto?: ZoneCryptoService): BullmqQueu
     createSharedOpsClient: () => client,
     createQueue: () => queue,
   };
-  return new BullmqQueueService(factory, undefined, zoneCrypto);
+  return new BullmqQueueService(factory, undefined, zoneCrypto, () => ({ persistInitialPlan: async () => true }));
 }
 
 function args() {

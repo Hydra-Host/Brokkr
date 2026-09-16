@@ -12,6 +12,8 @@ export const REDIS_KEYS = {
   sagaPlanById: (zoneUuid: string, planId: string) => `${zoneUuid}:bridge:jobs:plan:${planId}`,
 
   solLogs: (zonePrefix: string, planId: string) => `${zonePrefix}:sol:logs:${planId}`,
+
+  jobLogs: (zonePrefix: string, planId: string) => `${zonePrefix}:job:logs:${planId}`,
 };
 
 export const serverToken = (deviceId: string): string => `device:${deviceId}:server_token`;

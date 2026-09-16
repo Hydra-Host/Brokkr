@@ -49,7 +49,7 @@ export class QueuesController {
   }
 
   @TsRestHandler(contract.retryQueueJob)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   retryQueueJob() {
     return tsRestHandler(contract.retryQueueJob, async ({ params, body }) => {
       const outcome = await this.mutations.retryJob(params.prefix, params.name, params.jobId, body);
@@ -60,7 +60,7 @@ export class QueuesController {
   }
 
   @TsRestHandler(contract.removeQueueJob)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   removeQueueJob() {
     return tsRestHandler(contract.removeQueueJob, async ({ params }) => {
       const outcome = await this.mutations.removeJob(params.prefix, params.name, params.jobId);
@@ -71,7 +71,7 @@ export class QueuesController {
   }
 
   @TsRestHandler(contract.drainQueue)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   drainQueue() {
     return tsRestHandler(contract.drainQueue, async ({ params, body }) => {
       const outcome = await this.mutations.drainQueue(params.prefix, params.name, body);
@@ -82,7 +82,7 @@ export class QueuesController {
   }
 
   @TsRestHandler(contract.cleanQueue)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   cleanQueue() {
     return tsRestHandler(contract.cleanQueue, async ({ params, body }) => {
       const outcome = await this.mutations.cleanQueue(params.prefix, params.name, body);

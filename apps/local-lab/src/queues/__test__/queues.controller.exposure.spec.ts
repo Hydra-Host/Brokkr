@@ -6,13 +6,13 @@ import { QueuesController } from '../queues.controller';
 
 const reflector = new Reflector();
 
-describe('QueuesController exposure annotations', () => {
-  it('annotates every queue mutation loopback-only — each one rewrites shared queue state', () => {
+describe('QueuesController capability annotations', () => {
+  it('prices every queue mutation at operate — each one rewrites shared queue state', () => {
     for (const handler of ['retryQueueJob', 'removeQueueJob', 'drainQueue', 'cleanQueue'] as const) {
       expect(
         reflector.get<LabRouteOptions | undefined>(LAB_ROUTE, QueuesController.prototype[handler]),
         handler,
-      ).toEqual({ exposure: 'loopback-only' });
+      ).toEqual({ capability: 'operate' });
     }
   });
 

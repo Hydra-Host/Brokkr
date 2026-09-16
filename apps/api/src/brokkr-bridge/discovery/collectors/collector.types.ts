@@ -67,6 +67,8 @@ export interface DeviceMutation {
   serverUpdate?: ServerMutation;
   upserts?: MutationUpserts;
   warnings?: string[];
+  // the collector dropped malformed rows, so `pciDevices` is not the full bus — suppresses the stale-row prune
+  pciDevicesPartial?: boolean;
 }
 
 export interface ServerMutation {

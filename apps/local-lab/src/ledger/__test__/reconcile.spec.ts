@@ -136,7 +136,7 @@ describe('RunLedgerService.reconcileOnBoot — killable sections', () => {
 describe('RunLedgerService.reconcileOnBoot — sections that are never signalled', () => {
   it('never signals a stack orphan, even with a live pid', () => {
     alive.add(5150);
-    seedRun({ run_id: 'stack-1', section: 'stack', op_id: 'fleet-mode-apply', pid: 5150 });
+    seedRun({ run_id: 'stack-1', section: 'stack', op_id: 'fleet-planes-apply', pid: 5150 });
 
     ledger.reconcileOnBoot();
 
@@ -389,7 +389,7 @@ describe('RunLedgerService.reconcileOnBoot — orphaned is not failed', () => {
     seedRun({ run_id: 'kept' });
     const db = getDb();
 
-    expect(db.pragma('user_version', { simple: true })).toBe(3);
+    expect(db.pragma('user_version', { simple: true })).toBe(4);
     const indexes = db
       .prepare<[], { name: string }>(
         `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'runs' AND name LIKE 'idx_%'`,

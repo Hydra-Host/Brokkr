@@ -3,7 +3,7 @@
 > **Auto-generated — do not edit by hand.** Regenerate with `pnpm licenses:third-party`
 > (`scripts/generate-third-party-licenses.mjs`, sourced from `pnpm licenses list --prod --json`).
 
-This project bundles the following 1198 production dependencies. Their licenses and, where
+This project bundles the following 1197 production dependencies. Their licenses and, where
 available, their license texts are reproduced below to satisfy attribution requirements.
 
 > Platform-specific prebuilt native binaries (e.g. `@esbuild/<os>`, `@rollup/rollup-<os>-<libc>`,
@@ -27,7 +27,7 @@ available, their license texts are reproduced below to satisfy attribution requi
 | CC-BY-4.0 | 1 |
 | CC0-1.0 | 1 |
 | ISC | 55 |
-| MIT | 941 |
+| MIT | 940 |
 | MIT AND ISC | 1 |
 | MIT-0 | 3 |
 | MPL-2.0 | 1 |
@@ -35604,7 +35604,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### fast-uri@3.1.5, 4.1.2
+### fast-uri@3.1.7, 4.1.4
 
 - License: `BSD-3-Clause`
 - Homepage: https://github.com/fastify/fast-uri
@@ -39045,7 +39045,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### js-yaml@4.3.1, 5.3.0
+### js-yaml@4.3.2, 5.3.0
 
 - License: `MIT`
 - Homepage: https://github.com/nodeca/js-yaml#readme
@@ -43068,7 +43068,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### mysql2@3.15.3
+### mysql2@3.24.3
 
 - License: `MIT`
 - Homepage: https://sidorares.github.io/node-mysql2/docs
@@ -43796,7 +43796,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### nodemailer@9.0.5
+### nodemailer@9.1.1
 
 - License: `MIT-0`
 - Homepage: https://nodemailer.com/
@@ -49701,37 +49701,6 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### seq-queue@0.0.5
-
-- License: `MIT`
-- Homepage: https://github.com/changchang/seq-queue
-- Author: changchang
-
-```
-(The MIT License)
-
-Copyright (c) 2012 Netease, Inc. and other pomelo contributors
-
-Permission is hereby granted, free of charge, to any person obtaining
-a copy of this software and associated documentation files (the
-'Software'), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
-
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-```
-
 ### seroval@1.6.2
 
 - License: `MIT`
@@ -50709,31 +50678,34 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-### sqlstring@2.3.3
+### sql-escaper@1.5.1
 
 - License: `MIT`
-- Homepage: https://github.com/mysqljs/sqlstring#readme
+- Homepage: https://github.com/mysqljs/sql-escaper#readme
+- Author: https://github.com/mysqljs
 
 ```
-Copyright (c) 2012 Felix Geisendörfer (felix@debuggable.com) and contributors
+MIT License
 
- Permission is hereby granted, free of charge, to any person obtaining a copy
- of this software and associated documentation files (the "Software"), to deal
- in the Software without restriction, including without limitation the rights
- to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- copies of the Software, and to permit persons to whom the Software is
- furnished to do so, subject to the following conditions:
+Copyright (c) 2026 Weslley Araújo, Andrey Sidorov, Douglas Wilson, and contributors.
 
- The above copyright notice and this permission notice shall be included in
- all copies or substantial portions of the Software.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- THE SOFTWARE.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ### ssh-config@5.2.1

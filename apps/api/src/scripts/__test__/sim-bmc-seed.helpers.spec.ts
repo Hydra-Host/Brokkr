@@ -5,12 +5,24 @@ import {
   bmDeviceUuid,
   ENROLLMENT_POLL_ATTEMPTS,
   parseBaremetalNodes,
-  parseFleetMode,
+  parseFleetPlanes,
   parseFleetYaml,
   readBmc,
   simDeviceUuid,
   waitForEnrollment,
 } from '../sim-bmc-seed.helpers';
+
+const VM_ROSTER = 'nodes:\n  - name: cpu-1\n    ipmi_mac: "52:54:00:bc:00:01"\n';
+const BM_BLOCK = `baremetal:
+  iface: enp35s0
+  arch: amd64
+  nodes:
+    - name: bench-1
+      pxe_mac: "00:00:5e:00:53:b4"
+      bmc_mac: "00:00:5e:00:53:b5"
+      bmc_ip: 198.51.100.250
+`;
+const EMPTY_BM_BLOCK = 'baremetal:\n  iface: enp35s0\n  nodes: []\n';
 
 describe('sim-bmc-seed helpers', () => {
   describe('simDeviceUuid', () => {
@@ -35,52 +47,51 @@ describe('sim-bmc-seed helpers', () => {
     });
   });
 
-  describe('parseFleetMode', () => {
-    it('returns baremetal only when top-level mode === "baremetal"', () => {
-      expect(parseFleetMode('mode: baremetal\nbaremetal:\n  nodes: []\n')).toBe('baremetal');
+  describe('parseFleetPlanes', () => {
+    it('reads a vm-only fleet as the vm plane alone', () => {
+      expect(parseFleetPlanes(VM_ROSTER)).toEqual({ vm: true, baremetal: false });
     });
 
-    it('returns vm for an explicit mode: vm', () => {
-      expect(parseFleetMode('mode: vm\nnodes:\n  - name: cpu-1\n')).toBe('vm');
+    it('reads a bare-metal-only fleet as the bare-metal plane alone', () => {
+      expect(parseFleetPlanes(`nodes: []\n${BM_BLOCK}`)).toEqual({ vm: false, baremetal: true });
     });
 
-    it('returns vm when the mode key is absent (engine default)', () => {
-      expect(parseFleetMode('nodes:\n  - name: cpu-1\n')).toBe('vm');
+    it('reads both planes when a machine sits beside the vm roster', () => {
+      expect(parseFleetPlanes(`${VM_ROSTER}${BM_BLOCK}`)).toEqual({ vm: true, baremetal: true });
     });
 
-    it('returns vm for a non-object / non-baremetal-mode doc rather than throwing', () => {
-      expect(parseFleetMode('just-a-scalar\n')).toBe('vm');
-      expect(parseFleetMode('mode: other\n')).toBe('vm');
+    it('reads an empty roster as a plane that is off', () => {
+      expect(parseFleetPlanes(`nodes: []\n${EMPTY_BM_BLOCK}`)).toEqual({ vm: false, baremetal: false });
+      expect(parseFleetPlanes('network:\n  name: x\n')).toEqual({ vm: false, baremetal: false });
+    });
+
+    it('ignores a stale mode key', () => {
+      expect(parseFleetPlanes(`mode: baremetal\n${VM_ROSTER}`)).toEqual({ vm: true, baremetal: false });
+    });
+
+    it('throws when the doc is not an object', () => {
+      expect(() => parseFleetPlanes('just-a-scalar\n')).toThrow(/object/);
     });
   });
 
   describe('parseBaremetalNodes', () => {
-    const BAREMETAL = `
-mode: baremetal
-baremetal:
-  iface: enp35s0
-  arch: amd64
-  nodes:
-    - name: bench-1
-      pxe_mac: "00:00:5e:00:53:b4"
-      bmc_mac: "00:00:5e:00:53:b5"
-      bmc_ip: 198.51.100.250
-`;
-
     it('returns name + pxeMac for each baremetal node', () => {
-      const nodes = parseBaremetalNodes(BAREMETAL);
-      expect(nodes).toEqual([{ name: 'bench-1', pxeMac: '00:00:5e:00:53:b4' }]);
+      expect(parseBaremetalNodes(BM_BLOCK)).toEqual([{ name: 'bench-1', pxeMac: '00:00:5e:00:53:b4' }]);
     });
 
-    it('returns [] when the fleet is in vm mode (safe no-op)', () => {
-      expect(parseBaremetalNodes('nodes:\n  - name: cpu-1\n')).toEqual([]);
-      expect(parseBaremetalNodes('mode: vm\nbaremetal:\n  nodes:\n    - name: x\n      pxe_mac: "a"\n')).toEqual([]);
+    it('returns the machines beside a vm roster', () => {
+      expect(parseBaremetalNodes(`${VM_ROSTER}${BM_BLOCK}`)).toEqual([
+        { name: 'bench-1', pxeMac: '00:00:5e:00:53:b4' },
+      ]);
+    });
+
+    it('returns [] when the block is absent or carries no machines', () => {
+      expect(parseBaremetalNodes(VM_ROSTER)).toEqual([]);
+      expect(parseBaremetalNodes(`${VM_ROSTER}${EMPTY_BM_BLOCK}`)).toEqual([]);
     });
 
     it('throws on a baremetal node missing name/pxe_mac', () => {
-      expect(() => parseBaremetalNodes('mode: baremetal\nbaremetal:\n  nodes:\n    - {bmc_ip: 1.2.3.4}\n')).toThrow(
-        /name \+ pxe_mac/,
-      );
+      expect(() => parseBaremetalNodes('baremetal:\n  nodes:\n    - {bmc_ip: 1.2.3.4}\n')).toThrow(/name \+ pxe_mac/);
     });
   });
 

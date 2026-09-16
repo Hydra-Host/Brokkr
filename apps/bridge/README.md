@@ -71,6 +71,7 @@ The iPXE binaries the bridge serves embed a chainload script (`boot/ipxe/autoexe
 
 - **Default `https://brokkr.lan`** — the nginx `:443` front door. The bridge API binds loopback (`127.0.0.1:8080`), so `:443` (nginx terminates TLS and reverse-proxies `/api/chain` to the bridge) is the only externally reachable path; a device chaining to `:8080` directly is refused.
 - **The local sim overrides it** with a plaintext `http://<gateway>:<port>` endpoint (`apps/local-sim/scripts/local/ipxe_build.py` passes `--build-arg CHAIN_BASE_URL=…`) because the sim has no TLS terminator. It always passes the arg explicitly rather than inheriting the (https) Dockerfile default.
+- **The boot banner and the give-up beacon use the same baked URL.** The script prints `Chain URL: ${CHAIN_BASE_URL}/api/chain` and, after `max_attempts` failed chainloads, beacons to `${CHAIN_BASE_URL}/api/chain-unreachable`; neither reads the lease's `next-server`, which on a shared segment can name another DHCP server entirely. Binaries baked before this change still beacon to `next-server` — rebake (`ipxe_build.py`, or the image build) after upgrading.
 
 ### Trusting the zone CA (no committed PEMs)
 

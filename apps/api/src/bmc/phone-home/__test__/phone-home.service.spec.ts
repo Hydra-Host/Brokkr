@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import type { CreateDeviceDiagnosticsRequest } from '@repo/api-client';
 import { DeviceStatus, DeviceTokenContext, ServerLifecycleStatus, ServerPowerStatus } from '@repo/database';
+import { JobLogWriterService } from 'src/brokkr-bridge/job-logs/job-log-writer.service';
 import { BridgeInventoryCollectionService } from 'src/brokkr-bridge/lifecycle/inventory-collection.service';
 import { QualifyOrchestrationService } from 'src/brokkr-bridge/lifecycle/qualify-orchestration.service';
 import { ContextService } from 'src/common/context/context.service';
@@ -40,10 +41,12 @@ describe('PhoneHomeService', () => {
     updateDevice: Mock;
     hasActiveDeployment: Mock;
     createDeviceDiagnostics: Mock;
+    findActivePlanIdForDevice: Mock;
   };
   let qualifyOrchestration: { handleDeviceProvisioned: Mock };
   let bridgeInventoryCollection: { startInventoryCollection: Mock };
   let contextService: { deviceIdentity?: { context: DeviceTokenContext } };
+  let jobLogWriter: { write: Mock };
   let constructionAdds: unknown[][];
 
   beforeEach(async () => {
@@ -53,6 +56,7 @@ describe('PhoneHomeService', () => {
       updateDevice: vi.fn().mockResolvedValue({ transitioned: false }),
       hasActiveDeployment: vi.fn().mockResolvedValue(false),
       createDeviceDiagnostics: vi.fn(),
+      findActivePlanIdForDevice: vi.fn().mockResolvedValue(null),
     };
 
     qualifyOrchestration = {
@@ -63,6 +67,7 @@ describe('PhoneHomeService', () => {
       startInventoryCollection: vi.fn().mockResolvedValue({ jobId: 'inventory-cron-device-uuid-100' }),
     };
     contextService = {};
+    jobLogWriter = { write: vi.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -72,6 +77,7 @@ describe('PhoneHomeService', () => {
         { provide: BridgeInventoryCollectionService, useValue: bridgeInventoryCollection },
         { provide: LifecycleInboundService, useValue: { applyPhoneHome: vi.fn() } },
         { provide: ContextService, useValue: contextService },
+        { provide: JobLogWriterService, useValue: jobLogWriter },
         {
           provide: 'LoggerServicePhoneHomeService',
           useValue: {
@@ -350,6 +356,68 @@ describe('PhoneHomeService', () => {
       await expect(service.execute(deviceId)).rejects.toThrow('db down');
 
       expect(counterAdd).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('job log attribution', () => {
+    it('writes the phone-home line to the active lifecycle plan log stream', async () => {
+      const device = makeDevice({ server: { lifecycleStatus: ServerLifecycleStatus.PROVISIONING } });
+      repo.getDeviceByUuid.mockResolvedValue(device);
+      repo.findActivePlanIdForDevice.mockResolvedValue('plan-42');
+      contextService.deviceIdentity = { context: DeviceTokenContext.DEPLOYMENT_OS };
+
+      await service.execute(deviceId);
+
+      expect(repo.findActivePlanIdForDevice).toHaveBeenCalledExactlyOnceWith(device.id);
+      expect(jobLogWriter.write).toHaveBeenCalledExactlyOnceWith(
+        'zone-abc',
+        'plan-42',
+        'info',
+        `Phone-home from device ${device.id}: lifecycle status provisioned (token context ${DeviceTokenContext.DEPLOYMENT_OS})`,
+        'PhoneHomeService',
+      );
+    });
+
+    it('skips the log write when the device has no in-flight lifecycle plan', async () => {
+      repo.getDeviceByUuid.mockResolvedValue(makeDevice());
+
+      await service.execute(deviceId);
+
+      expect(repo.findActivePlanIdForDevice).toHaveBeenCalledExactlyOnceWith(deviceId);
+      expect(jobLogWriter.write).not.toHaveBeenCalled();
+    });
+
+    it('skips the plan lookup when the device has no zoneId', async () => {
+      repo.getDeviceByUuid.mockResolvedValue(makeDevice({ zoneId: null }));
+
+      await service.execute(deviceId);
+
+      expect(repo.findActivePlanIdForDevice).not.toHaveBeenCalled();
+      expect(jobLogWriter.write).not.toHaveBeenCalled();
+    });
+
+    it('still runs lifecycle orchestration when the plan lookup fails', async () => {
+      const device = makeDevice({ server: { lifecycleStatus: ServerLifecycleStatus.PROVISIONING } });
+      repo.getDeviceByUuid.mockResolvedValue(device);
+      repo.findActivePlanIdForDevice.mockRejectedValue(new Error('db down'));
+      contextService.deviceIdentity = { context: DeviceTokenContext.DEPLOYMENT_OS };
+
+      await expect(service.execute(deviceId)).resolves.toEqual({ deviceId });
+
+      expect(jobLogWriter.write).not.toHaveBeenCalled();
+      expect(qualifyOrchestration.handleDeviceProvisioned).toHaveBeenCalledExactlyOnceWith(device.id);
+    });
+
+    it('still runs lifecycle orchestration when the log write fails', async () => {
+      const device = makeDevice({ server: { lifecycleStatus: ServerLifecycleStatus.PROVISIONING } });
+      repo.getDeviceByUuid.mockResolvedValue(device);
+      repo.findActivePlanIdForDevice.mockResolvedValue('plan-42');
+      jobLogWriter.write.mockRejectedValue(new Error('redis down'));
+      contextService.deviceIdentity = { context: DeviceTokenContext.DEPLOYMENT_OS };
+
+      await expect(service.execute(deviceId)).resolves.toEqual({ deviceId });
+
+      expect(qualifyOrchestration.handleDeviceProvisioned).toHaveBeenCalledExactlyOnceWith(device.id);
     });
   });
 

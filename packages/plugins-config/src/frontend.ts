@@ -14,6 +14,7 @@ const SIDEBAR_ORDER = [
   'hubspot-leads',
   'salesforce-leads',
   'lender-device-associations',
+  'commerce',
   'bid-ask',
   'device-monitoring',
 ];

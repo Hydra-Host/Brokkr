@@ -1,3 +1,4 @@
+import { parseDiscoveryFlavors, type DiscoveryFlavor } from '../download/discovery.config.js';
 import { getBrokkrEnv, isLocalSimulationEnabled } from '../redfish/redfish.config.js';
 
 const STRICT_INT_PATTERN = /^\s*[+-]?\d+(?:_\d+)*\s*$/;
@@ -42,6 +43,7 @@ export interface SyncConfig {
   httpsRetryDelay: number;
   osLayerUrl: string;
   discoveryBaseUrl: string;
+  discoveryFlavors: readonly DiscoveryFlavor[];
   environment: string;
   localSimulationEnabled: boolean;
 }
@@ -53,6 +55,11 @@ const TLS_OPTIONAL_ENVIRONMENTS: ReadonlySet<string> = new Set(['local', 'dev'])
 const FORBIDDEN_URL_CHARS = new Set('"\'\\`$;&|<>\n\r\t '.split(''));
 
 export const DEFAULT_BROKKR_LIVE_VERSION = '1.1.9';
+
+// an older bridge pointed DISCOVERY_BASE_URL at the light tree itself; the flavor rule extends the flavor-less root
+function discoveryRootUrl(url: string): string {
+  return url.replace(/\/+$/, '').replace(/-light$/, '');
+}
 
 export function buildSyncConfig(env: NodeJS.ProcessEnv = process.env): SyncConfig {
   const environment = (getBrokkrEnv(env) || 'prod').trim().toLowerCase();
@@ -68,7 +75,10 @@ export function buildSyncConfig(env: NodeJS.ProcessEnv = process.env): SyncConfi
     httpsRetryAttempts: envInt(env, 'HTTPS_RETRY_ATTEMPTS', 3),
     httpsRetryDelay: envInt(env, 'HTTPS_RETRY_DELAY', 5),
     osLayerUrl: envString(env, 'OS_LAYER_URL', defaultOsLayerUrl),
-    discoveryBaseUrl: envString(env, 'DISCOVERY_BASE_URL', defaultBrokkrLiveUrl),
+    discoveryBaseUrl: discoveryRootUrl(envString(env, 'DISCOVERY_BASE_URL', defaultBrokkrLiveUrl)),
+    // same parser as the download side, so the synced and the served flavor lists cannot disagree;
+    // a lone entry is served to every device, and the discovery-light tag picks light only when both are listed
+    discoveryFlavors: parseDiscoveryFlavors(env.DISCOVERY_FLAVORS),
     environment,
     localSimulationEnabled: isLocalSimulationEnabled(env),
   };

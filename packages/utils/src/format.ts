@@ -178,6 +178,18 @@ function trimTrailingZeros(fixed: string): string {
   return fixed.replace(/0+$/, '').replace(/\.$/, '');
 }
 
+export function parseSize(input: string | null | undefined): number | null {
+  if (input == null) return null;
+  const match = /^\s*(\d+(?:\.\d+)?)\s*([kmgtpe]?i?b)?\s*$/i.exec(input);
+  if (!match) return null;
+  const unit = (match[2] ?? 'b').toUpperCase().replace('I', '');
+  const index = SIZE_UNITS.findIndex((candidate) => candidate === unit);
+  if (index === -1) return null;
+  const bytes = Math.round(Number(match[1]) * 1024 ** index);
+  if (!Number.isFinite(bytes) || bytes <= 0 || bytes > Number.MAX_SAFE_INTEGER) return null;
+  return bytes;
+}
+
 // The denormalized scalars are TOTALS across every drive of the type; the mean is
 // exact for uniform drives, approximate for mixed (`StorageDrive` rows are exact).
 export function perDriveSizeGb(count?: number | null, totalSizeGb?: number | null): number | null {

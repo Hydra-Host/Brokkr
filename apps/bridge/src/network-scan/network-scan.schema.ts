@@ -2,17 +2,7 @@ import { isIP } from 'node:net';
 
 import { z } from 'zod';
 
-function ipv4ToInt(s: string): number | null {
-  if (isIP(s) !== 4) return null;
-  const parts = s.split('.');
-  if (parts.length !== 4) return null;
-  let val = 0;
-  for (const p of parts) {
-    if (!/^\d+$/.test(p)) return null;
-    val = val * 256 + Number(p);
-  }
-  return val;
-}
+import { ipv4ToInt } from '@repo/utils';
 
 function isValidIpv4Netmask(s: string): boolean {
   const val = ipv4ToInt(s);

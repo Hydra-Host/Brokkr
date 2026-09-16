@@ -1,9 +1,11 @@
-import { Controller, Param, Sse } from '@nestjs/common';
+import { Controller, Param, Sse, UseGuards } from '@nestjs/common';
 import { TsRestHandler, tsRestHandler } from '@ts-rest/nest';
 import { type Observable } from 'rxjs';
 
+import { LabRoute } from '../common/lab-route';
 import { contract } from '../contract';
 import { runLogFrames, type RunLogFrame } from '../runner/run-log-stream';
+import { RunCapabilityGuard } from './run-capability.guard';
 import { RunsService } from './runs.service';
 
 @Controller()
@@ -27,6 +29,8 @@ export class RunsController {
   }
 
   @TsRestHandler(contract.cancelRun)
+  @LabRoute({ capability: 'per-run' })
+  @UseGuards(RunCapabilityGuard)
   cancel() {
     return tsRestHandler(contract.cancelRun, async ({ params }) => ({
       status: 200 as const,
@@ -35,6 +39,8 @@ export class RunsController {
   }
 
   @Sse('api/runs/:runId/stream')
+  @LabRoute({ capability: 'per-run' })
+  @UseGuards(RunCapabilityGuard)
   stream(@Param('runId') runId: string): Observable<RunLogFrame> {
     return runLogFrames(this.runs.stream(runId));
   }

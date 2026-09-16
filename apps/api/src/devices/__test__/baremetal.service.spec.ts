@@ -82,6 +82,7 @@ describe('BaremetalService', () => {
   const mockProvisionValidator = {
     validateDiskLayouts: vi.fn(),
     validateDiskGroupHomogeneity: vi.fn(),
+    validateDiskGroupSizeLimits: vi.fn(),
     validateIpxeRequirements: vi.fn(),
     validateCustomizations: vi.fn(),
   };
@@ -634,9 +635,9 @@ describe('BaremetalService', () => {
       const record = { data: { id: 'device-uuid-1' } };
       vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
       mockCloudInitProcessor.process.mockReturnValue('cloud-init-content');
-      mockLifecycleService.requestProvision.mockResolvedValue({ id: 'job-1' });
+      mockLifecycleService.requestProvision.mockResolvedValue({ data: { id: 'job-1' } });
 
-      await service.provisionServer('device-uuid-1', {
+      const result = await service.provisionServer('device-uuid-1', {
         deploymentName: 'test',
         operatingSystem: 'ubuntu-24-04' as any,
         sshKeyIds: ['k1'],
@@ -656,6 +657,7 @@ describe('BaremetalService', () => {
           source: RequestSource.UI,
         }),
       );
+      expect(result).toEqual({ data: { id: 'job-1' } });
     });
 
     it('forwards the device storageDrives to the homogeneity check', async () => {
@@ -675,6 +677,7 @@ describe('BaremetalService', () => {
 
       expect(mockProvisionValidator.validateDiskLayouts).toHaveBeenCalledWith(diskLayouts, 'provision');
       expect(mockProvisionValidator.validateDiskGroupHomogeneity).toHaveBeenCalledWith(diskLayouts, storageDrives);
+      expect(mockProvisionValidator.validateDiskGroupSizeLimits).toHaveBeenCalledWith(diskLayouts, storageDrives);
     });
 
     it('validates flattened customizations against the device hardware and forwards them', async () => {

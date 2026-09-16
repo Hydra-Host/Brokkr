@@ -4,7 +4,7 @@ import { inspect } from 'node:util';
 import { HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SudoService, sudoersDrift, sudoersDropInName } from '../sudo.service';
+import { SUDO_MAX_GRACE_MS, SudoService, sudoersDrift, sudoersDropInName } from '../sudo.service';
 
 const { spawnMock, readdirMock } = vi.hoisted(() => ({ spawnMock: vi.fn(), readdirMock: vi.fn() }));
 vi.mock('node:child_process', async (importOriginal) => {
@@ -223,6 +223,83 @@ describe('SudoService.cache throttling', () => {
 
     expect(written).toEqual(['hunter2\n']);
     expect(inspect(svc, { depth: 6 })).not.toContain('hunter2');
+  });
+});
+
+describe('SudoService keep-alive grace', () => {
+  let svc: SudoService;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    spawnMock.mockReset();
+    written = [];
+    svc = new SudoService();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('renews the grace while inside the cap', async () => {
+    exitWith(0);
+    await svc.cache('right');
+    spawnMock.mockClear();
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    expect(spawnMock).toHaveBeenCalledWith('sudo', ['-n', '-v'], expect.anything());
+    expect(spawnMock.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it('stops renewing once the cap elapses, even while sudo -n -v still succeeds', async () => {
+    exitWith(0);
+    await svc.cache('right');
+    spawnMock.mockClear();
+
+    await vi.advanceTimersByTimeAsync(SUDO_MAX_GRACE_MS + 60_000);
+    spawnMock.mockClear();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('sudo grace expired'));
+  });
+
+  it('bounds the renewals to the cap rather than running forever', async () => {
+    exitWith(0);
+    await svc.cache('right');
+    spawnMock.mockClear();
+
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+
+    expect(spawnMock.mock.calls.length).toBeLessThanOrEqual(SUDO_MAX_GRACE_MS / 60_000);
+  });
+
+  it('extends the grace only from a fresh accepted password', async () => {
+    exitWith(0);
+    await svc.cache('right');
+    await vi.advanceTimersByTimeAsync(SUDO_MAX_GRACE_MS - 60_000);
+    await svc.cache('right');
+    spawnMock.mockClear();
+
+    await vi.advanceTimersByTimeAsync(SUDO_MAX_GRACE_MS - 60_000);
+
+    expect(spawnMock).toHaveBeenCalled();
+  });
+
+  it('stops renewing as soon as sudo -n -v fails inside the cap', async () => {
+    exitWith(0);
+    await svc.cache('right');
+    exitWith(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    spawnMock.mockClear();
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 });
 

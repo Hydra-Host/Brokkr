@@ -115,10 +115,17 @@ export class InventoryPresenter {
 
   static reservationInviteBelongsToIdentity(ctx: InventoryListingContext, identity: IdentityContext): boolean {
     const invite = ServerSpecHelper.activeReservationInvite(ctx.device.server?.serversInReservationInvite ?? []);
-
     if (!invite) return true;
+    return InventoryPresenter.inviteBelongsToIdentity(ctx, invite, identity);
+  }
 
-    return InventoryPresenter.isInvitee(invite, identity) || InventoryPresenter.isSupplierParty(ctx, invite, identity);
+  /** Active invite: caller must be invitee or supplier party (listing status is ignored). No active invite: host must be listed. */
+  static isListedOrInvitee(ctx: InventoryListingContext, identity: IdentityContext): boolean {
+    const invite = ServerSpecHelper.activeReservationInvite(ctx.device.server?.serversInReservationInvite ?? []);
+    if (invite) {
+      return InventoryPresenter.inviteBelongsToIdentity(ctx, invite, identity);
+    }
+    return ctx.device.server?.isListed ?? false;
   }
 
   private static identityEmail(identity: IdentityContext): string {
@@ -130,10 +137,23 @@ export class InventoryPresenter {
     }
   }
 
+  private static emailsMatch(left: string | null | undefined, right: string | null | undefined): boolean {
+    if (!left || !right) return false;
+    return left.trim().toLowerCase() === right.trim().toLowerCase();
+  }
+
+  private static inviteBelongsToIdentity(
+    ctx: InventoryListingContext,
+    invite: ReservationInvite,
+    identity: IdentityContext,
+  ): boolean {
+    return InventoryPresenter.isInvitee(invite, identity) || InventoryPresenter.isSupplierParty(ctx, invite, identity);
+  }
+
   private static isInvitee(invite: ReservationInvite, identity: IdentityContext): boolean {
     return (
       invite.inviteeOrganizationId === identity.organizationId ||
-      InventoryPresenter.identityEmail(identity) === invite.inviteeEmail
+      InventoryPresenter.emailsMatch(InventoryPresenter.identityEmail(identity), invite.inviteeEmail)
     );
   }
 
@@ -144,7 +164,7 @@ export class InventoryPresenter {
   ): boolean {
     return (
       ctx.device.supplierId === identity.organizationId ||
-      InventoryPresenter.identityEmail(identity) === invite.inviterEmail
+      InventoryPresenter.emailsMatch(InventoryPresenter.identityEmail(identity), invite.inviterEmail)
     );
   }
 

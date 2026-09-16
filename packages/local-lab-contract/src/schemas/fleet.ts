@@ -1,10 +1,33 @@
 import { z } from 'zod';
 
+import { BOOT_SEVERITIES, type BootCode } from '@repo/utils';
 import { CcBuildSchema } from './common';
+
+export const NodeKindSchema = z
+  .enum(['vm', 'baremetal'])
+  .describe(
+    "Which plane a fleet machine belongs to: 'vm' = a libvirt domain with a simulated BMC; 'baremetal' = a real machine with a real BMC",
+  );
+export type NodeKind = z.infer<typeof NodeKindSchema>;
+
+export const BmcProbeSchema = z.object({
+  reachable: z
+    .enum(['ok', 'auth-failed', 'unreachable', 'unconfigured'])
+    .describe(
+      "Outcome of the lab's read-only Redfish probe: ok = answered and accepted the credential; auth-failed = answered 401/403; unreachable = no usable answer inside the probe timeout; unconfigured = no BMC address or credential is saved for the node",
+    ),
+  powerState: z.string().nullable().describe('Raw Redfish PowerState when reachable is ok; null otherwise'),
+});
+export type BmcProbe = z.infer<typeof BmcProbeSchema>;
 
 export const MachineSchema = z.object({
   name: z.string().describe('Fleet node name (e.g. cpu-1)'),
-  power: z.enum(['on', 'off', 'unknown']).describe('libvirt domain power state'),
+  kind: NodeKindSchema.describe('Plane the row was resolved from — drives which actions the UI offers'),
+  power: z
+    .enum(['on', 'off', 'unknown'])
+    .describe(
+      "Machine power state — the libvirt domain on the vm plane, the BMC-reported chassis state on the bare-metal plane; 'unknown' when it could not be read",
+    ),
   configured: z
     .boolean()
     .describe('In the active fleet config (false = a running domain not in config — rebuild to adopt)'),
@@ -12,6 +35,9 @@ export const MachineSchema = z.object({
     .string()
     .nullable()
     .describe('Index-derived hub Device.id; null for an unconfigured domain, which has no fleet index to derive from'),
+  bmc: BmcProbeSchema.nullable().describe(
+    'Live BMC probe for a bare-metal row; null for a VM row, whose power comes from libvirt',
+  ),
 });
 export type Machine = z.infer<typeof MachineSchema>;
 
@@ -19,7 +45,6 @@ export const HostInfoSchema = z.object({
   os: z.string().describe("Node platform — 'linux' | 'darwin' | …"),
   arch: z.string().describe("'amd64' | 'arm64' | …"),
   passthroughSupported: z.boolean().describe('PCI passthrough possible (linux/amd64)'),
-  lanIp: z.string().describe('Best-guess LAN IPv4 for browser links to hub/spoke web UIs'),
   ccBuild: CcBuildSchema.describe(
     'Build stamp of the running control-center server: the sha its dist was built from, the live checkout HEAD, and the checkout-skew flag',
   ),
@@ -57,12 +82,17 @@ export type NicSpec = z.infer<typeof NicSpecSchema>;
 export const BmcCredsSchema = z.object({ username: z.string(), password: z.string() });
 export type BmcCreds = z.infer<typeof BmcCredsSchema>;
 
-export const FleetModeSchema = z
-  .enum(['vm', 'baremetal'])
-  .describe(
-    'Active fleet mode: vm = libvirt/qemu simulated machines (current behavior); baremetal = PXE-boot real machines on a host NIC via DHCP proxy.',
-  );
-export type FleetMode = z.infer<typeof FleetModeSchema>;
+export const NetworkTypeSchema = z
+  .enum(['nat', 'public'])
+  .describe('Data-plane attachment mode, seeded onto the hub Device.networkType');
+
+export const FleetPlanesSchema = z.object({
+  vm: z.boolean().describe('True when at least one VM node is enabled — the simulated libvirt plane runs'),
+  baremetal: z
+    .boolean()
+    .describe('True when at least one bare-metal machine is saved — the PXE plane runs on the uplink NIC'),
+});
+export type FleetPlanes = z.infer<typeof FleetPlanesSchema>;
 
 export const HostNicSchema = z.object({
   name: z.string().describe('Kernel interface name, e.g. enp35s0'),
@@ -82,10 +112,19 @@ export const BareMetalNodeSchema = z.object({
   bmc_mac: z.string().describe('BMC NIC MAC — required; seeds the IPMI Interface row on the hub'),
   pxe_mac: z.string().describe('MAC of the data NIC that firmware-PXE-boots — the DHCP proxy allowlist key'),
   arch: BareMetalArchSchema.nullable().describe('Per-node arch override; null = inherit the fleet default'),
+  zone: z
+    .string()
+    .nullish()
+    .describe(
+      'Hub Zone.name this machine belongs to; absent/null = the single default zone, which stops being enough once the fleet declares more than one',
+    ),
   system_id: z
     .string()
     .nullable()
     .describe('Optional Redfish System id for multi-System/blade chassis; null = use /redfish/v1/Systems Members[0]'),
+  network_type: NetworkTypeSchema.nullish().describe(
+    "Per-machine attachment override; absent/null = the engine default ('public', since the machine is LAN-reachable)",
+  ),
 });
 export type BareMetalNode = z.infer<typeof BareMetalNodeSchema>;
 
@@ -164,12 +203,9 @@ export const FleetNodeSchema = z.object({
   passthrough: z.array(z.string()),
   nics: z.array(NicSpecSchema),
   data_mtu: z.number().int().min(1280).max(9000).nullable(),
-  network_type: z
-    .enum(['nat', 'public'])
-    .nullable()
-    .describe(
-      "Data-plane attachment: 'nat' puts the node behind the host bridge, 'public' places it on the LAN. Null leaves the engine default",
-    ),
+  network_type: NetworkTypeSchema.nullable().describe(
+    "Data-plane attachment: 'nat' puts the node behind the host bridge, 'public' places it on the LAN. Null leaves the engine default",
+  ),
   ip: z.string().nullable().describe('Static data-plane IP override; null = index-derived (.10, .11, …)'),
   bmc_ip: z
     .string()
@@ -226,9 +262,9 @@ export const FleetDriftFieldSchema = z.object({
 export const FleetPendingSchema = z.object({
   inSync: z.boolean().describe('True when the desired topology matches what is instantiated'),
   severity: z
-    .enum(['in-sync', 'hot-appliable', 'needs-full-rebuild', 'mode-change'])
+    .enum(['in-sync', 'hot-appliable', 'needs-full-rebuild', 'planes-change', 'stale-bake'])
     .describe(
-      'Coarse apply class; the apply planner refines it. `mode-change` means the desired fleet mode (vm/baremetal) differs from the applied one — the fleet-mode-apply op, not an incremental/full topology apply.',
+      'Coarse apply class; the apply planner refines it. `planes-change` means the desired plane set differs from the applied one — the fleet-planes-apply op, not an incremental or full topology apply. `stale-bake` means the topology matches but the boot binaries carry a chain URL that no longer resolves to this stack, so they need a re-bake rather than an apply.',
     ),
   desiredDigest: z.string().describe('sha256 of the desired canonical topology'),
   appliedDigest: z.string().nullable().describe('sha256 of the last-applied topology; null if never applied'),
@@ -328,9 +364,14 @@ export const VerifyFindingKindSchema = z
     'vmnet-socket-missing',
     'bootptab-missing',
     'orphan-domain',
+    'bmc-unreachable',
+    'bmc-auth-failed',
+    'no-hub-device',
+    'identity-split',
+    'boot-readiness',
   ])
   .describe(
-    'What a verify finding flags. domain-undefined and orphan-domain need an apply/adopt (not auto-healable); the rest are daemon/binding repairs verify --heal can perform.',
+    'What a verify finding flags. domain-undefined and orphan-domain need an apply/adopt, and the four bare-metal kinds (bmc-unreachable, bmc-auth-failed, no-hub-device, identity-split) need an off-box fix — cabling, credentials, or a re-seed; the rest are daemon/binding repairs verify --heal can perform. boot-readiness carries a bridge or hub PXE-nnn code and leads its detail with that code and severity.',
   );
 export type VerifyFindingKind = z.infer<typeof VerifyFindingKindSchema>;
 
@@ -342,24 +383,99 @@ export const VerifyFindingSchema = z.object({
   kind: VerifyFindingKindSchema.describe('Which check failed'),
   healable: z.boolean().describe('True when verify --heal can repair it in place (vs. needing a rebuild/apply)'),
   detail: z.string().describe('Human-readable explanation of the finding and its remedy'),
+  code: z
+    .string()
+    .nullish()
+    .describe('Boot diagnostic code (PXE-nnn) when the finding came from a readiness route; absent on engine findings'),
+  ref: z
+    .string()
+    .nullish()
+    .describe('Opaque id a UI can link on — the hub prefix id for a prefix readiness finding; absent otherwise'),
 });
 export type VerifyFinding = z.infer<typeof VerifyFindingSchema>;
 
 export const FleetVerifyReportSchema = z.object({
   status: VerifyStatusSchema.describe('Overall verify outcome'),
-  mode: FleetModeSchema.or(z.literal('unknown')).describe(
-    "Applied fleet mode ('vm' | 'baremetal'; 'unknown' when no manifest is present)",
-  ),
+  planes: FleetPlanesSchema.nullable()
+    .default(null)
+    .describe('Planes the applied manifest carries; null when the manifest is absent or the report predates planes'),
   findings: z.array(VerifyFindingSchema).describe('Every issue found, most useful first (node-level then fleet-level)'),
   summary: z
     .object({
-      checked: z.number().int().describe('Number of applied vm nodes probed'),
-      ok: z.number().int().describe('Nodes with no node-level findings'),
+      checked: z.number().int().describe('Number of nodes actually probed; zero when no per-node check ran'),
+      ok: z.number().int().describe('Probed nodes with no node-level findings; a node never probed is not ok'),
       findings: z.number().int().describe('Total finding count (node-level plus fleet-level)'),
     })
     .describe('Counts driving the verify headline'),
 });
 export type FleetVerifyReport = z.infer<typeof FleetVerifyReportSchema>;
+
+export const BootReadinessFindingSchema = z.object({
+  code: z
+    .string()
+    .describe(
+      'Boot diagnostic code (e.g. PXE-102) from the bridge registry — the vocabulary hub and lab findings share',
+    ),
+  severity: z.enum(BOOT_SEVERITIES).describe("'error' stops a machine booting; 'warn' and 'info' do not"),
+});
+export type BootReadinessFinding = z.infer<typeof BootReadinessFindingSchema>;
+
+/** Boot codes scoped to one hub prefix: the lab's uplink checks emit them and the web card routes them to that prefix. */
+export const PREFIX_FINDING_CODES: readonly BootCode[] = ['PXE-102', 'PXE-103', 'PXE-104', 'PXE-112', 'PXE-04'];
+
+export const BootReadinessReportSchema = z.object({
+  findings: z
+    .array(BootReadinessFindingSchema)
+    .describe('Every check that did not pass — codes and severities only, never a MAC, address or credential'),
+  counts: z
+    .object({
+      error: z.number().int().describe("'error' findings, which block a boot"),
+      warn: z
+        .number()
+        .int()
+        .describe(
+          "'warn' findings, which do not block a boot; 'info' findings are listed but not counted, as on the bridge",
+        ),
+      unevaluated: z
+        .number()
+        .int()
+        .describe('Checks whose subject was unreachable, so their result is unknown rather than passing'),
+    })
+    .describe(
+      'Blocking, advisory and unevaluated totals, so a caller can headline the result without walking findings',
+    ),
+});
+export type BootReadinessReport = z.infer<typeof BootReadinessReportSchema>;
+
+export const BootTrailSchema = z.object({
+  pxe: z
+    .object({
+      outcome: z
+        .enum(['offered', 'refused-allowlist', 'no-subnet'])
+        .describe('Last proxy-DHCP decision the bridge made for this MAC'),
+      atMs: z.number().int().describe('Epoch ms of that decision'),
+    })
+    .nullable()
+    .describe('Null when no PXE request from this MAC has reached the bridge inside the record window'),
+  chainReached: z
+    .boolean()
+    .nullable()
+    .describe(
+      'True when iPXE from this MAC reached POST /api/chain — the bridge records every hit, known device or not, and mints discovery:pending for an unknown one; null when the bridge Redis could not be read (readError set)',
+    ),
+  chainAtMs: z
+    .number()
+    .int()
+    .nullable()
+    .describe(
+      'Epoch ms of the last chain hit from this MAC. Null when no hit is recorded, when only the older discovery:pending marker proves the chain was reached, or when the bridge Redis could not be read',
+    ),
+  readError: z
+    .string()
+    .nullable()
+    .describe('Set when the bridge Redis could not be read; the two fields above are then unknown, not false'),
+});
+export type BootTrail = z.infer<typeof BootTrailSchema>;
 
 export const FleetDefaultsSchema = z.object({
   cpus: z
@@ -416,9 +532,11 @@ export const FleetConfigSchema = z.object({
   source: z
     .enum(['local', 'default'])
     .describe("'local' = the stack overlay customizes the fleet; 'default' = the committed base"),
-  mode: FleetModeSchema.describe('Which fleet mode is active — selects the VM vs bare-metal editor'),
+  planes: FleetPlanesSchema.describe(
+    'Derived from the two rosters; read-only — remove every node of a plane to turn it off',
+  ),
   baremetal: BareMetalConfigSchema.describe(
-    'Persisted bare-metal config (returned even when inactive; empty defaults when never configured). Never carries credentials.',
+    'Persisted bare-metal config (returned even when the plane is off; empty defaults when never configured). Never carries credentials.',
   ),
   bakedChainUrl: z
     .string()

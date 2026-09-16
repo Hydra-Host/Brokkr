@@ -32,13 +32,23 @@ export interface PluginReprovisionDiskLayout extends PluginProvisionDiskLayout {
 export interface PluginLifecycleActor {
   /** Device the operation targets. */
   deviceId: string;
-  /** User the job is attributed to (`performedBy`). */
+  /** Owner identity for the request (`request.userId`). On retry this stays the original owner; `retriedBy` is who triggered the new job. */
   userId: string;
-  /** How the request originated; operator plugins should pass `ADMIN`. */
+  /** How this job was triggered (`UI` vs `API`). */
   source: PluginRequestSource;
+  /** Email of who triggered this job; persisted on the job payload for audit. */
+  triggeredByEmail?: string;
 }
 
-export interface PluginProvisionRequest extends PluginLifecycleActor {
+/** Retry-only fields persisted on the new job payload; omit on a first-run request. */
+export interface PluginRetryAttribution {
+  /** Job id being retried. */
+  retriedFromJobId: string;
+  /** Operator who retried; becomes `triggeredBy` / `performedBy` on the new job. */
+  retriedBy: string;
+}
+
+export interface PluginProvisionRequest extends PluginLifecycleActor, Partial<PluginRetryAttribution> {
   /** Organization the deployment/reservation is created for. */
   organizationId: string;
   deploymentName: string;
@@ -58,7 +68,7 @@ export interface PluginProvisionRequest extends PluginLifecycleActor {
   internalProvision?: boolean;
 }
 
-export interface PluginReprovisionRequest extends PluginLifecycleActor {
+export interface PluginReprovisionRequest extends PluginLifecycleActor, Partial<PluginRetryAttribution> {
   /** Organization whose SSH keys are being deployed (the engine resolves the deployment's customer itself). */
   organizationId: string;
   deploymentName: string;

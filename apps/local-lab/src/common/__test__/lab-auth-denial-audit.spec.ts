@@ -13,7 +13,7 @@ import { labOriginMiddleware, type OriginRequest } from '../lab-context';
 import { LabRoute } from '../lab-route';
 
 class FixtureController {
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'host-exec' })
   sharp(): void {}
 
   plain(): void {}
@@ -89,7 +89,7 @@ describe('LabAuthGuard unauthorized denials', () => {
       status_code: 401,
       duration_ms: null,
       run_id: null,
-      error: 'lab control API requires a valid LAB_API_TOKEN for non-loopback requests',
+      error: 'lab control API requires a valid lab token for non-loopback requests',
     });
   });
 
@@ -129,12 +129,37 @@ describe('LabAuthGuard unauthorized denials', () => {
       expect(() => guard.canActivate(contextFor(FixtureController.prototype.plain))).toThrow(UnauthorizedException);
     });
 
-    expect(onlyRow()).toMatchObject({ origin_ip: '10.0.0.5', origin_loopback: 0, origin_token: 0 });
+    expect(onlyRow()).toMatchObject({
+      origin_ip: '10.0.0.5',
+      origin_loopback: 0,
+      origin_token: 0,
+      origin_principal: null,
+    });
+  });
+
+  it('names the principal that authenticated but did not authorize', () => {
+    vi.stubEnv('LAB_API_TOKEN', 'sekret-token');
+    const headers = { authorization: 'Bearer sekret-token' };
+    const origin: OriginRequest = {
+      method: 'POST',
+      path: '/api/stack/ops',
+      query: {},
+      socket: { remoteAddress: '10.0.0.5' },
+      headers,
+    };
+
+    labOriginMiddleware(origin, undefined, () => {
+      expect(() => guard.canActivate(contextFor(FixtureController.prototype.sharp, { headers }))).toThrow(
+        ForbiddenException,
+      );
+    });
+
+    expect(onlyRow()).toMatchObject({ origin_token: 1, origin_principal: 'api' });
   });
 });
 
-describe('LabAuthGuard exposure denials', () => {
-  it('records a denied row for a token-bearing remote peer on a loopback-only route', () => {
+describe('LabAuthGuard capability denials', () => {
+  it('records a denied row for an api-token remote peer on a host-exec route', () => {
     vi.stubEnv('LAB_API_TOKEN', 'sekret-token');
     const ctx = contextFor(FixtureController.prototype.sharp, { headers: { authorization: 'Bearer sekret-token' } });
 
@@ -146,7 +171,7 @@ describe('LabAuthGuard exposure denials', () => {
       status_code: 403,
       duration_ms: null,
     });
-    expect(onlyRow().error).toMatch(/loopback-only/);
+    expect(onlyRow().error).toMatch(/host-exec/);
   });
 
   it('records a denied row for a proxy-laundered loopback peer', () => {
@@ -155,18 +180,23 @@ describe('LabAuthGuard exposure denials', () => {
       headers: { 'x-forwarded-for': '10.0.0.5' },
     });
 
-    expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
+    expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
 
-    expect(onlyRow()).toMatchObject({ outcome: 'denied', status_code: 403 });
+    expect(onlyRow()).toMatchObject({ outcome: 'denied', status_code: 401 });
   });
 
-  it('rethrows the forbidden exception unchanged', () => {
-    const ctx = contextFor(FixtureController.prototype.sharp, {
-      ip: '127.0.0.1',
-      headers: { 'x-forwarded-for': '10.0.0.5' },
-    });
+  it('records a denied row for a loopback peer in fronted mode', () => {
+    vi.stubEnv('LAB_MODE', 'fronted');
+    const ctx = contextFor(FixtureController.prototype.sharp, { ip: '127.0.0.1' });
 
-    expect(() => guard.canActivate(ctx)).toThrow(/LAB_ALLOW_REMOTE_SHARP/);
+    expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
+
+    expect(onlyRow()).toMatchObject({
+      outcome: 'denied',
+      status_code: 401,
+      error:
+        'lab control API requires a valid lab token from every caller, loopback included: a terminator dials 127.0.0.1, so a loopback peer is whoever the front door serves',
+    });
   });
 });
 
@@ -177,10 +207,9 @@ describe('LabAuthGuard allowed requests', () => {
     expect(rows()).toEqual([]);
   });
 
-  it('writes nothing when the remote-sharp opt-in allows a token-bearing peer', () => {
-    vi.stubEnv('LAB_API_TOKEN', 'sekret-token');
-    vi.stubEnv('LAB_ALLOW_REMOTE_SHARP', '1');
-    const ctx = contextFor(FixtureController.prototype.sharp, { headers: { authorization: 'Bearer sekret-token' } });
+  it('writes nothing when the host token admits a remote peer', () => {
+    vi.stubEnv('LAB_HOST_TOKEN', 'host-token');
+    const ctx = contextFor(FixtureController.prototype.sharp, { headers: { authorization: 'Bearer host-token' } });
 
     expect(guard.canActivate(ctx)).toBe(true);
 
@@ -189,7 +218,7 @@ describe('LabAuthGuard allowed requests', () => {
 });
 
 describe('LabAuthGuard safe-method denials', () => {
-  it('does not record a denied get', () => {
+  it('does not record a denied get on an un-annotated route', () => {
     vi.stubEnv('LAB_API_TOKEN', 'sekret-token');
 
     expect(() => guard.canActivate(contextFor(FixtureController.prototype.plain, { method: 'GET' }))).toThrow(
@@ -199,7 +228,7 @@ describe('LabAuthGuard safe-method denials', () => {
     expect(rows()).toEqual([]);
   });
 
-  it('does not record a denied head or options, whatever the case', () => {
+  it('does not record a denied head or options on an un-annotated route', () => {
     vi.stubEnv('LAB_API_TOKEN', 'sekret-token');
 
     for (const method of ['HEAD', 'OPTIONS', 'head', 'options']) {
@@ -211,16 +240,32 @@ describe('LabAuthGuard safe-method denials', () => {
     expect(rows()).toEqual([]);
   });
 
-  it('does not record a get denied by the exposure rule', () => {
+  it('records a denied get on an annotated route', () => {
     const ctx = contextFor(FixtureController.prototype.sharp, {
       method: 'GET',
       ip: '127.0.0.1',
       headers: { 'x-forwarded-for': '10.0.0.5' },
     });
 
-    expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
+    expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
 
-    expect(rows()).toEqual([]);
+    expect(onlyRow()).toMatchObject({ method: 'GET', handler: 'FixtureController.sharp', outcome: 'denied' });
+  });
+
+  it('records the api token guessing its way through five denied gets before the backoff answers', () => {
+    vi.stubEnv('LAB_API_TOKEN', 'sekret-token');
+    const ctx = contextFor(FixtureController.prototype.sharp, {
+      method: 'GET',
+      headers: { authorization: 'Bearer wrong' },
+    });
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
+    }
+    expect(() => guard.canActivate(ctx)).toThrow(/retry in/);
+
+    expect(rows()).toHaveLength(6);
+    expect(rows()[0]).toMatchObject({ status_code: 429 });
   });
 });
 
@@ -235,13 +280,11 @@ describe('LabAuthGuard denial write failure', () => {
   });
 
   it('still rejects with 403 when the audit write throws', () => {
+    vi.stubEnv('LAB_API_TOKEN', 'sekret-token');
     vi.spyOn(store, 'insert').mockImplementation(() => {
       throw new Error('database is locked');
     });
-    const ctx = contextFor(FixtureController.prototype.sharp, {
-      ip: '127.0.0.1',
-      headers: { 'x-forwarded-for': '10.0.0.5' },
-    });
+    const ctx = contextFor(FixtureController.prototype.sharp, { headers: { authorization: 'Bearer sekret-token' } });
 
     expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
   });

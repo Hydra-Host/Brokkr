@@ -16,6 +16,7 @@ import { Button } from '@repo/ui/components/button';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { DecommissionedServerOverlay } from '~/components/decommissioned-server-overlay';
 import { tsr } from '~/lib/api';
+import { LIFECYCLE_JOBS_KEY } from '~/lib/query-keys';
 
 const parentRoute = getRouteApi('/_app/dcim/servers/$deviceId');
 
@@ -62,6 +63,7 @@ function DecommissionDevicePage() {
     });
 
     queryClient.removeQueries({ queryKey: ['server', params.deviceId] });
+    void queryClient.invalidateQueries({ queryKey: LIFECYCLE_JOBS_KEY });
     await router.invalidate();
     navigate({
       to: '/dcim/servers/$deviceId',

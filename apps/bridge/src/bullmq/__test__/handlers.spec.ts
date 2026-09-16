@@ -12,10 +12,11 @@ import { SealKeyUnknownError, SealOpenError } from '../../zone-crypto/auth-dh.ty
 import { SealedEnvelopeService } from '../../zone-crypto/sealed-envelope.service.js';
 import { ZoneCryptoService, type ZoneCryptoSnapshot } from '../../zone-crypto/zone-crypto.service.js';
 import {
+  AGENT_WAIT_REDELAY_SLACK_SECONDS,
+  AgentWaitExceeded,
   DeviceLockWaitExceeded,
   EnvelopeDeferralBudgetExceeded,
-  HANDOFF_ABANDON_DEADLINE_SECONDS,
-  HandoffAbandoned,
+  HANDOFF_REDELAY_ESCALATION,
   PlaintextAfterActivationError,
 } from '../bullmq.types.js';
 import { CollectionJobHandler } from '../collection.handler.js';
@@ -45,7 +46,7 @@ import {
   type SagaPlanManagerLike,
   type SagaRunnerLike,
 } from '../saga.handler.js';
-import { CURRENT_ENVELOPE_VERSION, DIRECTION_HUB_TO_BRIDGE } from '../sealed-envelope.js';
+import { CURRENT_ENVELOPE_VERSION, DIRECTION_HUB_TO_BRIDGE, FRESHNESS_WINDOW_MS } from '../sealed-envelope.js';
 
 const ZONE_ID = '00000000-0000-4000-8000-000000000001';
 
@@ -108,6 +109,7 @@ function makeProcessor(
       lockWaitWarningSeconds: 60,
       lockWaitHardCapSeconds: 0,
       lockLostRedelaySeconds: 90,
+      agentWaitHardCapSeconds: 0,
       ...overrides.config,
     },
     overrides.cache ?? {
@@ -280,23 +282,27 @@ describe('BullmqProcessorService.process', () => {
     expect(error).not.toHaveBeenCalled();
   });
 
-  it('fails the job with an abandon verdict once the handoff deferral deadline is exceeded', async () => {
+  it('fails the job with AgentWaitExceeded once the agent-wait hard cap is exceeded', async () => {
     const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
     const failPlan = vi.fn<LifecyclePlanFailure['failPlan']>(async () => {});
+    const set = vi.fn<LockWaitCache['set']>(async () => undefined);
     const del = vi.fn<LockWaitCache['delete']>(async () => 1);
-    const staleFirstDeferredAt = Date.now() / 1_000 - (HANDOFF_ABANDON_DEADLINE_SECONDS + 60);
+    const staleFirstDeferredAt = Date.now() / 1_000 - 700;
     const cache: LockWaitCache = {
       get: async (key) =>
         key.startsWith('handoff-defer:')
           ? JSON.stringify({ first_deferred_at: staleFirstDeferredAt, attempts: 42 })
           : null,
-      set: async () => undefined,
+      set,
       delete: del,
     };
     const failingHandler: JobHandler = async () => {
       throw new AgentNotConnected('99');
     };
-    const service = makeProcessor({ 'collection.run': failingHandler }, { cache, planManager: { failPlan } });
+    const service = makeProcessor(
+      { 'collection.run': failingHandler },
+      { cache, planManager: { failPlan }, config: { agentWaitHardCapSeconds: 600 } },
+    );
     const job = makeJob({
       name: 'collection.run',
       data: { device_id: 99, plan_id: 'enrich-plan-x' },
@@ -305,14 +311,328 @@ describe('BullmqProcessorService.process', () => {
       moveToDelayed,
     });
 
-    await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(HandoffAbandoned);
-    await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(UnrecoverableError);
+    const rejection = await service.process(job, 'tok').catch((error: unknown) => error);
+    expect(rejection).toBeInstanceOf(AgentWaitExceeded);
+    expect(rejection).toBeInstanceOf(UnrecoverableError);
+    expect(rejection).toHaveProperty(
+      'message',
+      expect.stringMatching(/^no agent session for device 99 after \d+s \(43 handoff attempts\)$/),
+    );
     expect(moveToDelayed).not.toHaveBeenCalled();
     expect(failPlan).toHaveBeenCalledWith(
       'enrich-plan-x',
-      'discovery agent never connected — device did not boot brokkr-live',
+      expect.stringMatching(/Agent wait exceeded hard cap \(600s\)/),
     );
-    expect(del).toHaveBeenCalled();
+    expect(set.mock.calls.some(([key]) => String(key).startsWith('handoff-defer:'))).toBe(true);
+    expect(del.mock.calls.some(([key]) => String(key).startsWith('handoff-defer:'))).toBe(false);
+  });
+
+  it('reschedules the first agent-wait occurrence on the base delay and stashes deferral state', async () => {
+    const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
+    const set = vi.fn<LockWaitCache['set']>(async () => undefined);
+    const cache: LockWaitCache = { get: async () => null, set, delete: async () => 0 };
+    const failingHandler: JobHandler = async () => {
+      throw new AgentNotConnected('99');
+    };
+    const service = makeProcessor({ 'collection.run': failingHandler }, { cache });
+    const job = makeJob({
+      name: 'collection.run',
+      data: { device_id: 99, plan_id: 'plan-aw-first' },
+      id: 'bull-aw-first',
+      queueName: COLLECTION_QUEUE,
+      moveToDelayed,
+    });
+
+    await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(CrossBridgeHandoff);
+    expect(moveToDelayed.mock.calls[0][2]).toBe(5_000);
+    const deferSet = set.mock.calls.find(([key]) => String(key).startsWith('handoff-defer:'));
+    expect(deferSet).toBeDefined();
+    const stash = JSON.parse(String(deferSet?.[1]));
+    expect(stash.attempts).toBe(1);
+    expect(stash.first_deferred_at).toBeTypeOf('number');
+  });
+
+  it('warns once and restarts deferral state on the base delay when the stash is malformed', async () => {
+    for (const raw of [
+      'not-json',
+      JSON.stringify({ attempts: 1.5 }),
+      JSON.stringify({ first_deferred_at: -1, attempts: 2 }),
+    ]) {
+      const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
+      const warning = vi.fn<BullmqProcessorLogger['warning']>(async () => {});
+      const set = vi.fn<LockWaitCache['set']>(async () => undefined);
+      const cache: LockWaitCache = {
+        get: async (key) => (key.startsWith('handoff-defer:') ? raw : null),
+        set,
+        delete: async () => 0,
+      };
+      const failingHandler: JobHandler = async () => {
+        throw new AgentNotConnected('99');
+      };
+      const service = makeProcessor({ 'collection.run': failingHandler }, { cache, logger: { ...SILENT, warning } });
+      const job = makeJob({
+        name: 'collection.run',
+        data: { device_id: 99, plan_id: 'plan-aw-malformed' },
+        id: 'bull-aw-malformed',
+        queueName: COLLECTION_QUEUE,
+        moveToDelayed,
+      });
+
+      await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(CrossBridgeHandoff);
+      expect(warning).toHaveBeenCalledTimes(1);
+      expect(warning).toHaveBeenCalledWith('Discarding malformed handoff-defer state for job bull-aw-malformed', {
+        jobId: 'plan-aw-malformed',
+      });
+      expect(moveToDelayed.mock.calls[0][2]).toBe(5_000);
+      const deferSet = set.mock.calls.find(([key]) => String(key).startsWith('handoff-defer:'));
+      expect(deferSet).toBeDefined();
+      const stash = JSON.parse(String(deferSet?.[1]));
+      expect(stash.attempts).toBe(1);
+      expect(stash.first_deferred_at).toBeTypeOf('number');
+    }
+  });
+
+  it('escalates the agent-wait redelay to 60s after 120s elapsed and increments attempts', async () => {
+    const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
+    const set = vi.fn<LockWaitCache['set']>(async () => undefined);
+    const cache: LockWaitCache = {
+      get: async (key) =>
+        key.startsWith('handoff-defer:')
+          ? JSON.stringify({ first_deferred_at: Date.now() / 1_000 - 120, attempts: 5 })
+          : null,
+      set,
+      delete: async () => 0,
+    };
+    const failingHandler: JobHandler = async () => {
+      throw new AgentNotConnected('99');
+    };
+    const service = makeProcessor({ 'collection.run': failingHandler }, { cache });
+    const job = makeJob({
+      name: 'collection.run',
+      data: { device_id: 99, plan_id: 'plan-aw-mid' },
+      id: 'bull-aw-mid',
+      queueName: COLLECTION_QUEUE,
+      moveToDelayed,
+    });
+
+    await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(CrossBridgeHandoff);
+    expect(moveToDelayed.mock.calls[0][2]).toBe(60_000);
+    const deferSet = set.mock.calls.find(([key]) => String(key).startsWith('handoff-defer:'));
+    expect(JSON.parse(String(deferSet?.[1])).attempts).toBe(6);
+  });
+
+  it('caps the agent-wait redelay at the top escalation tier and never fails the plan when the hard cap is disabled', async () => {
+    for (const elapsed of [700, 100_000]) {
+      const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
+      const failPlan = vi.fn<LifecyclePlanFailure['failPlan']>(async () => {});
+      const cache: LockWaitCache = {
+        get: async (key) =>
+          key.startsWith('handoff-defer:')
+            ? JSON.stringify({ first_deferred_at: Date.now() / 1_000 - elapsed, attempts: 9 })
+            : null,
+        set: async () => undefined,
+        delete: async () => 0,
+      };
+      const failingHandler: JobHandler = async () => {
+        throw new AgentNotConnected('99');
+      };
+      const service = makeProcessor({ 'collection.run': failingHandler }, { cache, planManager: { failPlan } });
+      const job = makeJob({
+        name: 'collection.run',
+        data: { device_id: 99, plan_id: 'plan-aw-uncapped' },
+        id: 'bull-aw-uncapped',
+        queueName: COLLECTION_QUEUE,
+        moveToDelayed,
+      });
+
+      await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(CrossBridgeHandoff);
+      expect(moveToDelayed.mock.calls[0][2]).toBe(
+        HANDOFF_REDELAY_ESCALATION[HANDOFF_REDELAY_ESCALATION.length - 1].delaySeconds * 1_000,
+      );
+      expect(failPlan).not.toHaveBeenCalled();
+    }
+  });
+
+  it('keeps escalated bridge-local agent-wait redelays inside the envelope freshness window', async () => {
+    const topTierMs = HANDOFF_REDELAY_ESCALATION[HANDOFF_REDELAY_ESCALATION.length - 1].delaySeconds * 1_000;
+    const previousTierMs = HANDOFF_REDELAY_ESCALATION[HANDOFF_REDELAY_ESCALATION.length - 2].delaySeconds * 1_000;
+    for (const previousDelayMs of [previousTierMs, topTierMs]) {
+      const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
+      const failPlan = vi.fn<LifecyclePlanFailure['failPlan']>(async () => {});
+      const cache: LockWaitCache = {
+        get: async (key) =>
+          key.startsWith('handoff-defer:')
+            ? JSON.stringify({ first_deferred_at: Date.now() / 1_000 - 100_000, attempts: 9 })
+            : null,
+        set: async () => undefined,
+        delete: async () => 0,
+      };
+      const failingHandler: JobHandler = async () => {
+        throw new AgentNotConnected('99');
+      };
+      const service = makeProcessor(
+        { 'collection.run': failingHandler },
+        {
+          cache,
+          planManager: { failPlan },
+          opener: {
+            open: async (job) => ({
+              payload: job.data,
+              createdAtMs: Date.now() - previousDelayMs,
+              isBridgeLocal: true,
+            }),
+          },
+        },
+      );
+      const job = makeJob({
+        name: 'collection.run',
+        data: { device_id: 99, plan_id: 'plan-aw-resealed' },
+        id: 'bull-aw-resealed',
+        queueName: COLLECTION_QUEUE,
+        moveToDelayed,
+      });
+
+      await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(CrossBridgeHandoff);
+      expect(moveToDelayed.mock.calls[0][2]).toBe(topTierMs);
+      expect(failPlan).not.toHaveBeenCalled();
+    }
+  });
+
+  it('bounds every redelay tier so a one-delay-old resealed envelope plus the next delay stays fresh', () => {
+    for (const tier of HANDOFF_REDELAY_ESCALATION) {
+      expect((2 * tier.delaySeconds + AGENT_WAIT_REDELAY_SLACK_SECONDS) * 1_000).toBeLessThanOrEqual(
+        FRESHNESS_WINDOW_MS,
+      );
+    }
+  });
+
+  it('fails a stale bridge-local envelope on the agent-wait redelay instead of rescheduling', async () => {
+    const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
+    const failPlan = vi.fn<LifecyclePlanFailure['failPlan']>(async () => {});
+    const cache: LockWaitCache = {
+      get: async (key) =>
+        key.startsWith('handoff-defer:')
+          ? JSON.stringify({ first_deferred_at: Date.now() / 1_000 - 100_000, attempts: 9 })
+          : null,
+      set: async () => undefined,
+      delete: async () => 0,
+    };
+    const failingHandler: JobHandler = async () => {
+      throw new AgentNotConnected('99');
+    };
+    const service = makeProcessor(
+      { 'collection.run': failingHandler },
+      {
+        cache,
+        planManager: { failPlan },
+        opener: {
+          open: async (job) => ({
+            payload: job.data,
+            createdAtMs: Date.now() - 200_000,
+            isBridgeLocal: true,
+          }),
+        },
+      },
+    );
+    const job = makeJob({
+      name: 'collection.run',
+      data: { device_id: 99, plan_id: 'plan-aw-stale-local' },
+      id: 'bull-aw-stale-local',
+      queueName: COLLECTION_QUEUE,
+      moveToDelayed,
+    });
+
+    await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(EnvelopeDeferralBudgetExceeded);
+    expect(moveToDelayed).not.toHaveBeenCalled();
+    expect(failPlan).toHaveBeenCalledTimes(1);
+    expect(String(failPlan.mock.calls[0][1])).toContain('Envelope freshness budget exhausted');
+  });
+
+  it('emits agent_wait then plan failure notifications after failing the plan on the hard cap', async () => {
+    const order: string[] = [];
+    const failPlan = vi.fn<LifecyclePlanFailure['failPlan']>(async () => {
+      order.push('failPlan');
+    });
+    const notifyStepTransition = vi.fn<LifecycleNotifications['notifyStepTransition']>(async (event) => {
+      order.push(`notify:${event.stepName}`);
+    });
+    const cache: LockWaitCache = {
+      get: async (key) =>
+        key.startsWith('handoff-defer:')
+          ? JSON.stringify({ first_deferred_at: Date.now() / 1_000 - 700, attempts: 42 })
+          : null,
+      set: async () => undefined,
+      delete: async () => 0,
+    };
+    const failingHandler: JobHandler = async () => {
+      throw new AgentNotConnected('dev-aw');
+    };
+    const service = makeProcessor(
+      { 'saga.run': failingHandler },
+      {
+        cache,
+        planManager: { failPlan },
+        notifications: { notifyStepTransition },
+        config: { agentWaitHardCapSeconds: 600 },
+      },
+    );
+    const job = makeJob({
+      name: 'saga.run',
+      data: { plan_id: 'plan-aw', saga_name: 'benchmarks', payload: { device_id: 'dev-aw' } },
+      id: 'bull-agent-wait',
+    });
+
+    await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(AgentWaitExceeded);
+    expect(order).toEqual(['failPlan', 'notify:agent_wait', 'notify:__plan__']);
+    expect(notifyStepTransition.mock.calls[0][0]).toMatchObject({
+      planId: 'plan-aw',
+      stepName: 'agent_wait',
+      status: JobStatus.FAILED,
+      deviceId: 'dev-aw',
+      result: { agent_wait: { attempts: 43 } },
+    });
+    expect(notifyStepTransition.mock.calls[1][0]).toMatchObject({
+      planId: 'plan-aw',
+      stepName: '__plan__',
+      status: JobStatus.FAILED,
+    });
+  });
+
+  it('clears handoff deferral state on lock loss', async () => {
+    const del = vi.fn<LockWaitCache['delete']>(async () => 1);
+    const cache: LockWaitCache = { get: async () => null, set: async () => undefined, delete: del };
+    const failingHandler: JobHandler = async () => {
+      throw new LockLost('device lock expired');
+    };
+    const service = makeProcessor({ 'saga.run': failingHandler }, { cache });
+    const job = makeJob({
+      name: 'saga.run',
+      data: { plan_id: 'plan-ll-defer', saga_name: 'provision' },
+      id: 'bull-ll-defer',
+    });
+
+    await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(CrossBridgeHandoff);
+    expect(del).toHaveBeenCalledWith('handoff-defer:bull-ll-defer', 'plan-ll-defer');
+  });
+
+  it('clears handoff deferral state before rescheduling lock contention', async () => {
+    const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
+    const del = vi.fn<LockWaitCache['delete']>(async () => 1);
+    const cache: LockWaitCache = { get: async () => null, set: async () => undefined, delete: del };
+    const failingHandler: JobHandler = async () => {
+      throw new DeviceLockUnavailable('device:dev-9');
+    };
+    const service = makeProcessor({ 'saga.run': failingHandler }, { cache });
+    const job = makeJob({
+      name: 'saga.run',
+      data: { plan_id: 'plan-dlu-defer', saga_name: 'provision', payload: { device_id: 'dev-9' } },
+      id: 'bull-dlu-defer',
+      moveToDelayed,
+    });
+
+    await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(CrossBridgeHandoff);
+    expect(del).toHaveBeenCalledWith('handoff-defer:bull-dlu-defer', 'plan-dlu-defer');
+    expect(del.mock.invocationCallOrder[0]).toBeLessThan(moveToDelayed.mock.invocationCallOrder[0]);
   });
 
   it('keeps rescheduling a short-lived handoff before the deadline and persists deferral state', async () => {
@@ -342,6 +662,7 @@ describe('BullmqProcessorService.process', () => {
     const deferSet = set.mock.calls.find(([key]) => String(key).startsWith('handoff-defer:'));
     expect(deferSet).toBeDefined();
     expect(JSON.parse(String(deferSet?.[1])).attempts).toBe(1);
+    expect(deferSet?.[2]).toBe(3_600);
   });
 
   it('clears handoff deferral state when the job finally succeeds', async () => {
@@ -1166,7 +1487,7 @@ describe('SagaJobHandler lock contention', () => {
     await expect(rejection).rejects.toBeInstanceOf(UnrecoverableError);
     expect(order).toEqual(['failPlan']);
     expect(failPlan).toHaveBeenCalledWith('plan-lock', 'Lock wait exceeded hard cap (60s) on device:dev-lock');
-    expect(deleteState).not.toHaveBeenCalled();
+    expect(deleteState).not.toHaveBeenCalledWith('lockwait:bull-job-lock', 'plan-lock');
   });
 
   it('deletes stored state after lock acquisition and normal completion', async () => {
@@ -1619,6 +1940,7 @@ describe('CollectionJobHandler', () => {
       collectors_failed: 1,
     });
     expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue).toHaveBeenCalledWith({ deviceId: 'dev-7', jobId: 'plan-c', succeededSteps: 5 });
   });
 });
 

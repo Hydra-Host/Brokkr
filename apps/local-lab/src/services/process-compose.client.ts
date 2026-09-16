@@ -8,7 +8,7 @@ import { Observable } from 'rxjs';
 import { WebSocket, type RawData } from 'ws';
 import { z } from 'zod';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { parseBoundary, ProcessesResponseSchema } from '../common/pc-schemas';
 import {
   classifyProc,
@@ -54,6 +54,8 @@ export const POLL_TIMEOUT_MS = 5_000;
 export const CONTROL_TIMEOUT_MS = 60_000;
 // Covers hub-web's cold Vite compile, the slowest readiness probe in the stack.
 export const DEP_READY_TIMEOUT_MS = 180_000;
+// pc assigns the pid on spawn, so this bounds the roster poll, not the process start-up.
+export const PID_CHANGE_TIMEOUT_MS = 15_000;
 
 const LOG_BACKLOG_LINES = 2000;
 const FOLLOW_READ_CHUNK = 256 * 1024;
@@ -160,7 +162,9 @@ export class ProcessComposeClient {
 
   // POST /process/restart returns 200 but leaves a signal-shutdown process in Completed without
   // starting it, so a caller that health-gates the result can only time out. Stop, then start.
-  async restartAndWait(name: string): Promise<boolean> {
+  async restartAndWait(name: string, pidTimeoutMs = PID_CHANGE_TIMEOUT_MS): Promise<boolean> {
+    // a settled stop can leave the old process alive (a spoke ignored SIGTERM), so only a changed pid counts
+    const before = await this.pidOf(name);
     if (!(await this.stopAndWait(name))) return false;
     // A start that 4xxs (e.g. pc already resurrected it) must not throw past the caller's own
     // abort message; report it and let the caller's health gate decide.
@@ -170,7 +174,28 @@ export class ProcessComposeClient {
       this.log.warn(`restartAndWait: start ${name} failed: ${getErrorMessage(error)}`);
       return false;
     }
-    return true;
+    // the same 1s roster poll as stopAndWait; the loops differ in what ends them, so they stay separate
+    const deadline = Date.now() + pidTimeoutMs;
+    for (;;) {
+      const after = await this.pidOf(name);
+      if (after !== null && after !== before) return true;
+      if (Date.now() >= deadline) {
+        this.log.warn(
+          `restartAndWait: ${name} pid did not change (${before ?? 'none'}) — the old process is still running`,
+        );
+        return false;
+      }
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
+  }
+
+  private async pidOf(name: string): Promise<number | null> {
+    try {
+      return (await this.listAll()).find((p) => p.name === name)?.pid ?? null;
+    } catch (error) {
+      this.log.debug(`pid poll failed for ${name}: ${getErrorMessage(error)}`);
+      return null;
+    }
   }
 
   // Inherits the /process/restart defect above: a 200 with no start never reaches the catch, so the
@@ -208,7 +233,7 @@ export class ProcessComposeClient {
     }
   }
 
-  async stopAndWait(name: string, timeoutMs = 130_000): Promise<boolean> {
+  async stopAndWait(name: string, timeoutMs = 130_000, opts: { absentIsStopped?: boolean } = {}): Promise<boolean> {
     // error/terminated count: an exited-with-error process is no longer running, which is all callers wait for.
     const terminal = new Set(['stopped', 'completed', 'disabled', 'skipped', 'error', 'terminated']);
     await this.stop(name).catch(() => {});
@@ -216,7 +241,9 @@ export class ProcessComposeClient {
     while (Date.now() < deadline) {
       try {
         const proc = (await this.listAll()).find((p) => p.name === name);
-        if (!proc || terminal.has((proc.status ?? '').toLowerCase())) return true;
+        if (!proc) {
+          if (opts.absentIsStopped !== false) return true;
+        } else if (terminal.has((proc.status ?? '').toLowerCase())) return true;
       } catch (error) {
         this.log.debug(`stopAndWait poll failed for ${name}: ${getErrorMessage(error)}`);
       }

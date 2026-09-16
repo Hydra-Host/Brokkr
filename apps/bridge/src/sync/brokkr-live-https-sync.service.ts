@@ -5,7 +5,7 @@ import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
 import { join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { getErrorMessage } from '../common/error-utils';
-import { getDiscoveryFileConfig } from '../download/discovery.config.js';
+import { getDiscoveryFileConfig, type DiscoveryFlavor } from '../download/discovery.config.js';
 
 import { allowsUnverifiedArtifacts, getStorageConfig, getSyncConfig, type SyncConfig } from './sync.config.js';
 import { logDebug, logError, logInfo, logWarning } from './sync.logger.js';
@@ -41,6 +41,13 @@ export type CacheMetadataEntry = {
 
 export type CacheMetadata = Record<string, CacheMetadataEntry>;
 
+// the light tree is published beside the full one as `<root>-light`; the full tree is the root itself
+const FLAVOR_URL_SUFFIX: Record<DiscoveryFlavor, string> = { full: '', light: '-light' };
+
+export function buildFlavorBaseUrl(rootUrl: string, flavor: DiscoveryFlavor): string {
+  return `${rootUrl.replace(/\/+$/, '')}${FLAVOR_URL_SUFFIX[flavor]}`;
+}
+
 export function buildDiscoveryManifestUrl(baseUrl: string, version: string, arch: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/${version}/${arch}/manifest.json`;
 }
@@ -53,8 +60,8 @@ export function resolveFileVersion(configuredVersion: string, manifest: Discover
   return manifest.version;
 }
 
-export function buildArchCacheDir(baseDir: string, arch: string): string {
-  return join(baseDir, arch);
+export function buildArchCacheDir(baseDir: string, flavor: DiscoveryFlavor, arch: string): string {
+  return join(baseDir, flavor, arch);
 }
 
 export type DownloadVerification = 'ok' | 'size_mismatch' | 'sha256_mismatch';
@@ -221,8 +228,8 @@ export class BrokkrLiveHTTPSSyncService {
     this.metadataFile = join(this.cacheDir, '.cache_metadata.json');
   }
 
-  async syncDiscoveryImages(): Promise<number> {
-    logInfo(`Starting Brokkr Live discovery image sync (version: ${this.syncConfig.brokkrLiveVersion})`, {
+  async syncDiscoveryImages(flavor: DiscoveryFlavor): Promise<number> {
+    logInfo(`Starting Brokkr Live ${flavor} discovery image sync (version: ${this.syncConfig.brokkrLiveVersion})`, {
       appClassName: APP_CLASS_NAME,
       jobId: this.jobId,
     });
@@ -230,25 +237,25 @@ export class BrokkrLiveHTTPSSyncService {
     try {
       const architectures = this.getArchitectures();
 
-      logInfo(`Syncing discovery images for architectures: ${architectures.join(', ')}`, {
+      logInfo(`Syncing ${flavor} discovery images for architectures: ${architectures.join(', ')}`, {
         appClassName: APP_CLASS_NAME,
         jobId: this.jobId,
       });
 
       let syncedCount = 0;
       for (const arch of architectures) {
-        if (await this.syncArchitecture(arch)) {
+        if (await this.syncArchitecture(flavor, arch)) {
           syncedCount += 1;
         }
       }
 
       if (syncedCount > 0) {
-        logInfo(`Brokkr Live discovery image sync completed (${syncedCount}/${architectures.length} architectures)`, {
-          appClassName: APP_CLASS_NAME,
-          jobId: this.jobId,
-        });
+        logInfo(
+          `Brokkr Live ${flavor} discovery image sync completed (${syncedCount}/${architectures.length} architectures)`,
+          { appClassName: APP_CLASS_NAME, jobId: this.jobId },
+        );
       } else {
-        logWarning('Brokkr Live discovery image sync found no files for any architecture', {
+        logWarning(`Brokkr Live ${flavor} discovery image sync found no files for any architecture`, {
           appClassName: APP_CLASS_NAME,
           jobId: this.jobId,
         });
@@ -257,22 +264,23 @@ export class BrokkrLiveHTTPSSyncService {
       return syncedCount;
     } catch (exc) {
       if (exc instanceof HTTPSSyncError) throw exc;
-      logError(`Brokkr Live discovery image sync failed: ${getErrorMessage(exc)}`, {
+      logError(`Brokkr Live ${flavor} discovery image sync failed: ${getErrorMessage(exc)}`, {
         appClassName: APP_CLASS_NAME,
         jobId: this.jobId,
       });
-      throw new HTTPSSyncError(`Discovery sync failed: ${getErrorMessage(exc)}`);
+      throw new HTTPSSyncError(`Discovery sync (${flavor}) failed: ${getErrorMessage(exc)}`);
     }
   }
 
-  private async syncArchitecture(arch: string): Promise<boolean> {
-    logInfo(`Syncing discovery images for ${arch}`, { appClassName: APP_CLASS_NAME, jobId: this.jobId });
+  private async syncArchitecture(flavor: DiscoveryFlavor, arch: string): Promise<boolean> {
+    logInfo(`Syncing discovery images for ${flavor}/${arch}`, { appClassName: APP_CLASS_NAME, jobId: this.jobId });
 
     const originalCacheDir = this.cacheDir;
     const originalMetadataFile = this.metadataFile;
 
     try {
-      const archCacheDir = this.getArchCacheDir(arch);
+      await this.migrateLegacyArchDir(arch);
+      const archCacheDir = this.getArchCacheDir(flavor, arch);
       await mkdir(archCacheDir, { recursive: true });
 
       this.cacheDir = archCacheDir;
@@ -280,9 +288,12 @@ export class BrokkrLiveHTTPSSyncService {
 
       await this.loadCacheMetadata();
 
-      const manifest = await this.fetchArchitectureManifest(arch);
+      const manifest = await this.fetchArchitectureManifest(flavor, arch);
       if (!manifest) {
-        logWarning(`No manifest found for ${arch}, skipping`, { appClassName: APP_CLASS_NAME, jobId: this.jobId });
+        logWarning(`No manifest found for ${flavor}/${arch}, skipping`, {
+          appClassName: APP_CLASS_NAME,
+          jobId: this.jobId,
+        });
         return false;
       }
 
@@ -321,9 +332,8 @@ export class BrokkrLiveHTTPSSyncService {
         jobId: this.jobId,
       });
 
-      const discoveryBase = this.getDiscoveryBaseUrl();
       const fileVersion = resolveFileVersion(this.syncConfig.brokkrLiveVersion, manifest);
-      const baseUrl = `${discoveryBase}/${fileVersion}/${arch}`;
+      const baseUrl = `${this.getFlavorBaseUrl(flavor)}/${fileVersion}/${arch}`;
 
       for (const fileInfo of files) {
         await this.syncFile(baseUrl, fileInfo);
@@ -331,16 +341,19 @@ export class BrokkrLiveHTTPSSyncService {
 
       await this.saveCacheMetadata();
 
-      logInfo(`Cleaning up old cached files for ${arch}`, { appClassName: APP_CLASS_NAME, jobId: this.jobId });
+      logInfo(`Cleaning up old cached files for ${flavor}/${arch}`, {
+        appClassName: APP_CLASS_NAME,
+        jobId: this.jobId,
+      });
       await this.cleanupOldFiles();
 
-      logInfo(`Discovery image sync for ${arch} completed successfully`, {
+      logInfo(`Discovery image sync for ${flavor}/${arch} completed successfully`, {
         appClassName: APP_CLASS_NAME,
         jobId: this.jobId,
       });
       return true;
     } catch (exc) {
-      logError(`Discovery image sync for ${arch} failed: ${getErrorMessage(exc)}`, {
+      logError(`Discovery image sync for ${flavor}/${arch} failed: ${getErrorMessage(exc)}`, {
         appClassName: APP_CLASS_NAME,
         jobId: this.jobId,
       });
@@ -351,9 +364,23 @@ export class BrokkrLiveHTTPSSyncService {
     }
   }
 
-  private async fetchArchitectureManifest(arch: string): Promise<DiscoveryManifest | null> {
-    const manifestUrl = this.getDiscoveryManifestUrl(arch);
-    logDebug(`Fetching discovery manifest for ${arch}: ${manifestUrl}`, {
+  // an older bridge kept `<base>/<arch>`; that tree held the full image, so it moves under `full/` exactly once
+  private async migrateLegacyArchDir(arch: string): Promise<void> {
+    const baseDir = getStorageConfig().brokkrLiveHttpsDir;
+    const legacyDir = join(baseDir, arch);
+    const fullDir = buildArchCacheDir(baseDir, 'full', arch);
+    if (!(await pathExists(legacyDir)) || (await pathExists(fullDir))) return;
+    await mkdir(join(baseDir, 'full'), { recursive: true });
+    await rename(legacyDir, fullDir);
+    logInfo(`Moved legacy discovery tree ${legacyDir} to ${fullDir}`, {
+      appClassName: APP_CLASS_NAME,
+      jobId: this.jobId,
+    });
+  }
+
+  private async fetchArchitectureManifest(flavor: DiscoveryFlavor, arch: string): Promise<DiscoveryManifest | null> {
+    const manifestUrl = this.getDiscoveryManifestUrl(flavor, arch);
+    logDebug(`Fetching discovery manifest for ${flavor}/${arch}: ${manifestUrl}`, {
       appClassName: APP_CLASS_NAME,
       jobId: this.jobId,
     });
@@ -755,16 +782,16 @@ export class BrokkrLiveHTTPSSyncService {
     }
   }
 
-  private getDiscoveryBaseUrl(): string {
-    return this.syncConfig.discoveryBaseUrl.replace(/\/+$/, '');
+  private getFlavorBaseUrl(flavor: DiscoveryFlavor): string {
+    return buildFlavorBaseUrl(this.syncConfig.discoveryBaseUrl, flavor);
   }
 
-  private getDiscoveryManifestUrl(arch: string): string {
-    return buildDiscoveryManifestUrl(this.getDiscoveryBaseUrl(), this.syncConfig.brokkrLiveVersion, arch);
+  private getDiscoveryManifestUrl(flavor: DiscoveryFlavor, arch: string): string {
+    return buildDiscoveryManifestUrl(this.getFlavorBaseUrl(flavor), this.syncConfig.brokkrLiveVersion, arch);
   }
 
-  private getArchCacheDir(arch: string): string {
-    return buildArchCacheDir(getStorageConfig().brokkrLiveHttpsDir, arch);
+  private getArchCacheDir(flavor: DiscoveryFlavor, arch: string): string {
+    return buildArchCacheDir(getStorageConfig().brokkrLiveHttpsDir, flavor, arch);
   }
 
   private getArchitectures(): readonly string[] {

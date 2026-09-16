@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { SingleFlightCache } from '../common/single-flight-cache';
 import type { QueueKind, QueueRef, QueueSummary } from '../contract';
 import { ZoneRegistryService } from '../datastore/zone-registry.service';

@@ -180,14 +180,14 @@ describe('QueuesTab drain gate', () => {
     expect(mocks.listQueueJobs).toHaveBeenCalledTimes(2);
   });
 
-  it('shows a non-200 body as the toast text', async () => {
+  it('shows a rejected drain’s body as the toast text', async () => {
     await renderTab();
     fireEvent.click(screen.getByRole('button', { name: 'drain' }));
     fireEvent.click(screen.getByRole('button', { name: 'Drain queue' }));
     const options = mocks.drain.mutate.mock.calls[0][1];
-    await act(async () => options.onSuccess({ status: 404, body: { error: 'queue absent' } }));
+    await act(async () => options.onError({ status: 404, body: { error: 'queue absent' } }));
 
-    expect(mocks.toast.error).toHaveBeenCalledWith('queue absent');
+    expect(mocks.toast.error).toHaveBeenCalledWith('drain — queue absent');
     expect(mocks.refetchQueues).not.toHaveBeenCalled();
     expect(mocks.navigate).not.toHaveBeenCalled();
   });

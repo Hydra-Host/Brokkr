@@ -5,6 +5,7 @@ import { getErrorMessage } from '../common/error-utils';
 import type { RedisEncryptor } from '../common/redis/redis-client/redis-encryptor';
 import { SagaLoggerLike } from './notifications.service';
 import type { LifecyclePlan, LifecyclePlanStep, LifecyclePlanStepResult } from './plan.types';
+import { getSagaDef } from './saga-registry';
 import type { SagaDef } from './saga.types';
 import { coerceStatus, transitionTimestamps } from './state.service';
 import { JobStatus, TERMINAL_STATUSES } from './state.types';
@@ -514,6 +515,30 @@ export class PlanManagerService {
 
     await this.persistPlan(plan);
     return plan;
+  }
+
+  async persistInitialPlan(planId: string, sagaName: string, deviceId: unknown, queueName: string): Promise<boolean> {
+    const sagaDef = getSagaDef(sagaName);
+    if (sagaDef === null) {
+      this.logger.warn(`Cannot persist bridge-local plan ${planId}: unknown saga '${sagaName}'`);
+      return false;
+    }
+    if ((await this.getPlan(planId)) !== null) return true;
+    await this.createPlanFromSaga({
+      planId,
+      deviceId,
+      jobClass: sagaName,
+      sagaDef,
+      queueName,
+      metadata: { saga_name: sagaName },
+    });
+    // persistPlan swallows Redis write errors, and getPlan would be satisfied by the
+    // in-memory copy it wrote first, so read the key back to confirm durability.
+    if ((await this.redis.get(this.redisKey(planId))) === null) {
+      this.logger.warn(`Plan ${planId} was not durably written to Redis; skipping enqueue`);
+      return false;
+    }
+    return true;
   }
 
   async updateStepStatus(args: {

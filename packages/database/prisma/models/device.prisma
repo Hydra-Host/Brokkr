@@ -117,15 +117,6 @@ model Device {
   deviceModel   DeviceModel?  @relation(fields: [deviceModelId], references: [id])
   deviceModelId String?
 
-  // ── Tenant ─────────────────────────────────────────────────────────
-  // Denormalized from `zone.organizationId` so per-org reads don't need to
-  // join Zone. Invariant: `organizationId` MUST equal `zone.organizationId`
-  // at all times for any row that has a zone. Write paths derive this from
-  // the zone and re-derive whenever `zoneId` changes. Nullable for legacy
-  // rows that may pre-date zone assignment.
-  organization   Organization? @relation("DeviceOrganization", fields: [organizationId], references: [id])
-  organizationId String?
-
   // Per-device config template link. Null means "fall back to the
   // purpose-tagged default" — the renderer resolves this at render time,
   // not here.
@@ -205,7 +196,7 @@ model Device {
 
   @@unique([id, zoneId])
   @@index([zoneId])
-  @@index([organizationId])
+  @@index([supplierId])
   @@index([configTemplateId])
   @@index([deletedAt])
   @@index([role])

@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import type { DbMigrationRow, DbMigrations } from '../contract';
 import { RepoBranchService } from '../services/repo-branch.service';
 import { PgService } from './pg.service';

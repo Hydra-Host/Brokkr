@@ -17,9 +17,11 @@ import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { cn } from '@repo/ui/utils';
 import { formatSize } from '@repo/utils';
 import { DeviceDiagnosticsCard } from '~/components/device-diagnostics-card';
+import { JobHistoryTable, useCanViewJobHistory } from '~/components/job-history-table';
 import { tsr } from '~/lib/api';
 import { COMPANY_NAME } from '~/lib/branding';
 import { formatLegacyOsSlug } from '~/lib/format-os';
+import { LIFECYCLE_JOBS_KEY } from '~/lib/query-keys';
 
 const parentRoute = getRouteApi('/_app/deployments/$deploymentId');
 
@@ -283,10 +285,30 @@ function DeploymentOverview() {
         </Card>
       )}
 
+      <DeploymentJobHistory deployment={deployment} />
+
       {deployment.deviceDiagnostics && deployment.deviceDiagnostics.length > 0 && (
         <DeviceDiagnosticsCard diagnostics={deployment.deviceDiagnostics} />
       )}
     </div>
+  );
+}
+
+function DeploymentJobHistory({ deployment }: { deployment: Deployment }) {
+  const { canView, isPending } = useCanViewJobHistory();
+
+  if (isPending || !canView) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Job History</CardTitle>
+        <CardDescription>Lifecycle jobs for this deployment with their job IDs.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <JobHistoryTable deploymentId={deployment.id} tableName={`deployment-jobs-${deployment.id}`} />
+      </CardContent>
+    </Card>
   );
 }
 
@@ -316,12 +338,14 @@ function PendingLifecycleRequests({ deployment }: { deployment: Deployment }) {
   const handleApprove = async (requestId: string) => {
     await approve({ params: { id: deployment.id, requestId }, body: {} });
     queryClient.removeQueries({ queryKey: ['deployment', deployment.id] });
+    void queryClient.invalidateQueries({ queryKey: LIFECYCLE_JOBS_KEY });
     await router.invalidate();
   };
 
   const handleReject = async (requestId: string) => {
     await reject({ params: { id: deployment.id, requestId }, body: {} });
     queryClient.removeQueries({ queryKey: ['deployment', deployment.id] });
+    void queryClient.invalidateQueries({ queryKey: LIFECYCLE_JOBS_KEY });
     await router.invalidate();
   };
 
@@ -340,24 +364,33 @@ function PendingLifecycleRequests({ deployment }: { deployment: Deployment }) {
               <Badge variant={statusVariant[request.status]}>{request.type}</Badge>
               requested by {request.requestedByName ?? 'Admin'}
             </AlertTitle>
-            <AlertDescription className="mt-2 flex items-center justify-between">
-              <span className="text-muted-foreground text-sm">
-                Created {new Date(request.createdAt).toLocaleString()}
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  onClick={() => handleReject(request.id)}
-                  disabled={isApproving || isRejecting}
-                >
-                  {isRejecting ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <X className="mr-1 h-3 w-3" />}
-                  Reject
-                </Button>
-                <Button size="sm" onClick={() => handleApprove(request.id)} disabled={isApproving || isRejecting}>
-                  {isApproving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Check className="mr-1 h-3 w-3" />}
-                  Approve
-                </Button>
+            <AlertDescription className="mt-2 space-y-2">
+              {typeof request.requestBody.notes === 'string' && request.requestBody.notes.length > 0 && (
+                <p className="text-sm">{request.requestBody.notes}</p>
+              )}
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground text-sm">
+                  Created {new Date(request.createdAt).toLocaleString()}
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => handleReject(request.id)}
+                    disabled={isApproving || isRejecting}
+                  >
+                    {isRejecting ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <X className="mr-1 h-3 w-3" />}
+                    Reject
+                  </Button>
+                  <Button size="sm" onClick={() => handleApprove(request.id)} disabled={isApproving || isRejecting}>
+                    {isApproving ? (
+                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                    ) : (
+                      <Check className="mr-1 h-3 w-3" />
+                    )}
+                    Approve
+                  </Button>
+                </div>
               </div>
             </AlertDescription>
           </Alert>

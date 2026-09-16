@@ -1,5 +1,14 @@
 import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import { DeviceRole, DeviceStatus, InterfaceType, Prisma, ServerLifecycleStatus } from '@repo/database';
+import type { CommissioningDeviceInput } from '@repo/api-client';
+import {
+  DeviceRole,
+  DeviceStatus,
+  InterfaceType,
+  JobStatus,
+  JobType,
+  Prisma,
+  ServerLifecycleStatus,
+} from '@repo/database';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SecretStorageUnavailableError } from '../../device-secret/device-secret.service';
 import { CommissioningService } from '../commissioning.service';
@@ -220,6 +229,7 @@ function makeMutationService(
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     ipAddress: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    job: { updateMany: vi.fn(async () => ({ count: 1 })) },
     deployment: { updateMany: vi.fn(async () => ({ count: 0 })) },
     server: {
       findUnique: vi.fn(async () =>
@@ -258,6 +268,10 @@ function makeMutationService(
       findMany: vi.fn(async () => overrides.progressDevices ?? []),
     },
     zoneStatus: { findMany: vi.fn(async () => overrides.zoneStatuses ?? [{ isOnline: true }]) },
+    job: {
+      create: vi.fn(async () => ({ id: DEVICE_ID })),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
     server: {
       update: vi.fn(async () => ({ deviceId: DEVICE_ID, lifecycleStatus: ServerLifecycleStatus.PROVISIONING })),
       updateMany: vi.fn(async () => ({ count: 1 })),
@@ -398,13 +412,65 @@ describe('CommissioningService commissionDevices (mutation/saga/secret)', () => 
       USER_ID,
       expect.objectContaining({ skipIfLivePresent: true, tx }),
     );
+    expect(prisma.job.create).toHaveBeenCalledTimes(1);
+    expect(prisma.job.create).toHaveBeenCalledWith({
+      data: {
+        id: DEVICE_ID,
+        jobType: JobType.Commission,
+        status: JobStatus.Pending,
+        device: { connect: { id: DEVICE_ID } },
+        job: {
+          zoneId: ZONE_ID,
+          bmcMacAddress: 'AA:BB:CC:DD:EE:01',
+          bmcIp: null,
+        },
+      },
+    });
     expect(commissionDevice).toHaveBeenCalledTimes(1);
     expect(commissionDevice).toHaveBeenCalledWith(DEVICE_ID, DEVICE_ID, {}, ZONE_ID, undefined);
+    expect(prisma.job.create.mock.invocationCallOrder[0]).toBeLessThan(commissionDevice.mock.invocationCallOrder[0]);
 
     expect(result.success).toBe(true);
     expect(result.createdCount).toBe(1);
     expect(result.deviceIds).toEqual([DEVICE_ID]);
     expect(result.failedDevices).toBeUndefined();
+  });
+
+  const enrichedInput: CommissioningDeviceInput = {
+    bmcMac: 'AA:BB:CC:DD:EE:01',
+    bmcIp: '',
+    bmcUsername: 'admin',
+    bmcPassword: 'secret',
+    nicMac: 'aa-bb-cc-dd-ee-01',
+  };
+
+  it('creates the eth0 row without a MAC when the BMC reports the NIC MAC', async () => {
+    const { service, tx, logger } = makeMutationService();
+
+    await service.commissionDevices(ZONE_ID, [enrichedInput]);
+
+    expect(tx.interface.create).toHaveBeenCalledTimes(2);
+    expect(tx.interface.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ data: expect.objectContaining({ name: 'IPMI', macAddress: 'AA:BB:CC:DD:EE:01' }) }),
+    );
+    expect(tx.interface.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ data: expect.objectContaining({ name: 'eth0', macAddress: null }) }),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('shares the NIC MAC'));
+  });
+
+  it('keeps the NIC MAC on eth0 when it differs from the BMC MAC', async () => {
+    const { service, tx, logger } = makeMutationService();
+
+    await service.commissionDevices(ZONE_ID, [{ ...enrichedInput, nicMac: 'aa:bb:cc:dd:ee:02' }]);
+
+    expect(tx.interface.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ data: expect.objectContaining({ name: 'eth0', macAddress: 'aa:bb:cc:dd:ee:02' }) }),
+    );
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining('shares the NIC MAC'));
   });
 
   it('translates the duplicate-name unique violation (P2002) into a generic duplication failure', async () => {
@@ -428,7 +494,7 @@ describe('CommissioningService commissionDevices (mutation/saga/secret)', () => 
     const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
       code: 'P2002',
       clientVersion: 'test',
-      meta: { target: ['organizationId', 'zoneId', 'name'] },
+      meta: { target: ['supplierId', 'zoneId', 'name'] },
     });
     const { service } = makeMutationService({ deviceCreateError: p2002 });
 
@@ -467,7 +533,7 @@ describe('CommissioningService commissionDevices (mutation/saga/secret)', () => 
     const commissionDevice = vi.fn(async () => {
       throw enqueueErr;
     });
-    const { service, deviceSecretService } = makeMutationService({ commissionDevice });
+    const { service, deviceSecretService, tx } = makeMutationService({ commissionDevice });
 
     const result = await service.commissionDevices(ZONE_ID, [deviceInput as never]);
 
@@ -478,6 +544,14 @@ describe('CommissioningService commissionDevices (mutation/saga/secret)', () => 
       'DEVICE_SOFT_DELETED',
       expect.anything(),
     );
+    expect(tx.job.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: DEVICE_ID,
+        jobType: JobType.Commission,
+        status: { in: [JobStatus.Pending, JobStatus.InProgress] },
+      },
+      data: { status: JobStatus.Failed, error: 'queue down' },
+    });
     expect(result.success).toBe(false);
     expect(result.createdCount).toBe(0);
     expect(result.failedDevices).toEqual([{ bmcMac: 'AA:BB:CC:DD:EE:01', error: 'queue down' }]);
@@ -495,6 +569,27 @@ describe('CommissioningService commissionDevices (mutation/saga/secret)', () => 
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('needs manual cleanup'));
     expect(result.failedDevices).toEqual([{ bmcMac: 'AA:BB:CC:DD:EE:01', error: 'queue down' }]);
     expect(result.createdCount).toBe(0);
+  });
+
+  it('does not enqueue the saga when Job create fails', async () => {
+    const { service, prisma, tx, commissionDevice, deviceSecretService } = makeMutationService();
+    prisma.job.create.mockRejectedValueOnce(new Error('job write failed'));
+
+    const result = await service.commissionDevices(ZONE_ID, [deviceInput as never]);
+
+    expect(commissionDevice).not.toHaveBeenCalled();
+    expect(tx.job.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.job.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: DEVICE_ID,
+        jobType: JobType.Commission,
+        status: { in: [JobStatus.Pending, JobStatus.InProgress] },
+      },
+      data: { status: JobStatus.Failed, error: 'job write failed' },
+    });
+    expect(deviceSecretService.invalidateAll).toHaveBeenCalledTimes(1);
+    expect(result.createdCount).toBe(0);
+    expect(result.failedDevices?.[0].error).toMatch(/job write failed/);
   });
 });
 
@@ -554,6 +649,10 @@ describe('CommissioningService retryCommissioning (reuse the row in place)', () 
         data: { lifecycleStatus: ServerLifecycleStatus.INVENTORY },
       }),
     );
+    expect(tx.job.updateMany).toHaveBeenCalledWith({
+      where: { id: DEVICE_ID, jobType: JobType.Commission },
+      data: { status: JobStatus.Pending, error: null, lastCompletedStep: null },
+    });
 
     expect(commissionDevice).toHaveBeenCalledTimes(1);
     expect(commissionDevice).toHaveBeenCalledWith(DEVICE_ID, DEVICE_ID, {}, ZONE_ID, undefined);
@@ -633,6 +732,10 @@ describe('CommissioningService retryCommissioningStep (in-place step retry)', ()
       expect.objectContaining({ device_id: DEVICE_ID }),
       DEVICE_ID,
     );
+    expect(prisma.job.updateMany).toHaveBeenCalledWith({
+      where: { id: PLAN_ID, jobType: JobType.Commission },
+      data: { status: JobStatus.Pending, error: null, lastCompletedStep: null },
+    });
   });
 
   it('rejects when the device is not in FAILED lifecycle state', async () => {
@@ -879,6 +982,14 @@ describe('CommissioningService softDeleteCommissioningDevice (via cancelCommissi
       'DEVICE_SOFT_DELETED',
       tx,
     );
+    expect(tx.job.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: DEVICE_ID,
+        jobType: JobType.Commission,
+        status: { in: [JobStatus.Pending, JobStatus.InProgress] },
+      },
+      data: { status: JobStatus.Failed, error: 'Commissioning discarded' },
+    });
     expect(eventEmitter.emit).toHaveBeenCalled();
     expect(result.success).toBe(true);
   });
@@ -945,6 +1056,7 @@ describe('CommissioningService softDeleteCommissioningDevice (via cancelCommissi
       where: { id: DEVICE_ID, deletedAt: null },
       data: { deletedAt: expect.any(Date) },
     });
+    expect(tx.job.updateMany).not.toHaveBeenCalled();
     expect(deviceSecretService.invalidateAll).not.toHaveBeenCalled();
     expect(eventEmitter.emit).not.toHaveBeenCalled();
     expect(result.success).toBe(true);

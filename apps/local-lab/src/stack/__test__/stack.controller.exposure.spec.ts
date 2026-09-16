@@ -13,29 +13,32 @@ import { StackController } from '../stack.controller';
 
 const reflector = new Reflector();
 
-describe('StackController exposure annotations', () => {
-  it('annotates startStackRun loopback-only — every stack op spawns a host command', () => {
+describe('StackController capability annotations', () => {
+  it('prices startStackRun at admin — every stack op spawns a host command', () => {
     expect(reflector.get<LabRouteOptions | undefined>(LAB_ROUTE, StackController.prototype.startRun)).toEqual({
-      exposure: 'loopback-only',
+      capability: 'admin',
     });
   });
 
-  it('keeps controlDatastore loopback-only alongside it', () => {
+  it('prices controlDatastore at admin alongside it', () => {
     expect(reflector.get<LabRouteOptions | undefined>(LAB_ROUTE, StackController.prototype.controlDatastore)).toEqual({
-      exposure: 'loopback-only',
+      capability: 'admin',
     });
   });
 
-  it('leaves restartState token-ok — a read-only GET that mutates nothing', () => {
+  it('leaves restartState at read — a GET that mutates nothing', () => {
     expect(
       reflector.get<LabRouteOptions | undefined>(LAB_ROUTE, StackController.prototype.restartState),
     ).toBeUndefined();
   });
 
-  it('leaves the init-task reads token-ok — both are read-only GETs', () => {
-    for (const handler of [StackController.prototype.initTasksList, StackController.prototype.initTaskLog]) {
-      expect(reflector.get<LabRouteOptions | undefined>(LAB_ROUTE, handler)).toBeUndefined();
-    }
+  it('leaves the init-task listing at read but prices its log stream like the op it reports on', () => {
+    expect(
+      reflector.get<LabRouteOptions | undefined>(LAB_ROUTE, StackController.prototype.initTasksList),
+    ).toBeUndefined();
+    expect(reflector.get<LabRouteOptions | undefined>(LAB_ROUTE, StackController.prototype.initTaskLog)).toEqual({
+      capability: 'admin',
+    });
   });
 });
 

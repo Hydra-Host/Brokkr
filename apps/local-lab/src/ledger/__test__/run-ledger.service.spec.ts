@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as pty from 'node-pty';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { labOriginMiddleware, type OriginRequest } from '../../common/lab-context';
@@ -9,6 +10,26 @@ import { RunnerService } from '../../runner/runner.service';
 import { RunLedgerService } from '../run-ledger.service';
 import { RunLogStore, runLogPath } from '../run-log-store';
 import { RunStore } from '../run-store';
+
+vi.mock('node-pty', () => ({ spawn: vi.fn() }));
+
+function mockPty(pid: number): { exit: (code?: number) => void } {
+  let exitCb: ((e: { exitCode: number; signal?: number }) => void) | undefined;
+  const fake = {
+    pid,
+    onData: vi.fn(),
+    onExit: vi.fn((cb: (e: { exitCode: number; signal?: number }) => void) => {
+      exitCb = cb;
+    }),
+    kill: vi.fn(),
+    write: vi.fn(),
+    resize: vi.fn(),
+  };
+  vi.mocked(pty.spawn).mockReturnValue(fake as unknown as ReturnType<typeof pty.spawn>);
+  return {
+    exit: (code = 0) => exitCb?.({ exitCode: code }),
+  };
+}
 
 let stateDir: string;
 let logs: RunLogStore;
@@ -75,7 +96,7 @@ describe('RunLedgerService.onCreate', () => {
   });
 
   it('leaves all three origin columns null for a run with no request behind it', () => {
-    const run = runner.create({ section: 'stack', opId: 'fleet-mode-apply', label: 'fleet-mode-apply' });
+    const run = runner.create({ section: 'stack', opId: 'fleet-planes-apply', label: 'fleet-planes-apply' });
 
     const row = getRunRow(run.runId);
     expect(row?.origin_ip).toBeNull();
@@ -196,27 +217,32 @@ describe('RunLedgerService pid durability', () => {
   });
 
   it('persists the pty pid while the child is still running', async () => {
+    const ptyChild = mockPty(4242);
     const run = runner.create({ section: 'test', opId: 'smoke', label: 'pty-crash-window' });
 
     const exit = runner.spawnPty(run, 'node', ['-e', 'setTimeout(() => undefined, 250)']);
     const midFlight = getRunRow(run.runId);
 
     expect(midFlight?.pid).toBe(run.childPid);
-    expect(midFlight?.pid).toBeGreaterThan(0);
+    expect(midFlight?.pid).toBe(4242);
     expect(midFlight?.status).toBe('running');
     expect(midFlight?.finished_at).toBeNull();
 
+    ptyChild.exit(0);
     await exit;
   });
 
   it('keeps the pty pid on the row after the child exits', async () => {
+    const ptyChild = mockPty(4242);
     const run = runner.create({ section: 'test', opId: 'smoke', label: 'pty-pid-retained' });
 
-    await runner.spawnPty(run, 'node', ['-e', '']);
+    const exit = runner.spawnPty(run, 'node', ['-e', '']);
+    ptyChild.exit(0);
+    await exit;
     runner.finalize(run, 0);
 
     expect(run.childPid).toBeUndefined();
-    expect(getRunRow(run.runId)?.pid).toBeGreaterThan(0);
+    expect(getRunRow(run.runId)?.pid).toBe(4242);
   });
 });
 

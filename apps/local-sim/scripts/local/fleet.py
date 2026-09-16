@@ -68,7 +68,7 @@ from local.pxe import build_ipxe_dhcp_image, build_ipxe_for_node
 from local.render_all import render_fleet_to_dir
 from local.schema import Fleet, Node, load_fleet
 from local.stores import HubDB
-from local.verify import run_verify
+from local.verify import DEFAULT_PROBE_BUDGET_SECONDS, run_verify
 
 
 def resolve_index(arg: str, fleet: Fleet | None) -> int:
@@ -421,7 +421,7 @@ def _records_failure(prefix: str):
 def bm_preflight(fleet: Fleet | None) -> None:
     bm = fleet.baremetal_raw if fleet is not None else None
     if bm is None:
-        sys.exit("baremetal mode requires a 'baremetal' block")
+        sys.exit("the bare-metal plane requires a 'baremetal' block")
     issues: list[str] = []
     if not iface_is_up(bm.iface):
         issues.append(f"uplink iface {bm.iface!r} is not up (ip link set {bm.iface} up)")
@@ -535,17 +535,18 @@ class BareMetalOps(ModeOps):
 
     def up(self, fleet: Fleet) -> None:
         log.info(
-            f"bare-metal mode — no VMs to render/power; the spoke answers DHCP proxy on "
+            f"bare-metal plane — the spoke answers DHCP proxy on "
             f"{fleet.baremetal_raw.iface if fleet.baremetal_raw else '?'} for {len(fleet.bm_nodes)} seeded node(s)"
         )
 
     def down(self, fleet: Fleet) -> None:  # noqa: ARG002
-        log.info("bare-metal fleet — nothing to power off (no VMs / BMC daemons)")
+        log.info("bare-metal plane — nothing to power off (no VMs / BMC daemons of its own)")
 
     def nuke(self, fleet: Fleet | None) -> None:
-        # No live VMs/BMC daemons of our own, but still run the VM sweep: a fleet switched from VM
-        # mode (or a mixed history) can leave orphan libvirt domains + sim VM state behind.
-        log.info("bare-metal fleet — sweeping any VM-mode leftovers (libvirt domains / sim state)")
+        # No live VMs/BMC daemons of our own, but still run the VM sweep: a fleet whose VM plane was
+        # turned off can leave orphan libvirt domains + sim VM state behind. The sweep is idempotent,
+        # so a two-plane fleet running it once per plane is harmless.
+        log.info("bare-metal plane — sweeping any VM-plane leftovers (libvirt domains / sim state)")
         _vm_nuke_extras(fleet)
 
     @staticmethod
@@ -557,8 +558,45 @@ class BareMetalOps(ModeOps):
         return [(n.name, n.zone) for n in fleet.bm_nodes]
 
 
+class FleetOps(ModeOps):
+    """Fans every whole-fleet verb out to the planes the rosters carry; per-node verbs route by name."""
+
+    def __init__(self, fleet: Fleet | None) -> None:
+        self.planes: list[ModeOps] = []
+        if fleet is None or fleet.has_vm:
+            self.planes.append(VmOps())
+        if fleet is not None and fleet.has_bm:
+            self.planes.append(BareMetalOps())
+
+    def preflight(self, fleet: Fleet | None) -> None:
+        for p in self.planes:
+            p.preflight(fleet)
+
+    def init_node(self, fleet: Fleet, name: str, zone: str, device_id: str | None, ordinal: int) -> None:
+        plane: ModeOps = BareMetalOps() if name in fleet.bm_node_names else VmOps()
+        plane.init_node(fleet, name, zone, device_id, ordinal)
+
+    def up(self, fleet: Fleet) -> None:
+        for p in self.planes:
+            p.up(fleet)
+
+    def down(self, fleet: Fleet) -> None:
+        for p in reversed(self.planes):
+            p.down(fleet)
+
+    def nuke(self, fleet: Fleet | None) -> None:
+        for p in self.planes:
+            p.nuke(fleet)
+
+    def node_count(self, fleet: Fleet) -> int:
+        return sum(p.node_count(fleet) for p in self.planes)
+
+    def init_targets(self, fleet: Fleet) -> list[tuple[str, str]]:
+        return [target for p in self.planes for target in p.init_targets(fleet)]
+
+
 def _ops_for(fleet: Fleet | None) -> ModeOps:
-    return BareMetalOps() if (fleet is not None and fleet.mode == "baremetal") else VmOps()
+    return FleetOps(fleet)
 
 
 # ===== cmd_init =====
@@ -617,12 +655,9 @@ def _node_device_ids(fleet: Fleet) -> dict[str, str]:
     Nodes with no matching Hub row are tolerated (omitted from the map) — a decommissioned
     node has no seeded id until re-commissioned; each caller decides how to handle a missing id.
     """
-    if fleet.mode == "baremetal":
-        name_by_bmc = {n.bmc_ip: n.name for n in fleet.bm_nodes}
-        all_names = [n.name for n in fleet.bm_nodes]
-    else:
-        name_by_bmc = {effective_bmc_ip(n, fleet.network.bmc_cidr, i): n.name for i, n in enumerate(fleet.nodes)}
-        all_names = [n.name for n in fleet.nodes]
+    name_by_bmc = {effective_bmc_ip(n, fleet.network.bmc_cidr, i): n.name for i, n in enumerate(fleet.nodes)}
+    name_by_bmc.update({n.bmc_ip: n.name for n in fleet.bm_nodes})
+    all_names = [n.name for n in fleet.nodes] + [n.name for n in fleet.bm_nodes]
     devices = HubDB.from_env().get_sim_devices_by_bmc_ips(list(name_by_bmc))
     out: dict[str, str] = {}
     for d in devices:
@@ -912,15 +947,16 @@ def cmd_apply(args: argparse.Namespace) -> int:
     ensure_state_dirs()
 
     live_diff = applied.diff(desired, applied.read(), host_os())
-    if live_diff.mode_change:
+    if live_diff.planes_change:
         log.warn(
-            f"mode change pending ({live_diff.note}) — route through the lab's fleet-mode-apply op, not `fleet apply`"
+            f"plane change pending ({live_diff.note}) — route through the lab's fleet-planes-apply op, "
+            "not `fleet apply`"
         )
         return 3
-    if desired.mode != "vm":
-        if live_diff.in_sync:
-            log.info("bare-metal fleet already in sync")
-            return 0 if _commit_applied(desired) else 1
+    if not desired.has_vm and live_diff.in_sync:
+        log.info("bare-metal fleet already in sync")
+        return 0 if _commit_applied(desired) else 1
+    if desired.has_bm and not live_diff.in_sync:
         log.warn("bare-metal drift pending — the lab converges it (Fleet apply); `fleet apply` does not")
         return 3
 
@@ -993,20 +1029,20 @@ def cmd_ensure_bridge(args: argparse.Namespace) -> int:  # noqa: ARG001
     fleet = load_fleet()
     if fleet is None:
         raise SystemExit("no fleet.yml found — run `task up` (or fleet:init) first")
-    if fleet.mode == "baremetal":
-        log.skip("bare-metal mode — real host NIC, br-brokkr not needed")
+    if not fleet.has_vm:
+        log.skip("no VM nodes — the bare-metal plane uses a real host NIC, br-brokkr not needed")
         return 0
     ensure_data_plane_bridge(fleet)
     return 0
 
 
 def cmd_node(args: argparse.Namespace) -> int:
-    """Run one per-node lifecycle verb (vm-mode fleets only)."""
+    """Run one per-node lifecycle verb (VM nodes only)."""
     fleet = load_fleet()
     if fleet is None:
         raise SystemExit("no fleet.yml found — run `task up` (or fleet:init) first")
-    if fleet.mode == "baremetal":
-        raise SystemExit("node verbs are vm-mode only — bare-metal power routes via the lab's redfish op")
+    if args.node in fleet.bm_node_names:
+        raise SystemExit("node verbs drive VM nodes only — bare-metal power routes via the lab's redfish op")
     idx = resolve_index(args.node, fleet)
     return run_node_verb(fleet, idx, args.verb, as_json=args.json, purge=getattr(args, "purge", False))
 
@@ -1015,7 +1051,9 @@ def cmd_verify(args: argparse.Namespace) -> int:
     """Verify the applied fleet's live daemons/domains; ``--heal`` repairs healable findings."""
     fleet = load_fleet()
     manifest = applied.read()
-    return run_verify(fleet, manifest, heal=args.heal, as_json=args.json)
+    return run_verify(
+        fleet, manifest, heal=args.heal, as_json=args.json, probe_budget_seconds=args.probe_budget_seconds
+    )
 
 
 # ===== CLI =====
@@ -1072,7 +1110,7 @@ def main() -> int:
     )
     p_apply.set_defaults(func=cmd_apply)
 
-    p_node = sub.add_parser("node", help="per-node lifecycle verbs: up | down | restart | undefine (vm mode only)")
+    p_node = sub.add_parser("node", help="per-node lifecycle verbs: up | down | restart | undefine (VM nodes only)")
     node_sub = p_node.add_subparsers(dest="verb", required=True)
     node_verbs = {
         "up": "render + wire one node into libvirt/ipmi_sim/sushy and power it on",
@@ -1095,10 +1133,16 @@ def main() -> int:
 
     p_verify = sub.add_parser(
         "verify",
-        help="check the applied fleet's live domains/BMC daemons (vm mode); --heal repairs healable findings",
+        help="check the applied fleet's live domains/BMC daemons and machines; --heal repairs healable findings",
     )
     p_verify.add_argument("--heal", action="store_true", help="repair healable findings, then re-verify")
     p_verify.add_argument("--json", action="store_true", help="print a FleetVerifyReport JSON envelope to stdout")
+    p_verify.add_argument(
+        "--probe-budget-seconds",
+        type=float,
+        default=DEFAULT_PROBE_BUDGET_SECONDS,
+        help="stop dialling bare-metal BMCs after this many seconds so the report still prints (default: %(default)s)",
+    )
     p_verify.set_defaults(func=cmd_verify)
 
     args = p.parse_args()

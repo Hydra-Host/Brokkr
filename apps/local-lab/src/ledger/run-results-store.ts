@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { existsSync, rmSync } from 'node:fs';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { labStateDir } from '../common/lab-state';
 import { isSafeRunId } from '../common/run-id';
 import { listResultsDirs, RESULTS_ROOT, resultsDir, resultsRootBelongsToStateDir } from '../results-root';

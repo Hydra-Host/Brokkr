@@ -16,11 +16,14 @@ import {
   DeviceSecretPurpose,
   DeviceStatus,
   InterfaceType,
+  JobStatus,
+  JobType,
   Prisma,
   ServerLifecycleStatus,
 } from '@repo/database';
+import { formatMacAddress } from '@repo/database/extensions/mac-address';
 import { isRecord } from '@repo/utils';
-import type { Job, JobType } from 'bullmq';
+import type { JobType as BullJobType, Job } from 'bullmq';
 import { randomUUID } from 'crypto';
 import type Redis from 'ioredis';
 import { NETWORK_SCAN_RESULT_TTL_SECONDS } from 'src/brokkr-bridge/constants/lifecycle.constants';
@@ -44,6 +47,7 @@ import { DeviceSecretService, SecretStorageUnavailableError } from 'src/device-s
 import { DeviceLifecycleEvent } from 'src/devices/device-lifecycle.events';
 import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
+import { resetCommissionJob, settleCommissionJob } from 'src/utils/settle-commission-job';
 import { z } from 'zod';
 
 const scanSessionSchema = z.object({
@@ -92,7 +96,7 @@ type RawPlan = z.infer<typeof rawPlanSchema>;
 // Structural view of the BullMQ methods the queue sweep uses — lets one helper drive both the
 // hub's LifecycleJobData queue and the (differently typed) collection queue.
 interface SweepableQueue {
-  getJobs: (types: JobType[]) => Promise<Array<Pick<Job, 'id' | 'data' | 'getState' | 'discard' | 'remove'>>>;
+  getJobs: (types: BullJobType[]) => Promise<Array<Pick<Job, 'id' | 'data' | 'getState' | 'discard' | 'remove'>>>;
 }
 
 function scanSessionKey(sessionId: string): string {
@@ -169,7 +173,7 @@ export class CommissioningService {
   ): Promise<{ id: string; zoneId: string | null }> {
     const organizationId = this.contextService.organizationId;
     const device = await this.prisma.device.findUnique({
-      where: { id: deviceId, organizationId, zoneId, role: null, deletedAt: null },
+      where: { id: deviceId, supplierId: organizationId, zoneId, role: null, deletedAt: null },
       select: { id: true, zoneId: true },
     });
     if (!device) throw new NotFoundException(`Commissioning device ${deviceId} not found`);
@@ -338,7 +342,7 @@ export class CommissioningService {
           OR: knownMacs.map((mac) => ({ macAddress: { equals: mac, mode: 'insensitive' as const } })),
           deletedAt: null,
           // Management IPs/MACs aren't globally unique — another tenant's device at the same address must not exclude or leak status here.
-          device: { deletedAt: null, organizationId, zoneId },
+          device: { deletedAt: null, supplierId: organizationId, zoneId },
         },
         select: { macAddress: true, device: { select: { role: true, server: { select: { lifecycleStatus: true } } } } },
       });
@@ -370,7 +374,7 @@ export class CommissioningService {
         JOIN "Device" d ON
           d.id = i."deviceId"
           AND d."deletedAt" IS NULL
-          AND d."organizationId" = ${organizationId}
+          AND d."supplierId" = ${organizationId}
           AND d."zoneId" = ${zoneId}
         LEFT JOIN "Server" s ON
           s."deviceId" = d.id
@@ -537,9 +541,8 @@ export class CommissioningService {
     return { status: await this.enrichPendingOrExpired(zoneId, planId), error: null };
   }
 
-  // No bridge plan yet: still pending while inside the grace window (the device is booting),
-  // expired once past it — the started marker shares the plan's TTL, so a missing marker means
-  // the enrich was long-abandoned and the UI should stop spinning and prompt a rescan.
+  // Started marker shares the plan TTL: missing means abandoned (prompt rescan).
+  // Marker inside the grace window means the device is still booting (pending).
   private async enrichPendingOrExpired(zoneId: string, planId: string): Promise<'pending' | 'expired'> {
     const startedRaw = await this.redis.get(enrichPlanStartedKey(zoneId, planId));
     if (!startedRaw) return 'expired';
@@ -724,6 +727,19 @@ export class CommissioningService {
         }
 
         try {
+          await this.prisma.job.create({
+            data: {
+              id: deviceRecord.id,
+              jobType: JobType.Commission,
+              status: JobStatus.Pending,
+              device: { connect: { id: deviceRecord.id } },
+              job: {
+                zoneId,
+                bmcMacAddress: device.bmcMac,
+                bmcIp: device.bmcIp ?? null,
+              },
+            },
+          });
           const deviceContext = device.bmcIp ? { bmcIp: device.bmcIp } : undefined;
           await this.bridgeCommissioningService.commissionDevice(
             deviceRecord.id,
@@ -734,7 +750,7 @@ export class CommissioningService {
           );
           this.logger.log(`[Commissioning] Commission saga enqueued for device ${deviceRecord.id}`);
         } catch (postErr) {
-          await this.softDeleteCommissioningDevice(deviceRecord.id).catch((cleanupErr) =>
+          await this.softDeleteCommissioningDevice(deviceRecord.id, getErrorMessage(postErr)).catch((cleanupErr) =>
             this.logger.error(
               `[Commissioning] CRITICAL: enqueue failed AND teardown failed for device ${deviceRecord.id} — ` +
                 `orphaned role=null device with sealed creds, needs manual cleanup: ${getErrorMessage(cleanupErr)}`,
@@ -787,7 +803,6 @@ export class CommissioningService {
         status: DeviceStatus.PLANNED,
         zoneId: input.zoneId,
         supplierId: input.organizationId,
-        organizationId: input.organizationId,
         systemSerial: enrichment?.serial || null,
       },
     });
@@ -816,11 +831,17 @@ export class CommissioningService {
 
     const eth0Ip = input.osIp || enrichment?.nicIp || null;
     if (enrichment?.nicMac || eth0Ip) {
+      const nicMac = enrichment?.nicMac ?? null;
+      // A shared-LAN BMC can answer with the host NIC's MAC; the per-device MAC index rejects a second row.
+      const bmcSharesNicMac = nicMac !== null && formatMacAddress(nicMac) === formatMacAddress(input.bmcMac);
+      if (bmcSharesNicMac) {
+        this.logger.warn(`[Commissioning] BMC ${input.bmcMac} shares the NIC MAC — creating eth0 without one`);
+      }
       const nicInterface = await tx.interface.create({
         data: {
           deviceId: device.id,
           name: 'eth0',
-          macAddress: enrichment?.nicMac ?? null,
+          macAddress: bmcSharesNicMac ? null : nicMac,
           markConnected: true,
         },
       });
@@ -864,7 +885,7 @@ export class CommissioningService {
     try {
       const devices = await this.prisma.device.findMany({
         where: {
-          organizationId,
+          supplierId: organizationId,
           zoneId,
           role: null,
           deletedAt: null,
@@ -1116,6 +1137,10 @@ export class CommissioningService {
       throw new ConflictException(`No failed step found in plan ${planInfo.planId} — nothing to reset`);
     }
 
+    if (planInfo.sagaName === 'commission') {
+      await resetCommissionJob(this.prisma, planInfo.planId);
+    }
+
     const payload = await this.buildRetryPayload(deviceId, planInfo.sagaName);
 
     await this.bridgeQueueService.enqueueSagaJob(zoneId, planInfo.sagaName, planInfo.planId, payload, deviceId);
@@ -1202,6 +1227,7 @@ export class CommissioningService {
       if (locked?.lifecycleStatus !== ServerLifecycleStatus.FAILED) {
         throw new ConflictException(`Device ${deviceId} retry already in progress`);
       }
+      await resetCommissionJob(tx, deviceId);
       await tx.deployment.updateMany({
         where: { server: { deviceId }, endDate: null },
         data: { endDate: new Date() },
@@ -1246,7 +1272,7 @@ export class CommissioningService {
     return { success: true, message: 'Commissioning cancelled' };
   }
 
-  private async softDeleteCommissioningDevice(deviceId: string): Promise<void> {
+  private async softDeleteCommissioningDevice(deviceId: string, jobError = 'Commissioning discarded'): Promise<void> {
     const now = new Date();
     const deleted = await this.prisma.$transaction(async (tx) => {
       const { count } = await tx.device.updateMany({
@@ -1254,6 +1280,7 @@ export class CommissioningService {
         data: { deletedAt: now },
       });
       if (count === 0) return false;
+      await settleCommissionJob(tx, deviceId, JobStatus.Failed, { error: jobError });
       await softDeleteDeviceNetworkAndSecrets(
         tx,
         this.deviceSecretService,
@@ -1280,9 +1307,8 @@ export class CommissioningService {
     );
   }
 
-  // Enrich has no Device row: its lifecycle job carries device_id === planId and the follow-on
-  // collection.run lands on the bridge collection queue (which removeBridgeJob never sweeps),
-  // keyed by device_id/plan_id/job_id === planId. Cancel sweeps BOTH queues for the planId.
+  // Enrich has no Device row — cancel sweeps both lifecycle and collection queues by planId.
+  // collection.run lands on the collection queue, which removeBridgeJob never sweeps.
   private async cancelEnrichBridgeJobs(zoneId: string, planId: string): Promise<void> {
     const matchesPlan = (data: unknown): boolean => {
       if (!isRecord(data)) return false;

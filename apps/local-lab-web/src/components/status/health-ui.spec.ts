@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { FleetHealthSchema, ProcHealthSchema } from '@/contract';
+import { FleetHealthSchema, InitTaskSchema, ProcHealthSchema } from '@/contract';
 
 import { FLEET_HEALTH_UI, HEALTH_UI, healthUi, RUNNING_HEALTH, serviceHealthUi, UP_NO_PROBE } from './health-ui';
 
@@ -21,12 +21,17 @@ describe('HEALTH_UI notes', () => {
       missing: 'no process',
       running: 'running',
       completed: 'done',
+      cached: 'cached',
       pending: 'not run',
     });
   });
 
   it('covers every ProcHealth the server can send', () => {
     for (const health of ProcHealthSchema.options) expect(HEALTH_UI[health]).toBeDefined();
+  });
+
+  it('covers every InitTask state the server can send', () => {
+    for (const state of InitTaskSchema.shape.state.options) expect(HEALTH_UI[state]).toBeDefined();
   });
 
   it('falls back to the raw status for an unmapped one', () => {

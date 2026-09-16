@@ -1,11 +1,12 @@
-import { ConflictException } from '@nestjs/common';
 import { PluginMigrator } from '@hydrahost/plugin-runtime';
+import { ConflictException } from '@nestjs/common';
 import { createPrismaClient, type PrismaClient as DatabasePrismaClient } from '@repo/database';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import pg from 'pg';
+import { NetplanLiveInvalidatorService } from 'src/brokkr-bridge/netplan/netplan-live-invalidator.service';
 import { DesignationOperatorPolicy } from 'src/common/authz/operator-policy';
 import { ContextService } from 'src/common/context/context.service';
 import { EventLogRepository } from 'src/event-log/event-log.repository';
@@ -18,6 +19,7 @@ import { IpRangeService } from 'src/ipam/ip-range/ip-range.service';
 import { IpamRoleRepository } from 'src/ipam/ipam-role/ipam-role.repository';
 import { PrefixRepository } from 'src/ipam/prefix/prefix.repository';
 import { PrefixService } from 'src/ipam/prefix/prefix.service';
+import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -49,11 +51,7 @@ type BridgeRequestsServiceLike = {
 };
 
 type OperatorBridgeRequestsBackend = {
-  BridgeRequestsService: new (
-    repository: unknown,
-    ipam: unknown,
-    prisma: unknown,
-  ) => BridgeRequestsServiceLike;
+  BridgeRequestsService: new (repository: unknown, ipam: unknown, prisma: unknown) => BridgeRequestsServiceLike;
   BridgeRequestRepository: new (prisma: unknown) => unknown;
   BridgeRequestIpamService: new (hostIpam: HostPluginIpamProvisioning) => unknown;
 };
@@ -165,6 +163,11 @@ function buildBridgeRequestsService(prisma: DatabasePrismaClient): BridgeRequest
     new IpAddressRepository(nestPrisma, contextService),
     contextService,
     dhcpPublisher as never,
+    new NetplanLiveInvalidatorService(
+      nestPrisma,
+      { deleteLive: vi.fn().mockResolvedValue(undefined) },
+      new LoggerService(contextService),
+    ),
   );
   const ipRangeService = new IpRangeService(
     new IpRangeRepository(nestPrisma, contextService),
@@ -327,9 +330,7 @@ describe.skipIf(!managedPluginPresent).sequential('operator-bridge-requests appr
     expect(String(range?.start)).toContain('10.99.0.100');
     expect(String(range?.end)).toContain('10.99.0.200');
 
-    await expect(service.approve(created.id, { approvedBy: 'again@example.com' })).rejects.toThrow(
-      /already approved/i,
-    );
+    await expect(service.approve(created.id, { approvedBy: 'again@example.com' })).rejects.toThrow(/already approved/i);
     const prefixCount = await prisma.prefix.count({
       where: { zoneId, organizationId: orgId, deletedAt: null },
     });

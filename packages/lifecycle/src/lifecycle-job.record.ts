@@ -1,5 +1,7 @@
 import { ActiveRecordRegistry, createActiveRecord } from '@repo/active-record';
-import { LifecycleJobPhase, Prisma } from '@repo/database';
+import { LifecycleJobPhase, Prisma, type LifecycleJob } from '@repo/database';
+import { paginateQuery, type PaginatedResult, type PaginationQuery } from '@repo/database/pagination';
+import { lifecycleJobPaginationConfig } from './lifecycle-job.pagination';
 import { LifecycleJobPersistenceSchema } from './lifecycle-job.schema';
 import { assertTransition } from './lifecycle-state.machine';
 
@@ -67,6 +69,18 @@ export class LifecycleJobRecord extends createActiveRecord(LifecycleJobPersisten
       data: { phase: to, ...(error !== undefined ? { error } : {}) },
     });
     return count === 1;
+  }
+
+  static async findPageByTargetUnscoped(
+    query: PaginationQuery,
+    target: { deviceId?: string; deploymentId?: string },
+  ): Promise<PaginatedResult<LifecycleJob>> {
+    return paginateQuery<LifecycleJob>(this._unscopedDelegate(), query, lifecycleJobPaginationConfig, {
+      where: {
+        ...(target.deviceId ? { deviceId: target.deviceId } : {}),
+        ...(target.deploymentId ? { deploymentId: target.deploymentId } : {}),
+      },
+    });
   }
 
   private transition(to: LifecycleJobPhase): this {

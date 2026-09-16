@@ -11,7 +11,7 @@ import pytest
 _APPS = Path(__file__).resolve().parents[2]
 _ROOT = _APPS.parent
 _CONTRACT = _ROOT / "packages" / "local-lab-contract" / "src"
-_VECTORS = _CONTRACT / "ipv4.vectors.json"
+_VECTORS = _ROOT / "packages" / "utils" / "src" / "ipv4.vectors.json"
 _IPV4_TS = _CONTRACT / "ipv4.ts"
 
 

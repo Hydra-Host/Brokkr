@@ -237,7 +237,7 @@ export const ORIENTATION_STEPS: TourStep[] = [
     route: ZONES,
     element: '#TOPOLOGY',
     title: 'The fleet, drawn',
-    description: `<b>Zones &amp; topology</b> draws the fleet it declares: one lane per zone, the ${term('spoke', 'bridges')} in each zone with their ports and a star on the leader, and the ${term('vm', 'nodes')} below them with their size and power. Colour is health, not shape. Click a zone to reach its card; click a node to open its hardware on <b>Fleet nodes</b>. Under the graph, three lanes name what a flat list hides — a node in a zone nothing declares, a machine that runs but the config does not know, and a hub zone the fleet never declared. See ${term('fleet-topology', 'the fleet topology entry')}.`,
+    description: `<b>Zones &amp; topology</b> draws the fleet it declares: one lane per zone, the ${term('spoke', 'bridges')} in each zone with their ports and a star on the leader, and the ${term('vm', 'nodes')} below them with their size and power. Color is health, not shape. Click a zone to reach its card; click a node to open its hardware on <b>Fleet nodes</b>. Under the graph, three lanes name what a flat list hides — a node in a zone nothing declares, a machine that runs but the config does not know, and a hub zone the fleet never declared. See ${term('fleet-topology', 'the fleet topology entry')}.`,
     side: 'bottom',
     align: 'start',
   },

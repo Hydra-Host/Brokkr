@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { isRecord } from '@repo/utils';
 
+import type { TeeVerificationResult } from '../../../redfish/vendor/base/tee';
 import { jsonFlag } from '../../../saga-framework/dispatch-payload';
 import type { SagaContext } from '../../../saga-framework/saga.types';
 import { credsFromContext } from '../../steps/power-control-context';
@@ -9,8 +10,8 @@ import { decideTeeAction } from '../decide-tee-action';
 
 interface RedfishOperationsLike {
   enableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<boolean>;
-  disableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<unknown>;
-  verifyTee?(
+  disableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<boolean>;
+  verifyTee(
     deviceId: string,
     bmcIp: string,
     username: string,
@@ -22,12 +23,6 @@ interface RedfishOperationsLike {
 interface LoggerLike {
   info(message: string, context?: { jobId?: string }): Promise<void>;
   warning(message: string, context?: { jobId?: string }): Promise<void>;
-}
-
-interface TeeVerificationResult {
-  ok: boolean;
-  checked: boolean;
-  missing: unknown[];
 }
 
 type VerifiableTeeConfigResult =
@@ -61,12 +56,12 @@ export class TeeConfigStep {
         throw new Error('enableTee failed: TEE was not enabled on the device');
       }
       const result: VerifiableTeeConfigResult = { action: 'enabled', success };
-      return this.verifyCustomTee(ctx, platformSlug, result);
+      return this.verifyEnable(ctx, result);
     }
     if (action === 'disable') {
       const { bmcIp, username, password } = credsFromContext(ctx);
       const success = await this.redfish.disableTee(deviceId, bmcIp, username, password, ctx.jobId);
-      if (success === false) {
+      if (!success) {
         throw new Error('disableTee failed: TEE was not disabled on the device');
       }
       return { action: 'disabled' };
@@ -80,40 +75,42 @@ export class TeeConfigStep {
       reason: `current=${String(teeEnabled)}, requested=${String(teeRequested)}`,
     };
     if (teeRequested) {
-      return this.verifyCustomTee(ctx, platformSlug, result);
+      return this.verifyEnable(ctx, result);
     }
     return result;
   }
 
-  private async verifyCustomTee(
-    ctx: SagaContext,
-    platformSlug: unknown,
-    result: VerifiableTeeConfigResult,
-  ): Promise<TeeConfigResult> {
-    if (platformSlug !== 'ipxe-custom-tee') {
-      return result;
-    }
-
-    const verifyTee = this.redfish.verifyTee;
-    if (verifyTee === undefined) {
-      throw new Error('verifyTee is not available');
-    }
-
+  private async verifyEnable(ctx: SagaContext, result: VerifiableTeeConfigResult): Promise<TeeConfigResult> {
     const deviceId = String(ctx.deviceId);
     const { bmcIp, username, password } = credsFromContext(ctx);
 
     for (let attempt = 1; attempt <= 3; attempt += 1) {
-      const verification = await verifyTee(deviceId, bmcIp, username, password, ctx.jobId);
+      const verification = await this.redfish.verifyTee(deviceId, bmcIp, username, password, ctx.jobId);
       if (verification.checked && verification.ok) {
         await this.logger.info(`TEE verification succeeded on attempt ${attempt}`, { jobId: ctx.jobId });
         return 'action' in result ? { action: 'enabled', success: true } : { ...result, success: true };
       }
       if (!verification.checked) {
-        await this.logger.warning('TEE verification is not available for this hardware', { jobId: ctx.jobId });
-        if ('action' in result && !result.success) {
-          throw new Error('enableTee failed: TEE was not enabled on the device');
+        switch (verification.reason) {
+          case 'unmodeled':
+            await this.logger.warning('TEE verification is not available for this hardware', { jobId: ctx.jobId });
+            if ('action' in result && !result.success) {
+              throw new Error('enableTee failed: TEE was not enabled on the device');
+            }
+            return result;
+          case 'bmc-unreachable':
+          case undefined:
+            // the enable already ran; only the readback is missing, so retry that alone
+            await this.logger.warning(
+              `TEE verification could not read the BIOS on attempt ${attempt}/3; reason=${String(verification.reason)}`,
+              { jobId: ctx.jobId },
+            );
+            continue;
+          default: {
+            const exhaustive: never = verification.reason;
+            throw new Error(`TEE verification returned an unhandled reason: ${String(exhaustive)}`);
+          }
         }
-        return result;
       }
 
       await this.logger.warning(

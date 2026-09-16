@@ -375,6 +375,7 @@ describe('denial auditing', () => {
       origin_ip: '127.0.0.1',
       origin_loopback: 1,
       origin_token: 0,
+      origin_principal: null,
       error: 'mutating requests must use content-type: application/json',
     });
   });
@@ -394,6 +395,7 @@ describe('denial auditing', () => {
       origin_ip: '127.0.0.1',
       origin_loopback: 1,
       origin_token: 0,
+      origin_principal: null,
       error: 'origin is not allowed to make mutating requests against the lab control API',
     });
   });

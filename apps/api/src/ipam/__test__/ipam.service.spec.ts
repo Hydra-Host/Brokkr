@@ -2,6 +2,7 @@ import { ConflictException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Prisma } from '@repo/database';
 import { DhcpConfigPublisherService } from 'src/brokkr-bridge/dhcp/dhcp-config-publisher.service';
+import { NetplanLiveInvalidatorService } from 'src/brokkr-bridge/netplan/netplan-live-invalidator.service';
 import { DesignationOperatorPolicy } from 'src/common/authz/operator-policy';
 import { ContextService } from 'src/common/context/context.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
@@ -62,6 +63,7 @@ describe('IPAM resource repositories validations', () => {
             republishForReservation: vi.fn(),
           },
         },
+        { provide: NetplanLiveInvalidatorService, useValue: { forInterface: vi.fn() } },
         PrefixRepository,
         IpRangeRepository,
         IpAddressRepository,

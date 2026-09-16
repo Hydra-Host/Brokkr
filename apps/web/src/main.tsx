@@ -2,7 +2,7 @@ import { setDocumentTitleSuffix } from '@repo/ui/hooks/use-document-title';
 import { configureUiBrand } from '@repo/ui/lib/brand';
 import { unwrapErrorMessage } from '@repo/utils';
 import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { RouterProvider, createRouter } from '@tanstack/react-router';
+import { createRouter, RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 import { toast } from 'sonner';
@@ -12,7 +12,7 @@ import { BootScreen } from './components/boot-screen';
 import { NotFound } from './components/not-found';
 import { tsr } from './lib/api';
 import { BRAND_NAME, HELPDESK_URL } from './lib/branding';
-import { PluginRegistryProvider } from './plugin-host';
+import { isCoreHostRoute, PluginRegistryProvider } from './plugin-host';
 import reportWebVitals from './reportWebVitals';
 import { routeTree } from './routeTree.gen';
 
@@ -67,6 +67,8 @@ const router = createRouter({
   },
 });
 
+const isCorePath = (path: string) => isCoreHostRoute(router.matchRoutes(path));
+
 declare module '@tanstack/react-router' {
   interface Register {
     router: typeof router;
@@ -85,7 +87,7 @@ if (rootElement && !rootElement.innerHTML) {
     <StrictMode>
       <QueryClientProvider client={queryClient}>
         <tsr.ReactQueryProvider>
-          <PluginRegistryProvider fallback={<BootScreen />}>
+          <PluginRegistryProvider fallback={<BootScreen />} isCorePath={isCorePath}>
             <RouterProvider router={router} />
           </PluginRegistryProvider>
         </tsr.ReactQueryProvider>

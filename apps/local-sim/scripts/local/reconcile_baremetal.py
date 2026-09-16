@@ -45,7 +45,7 @@ def assert_hermetic_local(settings) -> tuple[str, str]:
     return org, zone
 
 
-def _devices_carrying_mac(
+def devices_carrying_mac(
     cur, org: str, zone: str, macs: list[str], include_deleted: bool = False
 ) -> list[tuple[str, str | None]]:
     del_pred = "" if include_deleted else 'AND d."deletedAt" IS NULL AND i."deletedAt" IS NULL'
@@ -54,7 +54,7 @@ def _devices_carrying_mac(
         SELECT DISTINCT d.id, d.role::text, d."createdAt"
         FROM "Device" d
         JOIN "Interface" i ON i."deviceId" = d.id
-        WHERE d."organizationId" = %s
+        WHERE d."supplierId" = %s
           AND d."zoneId" = %s
           AND lower(i."macAddress") = ANY(%s)
           {del_pred}
@@ -71,7 +71,7 @@ def _soft_delete_stray(cur, org: str, zone: str, device_id: str) -> None:
         (device_id,),
     )
     cur.execute(
-        'UPDATE "Device" SET "deletedAt" = NOW() WHERE id = %s AND "organizationId" = %s AND "zoneId" = %s',
+        'UPDATE "Device" SET "deletedAt" = NOW() WHERE id = %s AND "supplierId" = %s AND "zoneId" = %s',
         (device_id, org, zone),
     )
 
@@ -82,7 +82,7 @@ def _repair_canonical_role(cur, org: str, zone: str, device_id: str) -> None:
         cur.execute(
             """UPDATE "Device"
                SET role = 'Server'::"DeviceRole", status = 'ACTIVE'::"DeviceStatus", "deletedAt" = NULL
-               WHERE id = %s AND "organizationId" = %s AND "zoneId" = %s""",
+               WHERE id = %s AND "supplierId" = %s AND "zoneId" = %s""",
             (device_id, org, zone),
         )
     finally:
@@ -109,7 +109,7 @@ def _purge_redis_pointers(rds: redis.Redis, zone: str, node: BareMetalNode, dead
 
 def reconcile_node(cur, org: str, zone: str, node: BareMetalNode) -> tuple[list[str], list[str]]:
     canonical = bm_device_uuid(node.pxe_mac)
-    found = _devices_carrying_mac(cur, org, zone, [node.pxe_mac, node.bmc_mac])
+    found = devices_carrying_mac(cur, org, zone, [node.pxe_mac, node.bmc_mac])
     log.info(f"{node.name}: canonical={canonical}; devices carrying its MACs: {[d for d, _ in found] or 'none'}")
 
     strays: list[str] = []
@@ -127,7 +127,7 @@ def reconcile_node(cur, org: str, zone: str, node: BareMetalNode) -> tuple[list[
             else:
                 log.success(f"{node.name}: canonical row {device_id} already role=Server — kept")
 
-    all_carrying = _devices_carrying_mac(cur, org, zone, [node.pxe_mac, node.bmc_mac], include_deleted=True)
+    all_carrying = devices_carrying_mac(cur, org, zone, [node.pxe_mac, node.bmc_mac], include_deleted=True)
 
     if not canonical_seen:
         # The live scan missed the canonical row. If it exists only soft-deleted, revive it here:

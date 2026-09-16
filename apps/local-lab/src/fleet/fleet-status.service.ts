@@ -11,6 +11,7 @@ import { OverlayStoreService } from '../services/overlay-store';
 import { procIsUp, type PcProcess } from '../services/proc-health';
 import { ProcessComposeClient } from '../services/process-compose.client';
 import { FleetPowerService } from './fleet-power.service';
+import { resolveRoster } from './fleet-roster';
 import { FleetTopologyService } from './fleet-topology.service';
 
 export function fleetProgressPath(): string {
@@ -62,9 +63,13 @@ export class FleetStatusService {
       procs = [];
     }
     const fleetProc = procs.find((p) => p.name === 'fleet');
-    const expected = this.topology.nodeNames();
+    const expected = resolveRoster({
+      vmNodeNames: () => this.topology.nodeNames(),
+      baremetalNodes: () => this.topology.baremetalView().nodes,
+    });
     const list = machines ?? (await this.power.machines().catch(() => []));
     const running = list.filter((m) => m.configured && m.power === 'on');
+    const unreachable = list.filter((m) => m.configured && m.power === 'unknown').length;
     const prog = this.reader.readProgress();
     const status = (fleetProc?.status ?? '').toLowerCase();
     const terminal = !!fleetProc && !['running', 'pending', 'disabled'].includes(status);
@@ -78,6 +83,7 @@ export class FleetStatusService {
       Date.now(),
       lastError,
       this.spokesDown(procs),
+      { planes: this.overlay.planes(), unreachable },
     );
   }
 }

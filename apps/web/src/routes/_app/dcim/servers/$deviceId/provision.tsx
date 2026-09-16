@@ -9,12 +9,18 @@ import { z } from 'zod';
 
 import {
   isIpxeCustomOs,
+  provisionDiskLayoutSchema,
   ProvisionServerRequestSchema,
   validateDiskLayoutEncryption,
   type SshKeyWithUser,
 } from '@repo/api-client';
 import { CustomizationLayers, type CustomizationLayersData } from '@repo/domain-ui/provision/customization-layers';
-import { applyDirectModeToSubmission, getDefaultDiskLayouts } from '@repo/domain-ui/provision/disk-layout-selector';
+import {
+  applyDirectModeToSubmission,
+  diskLayoutSizeToBytes,
+  getDefaultDiskLayouts,
+  validateDiskLayoutSizeInputs,
+} from '@repo/domain-ui/provision/disk-layout-selector';
 import { ProvisionAdvancedSettings } from '@repo/domain-ui/provision/provision-advanced-settings';
 import {
   AlertDialog,
@@ -47,6 +53,7 @@ import {
   TEE_CHECKBOX_DESCRIPTION,
   TEE_CHECKBOX_LABEL,
 } from '~/lib/provision-customizations';
+import { LIFECYCLE_JOBS_KEY } from '~/lib/query-keys';
 
 const parentRoute = getRouteApi('/_app/dcim/servers/$deviceId');
 
@@ -72,6 +79,7 @@ const provisionFormSchema = ProvisionServerRequestSchema.omit({ customizations: 
     cloudInit: z.string(),
     ipxeUrl: z.string(),
     customizations: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
+    diskLayouts: z.array(provisionDiskLayoutSchema.omit({ size: true }).extend({ size: z.string().optional() })),
   })
   .superRefine((data, ctx) => {
     if (isIpxeCustomOs(data.operatingSystem) && !data.ipxeUrl) {
@@ -124,6 +132,7 @@ const provisionFormSchema = ProvisionServerRequestSchema.omit({ customizations: 
     }
 
     validateDiskLayoutEncryption(data.diskLayouts, ctx, 'provision');
+    validateDiskLayoutSizeInputs(data.diskLayouts, ctx);
   });
 
 type ProvisionFormData = z.input<typeof provisionFormSchema>;
@@ -215,6 +224,7 @@ function ProvisionDeviceForm() {
     const collapsed = applyDirectModeToSubmission(data.diskLayouts);
     const diskLayouts = collapsed.map((layout) => ({
       ...layout,
+      size: diskLayoutSizeToBytes(layout.size),
       wipe: true,
       encrypt: layout.encrypt ?? false,
     }));
@@ -247,6 +257,7 @@ function ProvisionDeviceForm() {
 
     setShowConfirmDialog(false);
     queryClient.removeQueries({ queryKey: ['server', params.deviceId] });
+    void queryClient.invalidateQueries({ queryKey: LIFECYCLE_JOBS_KEY });
     await router.invalidate();
     navigate({
       to: '/dcim/servers/$deviceId',

@@ -11,6 +11,8 @@ export default defineConfig({
   },
   outDir: 'dist',
   format: ['esm', 'cjs'],
+  // @repo/utils resolves its import condition to TypeScript source, which plain Node cannot load from the ESM dist.
+  noExternal: ['@repo/utils'],
   // Declarations come from `tsc` (build script), not tsup: rollup-plugin-dts widens the ts-rest contract generics to `any`, silently breaking response-body inference.
   dts: false,
   sourcemap: true,

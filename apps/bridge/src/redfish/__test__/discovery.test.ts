@@ -2,6 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { JsonRecord, RedfishDevice } from '../vendor/base/base.js';
 import { RedfishDiscoveryHandler } from '../vendor/base/discovery.js';
+import {
+  discoverSupermicroTeeHandler,
+  FakeSupermicroBmc,
+  SUPERMICRO_BIOS_PATH,
+  SUPERMICRO_REGISTRY_URI,
+  SUPERMICRO_SD_PATH,
+} from './supermicro-tee.testutil.js';
 
 delete process.env.BROKKR_ENV;
 delete process.env.HH_ENV;
@@ -320,6 +327,35 @@ describe('supermicro discovery walk', () => {
     expect(device.rebootNeeded).toBe(false);
     expect(device.displayNameToAttr).toEqual({ 'Boot Mode Select': 'BootModeSelect' });
     expect(Object.keys(device.registry).sort()).toEqual(['BootModeSelect', 'InternalNoName']);
+  });
+
+  it('walks the x14 fixture through the unversioned registry member and keeps no pending from the echo', async () => {
+    const bmc = new FakeSupermicroBmc();
+
+    const { device } = await discoverSupermicroTeeHandler(bmc);
+
+    const paths = bmc.requests.map((request) => request.path);
+    expect(device.tag()).toBe('supermicro.ast2600.sys-222ha-tn');
+    expect(device.biosGetEndpoint).toBe(SUPERMICRO_BIOS_PATH);
+    expect(device.biosPatchEndpoint).toBe(SUPERMICRO_SD_PATH);
+    expect(paths).toContain('/redfish/v1/Registries/BiosAttributeRegistry');
+    expect(paths).toContain(SUPERMICRO_REGISTRY_URI);
+    expect(Object.keys(device.registry)).toHaveLength(22);
+    expect(device.registry['LimitCPUPAto46bits_F319']?.['Hidden']).toBe(true);
+    expect(device.displayNameToAttr?.['Trust Domain Extensions (TDX)']).toBe('TrustDomainExtensions_TDX_');
+    expect(Object.keys(device.biosParams)).toHaveLength(13);
+    expect(device.biosPendingParams).toEqual({});
+    expect(device.rebootNeeded).toBe(false);
+  });
+
+  it('keeps only the sd values that differ from live as pending', async () => {
+    const bmc = new FakeSupermicroBmc();
+    bmc.pending = { MemoryEncryption_TME_: 'Enabled' };
+
+    const { device } = await discoverSupermicroTeeHandler(bmc);
+
+    expect(device.biosPendingParams).toEqual({ MemoryEncryption_TME_: 'Enabled' });
+    expect(device.rebootNeeded).toBe(true);
   });
 });
 

@@ -14,6 +14,7 @@ import uuid
 from local.config import get_settings
 from local.derived import sim_device_uuid
 from local.schema import require_fleet
+from local.seed.tags import emit_tag, emit_tag_assign
 from local.sqlemit import emit_upsert, header, logs_to_stderr, q, qe, wrap_list
 from local.zones import zone_uuid
 
@@ -169,7 +170,7 @@ def _eth0_ip_ref(i: int) -> str:
     )
 
 
-_DEVICE_COLS = "id name status role deviceType zoneId supplierId organizationId deviceModelId"
+_DEVICE_COLS = "id name status role deviceType zoneId supplierId deviceModelId"
 
 
 def _device(
@@ -179,7 +180,7 @@ def _device(
     out.append(
         emit_upsert(
             "Device",
-            "id name status role deviceType zoneId supplierId organizationId deviceModelId",
+            "id name status role deviceType zoneId supplierId deviceModelId",
             [
                 q(did(f"device:{name}")),
                 q(name),
@@ -187,7 +188,6 @@ def _device(
                 qe(role, "DeviceRole"),
                 dtype,
                 q(zone),
-                q(org),
                 q(org),
                 _model_ref(mfr, model),
             ],
@@ -199,13 +199,13 @@ def _device(
 
 def _peer_device(out: list[str], name: str, mfr: str, model: str, zone_id: str, org_id: str) -> None:
     dtype = qe("Baremetal", "DeviceType")
-    refresh = "name zoneId supplierId organizationId deviceModelId"
+    refresh = "name zoneId supplierId deviceModelId"
     _device(out, name, "Baremetal", dtype, mfr, model, zone_id, org_id, refresh)
 
 
 def _role_device(out: list[str], name: str, role: str, mfr: str, model: str, zone_id: str, org_id: str) -> None:
     """A facility device: a real DeviceRole and a NULL `deviceType` — no compute device-type."""
-    refresh = "name role zoneId supplierId organizationId deviceModelId"
+    refresh = "name role zoneId supplierId deviceModelId"
     _device(out, name, role, "NULL", mfr, model, zone_id, org_id, refresh)
 
 
@@ -350,23 +350,11 @@ def _release_switch_ports(switch_ref: str, cable_ids: list[str]) -> str:
 
 
 def _tag(name: str, color: str, org_id: str) -> str:
-    return emit_upsert(
-        "Tag",
-        "id name slug color organizationId",
-        [q(did(f"tag:{name}")), q(name), q(slugify(name)), q("#" + color), q(org_id)],
-        "organizationId name",
-    )
+    return emit_tag(did(f"tag:{name}"), name, slugify(name), "#" + color, org_id)
 
 
 def _tag_assign(tag_name: str, obj_type: str, object_sql: str) -> str:
-    return emit_upsert(
-        "TagAssignment",
-        "tagId objectType objectId",
-        [q(did(f"tag:{tag_name}")), qe(obj_type, "TagObjectType"), object_sql],
-        "tagId objectType objectId",
-        do_nothing=True,
-        updated_at=False,
-    )
+    return emit_tag_assign(did(f"tag:{tag_name}"), obj_type, object_sql)
 
 
 def generate() -> str:
@@ -375,10 +363,8 @@ def generate() -> str:
     zone_id = zone_uuid(0)
 
     fleet = require_fleet()
-    if fleet.mode == "baremetal":
-        return header("55-dcim.py") + "-- mode == baremetal: no sim VM DCIM decoration.\n"
-    if not fleet.nodes:
-        raise RuntimeError("fleet.yml has no nodes")
+    if not fleet.has_vm:
+        return header("55-dcim.py") + "-- no VM nodes: no sim VM DCIM decoration.\n"
     servers = [(i, n.name) for i, n in enumerate(fleet.nodes) if n.seed_as_server]
 
     out: list[str] = [header("55-dcim.py"), "BEGIN;\n"]

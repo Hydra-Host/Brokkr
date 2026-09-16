@@ -1,8 +1,13 @@
+import { EventEmitter } from 'node:events';
+import type { RequestOptions } from 'node:https';
+import type * as net from 'node:net';
 import type * as os from 'node:os';
 import { networkInterfaces } from 'node:os';
+import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CommandFailed, CommandTimeout } from '../../common/process/run-command';
+import type * as ipmiPingModule from '../../oob/ipmi/ping';
 import {
   IPMI_NET_FN_APP_RS,
   RMCP_CLASS_IPMI,
@@ -24,6 +29,7 @@ import {
   tryParseCidr,
   type RunResultLike,
   type Runner,
+  type SubnetScanOutput,
 } from '../network-scan.service';
 import type { NetworkConfig } from '../network.config';
 
@@ -32,13 +38,82 @@ vi.mock('node:os', async (importOriginal) => {
   return { ...actual, networkInterfaces: vi.fn(actual.networkInterfaces) };
 });
 
+type RedfishReply = { kind: 'response'; statusCode: number; body: string } | { kind: 'error'; message: string };
+type TransportRequest = (
+  options: RequestOptions,
+  callback?: (res: PassThrough & { statusCode: number }) => void,
+) => EventEmitter;
+
+const probeState = vi.hoisted<{
+  redfishReply: RedfishReply;
+  httpRedfishReply: RedfishReply;
+  tcpConnectAttempts: number;
+}>(() => ({
+  redfishReply: { kind: 'response', statusCode: 200, body: '{"RedfishVersion":"1.6.0"}' },
+  httpRedfishReply: { kind: 'error', message: 'ECONNREFUSED' },
+  tcpConnectAttempts: 0,
+}));
+
+const REDFISH_ROOT_REPLY: RedfishReply = probeState.redfishReply;
+const HTTP_PROBE_REFUSED: RedfishReply = probeState.httpRedfishReply;
+
+const httpsRequestMock = vi.hoisted(() => vi.fn<TransportRequest>());
+const httpRequestMock = vi.hoisted(() => vi.fn<TransportRequest>());
+
+function fakeTransportRequest(reply: () => RedfishReply): TransportRequest {
+  return (_options, callback) => {
+    const req = Object.assign(new EventEmitter(), { end: (): void => {}, destroy: (): void => {} });
+    const current = reply();
+    queueMicrotask(() => {
+      if (current.kind === 'error') {
+        req.emit('error', new Error(current.message));
+        return;
+      }
+      const res = Object.assign(new PassThrough(), { statusCode: current.statusCode });
+      callback?.(res);
+      res.end(Buffer.from(current.body, 'utf8'));
+    });
+    return req;
+  };
+}
+
+const ipmiPingWithRetryMock = vi.hoisted(() => vi.fn<typeof ipmiPingModule.ipmiPingWithRetry>());
+
+vi.mock('../../oob/ipmi/ping', async (importOriginal) => {
+  const actual = await importOriginal<typeof ipmiPingModule>();
+  return { ...actual, ipmiPingWithRetry: ipmiPingWithRetryMock };
+});
+
+vi.mock('node:https', () => ({
+  request: httpsRequestMock.mockImplementation(fakeTransportRequest(() => probeState.redfishReply)),
+}));
+
+vi.mock('node:http', () => ({
+  request: httpRequestMock.mockImplementation(fakeTransportRequest(() => probeState.httpRedfishReply)),
+}));
+
+vi.mock('node:net', async (importOriginal) => {
+  const actual = await importOriginal<typeof net>();
+  class RefusingSocket extends EventEmitter {
+    setTimeout(): this {
+      return this;
+    }
+    connect(): this {
+      probeState.tcpConnectAttempts += 1;
+      queueMicrotask(() => this.emit('error', new Error('ECONNREFUSED')));
+      return this;
+    }
+    destroy(): void {}
+  }
+  return { ...actual, Socket: RefusingSocket };
+});
+
 const TEST_CONFIG: NetworkConfig = {
   maxConcurrentScans: 10,
   defaultScanTimeout: 60,
   ipmiTimeoutMs: 100,
   ipmiPort: 623,
   redfishTimeoutMs: 2000,
-  redfishPort: 443,
   nmapMinParallelism: 100,
   nmapMinRate: 256,
   nmapMaxRetries: 1,
@@ -266,6 +341,10 @@ function buildService(
 }
 
 describe('scanNetworks', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('rejects invalid CIDR with NetworkScanValidationError', async () => {
     const svc = buildService();
     await expect(svc.scanNetworks(['10.0.0.0/24', 'not-a-subnet'])).rejects.toThrow(NetworkScanValidationError);
@@ -348,7 +427,8 @@ describe('scanNetworks', () => {
     expect(seen).toEqual([60, 120, 480]);
   });
 
-  it('includes the configured Redfish port in the nmap -PS ping ports', async () => {
+  it('includes NETWORK_REDFISH_PORT in the nmap -PS ping ports', async () => {
+    vi.stubEnv('NETWORK_REDFISH_PORT', '8443');
     let nmapCmd: readonly string[] = [];
     const runner: Runner = async (cmd) => {
       if (cmd[0] === 'nmap') {
@@ -357,7 +437,41 @@ describe('scanNetworks', () => {
       }
       return fakeRunResult('[]');
     };
-    const svc = buildService({ runner, config: { ...TEST_CONFIG, redfishPort: 8443 } });
+    const svc = buildService({ runner });
+    await svc.scanNetworks(['10.0.0.0/23']);
+    expect(nmapCmd).toContain('-PS22,80,8443');
+  });
+
+  it('adds the simulated Redfish port to the ping ports when simulation is enabled', async () => {
+    vi.stubEnv('LOCAL_SIMULATION_ENABLED', 'true');
+    vi.stubEnv('SIM_REDFISH_PORT', '8443');
+    vi.stubEnv('NETWORK_REDFISH_PORT', '443');
+    let nmapCmd: readonly string[] = [];
+    const runner: Runner = async (cmd) => {
+      if (cmd[0] === 'nmap') {
+        nmapCmd = cmd;
+        return fakeRunResult('');
+      }
+      return fakeRunResult('[]');
+    };
+    const svc = buildService({ runner });
+    await svc.scanNetworks(['10.0.0.0/23']);
+    expect(nmapCmd).toContain('-PS22,80,443,8443');
+  });
+
+  it('does not duplicate the simulated port when it is already the real Redfish port', async () => {
+    vi.stubEnv('LOCAL_SIMULATION_ENABLED', 'true');
+    vi.stubEnv('SIM_REDFISH_PORT', '8443');
+    vi.stubEnv('NETWORK_REDFISH_PORT', '8443');
+    let nmapCmd: readonly string[] = [];
+    const runner: Runner = async (cmd) => {
+      if (cmd[0] === 'nmap') {
+        nmapCmd = cmd;
+        return fakeRunResult('');
+      }
+      return fakeRunResult('[]');
+    };
+    const svc = buildService({ runner });
     await svc.scanNetworks(['10.0.0.0/23']);
     expect(nmapCmd).toContain('-PS22,80,8443');
   });
@@ -371,7 +485,7 @@ describe('scanNetworks', () => {
       }
       return fakeRunResult('[]');
     };
-    const svc = buildService({ runner, config: { ...TEST_CONFIG, redfishPort: 443 } });
+    const svc = buildService({ runner });
     await svc.scanNetworks(['10.0.0.0/23']);
     expect(nmapCmd).toContain('-PS22,80,443');
   });
@@ -574,6 +688,131 @@ describe('getLocalIps loopback handling (real method, no provider override)', ()
     expect(results['10.0.0.2']).toBeUndefined();
     expect(results['10.0.0.5']).toEqual({ mac: '', ipmi: false, redfish: false });
     expect(results['10.0.0.9']).toEqual({ mac: '', ipmi: false, redfish: false });
+  });
+});
+
+describe('default probe wiring (no injected probe fns)', () => {
+  beforeEach(() => {
+    probeState.tcpConnectAttempts = 0;
+    probeState.redfishReply = REDFISH_ROOT_REPLY;
+    probeState.httpRedfishReply = HTTP_PROBE_REFUSED;
+    httpsRequestMock.mockClear();
+    httpRequestMock.mockClear();
+    ipmiPingWithRetryMock.mockClear();
+    ipmiPingWithRetryMock.mockResolvedValue(false);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function scanHost(
+    host: string,
+    overrides: Partial<{
+      config: NetworkConfig;
+      ipmiPingFn: (ip: string) => Promise<boolean>;
+      redfishCheckFn: (ip: string) => Promise<boolean>;
+    }> = {},
+  ): Promise<Record<string, SubnetScanOutput>> {
+    const svc = new NetworkScanService('wiring-job', {
+      config: overrides.config ?? TEST_CONFIG,
+      runner: async () => fakeRunResult('[]'),
+      nmapDiscover: async () => [host],
+      localIpsProvider: () => new Set(),
+      gatewayIpProvider: async () => null,
+      ipmiPingFn: overrides.ipmiPingFn,
+      redfishCheckFn: overrides.redfishCheckFn,
+    });
+    return svc.scanNetworks(['10.0.0.0/24']);
+  }
+
+  it('retries IPMI probes so one dropped packet cannot report a reachable BMC as absent', async () => {
+    ipmiPingWithRetryMock.mockResolvedValue(true);
+
+    const output = await scanHost('10.0.0.5', { redfishCheckFn: async () => false });
+
+    expect(output['10.0.0.0/24']?.results['10.0.0.5']?.ipmi).toBe(true);
+    expect(ipmiPingWithRetryMock).toHaveBeenCalledWith('10.0.0.5', {
+      port: TEST_CONFIG.ipmiPort,
+      timeout: TEST_CONFIG.ipmiTimeoutMs / 1000,
+      jobId: 'wiring-job',
+      maxAttempts: 3,
+      backoffSeconds: 0.25,
+    });
+  });
+
+  it('detects Redfish from the HTTPS probe alone, with no TCP pre-connect to gate it', async () => {
+    const output = await scanHost('10.0.0.7', { ipmiPingFn: async () => false });
+
+    expect(output['10.0.0.0/24']?.results['10.0.0.7']?.redfish).toBe(true);
+    expect(probeState.tcpConnectAttempts).toBe(0);
+  });
+
+  it('probes the real coordinate on the NETWORK_REDFISH_PORT port with the configured timeout', async () => {
+    vi.stubEnv('NETWORK_REDFISH_PORT', '8443');
+    const config: NetworkConfig = { ...TEST_CONFIG, redfishTimeoutMs: 9000 };
+
+    await scanHost('10.0.0.7', { config, ipmiPingFn: async () => false });
+
+    expect(httpsRequestMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: '10.0.0.7',
+        port: 8443,
+        path: '/redfish/v1',
+        method: 'GET',
+        timeout: 9000,
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('probes the simulated BMC over plain HTTP when the HTTPS probe fails inside SIM_BMC_CIDR', async () => {
+    vi.stubEnv('LOCAL_SIMULATION_ENABLED', 'true');
+    vi.stubEnv('SIM_BMC_CIDR', '10.0.0.0/24');
+    vi.stubEnv('SIM_REDFISH_PORT', '8000');
+    probeState.redfishReply = { kind: 'error', message: 'ECONNREFUSED' };
+    probeState.httpRedfishReply = REDFISH_ROOT_REPLY;
+
+    const output = await scanHost('10.0.0.7', { ipmiPingFn: async () => false });
+
+    expect(output['10.0.0.0/24']?.results['10.0.0.7']?.redfish).toBe(true);
+    expect(httpsRequestMock).toHaveBeenCalledTimes(1);
+    expect(httpRequestMock).toHaveBeenCalledWith(
+      expect.objectContaining({ host: '10.0.0.7', port: 8000, path: '/redfish/v1', method: 'GET' }),
+      expect.any(Function),
+    );
+  });
+
+  it('reports no Redfish when the endpoint answers without a RedfishVersion', async () => {
+    probeState.redfishReply = { kind: 'response', statusCode: 200, body: '{"Name":"some other https service"}' };
+
+    const output = await scanHost('10.0.0.7', { ipmiPingFn: async () => false });
+
+    expect(output['10.0.0.0/24']?.results['10.0.0.7']?.redfish).toBe(false);
+  });
+
+  it('reports no Redfish when the endpoint answers non-200', async () => {
+    probeState.redfishReply = { kind: 'response', statusCode: 404, body: '{"RedfishVersion":"1.6.0"}' };
+
+    const output = await scanHost('10.0.0.7', { ipmiPingFn: async () => false });
+
+    expect(output['10.0.0.0/24']?.results['10.0.0.7']?.redfish).toBe(false);
+  });
+
+  it('reports no Redfish when the endpoint body is not JSON', async () => {
+    probeState.redfishReply = { kind: 'response', statusCode: 200, body: '<html>not redfish</html>' };
+
+    const output = await scanHost('10.0.0.7', { ipmiPingFn: async () => false });
+
+    expect(output['10.0.0.0/24']?.results['10.0.0.7']?.redfish).toBe(false);
+  });
+
+  it('reports no Redfish when the request errors', async () => {
+    probeState.redfishReply = { kind: 'error', message: 'ECONNREFUSED' };
+
+    const output = await scanHost('10.0.0.7', { ipmiPingFn: async () => false });
+
+    expect(output['10.0.0.0/24']?.results['10.0.0.7']?.redfish).toBe(false);
   });
 });
 

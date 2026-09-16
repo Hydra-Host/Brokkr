@@ -3,14 +3,17 @@
 
 Reads zones from the rendered ``fleet.yml``. The Zone carries the ``organizationId`` that
 ``50-devices`` reads back via subquery, so this applies first (numbering: 45 < 50). Each zone
-gets addresses, contacts, maintenance history, and stable bridge rows."""
+gets addresses, contacts, maintenance history, and stable bridge rows with classified NICs/IPs
+(primary / management / virtual) for the admin zone-detail Bridges card."""
 
 from __future__ import annotations
 
+import ipaddress
 import uuid
 
 from local.config import get_settings
 from local.schema import require_fleet
+from local.seed.interfaces import DATA_NIC, IPMI_NIC, VIRTUAL_NIC, emit_interface, emit_ip_on_interface
 from local.sqlemit import header, logs_to_stderr, q
 from local.zones import bridge_device_uuid, bridge_ordinal, spoke_port_blocks, zone_uuid
 
@@ -115,27 +118,56 @@ ON CONFLICT (id) DO UPDATE SET
 
 def _bridge_sql(zone_id: str, bridge_name: str, bridge_id: str, org_id: str) -> str:
     return f"""-- role=Bridge device (+ 1:1 Bridge row) for the zone-detail "Bridges" card.
--- organizationId is the org-ownership FK the admin Bridges view joins on
--- (Device.organization) and MUST equal zone.organizationId — without it the
--- bridge reads back with a null zone/org and looks disconnected from the zone.
+-- supplierId is the owner FK and MUST equal zone.organizationId.
 WITH up AS (
     INSERT INTO "Device" (
         id, name, status, role, "deviceType",
-        "zoneId", "supplierId", "organizationId", "updatedAt"
+        "zoneId", "supplierId", "updatedAt"
     ) VALUES (
         {q(bridge_id)}, {q(bridge_name)}, 'PLANNED'::"DeviceStatus",
         'Bridge'::"DeviceRole", 'Baremetal'::"DeviceType",
-        {q(zone_id)}, {q(org_id)}, {q(org_id)}, NOW()
+        {q(zone_id)}, {q(org_id)}, NOW()
     )
     ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name, role = EXCLUDED.role, "zoneId" = EXCLUDED."zoneId",
-        "supplierId" = EXCLUDED."supplierId", "organizationId" = EXCLUDED."organizationId", "updatedAt" = NOW()
+        "supplierId" = EXCLUDED."supplierId", "updatedAt" = NOW()
     RETURNING id
 )
 INSERT INTO "Bridge" (id, "deviceId", "createdAt", "updatedAt")
 SELECT gen_random_uuid(), id, NOW(), NOW() FROM up
 ON CONFLICT ("deviceId") DO NOTHING;
 """
+
+
+def _host_ip(cidr: str, offset: int) -> str:
+    return str(ipaddress.ip_network(cidr, strict=False).network_address + offset)
+
+
+def _bridge_mac(kind: int, index: int) -> str:
+    return f"52:54:00:b{kind:x}:{index // 256:02x}:{index % 256:02x}"
+
+
+def _bridge_nics_sql(device_id: str, org_id: str, cidr: str, bmc_cidr: str, index: int) -> str:
+    # Hosts stay in .2-.9, below NODE_IP_BASE (10) and above the gateway (.1).
+    data_len = ipaddress.ip_network(cidr, strict=False).prefixlen
+    bmc_len = ipaddress.ip_network(bmc_cidr, strict=False).prefixlen
+    org = q(org_id)
+    primary = f"{_host_ip(cidr, 2 + 2 * index)}/{data_len}"
+    virtual = f"{_host_ip(cidr, 3 + 2 * index)}/{data_len}"
+    management = f"{_host_ip(bmc_cidr, 2 + index)}/{bmc_len}"
+    return (
+        "\n".join(
+            [
+                emit_interface(device_id, DATA_NIC, _bridge_mac(0, index)),
+                emit_interface(device_id, IPMI_NIC, _bridge_mac(1, index)),
+                emit_interface(device_id, VIRTUAL_NIC, _bridge_mac(2, index)),
+                *emit_ip_on_interface(device_id, DATA_NIC, primary, org),
+                *emit_ip_on_interface(device_id, IPMI_NIC, management, org),
+                *emit_ip_on_interface(device_id, VIRTUAL_NIC, virtual, org),
+            ]
+        )
+        + "\n"
+    )
 
 
 def _bridge_name(base: str, zone_index: int, zone_name: str, b: int) -> str:
@@ -210,11 +242,13 @@ def generate() -> str:
 
     # Fleet.zones synthesizes the legacy zone 0 when the fleet declares no `zones:` block,
     # so a single-zone fleet still emits the historical one-zone/one-bridge SQL.
-    zones = require_fleet().zones
+    fleet = require_fleet()
+    zones = fleet.zones
     # global bridge ordinal per zone (same ordering as the spoke port blocks) → unique ids.
     blocks = spoke_port_blocks([(z.index, z.bridges) for z in zones])
 
     out: list[str] = [header("45-zone.py"), "BEGIN;\n\n"]
+    bridge_index = 0
     for z in sorted(zones, key=lambda zz: zz.index):
         zid = zone_uuid(z.index)
         out.append(_zone_sql(zid, z.name, org_id))
@@ -224,6 +258,8 @@ def generate() -> str:
             bname = _bridge_name(s.sim.bridge_name, z.index, z.name, b)
             bridge_id = bridge_device_uuid(bridge_ordinal(base + b))
             out.append(_bridge_sql(zid, bname, bridge_id, org_id))
+            out.append(_bridge_nics_sql(bridge_id, org_id, fleet.network.cidr, fleet.network.bmc_cidr, bridge_index))
+            bridge_index += 1
     out.append(_maintenance_fixture_zone_sql(org_id))
     out.append("COMMIT;\n")
     return "".join(out)

@@ -1,0 +1,163 @@
+{
+  "/redfish/v1": {
+    "@odata.id": "/redfish/v1",
+    "RedfishVersion": "1.22.2",
+    "Vendor": "Supermicro",
+    "Systems": {
+      "@odata.id": "/redfish/v1/Systems"
+    },
+    "Managers": {
+      "@odata.id": "/redfish/v1/Managers"
+    },
+    "Chassis": {
+      "@odata.id": "/redfish/v1/Chassis"
+    },
+    "Registries": {
+      "@odata.id": "/redfish/v1/Registries"
+    },
+    "UpdateService": {
+      "@odata.id": "/redfish/v1/UpdateService"
+    }
+  },
+  "/redfish/v1/Systems": {
+    "@odata.id": "/redfish/v1/Systems",
+    "Members": [
+      {
+        "@odata.id": "/redfish/v1/Systems/1"
+      }
+    ]
+  },
+  "/redfish/v1/Systems/1": {
+    "@odata.id": "/redfish/v1/Systems/1",
+    "Manufacturer": "Supermicro",
+    "Model": "SYS-222HA-TN",
+    "BiosVersion": "BIOS Date: 05/06/2026 Ver 1.5b",
+    "SystemType": "Physical",
+    "PowerState": "On",
+    "Bios": {
+      "@odata.id": "/redfish/v1/Systems/1/Bios"
+    },
+    "Links": {
+      "ManagedBy": [
+        {
+          "@odata.id": "/redfish/v1/Managers/1"
+        }
+      ],
+      "Chassis": [
+        {
+          "@odata.id": "/redfish/v1/Chassis/1"
+        }
+      ]
+    },
+    "Actions": {
+      "#ComputerSystem.Reset": {
+        "target": "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset",
+        "ResetType@Redfish.AllowableValues": [
+          "On",
+          "ForceOff",
+          "GracefulShutdown",
+          "GracefulRestart",
+          "ForceRestart",
+          "Nmi",
+          "ForceOn",
+          "PowerCycle",
+          "FullPowerCycle"
+        ]
+      }
+    }
+  },
+  "/redfish/v1/Managers/1": {
+    "@odata.id": "/redfish/v1/Managers/1",
+    "Model": "AST2600",
+    "FirmwareVersion": "01.07.07.01",
+    "ManagerType": "BMC",
+    "Bios": null
+  },
+  "/redfish/v1/Chassis/1": {
+    "@odata.id": "/redfish/v1/Chassis/1",
+    "Model": "X14DBM-AP",
+    "PowerState": "On"
+  },
+  "/redfish/v1/Systems/1/Bios": {
+    "@odata.id": "/redfish/v1/Systems/1/Bios",
+    "AttributeRegistry": "BiosAttributeRegistry.v1_0_0",
+    "@Redfish.Settings": {
+      "@odata.type": "#Settings.v1_3_3.Settings",
+      "SettingsObject": {
+        "@odata.id": "/redfish/v1/Systems/1/Bios/SD"
+      }
+    },
+    "Attributes": {
+      "HostMemoryFrequency": "Auto",
+      "Intel_R_FlatMemoryModeSupport": "Disabled",
+      "MemoryEncryption_TME_": "Disabled",
+      "TotalMemoryEncryptionMulti_Tenant_TME_MT_": "Disabled",
+      "MemoryIntegrity": "Disabled",
+      "TMEEncryptionAlgorithm": "AES-XTS-256",
+      "TrustDomainExtensions_TDX_": "Disabled",
+      "TrustDomainExtensions_Connect_TDXConnect_": "Disabled",
+      "TDXSecureArbitrationModeLoader_SEAMLoader_": "Disabled",
+      "SGXFactoryReset": "Disabled",
+      "SWGuardExtensions_SGX_": "Disabled",
+      "SGXPackageInfoIn_BandAccess": "Disabled",
+      "SGXPRMRRSizeRequested": "Auto"
+    }
+  },
+  "/redfish/v1/Systems/1/Bios/SD": {
+    "@odata.id": "/redfish/v1/Systems/1/Bios/SD",
+    "@Redfish.SettingsApplyTime": null,
+    "attributeCount": 851,
+    "Attributes": {
+      "HostMemoryFrequency": "Auto",
+      "Intel_R_FlatMemoryModeSupport": "Disabled",
+      "MemoryEncryption_TME_": "Disabled",
+      "TotalMemoryEncryptionMulti_Tenant_TME_MT_": "Disabled",
+      "MemoryIntegrity": "Disabled",
+      "TMEEncryptionAlgorithm": "AES-XTS-256",
+      "TrustDomainExtensions_TDX_": "Disabled",
+      "TrustDomainExtensions_Connect_TDXConnect_": "Disabled",
+      "TDXSecureArbitrationModeLoader_SEAMLoader_": "Disabled",
+      "SGXFactoryReset": "Disabled",
+      "SWGuardExtensions_SGX_": "Disabled",
+      "SGXPackageInfoIn_BandAccess": "Disabled",
+      "SGXPRMRRSizeRequested": "Auto"
+    }
+  },
+  "/redfish/v1/Registries": {
+    "@odata.id": "/redfish/v1/Registries",
+    "Members": [
+      {
+        "@odata.id": "/redfish/v1/Registries/BiosAttributeRegistry"
+      },
+      {
+        "@odata.id": "/redfish/v1/Registries/Base"
+      },
+      {
+        "@odata.id": "/redfish/v1/Registries/Event"
+      },
+      {
+        "@odata.id": "/redfish/v1/Registries/SMC"
+      },
+      {
+        "@odata.id": "/redfish/v1/Registries/TaskEvent"
+      },
+      {
+        "@odata.id": "/redfish/v1/Registries/ResourceEvent"
+      }
+    ]
+  },
+  "/redfish/v1/Registries/BiosAttributeRegistry": {
+    "@odata.id": "/redfish/v1/Registries/BiosAttributeRegistry",
+    "Id": "BiosAttributeRegistry",
+    "Registry": "BiosAttributeRegistry.1.0.0",
+    "Languages": [
+      "en"
+    ],
+    "Location": [
+      {
+        "Language": "en",
+        "Uri": "/registries/BiosAttributeRegistry.1.0.0.json"
+      }
+    ]
+  }
+}

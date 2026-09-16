@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { Job } from 'bullmq';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import type { QueueCleanableState, QueueJobState } from '../contract';
 import { RunnerService } from '../runner/runner.service';
 import { addressesOneJob } from './queue-jobs.service';

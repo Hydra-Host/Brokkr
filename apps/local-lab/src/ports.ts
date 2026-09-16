@@ -13,7 +13,8 @@ const BOOTSTRAP_PORTS = {
   thanosQueryHttp: 10903,
 };
 
-// hosts are deliberately not overridable in Nix (modules/overrides.nix), so no eval reports them.
+// hosts are deliberately not overridable in Nix (modules/overrides.nix), so no eval reports them —
+// except the browser-facing host, which follows lan.bindAddress and arrives as HUB_BROWSER_HOST.
 const DEFAULT_HOSTS = {
   hubPublic: 'localhost',
   dataPlaneGateway: '192.168.200.1',
@@ -109,6 +110,7 @@ export const PORTS = {
 
 export const HOSTS = {
   hubPublic: envStr(process.env.HUB_PUBLIC_HOST, DEFAULT_HOSTS.hubPublic),
+  hubBrowser: envStr(process.env.HUB_BROWSER_HOST, envStr(process.env.HUB_PUBLIC_HOST, DEFAULT_HOSTS.hubPublic)),
   dataPlaneGateway: envStr(process.env.DATA_PLANE_GATEWAY, DEFAULT_HOSTS.dataPlaneGateway),
   loopback: envStr(process.env.LOOPBACK_HOST, DEFAULT_HOSTS.loopback),
   assetOrigin: envStr(process.env.ASSET_ORIGIN, ''),
@@ -118,6 +120,15 @@ export const HOSTS = {
  *  matches the one the hub will be launched with. */
 export const mkPgUrl = (pg: { user: string; password: string; db: string }, port: number = PORTS.pg): string =>
   `postgresql://${pg.user}:${pg.password}@${HOSTS.loopback}:${port}/${pg.db}`;
+
+export type HubOrigins = { hubApi: string; hubWeb: string };
+
+/** modules/ports.nix `originsFor`. http only — this repo terminates no TLS and mints no certificate,
+ *  which is why the Nix side hardcodes `publicScheme` too. */
+const originsFor = (host: string): HubOrigins => ({
+  hubApi: `http://${host}:${PORTS.hubApi.base}`,
+  hubWeb: `http://${host}:${PORTS.hubWeb}`,
+});
 
 export const URLS = {
   get pg() {
@@ -129,8 +140,21 @@ export const URLS = {
   get thanosQuery() {
     return `http://${HOSTS.loopback}:${PORTS.thanosQueryHttp}`;
   },
+  /** What a person types and what better-auth must trust. Follows lan.bindAddress. */
+  get browser() {
+    return originsFor(HOSTS.hubBrowser);
+  },
+  /** The same surfaces from this box, so a developer's own http://localhost:… survives a host move. */
+  get local() {
+    return originsFor(HOSTS.hubPublic);
+  },
+  /** Server-to-server on this host. Every dial-out from the lab process belongs here. */
+  get dial() {
+    return originsFor(HOSTS.loopback);
+  },
+  /** @deprecated Name the audience: `URLS.dial.hubApi` for a dial-out, `URLS.browser.hubApi` for a link. */
   get hubBase() {
-    return `http://${HOSTS.hubPublic}:${PORTS.hubApi.base}`;
+    return this.dial.hubApi;
   },
   get osLayer() {
     return `http://${HOSTS.dataPlaneGateway}:${PORTS.nginx}/assets`;

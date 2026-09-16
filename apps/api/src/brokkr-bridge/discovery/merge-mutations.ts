@@ -30,6 +30,9 @@ export function mergeMutations(buffered: DeviceMutation, next: DeviceMutation): 
     buffered.warnings = [...(buffered.warnings ?? []), ...next.warnings];
   }
 
+  // sticky: one partial chunk makes the merged list partial
+  if (next.pciDevicesPartial) buffered.pciDevicesPartial = true;
+
   return buffered;
 }
 

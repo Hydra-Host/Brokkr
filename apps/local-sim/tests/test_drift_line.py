@@ -12,13 +12,12 @@ FLEET = {
 
 def test_drift_line_reports_pending_with_apply_hint():
     f = Fleet.model_validate(FLEET)
-    # an applied manifest with no nodes → desired fleet has 1 added node → pending changes branch
     prev = applied.AppliedManifest(
         digest="sha256:old",
         applied_at=time.time() - 60,
         source="fleet.yml",
         network={"cidr": f.network.cidr, "bmc_cidr": f.network.bmc_cidr},
-        nodes=[],
+        nodes=[applied.AppliedNode(name="cpu-0", index=0, ip="192.168.200.10", bmc_ip="192.168.105.10", fields={})],
     )
     line = applied.drift_summary_line(applied.diff(f, prev))
     assert "pending fleet changes" in line

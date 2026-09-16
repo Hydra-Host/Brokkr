@@ -3,6 +3,7 @@ import { notFound, useLocation } from '@tanstack/react-router';
 import { useLayoutEffect } from 'react';
 
 import { BootScreen } from '~/components/boot-screen';
+import { useActiveOrganizationId } from '~/hooks/use-active-organization-id';
 
 import { PluginErrorBoundary } from './plugin-error-boundary';
 import { usePluginRegistry } from './plugin-registry-provider';
@@ -16,6 +17,7 @@ interface Props {
 export function PluginRouteDispatcher({ pluginId, splat }: Props) {
   const registry = usePluginRegistry();
   const { data: session } = useSession();
+  const organizationId = useActiveOrganizationId();
   const location = useLocation();
   const publicHref = publicRedirectFromPluginAppMount(location.pathname, location.searchStr, registry.publicRoutes);
 
@@ -36,7 +38,13 @@ export function PluginRouteDispatcher({ pluginId, splat }: Props) {
   const Component = entry.route.component;
   return (
     <PluginErrorBoundary key={`${pluginId}:${splat}`} pluginId={pluginId}>
-      <Component pluginId={pluginId} splat={splat} LoadingScreen={BootScreen} userEmail={session?.user?.email} />
+      <Component
+        pluginId={pluginId}
+        splat={splat}
+        LoadingScreen={BootScreen}
+        userEmail={session?.user?.email}
+        organizationId={organizationId}
+      />
     </PluginErrorBoundary>
   );
 }

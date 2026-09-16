@@ -1,27 +1,39 @@
+import {
+  AssignedObjectType,
+  DhcpMode,
+  IpRangeStatus,
+  IpStatus,
+  IpamRole,
+  IpxeBuildTarget,
+  PrefixStatus,
+  VlanStatus,
+} from '@repo/database/enums';
+import { BOOT_CODE_LIST, BOOT_SEVERITIES, CANONICAL_MAC_REGEX } from '@repo/utils';
 import { z } from 'zod';
 import { BooleanQueryParamSchema } from './common';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const PrefixStatusSchema = z.enum(['CONTAINER', 'ACTIVE', 'RESERVED', 'DEPRECATED']);
-export type PrefixStatus = z.infer<typeof PrefixStatusSchema>;
+export const PrefixStatusSchema = zodEnumFromPrisma(PrefixStatus);
+export type { PrefixStatus };
 
-export const IpamRoleSchema = z.enum(['ALLOCATION', 'COMMON', 'LOOPBACK', 'MANAGEMENT', 'NAT', 'PRIMARY']);
-export type IpamRole = z.infer<typeof IpamRoleSchema>;
+export const IpamRoleSchema = zodEnumFromPrisma(IpamRole);
+export type { IpamRole };
 
-export const IpStatusSchema = z.enum(['ACTIVE', 'RESERVED', 'DEPRECATED', 'DHCP']);
-export type IpStatus = z.infer<typeof IpStatusSchema>;
+export const IpStatusSchema = zodEnumFromPrisma(IpStatus);
+export type { IpStatus };
 
-export const AssignedObjectTypeSchema = z.enum(['Interface', 'VirtualMachine', 'Device']);
-export type AssignedObjectType = z.infer<typeof AssignedObjectTypeSchema>;
+export const AssignedObjectTypeSchema = zodEnumFromPrisma(AssignedObjectType);
+export type { AssignedObjectType };
 
-export const VlanStatusSchema = z.enum(['ACTIVE', 'RESERVED', 'DEPRECATED']);
-export type VlanStatus = z.infer<typeof VlanStatusSchema>;
+export const VlanStatusSchema = zodEnumFromPrisma(VlanStatus);
+export type { VlanStatus };
 
 export const VLAN_VID_MIN = 2;
 export const VLAN_VID_MAX = 4094;
 export const VLAN_VID_RANGE_MESSAGE = `VID must be between ${VLAN_VID_MIN} and ${VLAN_VID_MAX}`;
 
-export const IpRangeStatusSchema = z.enum(['ACTIVE', 'RESERVED', 'DEPRECATED']);
-export type IpRangeStatus = z.infer<typeof IpRangeStatusSchema>;
+export const IpRangeStatusSchema = zodEnumFromPrisma(IpRangeStatus);
+export type { IpRangeStatus };
 
 export const VrfSchema = z.object({
   id: z.string().uuid().describe('Unique identifier of the VRF.'),
@@ -633,17 +645,15 @@ export type IpamChangelogQuery = z.infer<typeof IpamChangelogQuerySchema>;
 
 // ── DHCP config schemas ────────────────────────────────────────────────
 
-export const DhcpModeSchema = z
-  .enum(['AUTHORITATIVE', 'PROXY', 'OFF'])
-  .describe(
-    'DHCP serving mode: AUTHORITATIVE (full lease server), PROXY (PXE/boot info only, no address leasing), or OFF (disabled).',
-  );
-export type DhcpMode = z.infer<typeof DhcpModeSchema>;
+export const DhcpModeSchema = zodEnumFromPrisma(DhcpMode).describe(
+  'DHCP serving mode: AUTHORITATIVE (full lease server), PROXY (PXE/boot info only, no address leasing), or OFF (disabled).',
+);
+export type { DhcpMode };
 
-export const IpxeBuildTargetSchema = z
-  .enum(['IPXE', 'SNP', 'SNPONLY'])
-  .describe('iPXE boot firmware flavor: IPXE, SNP, or SNPONLY.');
-export type IpxeBuildTarget = z.infer<typeof IpxeBuildTargetSchema>;
+export const IpxeBuildTargetSchema = zodEnumFromPrisma(IpxeBuildTarget).describe(
+  'iPXE boot firmware flavor: IPXE, SNP, or SNPONLY.',
+);
+export type { IpxeBuildTarget };
 
 // Authoritative reserved/auto-managed code list; the bridge OPT_* constants
 // (apps/bridge/src/dhcp/dhcp-options.ts) consume these but export no matching set — edit here only.
@@ -669,7 +679,7 @@ export const RESERVED_DHCP_OPTIONS: Readonly<Record<number, string>> = {
 
 export const RESERVED_DHCP_OPTION_CODES: ReadonlySet<number> = new Set(Object.keys(RESERVED_DHCP_OPTIONS).map(Number));
 
-const Ipv4Schema = z
+export const Ipv4Schema = z
   .string()
   .regex(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/, 'Must be a valid IPv4 address (e.g. 192.168.1.1)')
   .refine(
@@ -717,7 +727,6 @@ export type DhcpOption = z.infer<typeof DhcpOptionSchema>;
 
 // Canonical 6-octet lowercase colon-hex MAC (e.g. "aa:bb:cc:dd:ee:ff") — shared by the DHCP proxy
 // allowlist and the derived reservation MAC so the two can't drift.
-const CANONICAL_MAC_REGEX = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/;
 
 export const PrefixDhcpConfigSchema = z.object({
   dhcpMode: DhcpModeSchema.nullable().describe(
@@ -852,3 +861,47 @@ export const PrefixDhcpServingSchema = z.object({
     ),
 });
 export type PrefixDhcpServing = z.infer<typeof PrefixDhcpServingSchema>;
+
+// Both enums derive from the boot-code registry in @repo/utils, so a code the bridge does not
+// register cannot reach the wire and no parity test is needed.
+export const BootReadinessSeveritySchema = z
+  .enum(BOOT_SEVERITIES)
+  .describe('Finding severity from the boot-code registry: error blocks a boot, warn and info do not.');
+export type BootReadinessSeverity = z.infer<typeof BootReadinessSeveritySchema>;
+
+export const PrefixBootReadinessFindingSchema = z.object({
+  code: z
+    .enum(BOOT_CODE_LIST)
+    .describe('Boot diagnostic code (e.g. "PXE-102"), the same vocabulary the bridge readiness route reports.'),
+  severity: BootReadinessSeveritySchema.describe('Severity this code carries in the boot-code registry.'),
+  message: z
+    .string()
+    .min(1)
+    .describe('Operator-facing sentence naming the field that is wrong and the setting that fixes it.'),
+});
+export type PrefixBootReadinessFinding = z.infer<typeof PrefixBootReadinessFindingSchema>;
+
+export const PrefixBootReadinessQuerySchema = z.object({
+  mac: z
+    .string()
+    .regex(CANONICAL_MAC_REGEX, 'must be a lowercase colon-hex MAC (e.g. "aa:bb:cc:dd:ee:ff")')
+    .describe(
+      'PXE MAC to check against this prefix, lowercase colon-hex (6 octets) — the same canonical form the ' +
+        'proxy allowlist stores, so the two compare without normalization.',
+    ),
+  bmcAddress: Ipv4Schema.optional().describe(
+    "The machine's BMC IPv4 address. Supplied, the identity check reports whether one hub device owns both " +
+      'this address and the PXE MAC; omitted, that check is not run.',
+  ),
+});
+export type PrefixBootReadinessQuery = z.infer<typeof PrefixBootReadinessQuerySchema>;
+
+export const PrefixBootReadinessSchema = z.object({
+  findings: z
+    .array(PrefixBootReadinessFindingSchema)
+    .describe(
+      'Every readiness check the hub can answer from its own data that this prefix and MAC fail, ordered by ' +
+        'code. Empty means nothing in hub data blocks a network boot — the bridge answers the rest.',
+    ),
+});
+export type PrefixBootReadiness = z.infer<typeof PrefixBootReadinessSchema>;

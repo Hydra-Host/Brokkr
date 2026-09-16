@@ -1,8 +1,7 @@
 import { isIP } from 'node:net';
 
-import { isRecord } from '@repo/utils';
+import { isRecord, isRoutableUnicastIpv4 } from '@repo/utils';
 import { isClientFacingName } from '../../bridge-network/bridge-ip-resolution.service';
-import { isRoutableUnicastIpv4 } from '../../bridge-network/ip-utils';
 import type { BridgeSnapshot, InterfaceEntry } from './topology-broadcaster.types';
 
 interface ParsedAddress {

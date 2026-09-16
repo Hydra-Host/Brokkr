@@ -1,14 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { request } from 'node:https';
-import { Socket, isIP } from 'node:net';
+import * as http from 'node:http';
+import * as https from 'node:https';
+import { isIP } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { getErrorMessage } from '../common/error-utils';
 
-import { isRecord } from '@repo/utils';
+import { ipv4ToInt, isRecord } from '@repo/utils';
 
 import { CommandFailed, CommandTimeout, run } from '../common/process/run-command';
-import { ipmiPing } from '../oob/ipmi/ping';
+import { ipmiPingWithRetry } from '../oob/ipmi/ping';
+import { type BmcCoordinates, redfishProbeCoordinates } from '../redfish/bmc-coordinates.js';
 import {
+  buildRedfishConfig,
   isTlsCertVerificationError,
   redfishRejectUnauthorized,
   redfishTlsVerificationFailureHint,
@@ -163,19 +166,6 @@ export function parseArpAnOutput(
   return macMap;
 }
 
-function ipv4ToInt(addr: string): number | null {
-  const parts = addr.split('.');
-  if (parts.length !== 4) return null;
-  let value = 0;
-  for (const part of parts) {
-    if (!/^\d+$/.test(part)) return null;
-    const octet = Number.parseInt(part, 10);
-    if (!Number.isInteger(octet) || octet < 0 || octet > 255) return null;
-    value = (value * 256 + octet) >>> 0;
-  }
-  return value;
-}
-
 interface ParsedV4Network {
   family: 4;
   networkInt: number;
@@ -275,34 +265,22 @@ export function cidrContains(network: ParsedNetwork, addr: string): boolean {
   return addrBits.slice(0, network.prefix) === network.bits.slice(0, network.prefix);
 }
 
-function tcpConnect(ip: string, port: number, timeoutMs: number): Promise<boolean> {
+function redfishProbe(ip: string, coords: BmcCoordinates, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = new Socket();
-    let done = false;
-    const finish = (ok: boolean): void => {
-      if (done) return;
-      done = true;
-      socket.destroy();
-      resolve(ok);
-    };
-    socket.setTimeout(timeoutMs, () => finish(false));
-    socket.once('error', () => finish(false));
-    socket.connect(port, ip, () => finish(true));
-  });
-}
-
-function httpsRedfishProbe(ip: string, port: number, timeoutMs: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const rejectUnauthorized = redfishRejectUnauthorized();
-    if (!rejectUnauthorized) warnRedfishTlsVerificationDisabledOnce((m) => probeLogger.warn(m), `${ip}:${port}`);
-    const req = request(
+    // same transport pick as defaultRedfishRequester; the request shapes differ too much to share a client
+    const isHttps = coords.protocol === 'https';
+    const transport = isHttps ? https : http;
+    const rejectUnauthorized = isHttps && redfishRejectUnauthorized();
+    if (isHttps && !rejectUnauthorized)
+      warnRedfishTlsVerificationDisabledOnce((m) => probeLogger.warn(m), `${ip}:${coords.port}`);
+    const req = transport.request(
       {
         host: ip,
-        port,
+        port: coords.port,
         path: '/redfish/v1',
         method: 'GET',
-        rejectUnauthorized,
         timeout: timeoutMs,
+        ...(isHttps ? { rejectUnauthorized } : {}),
       },
       (res) => {
         if (res.statusCode !== 200) {
@@ -325,7 +303,8 @@ function httpsRedfishProbe(ip: string, port: number, timeoutMs: number): Promise
     );
     req.on('timeout', () => req.destroy(new Error('redfish request timed out')));
     req.on('error', (err) => {
-      if (rejectUnauthorized && isTlsCertVerificationError(err)) warnRedfishTlsVerificationFailureOnce(`${ip}:${port}`);
+      if (rejectUnauthorized && isTlsCertVerificationError(err))
+        warnRedfishTlsVerificationFailureOnce(`${ip}:${coords.port}`);
       resolve(false);
     });
     req.end();
@@ -351,10 +330,13 @@ export class NetworkScanService {
     this.ipmiPingFn =
       deps.ipmiPingFn ??
       ((ip: string): Promise<boolean> =>
-        ipmiPing(ip, {
+        ipmiPingWithRetry(ip, {
           port: this.config.ipmiPort,
           timeout: this.config.ipmiTimeoutMs / 1000,
           jobId: this.jobId,
+          maxAttempts: 3,
+          // short: retries cover packet loss, not a BMC that needs time to come up
+          backoffSeconds: 0.25,
         }));
     this.redfishCheckFn = deps.redfishCheckFn ?? ((ip: string): Promise<boolean> => this.checkRedfish(ip));
     this.localIpsProvider = deps.localIpsProvider ?? ((network: string): Set<string> => this.getLocalIps(network));
@@ -503,7 +485,9 @@ export class NetworkScanService {
     const cmd: string[] = ['nmap', '-sn', '-n'];
     if (this.config.nmapPrivileged) cmd.push('--send-ip', '-PE');
     // Redfish port must be in the SYN set: unprivileged scans would otherwise never discover a BMC that only answers on a non-standard Redfish port.
-    const synPorts = [...new Set([22, 80, this.config.redfishPort])];
+    const redfish = buildRedfishConfig();
+    const simulatedPorts = redfish.localSimulationEnabled ? [redfish.simRedfishPort] : [];
+    const synPorts = [...new Set([22, 80, redfish.realRedfishPort, ...simulatedPorts])];
     cmd.push(`-PS${synPorts.join(',')}`);
     if (this.config.nmapPrivileged) cmd.push('-PU623');
     cmd.push(
@@ -682,13 +666,10 @@ export class NetworkScanService {
   }
 
   private async checkRedfish(ip: string): Promise<boolean> {
-    const timeoutMs = this.config.redfishTimeoutMs;
-    const port = this.config.redfishPort;
-
-    const tcpOk = await tcpConnect(ip, port, timeoutMs);
-    if (!tcpOk) return false;
-
-    return httpsRedfishProbe(ip, port, timeoutMs);
+    for (const coords of redfishProbeCoordinates(ip)) {
+      if (await redfishProbe(ip, coords, this.config.redfishTimeoutMs)) return true;
+    }
+    return false;
   }
 
   private async checkBatch(

@@ -17,7 +17,7 @@ from rich.console import Console
 
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "config-model.json"
 
-_BLIND_SPOTS = ("lan.expose", "telemetry.enable", "stack.slot", "fleet.mode", "fleet.autoStart")
+_BLIND_SPOTS = tuple(path for _, path in show_env._DIGEST)
 
 
 def _model() -> dict:
@@ -66,7 +66,7 @@ def test_fixture_is_a_whole_config_model_capture() -> None:
 def test_former_blind_spots_are_in_the_model() -> None:
     knobs = _knobs()
     assert set(_BLIND_SPOTS) <= set(knobs)
-    assert knobs["fleet.mode"].choices == ("vm", "baremetal")
+    assert {path for path in knobs if path.startswith("fleet.")} == {"fleet.autoStart"}
     assert knobs["stack.slot"].editable is False
 
 
@@ -157,7 +157,7 @@ def test_json_round_trips_and_masks_secrets() -> None:
     assert by_path["identity.pg.password"]["value"] == "***"
     assert by_path["identity.pg.password"]["default"] == "***"
     assert by_path["ports.postgres"]["value"] == 5432
-    assert by_path["fleet.mode"]["choices"] == ["vm", "baremetal"]
+    assert by_path["lan.mode"]["choices"] == ["loopback", "direct", "fronted"]
     assert by_path["lan.expose"]["sources"] == ["devenv/modules/overrides.nix"]
 
 
@@ -208,11 +208,34 @@ def test_summary_digest_reports_the_former_blind_spots() -> None:
     out = "\n".join(overlay_summary(list(_knobs().values())))
     assert "slot=0" in out
     assert "hub=1 · spoke=1" in out
-    assert "fleet.autoStart=true" in out
-    assert "fleet.mode=vm" in out
-    assert "lan.expose=false" in out
+    assert "fleet.autoStart=true · lan.mode=loopback" in out
+    assert "lan.datastoreAuth=true" in out
     assert "telemetry=false" in out
     assert "pg=brokkr/brokkr" in out
+
+
+def test_summary_digest_reports_a_non_default_network_mode() -> None:
+    model = _override_option(_model(), "lan.mode", "fronted")
+    out = "\n".join(overlay_summary(list(_knobs(model).values())))
+    assert "lan.mode=fronted" in out
+    assert "lan.mode=fronted" in next(ln for ln in out.splitlines() if ln.strip().startswith("overridden:"))
+
+
+def test_summary_masks_the_new_datastore_secrets() -> None:
+    model = _override_option(_model(), "identity.redis.password", "hunter2")
+    _override_option(model, "identity.mailpit.password", "hunter3")
+    out = "\n".join(overlay_summary(list(_knobs(model).values())))
+    assert "identity.redis.password=***" in out
+    assert "identity.mailpit.password=***" in out
+    assert "hunter2" not in out
+    assert "hunter3" not in out
+
+
+def test_bind_address_is_a_networking_knob_with_an_empty_default() -> None:
+    knobs = _knobs()
+    assert knobs["lan.bindAddress"].group == "Networking"
+    assert knobs["lan.bindAddress"].default == ""
+    assert knobs["lan.mode"].choices == ("loopback", "direct", "fronted")
 
 
 def _rendered(knobs, show_secrets: bool = False) -> str:

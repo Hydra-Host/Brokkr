@@ -117,6 +117,8 @@ export const MAIN_APP_PERMISSIONS: PermissionDefinition[] = [
   // `read-only` for capture — log views are throttled, not recorded as mutations.
   { resource: 'event-log', action: 'access', description: 'View the organization event log', audit: 'read-only' },
 
+  { resource: 'job-log', action: 'access', description: 'View operator job logs', audit: 'read-only' },
+
   {
     resource: 'zone',
     action: 'register',
@@ -133,4 +135,6 @@ export const MAIN_APP_PERMISSIONS: PermissionDefinition[] = [
   { resource: 'reservation-invite', action: 'create', description: 'Create reservation invites', audit: 'mutating' },
   { resource: 'reservation-invite', action: 'update', description: 'Update reservation invites', audit: 'mutating' },
   { resource: 'reservation-invite', action: 'delete', description: 'Delete reservation invites', audit: 'mutating' },
+
+  { resource: 'job', action: 'read', description: 'View device lifecycle job history', audit: 'read-only' },
 ];

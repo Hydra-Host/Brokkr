@@ -21,7 +21,6 @@ export const deviceSpecColumnsFixture: DeviceSpecColumns = {
   iommuEnabled: null,
   sriovEnabled: null,
   zoneId: null,
-  organizationId: null,
   supplierId: null,
   deviceModelId: null,
   createdAt: new Date('2024-01-01T00:00:00.000Z'),

@@ -85,8 +85,15 @@ describe('RosterService catalog-driven membership', () => {
       label: 'Control Center API',
       port: 3002,
       disabled: false,
+      features: [],
     });
-    expect(catalog.get('postgres')).toEqual({ namespace: 'datastore', label: 'Postgres', port: null, disabled: false });
+    expect(catalog.get('postgres')).toEqual({
+      namespace: 'datastore',
+      label: 'Postgres',
+      port: null,
+      disabled: false,
+      features: [],
+    });
     expect(catalog.get('hub-admin')?.disabled).toBe(true);
   });
 

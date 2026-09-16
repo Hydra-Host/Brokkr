@@ -316,11 +316,37 @@ describe('deployOs device payload fields', () => {
     expect((payload['roce'] as Record<string, unknown>)['enabled']).toBe(false);
   });
 
-  it('infiniband network_type with node_desc injects the udev rule into cloud_init', async () => {
+  it('infiniband network_type with node_desc ships typed infiniband vars', async () => {
+    const payload = await runWith({ deviceNetworkType: 'infiniband', nodeDesc: 'compute-42' });
+    expect(payload['infiniband']).toEqual({ enabled: true, node_desc: 'compute-42' });
+  });
+
+  it('infiniband leaves the customer user_data slot empty', async () => {
     const payload = await runWith({ deviceNetworkType: 'infiniband', nodeDesc: 'compute-42' });
     const cloudInit = payload['cloud_init_vars'] as Record<string, unknown>;
+    expect('custom_user_data_yaml' in cloudInit).toBe(false);
+  });
+
+  it('infiniband customer user_data ships unmodified', async () => {
+    const payload = await runWith({
+      osPayload: osPayload({ user_data: { runcmd: ['echo customer'] } }),
+      deviceNetworkType: 'infiniband',
+      nodeDesc: 'compute-42',
+    });
+    const cloudInit = payload['cloud_init_vars'] as Record<string, unknown>;
     const customUserData = cloudInit['custom_user_data_yaml'] as string;
-    expect(customUserData).toContain('infiniband-node-desc');
+    expect(customUserData).toContain('echo customer');
+    expect(customUserData).not.toContain('infiniband');
+  });
+
+  it('invalid node_desc disables the infiniband config', async () => {
+    const payload = await runWith({ deviceNetworkType: 'infiniband', nodeDesc: 'bad name!' });
+    expect(payload['infiniband']).toEqual({ enabled: false, node_desc: '' });
+  });
+
+  it('node_desc without an infiniband network_type disables the infiniband config', async () => {
+    const payload = await runWith({ nodeDesc: 'compute-42' });
+    expect(payload['infiniband']).toEqual({ enabled: false, node_desc: '' });
   });
 });
 
@@ -346,11 +372,13 @@ describe('deployOs dispatch shape', () => {
       'image',
       'fstab',
       'encrypted_volumes',
+      'rekey_volumes',
       'roce_iommu',
       'cloud_init_vars',
       'grub_vars',
       'luks_already_keyed',
       'roce',
+      'infiniband',
     ]) {
       expect(payload, `missing key ${key}`).toHaveProperty(key);
     }

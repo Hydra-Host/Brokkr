@@ -18,11 +18,21 @@ const facts = (over: Partial<InitTaskFacts> = {}): InitTaskFacts => ({
 });
 
 describe('deriveInitTask', () => {
-  it('reports pending when both artifacts predate this bring-up', () => {
-    const task = deriveInitTask(facts({ logMtimeMs: 500, statusMtimeMs: 600, statusCode: 0 }), 1_000);
+  it('reports pending when both artifacts predate this bring-up and the last exit was not 0', () => {
+    const task = deriveInitTask(facts({ logMtimeMs: 500, statusMtimeMs: 600, statusCode: 1 }), 1_000);
 
     expect(task.state).toBe('pending');
     expect(task.exitCode).toBeNull();
+  });
+
+  it('derives cached from a stale exit-0 sidecar', () => {
+    const task = deriveInitTask(facts({ logMtimeMs: 1, statusMtimeMs: 2, statusCode: 0 }), 10);
+
+    expect(task).toMatchObject({ state: 'cached', exitCode: 0, detail: null });
+  });
+
+  it('stays pending when the stale task left no sidecar at all', () => {
+    expect(deriveInitTask(facts({ logMtimeMs: 1, statusMtimeMs: null }), 10).state).toBe('pending');
   });
 
   it('reports running when the log is fresh and no result has landed', () => {
@@ -51,10 +61,10 @@ describe('deriveInitTask', () => {
     expect(task.detail).toMatch(/unreadable/);
   });
 
-  it('treats a whole stale generation as pending, never as last boot’s success', () => {
+  it('treats a whole stale generation as cached, never as this boot’s completion', () => {
     const task = deriveInitTask(facts({ logMtimeMs: 100, statusMtimeMs: 120, statusCode: 0 }), 5_000);
 
-    expect(task.state).toBe('pending');
+    expect(task.state).toBe('cached');
   });
 
   it('reports pending with no socket to date artifacts against', () => {
@@ -154,12 +164,12 @@ describe('InitTasksService', () => {
     expect(svc.list().map((t) => t.name)).toEqual(['hub:init']);
   });
 
-  it('reads a stale-status task as pending rather than last boot’s success', () => {
+  it('reads a stale exit-0 sidecar as cached rather than this boot’s completion', () => {
     write('hub:init.log', 'b\n', 900);
     write('hub:init.status', '0\n', 900);
     const { svc } = makeService();
 
-    expect(svc.list()[0]).toMatchObject({ name: 'hub:init', state: 'pending', exitCode: null });
+    expect(svc.list()[0]).toMatchObject({ name: 'hub:init', state: 'cached', exitCode: 0 });
   });
 
   it('surfaces a fresh non-zero status as failed with the log tail', () => {
@@ -280,6 +290,16 @@ describe('InitTasksService', () => {
       write('apps:init.status', '0\n', 1_100);
       write('hub:init.log', 'b\n', 1_150);
       write('hub:init.status', '0\n', 1_150);
+      const { svc } = makeService();
+
+      expect(svc.summary()).toEqual({ state: 'completed', total: 2, completed: 2, failed: 0, current: null });
+    });
+
+    it('counts a cached task as completed so a settled roster reads whole', () => {
+      write('apps:init.log', 'a\n', 900);
+      write('apps:init.status', '0\n', 900);
+      write('hub:init.log', 'b\n', 1_100);
+      write('hub:init.status', '0\n', 1_100);
       const { svc } = makeService();
 
       expect(svc.summary()).toEqual({ state: 'completed', total: 2, completed: 2, failed: 0, current: null });

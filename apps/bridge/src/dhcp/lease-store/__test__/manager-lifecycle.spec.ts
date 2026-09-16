@@ -112,6 +112,7 @@ function recordingStore(log: string[], records: LeaseRecord[] = []): LeaseStore 
     put: vi.fn(async () => void log.push('put')),
     delete: vi.fn(async () => void log.push('delete')),
     pruneExpired: vi.fn(async () => 0),
+    takeRevocations: vi.fn(async () => []),
   };
 }
 
@@ -230,6 +231,7 @@ describe('DHCP manager lease-store lifecycle (group F)', () => {
       put: vi.fn(async () => void log.push('put')),
       delete: vi.fn(async () => void log.push('delete')),
       pruneExpired: vi.fn(async () => 0),
+      takeRevocations: vi.fn(async () => []),
     };
     const { service, sockets } = buildService(() => true, store, log);
     void service.start('job');
@@ -345,6 +347,7 @@ describe('DHCP manager lease-store lifecycle (group F)', () => {
       put: vi.fn(async () => void log.push('put')),
       delete: vi.fn(async () => void log.push('delete')),
       pruneExpired: vi.fn(async () => 0),
+      takeRevocations: vi.fn(async () => []),
     };
     const { service } = buildService(() => true, store, log);
     const setIntervalSpy = vi.spyOn(global, 'setInterval');
@@ -361,5 +364,67 @@ describe('DHCP manager lease-store lifecycle (group F)', () => {
 
     expect(setIntervalSpy).not.toHaveBeenCalled();
     setIntervalSpy.mockRestore();
+  });
+});
+
+describe('DHCP manager operator lease revocation', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function revokingStore(log: string[], records: LeaseRecord[], ips: string[]): LeaseStore {
+    let drained = false;
+    return {
+      loadAll: vi.fn(async () => records),
+      put: vi.fn(async () => void log.push('put')),
+      delete: vi.fn(async () => void log.push('delete')),
+      pruneExpired: vi.fn(async () => 0),
+      takeRevocations: vi.fn(async () => {
+        if (drained) return [];
+        drained = true;
+        return ips;
+      }),
+    };
+  }
+
+  it('evicts a hydrated lease from the running engine when the hub queues a revocation', async () => {
+    vi.useFakeTimers();
+    const log: string[] = [];
+    const held: LeaseRecord = { ip: '10.0.0.10', mac: CLIENT_MAC, hostname: null, expiresAt: 1e12 };
+    const store = revokingStore(log, [held], ['10.0.0.10']);
+    const { service } = buildService(() => true, store, log);
+
+    void service.start('job');
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    service.stop('job');
+
+    expect(store.takeRevocations).toHaveBeenCalled();
+    expect(vi.mocked(store.delete).mock.calls[0]?.[0]).toMatchObject({ ip: '10.0.0.10' });
+  });
+
+  it('stops draining after leader-loss, leaving the marker for whoever holds the lease now', async () => {
+    vi.useFakeTimers();
+    const log: string[] = [];
+    const store: LeaseStore = {
+      loadAll: vi.fn(async () => []),
+      put: vi.fn(async () => void log.push('put')),
+      delete: vi.fn(async () => void log.push('delete')),
+      pruneExpired: vi.fn(async () => 0),
+      takeRevocations: vi.fn(async () => ['10.0.0.10']),
+    };
+    let leader = true;
+    const { service } = buildService(() => leader, store, log);
+
+    void service.start('job');
+    await vi.advanceTimersByTimeAsync(0);
+    const drainsWhileLeader = vi.mocked(store.takeRevocations).mock.calls.length;
+    expect(drainsWhileLeader).toBeGreaterThan(0);
+
+    leader = false;
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    service.stop('job');
+
+    expect(vi.mocked(store.takeRevocations).mock.calls.length).toBe(drainsWhileLeader);
   });
 });

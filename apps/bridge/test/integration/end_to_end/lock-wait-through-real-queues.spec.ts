@@ -209,6 +209,7 @@ async function makeHarness(lockWaitHardCapSeconds: number): Promise<Harness> {
     {
       lockWaitWarningSeconds: 0,
       lockWaitHardCapSeconds,
+      agentWaitHardCapSeconds: 0,
       lockLostRedelaySeconds: 90,
     },
     cache,

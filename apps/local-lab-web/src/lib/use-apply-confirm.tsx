@@ -99,11 +99,16 @@ function ApplyPlanView({ plan }: { plan: ApplyPlan }) {
   );
 }
 
+/** The root gate modal's prompt alone, for a caller that never fetches the apply plan. */
+export function useApplyPrompt() {
+  const ctx = useContext(ApplyConfirmContext);
+  if (!ctx) throw new Error('useApplyPrompt must be used within an ApplyConfirmProvider');
+  return ctx.prompt;
+}
+
 /** Fetches the apply plan and, when the change is destructive, prompts via the root gate modal. */
 export function useApplyConfirm() {
-  const ctx = useContext(ApplyConfirmContext);
-  if (!ctx) throw new Error('useApplyConfirm must be used within an ApplyConfirmProvider');
-  const { prompt } = ctx;
+  const prompt = useApplyPrompt();
   const planQ = tsr.getFleetApplyPlan.useQuery({ queryKey: ['fleet-apply-plan'], enabled: false });
 
   const confirmApply = async (): Promise<ApplyConfirm> => {
@@ -124,5 +129,5 @@ export function useApplyConfirm() {
     return { proceed: true, allowDataLoss: false };
   };
 
-  return { confirmApply };
+  return { confirmApply, prompt };
 }

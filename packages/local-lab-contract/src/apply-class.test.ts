@@ -9,6 +9,18 @@ describe('applyClassFor', () => {
     expect(applyClassFor('lan.expose')).toBe('rebind-recreate');
   });
 
+  it('prices every lan knob, not just the deprecated boolean', () => {
+    for (const path of ['lan.mode', 'lan.bindAddress', 'lan.datastoreAuth']) {
+      expect(applyClassFor(path)).toBe('rebind-recreate');
+    }
+  });
+
+  it('splits the two datastore credentials off the reset the postgres identity costs', () => {
+    expect(applyClassFor('identity.pg.password')).toBe('datastore-reset');
+    expect(applyClassFor('identity.redis.password')).toBe('redeploy');
+    expect(applyClassFor('identity.mailpit.password')).toBe('redeploy');
+  });
+
   it('splits the two service reloads by which process reads the knob', () => {
     expect(applyClassFor('stackDefaults.hub.LOG_LEVEL')).toBe('reload-hub');
     expect(applyClassFor('stackDefaults.spoke.BRIDGE_SYNC_ENABLED')).toBe('reload-spoke');
@@ -17,7 +29,7 @@ describe('applyClassFor', () => {
   it('splits a zone change off the rest of the fleet, because the seed order differs', () => {
     expect(applyClassFor('fleet.zones.edge')).toBe('zone-apply');
     expect(applyClassFor('fleet.zones."sim-zone".bridges')).toBe('zone-apply');
-    expect(applyClassFor('fleet.mode')).toBe('fleet-op');
+    expect(applyClassFor('fleet.autoStart')).toBe('fleet-op');
     expect(applyClassFor('fleet.defaults.cpus')).toBe('fleet-op');
   });
 

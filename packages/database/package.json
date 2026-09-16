@@ -21,12 +21,17 @@
       "types": "./src/extensions/mac-address.ts",
       "require": "./dist/extensions/mac-address.js",
       "import": "./dist/extensions/mac-address.js"
+    },
+    "./enums": {
+      "types": "./generated/client/enums.ts",
+      "require": "./generated/client/enums.ts",
+      "import": "./generated/client/enums.ts"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.nest-exports.json && mkdir -p dist/pagination dist/extensions && echo '{\"type\":\"commonjs\"}' > dist/pagination/package.json && echo '{\"type\":\"commonjs\"}' > dist/extensions/package.json",
     "db:init": "./scripts/init_db.sh",
-    "db:generate": "prisma generate",
+    "db:generate": "prisma generate && tsc -p tsconfig.generated.json && echo '{\"type\":\"commonjs\"}' > generated/js/package.json",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",

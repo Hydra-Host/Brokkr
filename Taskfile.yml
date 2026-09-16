@@ -216,8 +216,9 @@ tasks:
     desc: "Regenerate devenv/README.md's option + fleet-node reference tables from knobCatalog and schema.py."
     cmds:
       # the generator reads the apply-class + writability rules out of the built contract, so a
-      # stale dist would price the table against rules the lab no longer applies.
-      - pnpm --filter @repo/local-lab-contract build
+      # stale dist would price the table against rules the lab no longer applies; turbo also builds
+      # the workspace packages the contract imports at runtime.
+      - pnpm exec turbo run build --filter=@repo/local-lab-contract
       - node scripts/gen-config-reference.mjs
 
   local:logs:

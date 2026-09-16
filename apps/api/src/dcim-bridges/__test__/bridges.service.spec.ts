@@ -110,7 +110,7 @@ describe('BridgesService', () => {
       expect(mockPrismaClient.device.findMany).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({
-          where: expect.objectContaining({ role: 'Bridge', organizationId: 'org-1' }),
+          where: expect.objectContaining({ role: 'Bridge', supplierId: 'org-1' }),
           select: expect.objectContaining({ id: true }),
         }),
       );
@@ -120,7 +120,7 @@ describe('BridgesService', () => {
       expect(mockPrismaClient.device.findMany).toHaveBeenNthCalledWith(
         2,
         expect.objectContaining({
-          where: expect.objectContaining({ id: { in: ['device-uuid-1'] }, role: 'Bridge', organizationId: 'org-1' }),
+          where: expect.objectContaining({ id: { in: ['device-uuid-1'] }, role: 'Bridge', supplierId: 'org-1' }),
           include: expect.objectContaining({ interfaces: expect.anything() }),
         }),
       );
@@ -160,7 +160,7 @@ describe('BridgesService', () => {
 
       const summaryWhere = mockPrismaClient.device.findMany.mock.calls[0][0].where;
       expect(summaryWhere).toEqual(
-        expect.objectContaining({ role: 'Bridge', organizationId: 'org-1', zoneId: 'zone-uuid-a' }),
+        expect.objectContaining({ role: 'Bridge', supplierId: 'org-1', zoneId: 'zone-uuid-a' }),
       );
     });
 

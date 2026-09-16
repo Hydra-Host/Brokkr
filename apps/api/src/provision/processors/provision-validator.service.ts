@@ -9,6 +9,14 @@ import {
 } from '@repo/api-client';
 import { LayerKind, type StorageDrive } from '@repo/database';
 import { hardwareEligibleLayerSlugs, LayerArtifactRecord, LayerRecord } from '@repo/layers';
+import {
+  DATA_PARTITION_OVERHEAD_BYTES,
+  DATA_SIZE_MIN_BYTES,
+  formatSize,
+  raidUsableCapacityBytes,
+  ROOT_PARTITION_OVERHEAD_BYTES,
+  ROOT_SIZE_MIN_BYTES,
+} from '@repo/utils';
 
 type ResolvedDiskMember = { identifier: string; drive: StorageDrive };
 
@@ -82,26 +90,25 @@ export class ProvisionValidatorService {
     this.validateNoDuplicateDisks(layouts);
   }
 
+  private resolveDrive(storageDrives: StorageDrive[], identifier: string, mountpoint: string): StorageDrive {
+    const nameMatch = storageDrives.find((drive) => drive.name === identifier);
+    if (nameMatch) return nameMatch;
+
+    const metadataMatches = storageDrives.filter((drive) => drive.serial === identifier || drive.wwn === identifier);
+    if (metadataMatches.length === 0) {
+      throw new BadRequestException(
+        `Disk identifier "${identifier}" in RAID group "${mountpoint}" does not match a known disk.`,
+      );
+    }
+    if (metadataMatches.length > 1) {
+      throw new BadRequestException(
+        `Disk identifier "${identifier}" in RAID group "${mountpoint}" matches multiple disks by serial or WWN.`,
+      );
+    }
+    return metadataMatches[0];
+  }
+
   validateDiskGroupHomogeneity(layouts: DiskLayout[], storageDrives: StorageDrive[]): void {
-    // `name` is authoritative (unique per device), so a colliding serial/WWN can never shadow it.
-    const resolveDrive = (identifier: string, mountpoint: string): StorageDrive => {
-      const nameMatch = storageDrives.find((drive) => drive.name === identifier);
-      if (nameMatch) return nameMatch;
-
-      const metadataMatches = storageDrives.filter((drive) => drive.serial === identifier || drive.wwn === identifier);
-      if (metadataMatches.length === 0) {
-        throw new BadRequestException(
-          `Disk identifier "${identifier}" in RAID group "${mountpoint}" does not match a known disk.`,
-        );
-      }
-      if (metadataMatches.length > 1) {
-        throw new BadRequestException(
-          `Disk identifier "${identifier}" in RAID group "${mountpoint}" matches multiple disks by serial or WWN.`,
-        );
-      }
-      return metadataMatches[0];
-    };
-
     const label = (member: ResolvedDiskMember): string =>
       member.identifier === member.drive.name
         ? `"${member.drive.name}"`
@@ -112,7 +119,7 @@ export class ProvisionValidatorService {
 
       const resolved = layout.disks.map((identifier) => ({
         identifier,
-        drive: resolveDrive(identifier, layout.mountpoint),
+        drive: this.resolveDrive(storageDrives, identifier, layout.mountpoint),
       }));
       const resolvedNames = new Set<string>();
       for (const member of resolved) {
@@ -150,6 +157,48 @@ export class ProvisionValidatorService {
       if (modelReference && modelMismatch) {
         throw new BadRequestException(
           `Disk group "${layout.mountpoint}" mixes disk models: ${label(modelReference.member)} is "${modelReference.model}" but ${label(modelMismatch.member)} is "${modelMismatch.model}". All disks in a disk group must be the same model.`,
+        );
+      }
+    }
+  }
+
+  validateDiskGroupSizeLimits(layouts: DiskLayout[], storageDrives: StorageDrive[]): void {
+    for (const layout of layouts) {
+      if (layout.size === undefined) continue;
+
+      if (layout.encrypt) {
+        throw new BadRequestException(`Disk group "${layout.mountpoint}": a size cannot be combined with encryption`);
+      }
+      if (layout.wipe === false) {
+        throw new BadRequestException(
+          `Disk group "${layout.mountpoint}": a size cannot be set on a preserved disk group`,
+        );
+      }
+
+      const minimum = layout.mountpoint === '/' ? ROOT_SIZE_MIN_BYTES : DATA_SIZE_MIN_BYTES;
+      if (layout.size < minimum) {
+        throw new BadRequestException(
+          `Requested size ${formatSize(layout.size)} for "${layout.mountpoint}" is below the minimum of ${formatSize(minimum)}`,
+        );
+      }
+
+      const drives = layout.disks.map((identifier) => this.resolveDrive(storageDrives, identifier, layout.mountpoint));
+      if (drives.length === 0) continue;
+
+      const perDisk = drives.reduce(
+        (min, drive) => (drive.sizeBytes < min ? drive.sizeBytes : min),
+        drives[0].sizeBytes,
+      );
+      const overhead = layout.mountpoint === '/' ? ROOT_PARTITION_OVERHEAD_BYTES : DATA_PARTITION_OVERHEAD_BYTES;
+      const usablePerDisk = perDisk - overhead;
+      if (usablePerDisk <= 0n) {
+        throw new BadRequestException(`Disk group "${layout.mountpoint}": disks are too small to carry a custom size`);
+      }
+
+      const capacity = raidUsableCapacityBytes(layout.config, layout.disks.length, usablePerDisk);
+      if (BigInt(layout.size) > capacity) {
+        throw new BadRequestException(
+          `Requested size ${formatSize(layout.size)} for "${layout.mountpoint}" exceeds the disk group's usable capacity of ${formatSize(capacity)}`,
         );
       }
     }
@@ -323,6 +372,7 @@ export class ProvisionValidatorService {
   validate(request: ProvisionRequest, storageDrives: StorageDrive[]): void {
     this.validateDiskLayouts(request.diskLayouts, 'provision');
     this.validateDiskGroupHomogeneity(request.diskLayouts, storageDrives);
+    this.validateDiskGroupSizeLimits(request.diskLayouts, storageDrives);
     this.validateIpxeRequirements(request.operatingSystem, request.ipxeUrl);
   }
 }

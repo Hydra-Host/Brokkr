@@ -16,6 +16,8 @@ import { DeviceTestRunsModule } from './device-test-runs/device-test-runs.module
 import { EventLogModule } from './event-log/event-log.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { IpamModule } from './ipam/ipam.module';
+import { JobLogsModule } from './job-logs/job-logs.module';
+import { JobsModule } from './jobs/jobs.module';
 import { LoggerModule } from './logger/logger.module';
 import { WebhookModule } from './webhook/webhook.module';
 
@@ -131,6 +133,7 @@ const enabledPluginManifests = enabledPluginEntries.map((entry) => entry.plugin)
     HeartbeatMonitorModule,
     InventoryModule,
     IpamModule,
+    JobLogsModule,
     PluginIpamProvisioningModule,
     PermissionsModule,
     OrganizationsModule,
@@ -147,6 +150,7 @@ const enabledPluginManifests = enabledPluginEntries.map((entry) => entry.plugin)
     CommissioningModule,
     UsersModule,
     EventLogModule,
+    JobsModule,
     WebhookModule,
     DeviceSecretModule,
     ZoneCryptoModule,

@@ -5,15 +5,18 @@
 BEGIN;
 
 -- bench-1 id=0e8c9981-6781-5e20-9d8e-a84ccf7f548a pxe=00:00:5e:00:53:b4 bmc=198.51.100.250 net=Public arch=amd64 zone=00000000-0000-0000-0000-111111111111
+UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()
+WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' AND name = 'bench-1'
+  AND id <> '0e8c9981-6781-5e20-9d8e-a84ccf7f548a' AND "supplierId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
 INSERT INTO "Device" (
     id, name, status, role, "deviceType",
     "zoneId", "networkType",
-    "supplierId", "organizationId",
+    "supplierId",
     architecture, "updatedAt"
 ) VALUES (
     '0e8c9981-6781-5e20-9d8e-a84ccf7f548a', 'bench-1', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
     '00000000-0000-0000-0000-111111111111', 'Public'::"DeviceNetworkType",
-    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'), (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
+    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
     'amd64', NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
@@ -21,7 +24,6 @@ ON CONFLICT (id) DO UPDATE SET
     "deviceType" = EXCLUDED."deviceType",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",
-    "organizationId" = EXCLUDED."organizationId",
     architecture = EXCLUDED.architecture,
     "updatedAt" = NOW();
 INSERT INTO "Server" (id, "deviceId", "powerStatus", "createdAt", "updatedAt")
@@ -36,13 +38,15 @@ ON CONFLICT ("deviceId") DO UPDATE SET
     "solCapable" = EXCLUDED."solCapable", "solEnabled" = EXCLUDED."solEnabled",
     "baudRate" = EXCLUDED."baudRate", "optimalPort" = EXCLUDED."optimalPort",
     "availablePorts" = EXCLUDED."availablePorts", "updatedAt" = NOW();
+UPDATE "Interface" SET
+    type = 'ETHERNET_1G'::"InterfaceType", enabled = true, "mgmtOnly" = false,
+    description = 'Primary data NIC (PXE)', "updatedAt" = NOW()
+WHERE "deviceId" = '0e8c9981-6781-5e20-9d8e-a84ccf7f548a' AND lower("macAddress") = '00:00:5e:00:53:b4' AND "deletedAt" IS NULL;
 INSERT INTO "Interface"
     (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
-VALUES (gen_random_uuid(), 'eth0', 'ETHERNET_1G'::"InterfaceType", true,
-    '00:00:5e:00:53:b4', false, '0e8c9981-6781-5e20-9d8e-a84ccf7f548a', 'Primary data NIC (PXE)', NOW())
-ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
-    type = EXCLUDED.type, "macAddress" = EXCLUDED."macAddress",
-    "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();
+SELECT gen_random_uuid(), 'eth0', 'ETHERNET_1G'::"InterfaceType", true,
+    '00:00:5e:00:53:b4', false, '0e8c9981-6781-5e20-9d8e-a84ccf7f548a', 'Primary data NIC (PXE)', NOW()
+WHERE NOT EXISTS (SELECT 1 FROM "Interface" WHERE "deviceId" = '0e8c9981-6781-5e20-9d8e-a84ccf7f548a' AND lower("macAddress") = '00:00:5e:00:53:b4' AND "deletedAt" IS NULL);
 INSERT INTO "Interface"
     (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
 VALUES (gen_random_uuid(), 'IPMI', 'IPMI_BMC'::"InterfaceType", true,
@@ -59,15 +63,18 @@ SELECT gen_random_uuid(), '198.51.100.250'::inet, 'ACTIVE'::"IpStatus", (SELECT 
 FROM "Interface" WHERE "deviceId" = '0e8c9981-6781-5e20-9d8e-a84ccf7f548a' AND name = 'IPMI';
 
 -- bench-2 id=95cea2ca-2407-5fd7-886c-a36fe707c379 pxe=00:00:5e:00:53:c4 bmc=198.51.100.251 net=Public arch=arm64 zone=00000000-0000-0000-0000-111111111111
+UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()
+WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' AND name = 'bench-2'
+  AND id <> '95cea2ca-2407-5fd7-886c-a36fe707c379' AND "supplierId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
 INSERT INTO "Device" (
     id, name, status, role, "deviceType",
     "zoneId", "networkType",
-    "supplierId", "organizationId",
+    "supplierId",
     architecture, "updatedAt"
 ) VALUES (
     '95cea2ca-2407-5fd7-886c-a36fe707c379', 'bench-2', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
     '00000000-0000-0000-0000-111111111111', 'Public'::"DeviceNetworkType",
-    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'), (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
+    (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
     'arm64', NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
@@ -75,7 +82,6 @@ ON CONFLICT (id) DO UPDATE SET
     "deviceType" = EXCLUDED."deviceType",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",
-    "organizationId" = EXCLUDED."organizationId",
     architecture = EXCLUDED.architecture,
     "updatedAt" = NOW();
 INSERT INTO "Server" (id, "deviceId", "powerStatus", "createdAt", "updatedAt")
@@ -90,13 +96,15 @@ ON CONFLICT ("deviceId") DO UPDATE SET
     "solCapable" = EXCLUDED."solCapable", "solEnabled" = EXCLUDED."solEnabled",
     "baudRate" = EXCLUDED."baudRate", "optimalPort" = EXCLUDED."optimalPort",
     "availablePorts" = EXCLUDED."availablePorts", "updatedAt" = NOW();
+UPDATE "Interface" SET
+    type = 'ETHERNET_1G'::"InterfaceType", enabled = true, "mgmtOnly" = false,
+    description = 'Primary data NIC (PXE)', "updatedAt" = NOW()
+WHERE "deviceId" = '95cea2ca-2407-5fd7-886c-a36fe707c379' AND lower("macAddress") = '00:00:5e:00:53:c4' AND "deletedAt" IS NULL;
 INSERT INTO "Interface"
     (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
-VALUES (gen_random_uuid(), 'eth0', 'ETHERNET_1G'::"InterfaceType", true,
-    '00:00:5e:00:53:c4', false, '95cea2ca-2407-5fd7-886c-a36fe707c379', 'Primary data NIC (PXE)', NOW())
-ON CONFLICT ("deviceId", name) WHERE "deletedAt" IS NULL DO UPDATE SET
-    type = EXCLUDED.type, "macAddress" = EXCLUDED."macAddress",
-    "mgmtOnly" = EXCLUDED."mgmtOnly", "updatedAt" = NOW();
+SELECT gen_random_uuid(), 'eth0', 'ETHERNET_1G'::"InterfaceType", true,
+    '00:00:5e:00:53:c4', false, '95cea2ca-2407-5fd7-886c-a36fe707c379', 'Primary data NIC (PXE)', NOW()
+WHERE NOT EXISTS (SELECT 1 FROM "Interface" WHERE "deviceId" = '95cea2ca-2407-5fd7-886c-a36fe707c379' AND lower("macAddress") = '00:00:5e:00:53:c4' AND "deletedAt" IS NULL);
 INSERT INTO "Interface"
     (id, name, type, enabled, "macAddress", "mgmtOnly", "deviceId", description, "updatedAt")
 VALUES (gen_random_uuid(), 'IPMI', 'IPMI_BMC'::"InterfaceType", true,

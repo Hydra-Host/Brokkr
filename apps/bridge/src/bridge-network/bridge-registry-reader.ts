@@ -2,12 +2,11 @@ import { isIP } from 'node:net';
 
 import { getErrorMessage } from '../common/error-utils';
 
-import { isRecord } from '@repo/utils';
+import { ipv4ToInt, isRecord, isRoutableUnicastIpv4 } from '@repo/utils';
 
 import { getLeaderConfig } from '../leader-election/leader-election.config';
 import { getLogger } from '../logger/logger.service';
 import { isClientFacingName } from './bridge-ip-resolution.service';
-import { isRoutableUnicastIpv4 } from './ip-utils';
 
 const APP_CLASS_NAME = 'bridge-registry-reader';
 
@@ -263,18 +262,6 @@ function cidrContains(cidr: string, addr: string): boolean {
   if (netBits === null || addrBits === null) return false;
   if (prefix < 128 && netBits.slice(prefix).includes('1')) return false;
   return netBits.slice(0, prefix) === addrBits.slice(0, prefix);
-}
-
-function ipv4ToInt(addr: string): number | null {
-  const parts = addr.split('.');
-  if (parts.length !== 4) return null;
-  let value = 0;
-  for (const part of parts) {
-    const octet = Number.parseInt(part, 10);
-    if (!Number.isInteger(octet) || octet < 0 || octet > 255) return null;
-    value = (value * 256 + octet) >>> 0;
-  }
-  return value;
 }
 
 function ipv6ToBits(addr: string): string | null {

@@ -34,9 +34,17 @@ export function useStackConfigForm() {
   const [identity, setIdentity] = useState<Identity>({
     pg: { user: 'brokkr', password: 'password', db: 'brokkr' },
     orgId: '00000000-0000-0000-0000-000000000000',
+    redis: { password: 'password' },
+    mailpit: { password: 'password' },
   });
   const [osLayer, setOsLayer] = useState<OsLayer>({ originHost: '', resolvers: '' });
-  const [lan, setLan] = useState<Lan>({ expose: false });
+  const [lan, setLan] = useState<Lan>({
+    mode: 'loopback',
+    bindAddress: '',
+    publicHost: '',
+    datastoreAuth: true,
+    expose: false,
+  });
   const [telemetry, setTelemetry] = useState<Telemetry>({ enable: false });
   const [portVals, setPortVals] = useState<Record<string, string>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -126,8 +134,14 @@ export function useStackConfigForm() {
     put('identity.pg.password', identity.pg.password, was?.identity.pg.password);
     put('identity.pg.db', identity.pg.db, was?.identity.pg.db);
     put('identity.orgId', identity.orgId, was?.identity.orgId);
+    put('identity.redis.password', identity.redis.password, was?.identity.redis.password);
+    put('identity.mailpit.password', identity.mailpit.password, was?.identity.mailpit.password);
     put('osLayerCache.originHost', osLayer.originHost, was?.osLayerCache.originHost);
     put('osLayerCache.resolvers', osLayer.resolvers, was?.osLayerCache.resolvers);
+    put('lan.mode', lan.mode, was?.lan.mode);
+    put('lan.bindAddress', lan.bindAddress, was?.lan.bindAddress);
+    put('lan.publicHost', lan.publicHost, was?.lan.publicHost);
+    put('lan.datastoreAuth', String(lan.datastoreAuth), was === null ? undefined : String(was.lan.datastoreAuth));
     put('lan.expose', String(lan.expose), was === null ? undefined : String(was.lan.expose));
     put('telemetry.enable', String(telemetry.enable), was === null ? undefined : String(was.telemetry.enable));
     return out;

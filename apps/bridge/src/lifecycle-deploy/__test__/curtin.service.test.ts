@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { DATA_PARTITION_OVERHEAD_BYTES, ROOT_PARTITION_OVERHEAD_BYTES, UEFI_ROOT_OFFSET } from '@repo/utils';
+
 import {
   computeLegacyPartitionGeometry,
   computeUefiPartitionGeometry,
@@ -282,5 +284,204 @@ describe('normalizeMdName', () => {
     ]);
     expect(curtin.yamlContent).not.toContain('fixed-key\nfixed-key');
     expect(curtin.yamlContent.replace(/(key:\s+).+/g, '$1<redacted>')).not.toContain('fixed-key');
+  });
+});
+
+describe('requested size', () => {
+  const GIB_10 = 10_737_418_240;
+
+  it('sizes a uefi direct root partition to the requested bytes', async () => {
+    const curtin = await createCurtinService('/target', [rootGroup({ size: GIB_10, disk_size: 100_000_000_000 })], {
+      uefi: true,
+      jobId: 'j',
+    });
+    await curtin.buildLayout();
+
+    const root = curtin.storageConfig.find((e) => e.id === 'partition-1');
+    expect(root).toMatchObject({ offset: UEFI_ROOT_OFFSET, size: GIB_10 });
+    const esp = curtin.storageConfig.find((e) => e.id === 'partition-0');
+    expect(esp).toMatchObject({ flag: 'boot', offset: 1048576, size: 1127219200 });
+  });
+
+  it('sizes both legacy raid1 root partitions to the requested bytes', async () => {
+    const curtin = await createCurtinService(
+      '/target',
+      [rootGroup({ disks: ['sda', 'sdb'], config: 'raid1', size: GIB_10 })],
+      { uefi: false, jobId: 'j' },
+    );
+    await curtin.buildLayout();
+
+    const roots = curtin.storageConfig.filter((e) => 'number' in e && e.number === 3);
+    expect(roots).toHaveLength(2);
+    for (const root of roots) {
+      expect(root).toMatchObject({ size: GIB_10 });
+    }
+  });
+
+  it('splits an lvm root request across member partitions with ceiling division', async () => {
+    const curtin = await createCurtinService(
+      '/target',
+      [rootGroup({ disks: ['sda', 'sdb'], config: 'lvm', size: GIB_10 })],
+      { uefi: true, jobId: 'j' },
+    );
+    await curtin.buildLayout();
+
+    const roots = curtin.storageConfig.filter((e) => 'number' in e && e.number === 2);
+    expect(roots).toHaveLength(2);
+    for (const root of roots) {
+      expect(root).toMatchObject({ size: 5_368_709_120 });
+    }
+  });
+
+  it('creates sized raid5 data partitions and stacks raid and format on them', async () => {
+    const curtin = await createCurtinService(
+      '/target',
+      [
+        rootGroup(),
+        rootGroup({ mountpoint: '/data', config: 'raid5', disks: ['sdb', 'sdc', 'sdd'], size: 21_474_836_480 }),
+      ],
+      { uefi: true, jobId: 'j' },
+    );
+    await curtin.buildLayout();
+
+    const dataPartitions = curtin.storageConfig.filter(
+      (e) => 'device' in e && 'offset' in e && ['disk-sdb', 'disk-sdc', 'disk-sdd'].includes(e.device),
+    );
+    expect(dataPartitions).toHaveLength(3);
+    for (const partition of dataPartitions) {
+      expect(partition).toMatchObject({ number: 1, offset: 1048576, size: GIB_10 });
+    }
+
+    const raid = curtin.storageConfig.find((e) => e.type === 'raid');
+    expect(raid).toMatchObject({ raidlevel: 'raid5', devices: dataPartitions.map((p) => p.id) });
+    const format = curtin.storageConfig.find((e) => 'volume' in e && e.volume === raid?.id);
+    expect(format).toBeDefined();
+  });
+
+  it('keeps unsized data groups on whole-disk ids with no partitions', async () => {
+    const curtin = await createCurtinService(
+      '/target',
+      [rootGroup(), rootGroup({ mountpoint: '/data', config: 'raid5', disks: ['sdb', 'sdc', 'sdd'] })],
+      { uefi: true, jobId: 'j' },
+    );
+    await curtin.buildLayout();
+
+    const dataPartitions = curtin.storageConfig.filter(
+      (e) => 'device' in e && 'offset' in e && e.device !== 'disk-sda',
+    );
+    expect(dataPartitions).toEqual([]);
+    const raid = curtin.storageConfig.find((e) => e.type === 'raid');
+    expect(raid).toMatchObject({ devices: ['disk-sdb', 'disk-sdc', 'disk-sdd'] });
+    const format = curtin.storageConfig.find((e) => 'volume' in e && e.volume === raid?.id);
+    expect(format).toBeDefined();
+  });
+
+  it('rejects a root size exceeding the available root capacity', async () => {
+    const curtin = await createCurtinService('/target', [rootGroup({ size: DISK_SIZE })], { uefi: true, jobId: 'j' });
+    await expect(curtin.buildLayout()).rejects.toBeInstanceOf(StorageConfigError);
+    await expect(curtin.buildLayout()).rejects.toThrowError('Requested size exceeds the available root capacity on /');
+  });
+
+  it('rejects a data size exceeding the disk capacity', async () => {
+    const curtin = await createCurtinService(
+      '/target',
+      [rootGroup(), rootGroup({ mountpoint: '/data', disks: ['sdb'], size: DISK_SIZE })],
+      { uefi: true, jobId: 'j' },
+    );
+    await expect(curtin.buildLayout()).rejects.toBeInstanceOf(StorageConfigError);
+    await expect(curtin.buildLayout()).rejects.toThrowError('Requested size exceeds the disk capacity for /data');
+  });
+
+  it('rejects size on an encrypted group', async () => {
+    await expect(
+      createCurtinService('/target', [
+        rootGroup(),
+        rootGroup({ mountpoint: '/data', disks: ['sdb'], encrypt: true, size: GIB_10 }),
+      ]),
+    ).rejects.toThrowError('Cannot set a size on an encrypted disk group');
+  });
+
+  it('rejects size on a preserved group', async () => {
+    await expect(
+      createCurtinService('/target', [
+        rootGroup(),
+        rootGroup({ mountpoint: '/data', disks: ['sdb'], wipe: false, size: GIB_10 }),
+      ]),
+    ).rejects.toThrowError('Cannot set a size on a preserved disk group');
+  });
+
+  it('rejects a zero size', async () => {
+    await expect(createCurtinService('/target', [rootGroup({ size: 0 })])).rejects.toThrowError(
+      'Disk group size must be a positive integer number of bytes',
+    );
+  });
+
+  it('rejects a fractional size', () => {
+    expect(
+      () =>
+        new DiskGroup({
+          disks: ['sda'],
+          config: 'direct',
+          format: 'ext4',
+          mountpoint: '/',
+          diskSize: DISK_SIZE,
+          size: 10.5,
+        }),
+    ).toThrowError('Disk group size must be a positive integer number of bytes');
+  });
+
+  it('rejects a fractional size through the factory without truncating', async () => {
+    await expect(createCurtinService('/target', [rootGroup({ size: 10.5 })])).rejects.toThrowError(
+      'expected an integer number of bytes for size, got 10.5',
+    );
+  });
+
+  it('rejects a non-numeric size through the factory', async () => {
+    await expect(createCurtinService('/target', [rootGroup({ size: '10' })])).rejects.toThrowError(
+      'expected an integer number of bytes for size, got string',
+    );
+  });
+});
+
+describe('hub overhead constants round-trip against curtin geometry', () => {
+  const maxRootSize = DISK_SIZE - Number(ROOT_PARTITION_OVERHEAD_BYTES);
+  const maxDataSize = DISK_SIZE - Number(DATA_PARTITION_OVERHEAD_BYTES);
+
+  it('builds a legacy root at exactly the hub-accepted capacity and rejects one byte more', async () => {
+    const atMax = await createCurtinService('/target', [rootGroup({ size: maxRootSize })], {
+      uefi: false,
+      jobId: 'j',
+    });
+    await expect(atMax.buildLayout()).resolves.toBeUndefined();
+
+    const overMax = await createCurtinService('/target', [rootGroup({ size: maxRootSize + 1 })], {
+      uefi: false,
+      jobId: 'j',
+    });
+    await expect(overMax.buildLayout()).rejects.toThrowError('Requested size exceeds the available root capacity on /');
+  });
+
+  it('builds a uefi root at the hub-accepted capacity because legacy overhead dominates', async () => {
+    const curtin = await createCurtinService('/target', [rootGroup({ size: maxRootSize })], {
+      uefi: true,
+      jobId: 'j',
+    });
+    await expect(curtin.buildLayout()).resolves.toBeUndefined();
+  });
+
+  it('builds a data group at exactly the hub-accepted capacity and rejects one byte more', async () => {
+    const atMax = await createCurtinService(
+      '/target',
+      [rootGroup(), rootGroup({ mountpoint: '/data', disks: ['sdb'], size: maxDataSize })],
+      { uefi: true, jobId: 'j' },
+    );
+    await expect(atMax.buildLayout()).resolves.toBeUndefined();
+
+    const overMax = await createCurtinService(
+      '/target',
+      [rootGroup(), rootGroup({ mountpoint: '/data', disks: ['sdb'], size: maxDataSize + 1 })],
+      { uefi: true, jobId: 'j' },
+    );
+    await expect(overMax.buildLayout()).rejects.toThrowError('Requested size exceeds the disk capacity for /data');
   });
 });

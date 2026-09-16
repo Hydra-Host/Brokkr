@@ -36,6 +36,7 @@
     "@mdx-js/rollup": "^3.1.1",
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
+    "@repo/vite-config": "workspace:*",
     "@tanstack/router-cli": "^1.158.0",
     "@tanstack/router-plugin": "^1.158.0",
     "@terrastruct/d2": "^0.1.33",

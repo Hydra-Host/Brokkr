@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from '@nestjs/testing';
-import { DeviceRole } from '@repo/database';
+import { DeviceRole, TagObjectType } from '@repo/database';
 import { ConfigAtomWriter } from 'src/common/redis';
 import { NetplanService } from 'src/devices/netplan/netplan.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
@@ -56,6 +56,7 @@ describe('DeviceRecordPublisher', () => {
     device: { findUnique: Mock };
     zone: { findUnique: Mock };
     deployment: { findFirst: Mock };
+    tagAssignment: { findMany: Mock };
   };
   let lastMutatorResult: MutatorResult | null;
   let logger: { log: Mock; warn: Mock };
@@ -85,6 +86,7 @@ describe('DeviceRecordPublisher', () => {
       device: { findUnique: vi.fn() },
       zone: { findUnique: vi.fn().mockResolvedValue(null) },
       deployment: { findFirst: vi.fn().mockResolvedValue(null) },
+      tagAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -467,8 +469,9 @@ describe('DeviceRecordPublisher', () => {
       expect(value.is_vpc).toBe(false);
     });
 
-    it('emits empty platform_tags and installed_os/rescue_os from the active deployment', async () => {
+    it('emits platform_tags and installed_os/rescue_os from the active deployment', async () => {
       prisma.device.findUnique.mockResolvedValueOnce(makeDeviceRow());
+      prisma.tagAssignment.findMany.mockResolvedValueOnce([{ tag: { slug: 'vm' } }, { tag: { slug: 'compute' } }]);
       prisma.deployment.findFirst.mockResolvedValueOnce({
         baseLayer: { slug: 'ubuntu-24.04' },
         rescueLayer: { slug: 'brokkr-discovery' },
@@ -477,7 +480,7 @@ describe('DeviceRecordPublisher', () => {
       await publisher.writeForDevice(DEVICE_UUID);
 
       const value = atomWriter.writeAtomJson.mock.calls[0][2];
-      expect(value.platform_tags).toEqual([]);
+      expect(value.platform_tags).toEqual(['compute', 'vm']);
       expect(value.installed_os).toBe('ubuntu-24.04');
       expect(value.rescue_os).toBe('brokkr-discovery');
     });
@@ -496,16 +499,44 @@ describe('DeviceRecordPublisher', () => {
       expect(value.rescue_os).toBeNull();
     });
 
-    it('null installed_os/rescue_os + empty tags when there is no active deployment', async () => {
+    it('null installed_os/rescue_os + tag slugs when there is no active deployment', async () => {
       prisma.device.findUnique.mockResolvedValueOnce(makeDeviceRow());
+      prisma.tagAssignment.findMany.mockResolvedValueOnce([{ tag: { slug: 'managed' } }]);
 
       await publisher.writeForDevice(DEVICE_UUID);
 
       const value = atomWriter.writeAtomJson.mock.calls[0][2];
       expect(value.installed_os).toBeNull();
       expect(value.rescue_os).toBeNull();
-      expect(value.platform_tags).toEqual([]);
+      expect(value.platform_tags).toEqual(['managed']);
       expect(atomWriter.writeAtomJson).toHaveBeenCalledOnce();
+    });
+
+    it("publishes the device's tag slugs as platform tags", async () => {
+      prisma.device.findUnique.mockResolvedValueOnce(makeDeviceRow());
+      prisma.tagAssignment.findMany.mockResolvedValueOnce([
+        { tag: { slug: 'VM' } },
+        { tag: { slug: 'Compute' } },
+        { tag: { slug: null } },
+        { tag: { slug: 'compute' } },
+      ]);
+
+      await publisher.writeForDevice(DEVICE_UUID);
+
+      expect(prisma.tagAssignment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { objectType: TagObjectType.DEVICE, objectId: DEVICE_UUID } }),
+      );
+      const value = atomWriter.writeAtomJson.mock.calls[0][2];
+      expect(value.platform_tags).toEqual(['compute', 'vm']);
+    });
+
+    it('publishes an empty list for a device with no tags', async () => {
+      prisma.device.findUnique.mockResolvedValueOnce(makeDeviceRow());
+
+      await publisher.writeForDevice(DEVICE_UUID);
+
+      const value = atomWriter.writeAtomJson.mock.calls[0][2];
+      expect(value.platform_tags).toEqual([]);
     });
 
     it('still DELs the data atom for an unmonitored role when the record write loses the stale race', async () => {

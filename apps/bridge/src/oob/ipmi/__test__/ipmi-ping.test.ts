@@ -10,25 +10,29 @@ type SocketBehavior = {
 };
 
 let nextBehavior: SocketBehavior = {};
+let behaviorQueue: SocketBehavior[] = [];
+let sendCount = 0;
 
 class FakeSocket extends EventEmitter {
   closed = false;
   send(_data: Buffer, _port: number, _ip: string, cb?: (err: Error | null) => void): void {
-    if (nextBehavior.sendError) {
-      if (cb) cb(nextBehavior.sendError);
+    sendCount += 1;
+    const behavior = behaviorQueue.length > 0 ? (behaviorQueue.shift() ?? {}) : nextBehavior;
+    if (behavior.sendError) {
+      if (cb) cb(behavior.sendError);
       return;
     }
     if (cb) cb(null);
-    if (nextBehavior.emitError) {
-      setImmediate(() => this.emit('error', nextBehavior.emitError));
+    if (behavior.emitError) {
+      setImmediate(() => this.emit('error', behavior.emitError));
       return;
     }
-    if (nextBehavior.recvData) {
-      const delay = nextBehavior.recvDelayMs ?? 0;
+    if (behavior.recvData) {
+      const delay = behavior.recvDelayMs ?? 0;
       if (delay > 0) {
-        setTimeout(() => this.emit('message', nextBehavior.recvData), delay);
+        setTimeout(() => this.emit('message', behavior.recvData), delay);
       } else {
-        setImmediate(() => this.emit('message', nextBehavior.recvData));
+        setImmediate(() => this.emit('message', behavior.recvData));
       }
     }
   }
@@ -49,6 +53,8 @@ let isValidIpmiResponse: typeof import('../ping.js').isValidIpmiResponse;
 
 beforeEach(async () => {
   nextBehavior = {};
+  behaviorQueue = [];
+  sendCount = 0;
   vi.resetModules();
   ({ ipmiPing, ipmiPingOutcome, ipmiPingWithRetry, buildIpmiPingPacket, isValidIpmiResponse } = await import(
     '../ping.js'
@@ -131,6 +137,50 @@ describe('ipmiPingWithRetry', () => {
   it('returns false when every attempt fails', async () => {
     nextBehavior = { recvData: Buffer.from([0xff, 0x00, 0x00, 0x00]) };
     expect(await ipmiPingWithRetry('10.0.0.1', { maxAttempts: 3, backoffSeconds: 0, timeout: 0.05 })).toBe(false);
+    expect(sendCount).toBe(3);
+  });
+
+  it('reports reachable when a dropped first packet is answered on a later attempt', async () => {
+    behaviorQueue = [{ sendError: new Error('EAGAIN') }, { recvData: validResponse() }];
+    expect(await ipmiPingWithRetry('10.0.0.1', { maxAttempts: 3, backoffSeconds: 0, timeout: 0.05 })).toBe(true);
+    expect(sendCount).toBe(2);
+  });
+
+  it('reports reachable when only the final attempt is answered', async () => {
+    behaviorQueue = [
+      { sendError: new Error('EAGAIN') },
+      { emitError: new Error('EHOSTUNREACH') },
+      { recvData: validResponse() },
+    ];
+    expect(await ipmiPingWithRetry('10.0.0.1', { maxAttempts: 3, backoffSeconds: 0, timeout: 0.05 })).toBe(true);
+    expect(sendCount).toBe(3);
+  });
+
+  it('stops probing as soon as an attempt succeeds', async () => {
+    behaviorQueue = [{ recvData: validResponse() }];
+    expect(await ipmiPingWithRetry('10.0.0.1', { maxAttempts: 3, backoffSeconds: 0, timeout: 0.05 })).toBe(true);
+    expect(sendCount).toBe(1);
+  });
+
+  it('waits the backoff before the next attempt', async () => {
+    vi.useFakeTimers();
+    behaviorQueue = [{ sendError: new Error('EAGAIN') }, { recvData: validResponse(), recvDelayMs: 1 }];
+    const pending = ipmiPingWithRetry('10.0.0.1', { maxAttempts: 3, backoffSeconds: 1, timeout: 0.05 });
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(sendCount).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sendCount).toBe(2);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await pending).toBe(true);
+  });
+
+  it('makes a single attempt when retries are disabled', async () => {
+    nextBehavior = { recvData: Buffer.from([0xff, 0x00, 0x00, 0x00]) };
+    expect(await ipmiPingWithRetry('10.0.0.1', { maxAttempts: 1, backoffSeconds: 0, timeout: 0.05 })).toBe(false);
+    expect(sendCount).toBe(1);
   });
 });
 

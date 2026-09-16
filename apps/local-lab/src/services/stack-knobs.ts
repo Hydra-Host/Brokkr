@@ -166,4 +166,4 @@ export const readOnlyPortRows = (
   catalog: Map<string, KnobCatalogEntry>,
 ): StackConfig['servicePorts'] => servicePortRows(keys, values, true, catalog);
 
-export const OBSERVABILITY_PROCS = ['otel-collector', 'tempo', 'grafana'];
+export const OBSERVABILITY_PROCS = ['otel-collector', 'tempo', 'loki', 'grafana'];

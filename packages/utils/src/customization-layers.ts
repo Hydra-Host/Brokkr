@@ -11,3 +11,14 @@ export function compareCustomizationLayers(a: { slug: string }, b: { slug: strin
   const bo = LAYER_DISPLAY_ORDER[b.slug] ?? 99;
   return ao - bo;
 }
+
+/** Reset payload must cover every catalog group slug: a bare `{}` leaves prior picks registered under `customizations.<groupSlug>` intact. */
+export function emptyCustomizations(
+  availableComponentLayersByBase: Record<string, ReadonlyArray<{ slug: string; selectionType: string }>>,
+): Record<string, string | string[]> {
+  const empty: Record<string, string | string[]> = {};
+  for (const layers of Object.values(availableComponentLayersByBase)) {
+    for (const group of layers) empty[group.slug] = group.selectionType === 'MULTI_SELECT' ? [] : '';
+  }
+  return empty;
+}

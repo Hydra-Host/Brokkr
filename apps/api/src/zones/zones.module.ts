@@ -7,6 +7,8 @@ import { IpamModule } from 'src/ipam/ipam.module';
 import { LoggerModule } from 'src/logger/logger.module';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { RegionsModule } from 'src/regions/regions.module';
+import { DhcpLeasesController } from './dhcp-leases.controller';
+import { DhcpLeasesService } from './dhcp-leases.service';
 import { DnsConfigController } from './dns-config.controller';
 import { DnsConfigService } from './dns-config.service';
 import { ServiceTuningController } from './service-tuning.controller';
@@ -26,8 +28,8 @@ import { ZonesService } from './zones.service';
     DnsConfigModule,
     DnsRecordsModule,
   ],
-  controllers: [ZonesController, DnsConfigController, ServiceTuningController],
-  providers: [ZonesService, ZoneRedisAclService, DnsConfigService, ServiceTuningService],
+  controllers: [ZonesController, DnsConfigController, DhcpLeasesController, ServiceTuningController],
+  providers: [ZonesService, ZoneRedisAclService, DnsConfigService, DhcpLeasesService, ServiceTuningService],
   exports: [ZonesService, ZoneRedisAclService],
 })
 export class ZonesModule {}

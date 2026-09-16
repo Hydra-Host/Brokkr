@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { RequestSource, WebhookEventType } from '@repo/database';
 import { buildCustomizationCatalog, LayerRecord, resolveZoneBuildId } from '@repo/layers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -78,7 +78,7 @@ describe('InventoryService.provisionDirectProvisionDevice routing', () => {
   it('routes a free host to requestProvision with isInterruptible=false', async () => {
     vi.spyOn(InventoryRecord, 'findListableById').mockResolvedValue(buildAggregate(null) as never);
 
-    await service.provisionDirectProvisionDevice({ ...baseData });
+    const result = await service.provisionDirectProvisionDevice({ ...baseData });
 
     expect(lifecycleService.requestProvision).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -89,6 +89,7 @@ describe('InventoryService.provisionDirectProvisionDevice routing', () => {
       }),
     );
     expect(lifecycleService.requestInterruptibleProvision).not.toHaveBeenCalled();
+    expect(result).toEqual({ jobId: 'job-1' });
   });
 
   it('forwards the device storageDrives to the provision validator', async () => {
@@ -113,13 +114,29 @@ describe('InventoryService.provisionDirectProvisionDevice routing', () => {
     const aggregate = buildAggregate({ isInterruptible: true, customerId: 'outgoing-org' });
     vi.spyOn(InventoryRecord, 'findListableById').mockResolvedValue(aggregate as never);
 
-    await service.provisionDirectProvisionDevice({ ...baseData, isInterruptible: true });
+    const result = await service.provisionDirectProvisionDevice({ ...baseData, isInterruptible: true });
 
     expect(lifecycleService.requestInterruptibleProvision).toHaveBeenCalledWith(
       expect.objectContaining({ deviceId: 'device-1', request: expect.objectContaining({ isInterruptible: true }) }),
     );
     expect(contextService.requirePermission).toHaveBeenCalledWith('lifecycle-request', 'create');
     expect(lifecycleService.requestProvision).not.toHaveBeenCalled();
+    expect(result).toEqual({ jobId: null });
+  });
+
+  it('returns the incoming job id when an interruptible takeover executes immediately', async () => {
+    const aggregate = buildAggregate({ isInterruptible: true, customerId: 'outgoing-org' });
+    vi.spyOn(InventoryRecord, 'findListableById').mockResolvedValue(aggregate as never);
+    lifecycleService.requestInterruptibleProvision.mockResolvedValueOnce({
+      status: 'executing',
+      deprovisionJobId: 'job-out-1',
+      incomingJobId: 'job-in-1',
+      claimId: 'claim-1',
+    });
+
+    const result = await service.provisionDirectProvisionDevice({ ...baseData, isInterruptible: true });
+
+    expect(result).toEqual({ jobId: 'job-in-1' });
   });
 
   it('rejects a non-interruptible takeover attempt with a 400', async () => {
@@ -564,5 +581,91 @@ describe('InventoryService catalog wiring', () => {
     const [, eventDto] = scheduleDelivery.mock.calls[0];
     expect(eventDto.data.availableBaseLayers).toEqual(mockBaseLayers);
     expect(eventDto.data.availableComponentLayersByBase).toEqual({});
+  });
+});
+
+describe('InventoryService.getListingById invite access', () => {
+  const identity = {
+    organizationId: 'incoming-org',
+    authType: 'Session' as const,
+    session: { user: { email: 'a@b.c' } },
+  };
+  const contextService = {
+    requireIdentity: identity,
+    identity,
+    userId: 'user-1',
+    organizationId: 'incoming-org',
+    requestSource: RequestSource.API,
+  };
+  const logger = { warn: vi.fn(), error: vi.fn(), log: vi.fn() };
+
+  const mockCatalog = {
+    bases: [{ slug: 'ubuntu-22', name: 'Ubuntu 22.04', kind: 'BASE' }],
+    componentsByBase: {},
+  };
+
+  const listingAggregate = (inviteeOrganizationId: string | null) => ({
+    id: 'device-1',
+    supplierId: 'supplier-org',
+    zoneId: 'zone-1',
+    server: {
+      lifecycleStatus: 'INVENTORY',
+      isListed: false,
+      teeEnabled: false,
+      deployments: [],
+      serversInReservationInvite: [
+        {
+          serverId: 'server-1',
+          reservationInviteId: 'invite-1',
+          reservationInvite: {
+            inviteeOrganizationId,
+            inviteeEmail: null,
+            inviterEmail: 'admin@supplier.com',
+            dateAccepted: null,
+            dateDeleted: null,
+            dateCreated: new Date(),
+            dateExpires: new Date(Date.now() + 86_400_000),
+            price: 100,
+            billingFrequency: 'WEEKLY',
+            interruptibleNoticePeriod: null,
+            inviteeOrganization: null,
+          },
+        },
+      ],
+    },
+  });
+
+  let service: InventoryService;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    service = new InventoryService(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      contextService as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      logger as never,
+    );
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('allows an invitee to view an unlisted device that has a pending invite', async () => {
+    vi.spyOn(InventoryRecord, 'findListableById').mockResolvedValue(listingAggregate('incoming-org') as never);
+    vi.mocked(buildCustomizationCatalog).mockResolvedValueOnce(mockCatalog as never);
+
+    await expect(service.getListingById('device-1')).resolves.toMatchObject({ id: 'device-1' });
+  });
+
+  it('denies an unrelated caller access to an unlisted device with a pending invite', async () => {
+    vi.spyOn(InventoryRecord, 'findListableById').mockResolvedValue(listingAggregate('other-org') as never);
+
+    await expect(service.getListingById('device-1')).rejects.toThrow(NotFoundException);
+    expect(logger.warn).toHaveBeenCalled();
   });
 });

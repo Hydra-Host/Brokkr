@@ -111,11 +111,6 @@ export function ManifestViewer() {
       { body: { url } },
       {
         onSuccess: (res) => {
-          if (res.status !== 200) {
-            setConsoleTitle(null);
-            setSeedError(bodyError(res.body) ?? `request failed (${res.status})`);
-            return;
-          }
           setConsoleTitle('Seed console');
           stream.open(streamPaths.run(res.body.runId));
         },

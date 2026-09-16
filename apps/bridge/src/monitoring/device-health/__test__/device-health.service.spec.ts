@@ -588,10 +588,19 @@ describe('createDeviceHealthService factory', () => {
 });
 
 describe('checkRedfishPing TLS policy', () => {
-  const ENV_KEYS = ['BROKKR_ENV', 'HH_ENV', 'ENVIRONMENT', 'LOCAL_SIMULATION_ENABLED', 'REDFISH_TLS_VERIFY'];
+  const ENV_KEYS = [
+    'BROKKR_ENV',
+    'HH_ENV',
+    'ENVIRONMENT',
+    'LOCAL_SIMULATION_ENABLED',
+    'NETWORK_REDFISH_PORT',
+    'SIM_REDFISH_PORT',
+    'SIM_BMC_CIDR',
+    'REDFISH_TLS_VERIFY',
+  ];
   const savedEnv: Record<string, string | undefined> = {};
 
-  function spyHttpsRequest(capture: { options: https.RequestOptions | null }) {
+  function spyRequest(transport: { request: typeof https.request }, capture: { options: https.RequestOptions | null }) {
     const fakeImpl = (
       options: https.RequestOptions,
       callback?: (res: http.IncomingMessage) => void,
@@ -606,7 +615,11 @@ describe('checkRedfishPing TLS policy', () => {
       });
       return { on: vi.fn(), write: vi.fn(), end: vi.fn() } as unknown as http.ClientRequest;
     };
-    return vi.spyOn(https, 'request').mockImplementation(fakeImpl as typeof https.request);
+    return vi.spyOn(transport, 'request').mockImplementation(fakeImpl as typeof https.request);
+  }
+
+  function spyHttpsRequest(capture: { options: https.RequestOptions | null }) {
+    return spyRequest(https, capture);
   }
 
   function patchAllButRedfish(service: DeviceHealthService): void {
@@ -660,5 +673,23 @@ describe('checkRedfishPing TLS policy', () => {
 
     expect(spy).toHaveBeenCalledTimes(1);
     expect((capture.options as unknown as https.RequestOptions).rejectUnauthorized).toBe(true);
+  });
+
+  it('requests a simulated bmc over plain http on the simulated port', async () => {
+    process.env.LOCAL_SIMULATION_ENABLED = 'true';
+    process.env.SIM_REDFISH_PORT = '8443';
+    const capture: { options: https.RequestOptions | null } = { options: null };
+    const httpSpy = spyRequest(http, capture);
+    const httpsSpy = spyHttpsRequest({ options: null });
+    const service = svc(buildDeps());
+    patchAllButRedfish(service);
+
+    const result = await service.checkDeviceHealth({ deviceId: 'dev-1', bmcIp: '10.0.0.1' });
+
+    expect(httpSpy).toHaveBeenCalledTimes(1);
+    expect(httpsSpy).not.toHaveBeenCalled();
+    expect(capture.options).toMatchObject({ host: '10.0.0.1', port: 8443, path: '/redfish/v1/' });
+    expect(capture.options).not.toHaveProperty('rejectUnauthorized');
+    expect(result.bmc_redfish_reachable).toBe(true);
   });
 });

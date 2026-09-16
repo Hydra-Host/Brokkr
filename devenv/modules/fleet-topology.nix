@@ -128,6 +128,16 @@ let
           default = null;
           description = "Redfish System Id override; null → the first member of /redfish/v1/Systems.";
         };
+        network_type = lib.mkOption {
+          type = lib.types.nullOr (
+            lib.types.enum [
+              "nat"
+              "public"
+            ]
+          );
+          default = null;
+          description = "Hub Device.networkType the seed stamps on this machine; null → the seed's default.";
+        };
       };
     }
   );
@@ -236,7 +246,7 @@ let
 
   bmBlock =
     assert lib.assertMsg (cfg.baremetal.iface != "" && cfg.baremetal.ifaceIp != "")
-      "fleet.mode = baremetal requires fleet.baremetal.iface and fleet.baremetal.ifaceIp to be set (a real host NIC + its IPv4); set them in devenv.local.nix.";
+      "a bare-metal machine requires fleet.baremetal.iface and fleet.baremetal.ifaceIp to be set (a real host NIC + its IPv4); set them in devenv.local.nix.";
     {
       inherit (cfg.baremetal) iface arch;
       iface_ip = cfg.baremetal.ifaceIp;
@@ -246,6 +256,9 @@ let
   zoneShaped =
     assert lib.assertMsg (builtins.length zonePairs > 0)
       "every fleet.zones entry is disabled, so the fleet would render no zone, no spoke and no seed; leave at least one enabled.";
+    assert lib.assertMsg (
+      cfg.planes.vm || cfg.planes.baremetal
+    ) "the fleet has no enabled node in either plane; enable a VM node or add a bare-metal machine";
     if isDefaultSingle then
       { nodes = map (n: removeAttrs n [ "zone" ]) nodeList; }
     else
@@ -254,20 +267,11 @@ let
         zones = zonesMeta;
       };
 
-  effective =
-    if cfg.mode == "baremetal" then
-      {
-        mode = "baremetal";
-        inherit (cfg) network defaults;
-        nodes = [ ];
-        baremetal = bmBlock;
-      }
-      // (if isDefaultSingle then { } else { zones = zonesMeta; })
-    else
-      {
-        inherit (cfg) network defaults;
-      }
-      // zoneShaped;
+  effective = {
+    inherit (cfg) network defaults;
+  }
+  // zoneShaped
+  // lib.optionalAttrs cfg.planes.baremetal { baremetal = bmBlock; };
 
   # drop null/unset optionals so Pydantic's own defaulting still applies (omit
   # defaults.arch → host-arch detection; omit node.ip → index-derived IP).
@@ -284,13 +288,17 @@ let
 in
 {
   options.fleet = {
-    mode = lib.mkOption {
-      type = lib.types.enum [
-        "vm"
-        "baremetal"
-      ];
-      default = "vm";
-      description = "Fleet mode. 'vm' (default) = the simulated libvirt/qemu fleet — output is byte-identical to the pre-mode topology (no mode: / baremetal: keys). 'baremetal' = real hardware via the baremetal block.";
+    planes = {
+      vm = lib.mkOption {
+        type = lib.types.bool;
+        readOnly = true;
+        description = "True when at least one VM node is enabled; the libvirt plane renders and SIM_REDFISH_PORT is set.";
+      };
+      baremetal = lib.mkOption {
+        type = lib.types.bool;
+        readOnly = true;
+        description = "True when at least one bare-metal machine is enabled; the PXE plane renders on the uplink NIC.";
+      };
     };
     network = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
@@ -311,12 +319,12 @@ in
       iface = lib.mkOption {
         type = lib.types.str;
         default = "";
-        description = "Host NIC the spoke answers DHCP proxy/TFTP on (a real LAN interface). Required when mode == baremetal.";
+        description = "Host NIC the spoke answers DHCP proxy/TFTP on (a real LAN interface). Required when a bare-metal machine is enabled.";
       };
       ifaceIp = lib.mkOption {
         type = lib.types.str;
         default = "";
-        description = "That NIC's IPv4 — the base for the baked CHAIN_BASE_URL + phone-home. Required when mode == baremetal.";
+        description = "That NIC's IPv4 — the base for the baked CHAIN_BASE_URL + phone-home. Required when a bare-metal machine is enabled.";
       };
       arch = lib.mkOption {
         type = lib.types.enum [
@@ -329,16 +337,9 @@ in
       nodes = lib.mkOption {
         type = lib.types.attrsOf bmNodeType;
         default = { };
-        description = "Bare-metal machines keyed by name. Each carries pxe_mac / bmc_ip / bmc_mac (required) + optional arch / zone / system_id. NO creds (sealed separately).";
+        description = "Bare-metal machines keyed by name. Each carries pxe_mac / bmc_ip / bmc_mac (required) + optional arch / zone / system_id / network_type. NO creds (sealed separately).";
       };
     };
-  };
-
-  # Presentation metadata for the one fleet knob declared here; modules/overrides.nix owns the
-  # catalog and derives the widget, the choices and the tooltip from the enum above.
-  config.knobMeta."fleet.mode" = {
-    label = "Fleet mode";
-    group = "Fleet";
   };
 
   # Committed base topology — the tracked default the stack renders from. To change the
@@ -349,57 +350,64 @@ in
   # UUID + SCSI serial/WWN) and data_mac (customer NIC; what qemu reports + bootpd matches).
   # "bc" octet = BMC plane, "da" octet = DAta plane. The base is one zone — add more under
   # fleet.zones.<name> (with a unique index + its own nodes) to model a multi-zone fleet.
-  config.fleet = mkDefaults {
-    network = {
-      name = "brokkr-net";
-      cidr = "192.168.${toString (200 + slot)}.0/24";
-      domain = "sim.local";
-      bmc_cidr = "192.168.${toString (105 + slot)}.0/24";
-    };
-    defaults = {
-      cpus = 2;
-      memory_mb = 2048;
-      disk_gb = 40;
-      bmc = {
-        username = "admin";
-        password = "admin";
+  config.fleet =
+    mkDefaults {
+      network = {
+        name = "brokkr-net";
+        cidr = "192.168.${toString (200 + slot)}.0/24";
+        domain = "sim.local";
+        bmc_cidr = "192.168.${toString (105 + slot)}.0/24";
+      };
+      defaults = {
+        cpus = 2;
+        memory_mb = 2048;
+        disk_gb = 40;
+        bmc = {
+          username = "admin";
+          password = "admin";
+        };
+      };
+      # single zone (index 0, 1 bridge → the lone `spoke`, legacy zone UUID …111). Slot 0 keeps
+      # the literal 4-node set (byte-parity, no console stamps); slots >=1 generate nodeCount
+      # nodes named s<S>-cpu-N with slot-derived MACs + console ports.
+      zones."sim-zone" = {
+        index = 0;
+        bridges = 1;
+        nodes =
+          if slot == 0 then
+            {
+              cpu-1 = {
+                ipmi_mac = "52:54:00:bc:00:01";
+                data_mac = "52:54:00:da:00:01";
+              };
+              cpu-2 = {
+                ipmi_mac = "52:54:00:bc:00:02";
+                data_mac = "52:54:00:da:00:02";
+              };
+              cpu-3 = {
+                ipmi_mac = "52:54:00:bc:00:03";
+                data_mac = "52:54:00:da:00:03";
+              };
+              cpu-4 = {
+                ipmi_mac = "52:54:00:bc:00:04";
+                data_mac = "52:54:00:da:00:04";
+              };
+            }
+          else
+            builtins.listToAttrs (
+              map (i: {
+                name = "s${toString slot}-cpu-${toString i}";
+                value = mkNode i;
+              }) (lib.range 1 nodeCount)
+            );
+      };
+    }
+    // {
+      planes = {
+        vm = nodeList != [ ];
+        baremetal = bmNodeList != [ ];
       };
     };
-    # single zone (index 0, 1 bridge → the lone `spoke`, legacy zone UUID …111). Slot 0 keeps
-    # the literal 4-node set (byte-parity, no console stamps); slots >=1 generate nodeCount
-    # nodes named s<S>-cpu-N with slot-derived MACs + console ports.
-    zones."sim-zone" = {
-      index = 0;
-      bridges = 1;
-      nodes =
-        if slot == 0 then
-          {
-            cpu-1 = {
-              ipmi_mac = "52:54:00:bc:00:01";
-              data_mac = "52:54:00:da:00:01";
-            };
-            cpu-2 = {
-              ipmi_mac = "52:54:00:bc:00:02";
-              data_mac = "52:54:00:da:00:02";
-            };
-            cpu-3 = {
-              ipmi_mac = "52:54:00:bc:00:03";
-              data_mac = "52:54:00:da:00:03";
-            };
-            cpu-4 = {
-              ipmi_mac = "52:54:00:bc:00:04";
-              data_mac = "52:54:00:da:00:04";
-            };
-          }
-        else
-          builtins.listToAttrs (
-            map (i: {
-              name = "s${toString slot}-cpu-${toString i}";
-              value = mkNode i;
-            }) (lib.range 1 nodeCount)
-          );
-    };
-  };
 
   # LOCAL_FLEET_SOURCE is the immutable /nix/store seed produced by this eval.
   # LOCAL_FLEET_PATH is the stable runtime location every consumer reads — bootstrapped

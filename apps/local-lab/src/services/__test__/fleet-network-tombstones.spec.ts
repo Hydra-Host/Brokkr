@@ -22,9 +22,14 @@ function makeService(over: Mirror = {}): { svc: OverlayStoreService; overlay: ()
     hub: {},
     spoke: {},
     counts: { hub: 1, spoke: 1 },
-    identity: { pg: { user: 'u', password: 'p', db: 'd' }, orgId: 'org' },
+    identity: {
+      pg: { user: 'u', password: 'p', db: 'd' },
+      orgId: 'org',
+      redis: { password: 'p' },
+      mailpit: { password: 'p' },
+    },
     osLayerCache: { originHost: '', resolvers: '' },
-    lan: { expose: false },
+    lan: { mode: 'loopback', bindAddress: '', publicHost: '', datastoreAuth: true, expose: false },
     telemetry: { enable: false },
     catalog: [],
     provenance: [],
@@ -37,7 +42,6 @@ function makeService(over: Mirror = {}): { svc: OverlayStoreService; overlay: ()
     bridges: [],
     fleet: null,
     fleetOwned: false,
-    mode: 'vm',
     baremetal: null,
     baremetalOwned: false,
     zonesMeta: [{ name: 'sim-zone', index: 0, bridges: 1 }],
@@ -175,24 +179,10 @@ describe('OverlayStoreService.setFleetConfig — what the write did not persist'
     fleetOwned: true,
   });
 
-  it('reports a pinned mode rather than answering with nothing', () => {
-    const { svc } = makeService({ envPins: { 'fleet.mode': 'BROKKR_FLEET_MODE' }, mode: 'vm' });
-
-    const rejected = svc.setFleetConfig({ nodes: [{ name: 'cpu-1', spec: {} }], mode: 'baremetal' });
-
-    expect(rejected).toEqual([{ path: 'fleet.mode', reason: 'pinned', detail: 'BROKKR_FLEET_MODE' }]);
-  });
-
-  it('reports nothing when the requested mode already matches the pin', () => {
-    const { svc } = makeService({ envPins: { 'fleet.mode': 'BROKKR_FLEET_MODE' }, mode: 'vm' });
-
-    expect(svc.setFleetConfig({ nodes: [{ name: 'cpu-1', spec: {} }], mode: 'vm' })).toEqual([]);
-  });
-
   it('reports a removed node the overlay held out as a tombstone instead of dropping', () => {
     const { svc } = makeService(withNodes());
 
-    const rejected = svc.setFleetConfig({ nodes: [], mode: 'vm' });
+    const rejected = svc.setFleetConfig({ nodes: [] });
 
     expect(rejected).toEqual([{ path: 'fleet.nodes.cpu-1', reason: 'tombstoned' }]);
   });
@@ -200,12 +190,21 @@ describe('OverlayStoreService.setFleetConfig — what the write did not persist'
   it('stops re-reporting a node that was already tombstoned', () => {
     const { svc } = makeService(withNodes());
 
-    expect(svc.setFleetConfig({ nodes: [{ name: 'cpu-1', spec: {} }], mode: 'vm' })).toEqual([]);
+    expect(svc.setFleetConfig({ nodes: [{ name: 'cpu-1', spec: {} }] })).toEqual([]);
   });
 
   it('reports nothing for a node the save pruned outright', () => {
     const { svc } = makeService(withNodes());
 
-    expect(svc.setFleetConfig({ nodes: [], prune: ['cpu-1', 'cpu-3'], mode: 'vm' })).toEqual([]);
+    expect(svc.setFleetConfig({ nodes: [], prune: ['cpu-1', 'cpu-3'] })).toEqual([]);
+  });
+
+  it('turns the vm plane off once every node is tombstoned', () => {
+    const { svc } = makeService(withNodes());
+    expect(svc.planes()).toEqual({ vm: true, baremetal: false });
+
+    svc.setFleetConfig({ nodes: [] });
+
+    expect(svc.planes()).toEqual({ vm: false, baremetal: false });
   });
 });

@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { DeviceTestType } from '@repo/database';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { DeviceTestType, JobType } from '@repo/database';
+import { SYSTEM_JOB_SAGAS } from '@repo/lifecycle';
 import { Logger } from 'src/common/decorators/logger.decorator';
+import { LifecycleService, type SystemJobSource } from 'src/lifecycle/lifecycle.service';
 import { LoggerService } from 'src/logger/logger.service';
 import { BridgeQueueService } from '../queue/bridge-queue.service';
 import { BenchmarksRepository } from './benchmarks.repository';
@@ -11,6 +13,7 @@ export class BenchmarkService {
   constructor(
     private readonly benchmarksRepository: BenchmarksRepository,
     private readonly bridgeQueueService: BridgeQueueService,
+    @Inject(LifecycleService) private readonly lifecycleService: Pick<LifecycleService, 'runSystem'>,
     @Logger(BenchmarkService.name) private readonly logger: LoggerService,
   ) {}
 
@@ -37,8 +40,7 @@ export class BenchmarkService {
     return false;
   }
 
-  async runBenchmarks(deviceId: string) {
-    const jobId = crypto.randomUUID();
+  async runBenchmarks(deviceId: string, source: SystemJobSource = 'manual') {
     const latestTestRun = await this.benchmarksRepository.getLatestDeviceTestRunForDevice(deviceId);
 
     if (!latestTestRun) {
@@ -51,12 +53,12 @@ export class BenchmarkService {
     // Mid-commissioning (no role yet) skip must happen ahead of createRunningDeviceTestRun —
     // stranded `Running` runs would make shouldRunBenchmarks block retries for an hour.
     if (!latestTestRun.role) {
-      this.logger.log(`Skipping benchmarks for device ${deviceId} — no role assigned yet`, jobId);
+      this.logger.log(`Skipping benchmarks for device ${deviceId} — no role assigned yet`);
       return { skipped: true };
     }
 
     if (!this.shouldRunBenchmarks(latestTestRun)) {
-      this.logger.log(`Skipping benchmarks for device ${deviceId} — ran within last 15 days`, jobId);
+      this.logger.log(`Skipping benchmarks for device ${deviceId} — ran within last 15 days`);
       return { skipped: true };
     }
 
@@ -70,20 +72,31 @@ export class BenchmarkService {
       this.benchmarksRepository.createRunningDeviceTestRun(deviceId, DeviceTestType.NcclPerformance),
     ]);
 
-    const job = await this.bridgeQueueService.enqueueSagaJob(
-      zoneId,
-      'benchmarks',
-      jobId,
-      {
-        device_id: deviceId,
-        gpu_burn_job_id: gpuBurnRun.id,
-        nccl_job_id: ncclRun.id,
-        benchmark_type: 'all',
-      },
+    const job = await this.lifecycleService.runSystem({
+      jobType: JobType.Benchmarks,
       deviceId,
-    );
+      zoneId,
+      source,
+      dispatch: async (planId) => {
+        const enqueued = await this.bridgeQueueService.enqueueSagaJob(
+          zoneId,
+          SYSTEM_JOB_SAGAS[JobType.Benchmarks],
+          planId,
+          {
+            device_id: deviceId,
+            gpu_burn_job_id: gpuBurnRun.id,
+            nccl_job_id: ncclRun.id,
+            benchmark_type: 'all',
+          },
+          deviceId,
+        );
+        this.logger.log(
+          `Benchmarks enqueued for device ${deviceId}: planId=${planId}, bullmqJobId=${enqueued.id}`,
+          planId,
+        );
+      },
+    });
 
-    this.logger.log(`Benchmarks enqueued for device ${deviceId}: planId=${jobId}, bullmqJobId=${job.id}`, jobId);
-    return { enqueued: true, plan_id: jobId, gpu_burn_run_id: gpuBurnRun.id, nccl_run_id: ncclRun.id };
+    return { enqueued: true, plan_id: job.data.id, gpu_burn_run_id: gpuBurnRun.id, nccl_run_id: ncclRun.id };
   }
 }

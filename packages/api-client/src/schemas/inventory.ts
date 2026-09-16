@@ -1,10 +1,10 @@
+import { BillingFrequency } from '@repo/database/enums';
 import { z } from 'zod';
 import { IpxeBootUrlSchema } from './common';
 import { availableLayersFields } from './customizations';
 import { GpuTypeSchema } from './gpu';
+import { zodEnumFromPrisma } from './prisma-enum';
 import { customizationsField, provisionCommonFields, teeField } from './provision';
-
-const BillingFrequencyValues = ['HOURLY', 'WEEKLY', 'MONTHLY'] as const;
 
 export const DeviceCategoriesSchema = GpuTypeSchema.describe('GPU or compute device category identifier');
 
@@ -132,7 +132,7 @@ export const InventoryReservationInvitesSchema = z.object({
   inviterEmail: z.string().nullable().describe('Email address of the user who sent the invite'),
   inviteeOrganization: InviteeOrganizationSchema.nullable().describe('Organization receiving the reservation invite'),
   price: z.number().nullable().describe('Agreed-upon price'),
-  billingFrequency: z.enum(BillingFrequencyValues).describe('How often the buyer is billed'),
+  billingFrequency: zodEnumFromPrisma(BillingFrequency).describe('How often the buyer is billed'),
   invoiceDueDays: z.number().optional().describe('Number of days until invoice is due'),
   interruptibleNoticePeriod: z
     .number()
@@ -241,6 +241,11 @@ export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
 
 export const ProvisionResponseSchema = z.object({
   success: z.boolean().describe('Whether provisioning was initiated successfully'),
+  jobId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe('Identifier of the lifecycle job created by this action; correlate it with the job history endpoint'),
 });
 
 export type ProvisionResponse = z.infer<typeof ProvisionResponseSchema>;

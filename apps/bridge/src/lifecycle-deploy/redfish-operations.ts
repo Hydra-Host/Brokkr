@@ -118,7 +118,7 @@ export async function verifyTee(
     return result;
   } catch (error) {
     logError(`Failed to verify TEE via Redfish: ${getErrorMessage(error)}`, { jobId });
-    return { ok: false, checked: true, missing: [] };
+    return { ok: false, checked: false, missing: [], reason: 'bmc-unreachable' };
   }
 }
 

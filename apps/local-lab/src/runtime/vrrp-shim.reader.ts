@@ -3,7 +3,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import type { ShimBinding } from './vrrp-desired';
 
 /** The constant label the bridge reconciler tags its VIP addresses with, so a restart can rediscover

@@ -1,3 +1,5 @@
+import { canonicalMac } from '@repo/utils';
+
 import { NIL_DEVICE_ID } from '../../constants';
 
 export type DeviceId = string;
@@ -87,8 +89,24 @@ export function deviceInitrdBuildLock(deviceId: DeviceId, initrdType: string): s
   return `device:${deviceId}:initrd:${initrdType}:build`;
 }
 
+// The one mac form both boot-trail keys use. The non-48-bit fallback stays because the result is a live
+// Redis key suffix: a malformed mac still has to key deterministically rather than collapse to one bucket.
+export function normalizeDiscoveryMac(mac: string): string {
+  return canonicalMac(mac) ?? mac.replace(/[-.]/g, ':').toLowerCase();
+}
+
 export function discoveryPending(normalizedMac: string): string {
   return `discovery:pending:${normalizedMac}`;
+}
+
+// Written on every /api/chain hit, known device or not; discovery:pending stays unknown-only
+// because the hub creates placeholders from it.
+export function ipxeChainHit(normalizedMac: string): string {
+  return `ipxe:chain:${normalizedMac}`;
+}
+
+export function dhcpPxeDecision(normalizedMac: string): string {
+  return `dhcp:pxe:${normalizedMac}`;
 }
 
 export function deviceDiscoveryCollector(deviceId: DeviceId, field: string): string {
@@ -115,6 +133,16 @@ export function dhcpLeasePattern(): string {
   return 'dhcp:lease:*';
 }
 
+// Marker the hub writes to evict a lease from a *running* engine: the engine only re-reads the
+// store on hydrate, so deleting dhcp:lease:<ip> alone leaves the address held in memory.
+export function dhcpLeaseRevoke(ip: string): string {
+  return `dhcp:lease-revoke:${ip}`;
+}
+
+export function dhcpLeaseRevokePattern(): string {
+  return 'dhcp:lease-revoke:*';
+}
+
 export function vrrpConfigScanPattern(): string {
   return 'prefix:*:config:vrrp';
 }
@@ -137,4 +165,8 @@ export function dhcpZoneConfigKey(): string {
 
 export function dnsPrefixConfigScanPattern(): string {
   return 'prefix:*:config:dns';
+}
+
+export function jobLogs(jobId: string): string {
+  return `job:logs:${jobId}`;
 }

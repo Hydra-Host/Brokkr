@@ -58,6 +58,11 @@ interface RoceVarsInput {
   doca_repo_url: string;
 }
 
+interface InfinibandVarsInput {
+  enabled: boolean;
+  node_desc: string;
+}
+
 interface DeployOsInput {
   target_path: string;
   arch: Architecture;
@@ -76,6 +81,7 @@ interface DeployOsInput {
   grub_vars: GrubVarsInput;
   luks_already_keyed: boolean;
   roce: RoceVarsInput;
+  infiniband?: InfinibandVarsInput | undefined;
 }
 
 export function registerDeployOS(): void {
@@ -105,6 +111,7 @@ export function registerDeployOS(): void {
         },
       },
       roce: { enabled: i.roce.enabled, docaRepoUrl: i.roce.doca_repo_url },
+      infiniband: i.infiniband ? { enabled: i.infiniband.enabled, nodeDesc: i.infiniband.node_desc } : undefined,
     });
 
     const grubDefaults = renderGrubDefaults({

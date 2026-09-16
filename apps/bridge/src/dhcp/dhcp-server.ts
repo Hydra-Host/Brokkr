@@ -1,11 +1,13 @@
 import { isIPv4 } from 'node:net';
 
 import { getTelemetryMeter } from '@repo/telemetry';
+import { isRoutableUnicastIpv4 } from '@repo/utils';
 
-import { isRoutableUnicastIpv4 } from '../bridge-network/ip-utils.js';
+import { BOOT_CODES } from '@repo/utils';
 import { getErrorMessage } from '../common/error-utils.js';
 import { logError, logWarning } from '../logger/logger.service.js';
 import { type ReplyTarget, chooseNakTarget, chooseReplyTarget } from './broadcast-socket.js';
+import { isLegacyBiosArch, latchMacWarning } from './dhcp-boot-defaults.js';
 import {
   DHCPACK,
   DHCPDECLINE,
@@ -42,6 +44,7 @@ import { InMemoryLeaseStore } from './lease-store/in-memory-lease-store.js';
 import type { LeaseRecord } from './lease-store/lease-record.js';
 import type { LeaseStore } from './lease-store/lease-store.js';
 import { type DhcpMessage, buildReply } from './protocol.js';
+import { NOOP_PXE_OBSERVER, type PxeObserver } from './pxe-decision.js';
 import { Subnet, type SubnetConfig, type SubnetLease } from './subnet.js';
 
 const ZERO_IP = '0.0.0.0';
@@ -115,6 +118,8 @@ export class DhcpEngine {
 
   private peerDnsIp: string | null = null;
 
+  private readonly legacyBiosWarnedMacs = new Set<string>();
+
   // Ephemeral: the free address found during the last groupAllocate call, consumed
   // once by onDiscover so selectAddress can skip a redundant nextFreePoolAddress scan.
   private lastGroupAllocFreeAddr: string | null = null;
@@ -131,6 +136,7 @@ export class DhcpEngine {
     private readonly now: () => number = () => Date.now() / 1000,
     private readonly leaseStore: LeaseStore = new InMemoryLeaseStore(),
     private readonly logger: DhcpEngineLogger = defaultEngineLogger(),
+    private readonly observer: PxeObserver = NOOP_PXE_OBSERVER,
   ) {
     this.mode = mode;
     this.sharedNetworks = sharedNetworks;
@@ -148,6 +154,7 @@ export class DhcpEngine {
     now: () => number = () => Date.now() / 1000,
     leaseStore: LeaseStore = new InMemoryLeaseStore(),
     logger: DhcpEngineLogger = defaultEngineLogger(),
+    observer: PxeObserver = NOOP_PXE_OBSERVER,
   ): DhcpEngine {
     const subnetLogger = { warn: (m: string) => logger.warn(m) };
     const all: Subnet[] = [];
@@ -167,7 +174,7 @@ export class DhcpEngine {
       return s;
     });
 
-    return new DhcpEngine(opts.mode, sharedNetworks, relayed, all, now, leaseStore, logger);
+    return new DhcpEngine(opts.mode, sharedNetworks, relayed, all, now, leaseStore, logger, observer);
   }
 
   leases(): SubnetLease[] {
@@ -305,10 +312,18 @@ export class DhcpEngine {
     if (onPxePort) {
       if (this.isPxeRequest(request) && (request.messageType === DHCPREQUEST || request.messageType === DHCPINFORM)) {
         const subnet = this.selectSubnet(request, ingress ?? null) ?? this.allSubnets[0];
-        if (subnet === undefined) return null;
+        if (subnet === undefined) {
+          this.observer.onDecision(request.chaddr, 'no-subnet');
+          return null;
+        }
         // allowlist is PROXY-only: AUTHORITATIVE also binds :4011 for its own PXE replies and must not be filtered
-        if (this.subnetMode(subnet) === 'PROXY' && !this.proxyMacAllowed(subnet, request.chaddr)) return null;
-        return this.buildProxyReply(request, serverId, DHCPACK, subnet);
+        if (this.subnetMode(subnet) === 'PROXY' && !this.proxyMacAllowed(subnet, request.chaddr)) {
+          this.observer.onDecision(request.chaddr, 'refused-allowlist');
+          return null;
+        }
+        const ack = this.buildProxyReply(request, serverId, DHCPACK, subnet);
+        this.observer.onDecision(request.chaddr, 'offered');
+        return ack;
       }
       return null;
     }
@@ -413,10 +428,18 @@ export class DhcpEngine {
     }
     // Ingress-selected subnet supplies the right TFTP/bootfile in a multi-subnet zone.
     const subnet = selectedSubnet ?? this.allSubnets[0];
-    if (subnet === undefined) return null;
-    if (!this.proxyMacAllowed(subnet, request.chaddr)) return null;
+    if (subnet === undefined) {
+      this.observer.onDecision(request.chaddr, 'no-subnet');
+      return null;
+    }
+    if (!this.proxyMacAllowed(subnet, request.chaddr)) {
+      this.observer.onDecision(request.chaddr, 'refused-allowlist');
+      return null;
+    }
     if (!onPxePort && request.messageType === DHCPDISCOVER) {
-      return this.buildProxyReply(request, serverId, DHCPOFFER, subnet);
+      const offer = this.buildProxyReply(request, serverId, DHCPOFFER, subnet);
+      this.observer.onDecision(request.chaddr, 'offered');
+      return offer;
     }
     if (onPxePort && (request.messageType === DHCPREQUEST || request.messageType === DHCPINFORM)) {
       return this.buildProxyReply(request, serverId, DHCPACK, subnet);
@@ -434,9 +457,8 @@ export class DhcpEngine {
       options.push({ code: OPT_TFTP_SERVER, value: Buffer.from(subnet.config.tftpServer, 'ascii') });
     }
     if (bootfile !== '') {
-      // Some UEFI PXE ROMs (Dell iDRAC7) over-read an unterminated opt-67 value and mangle the
-      // NBP filename ("ipxe-amd64.efi" -> "ipxe-amd64.efiij") -> PXE-E18. NUL-terminate it to match
-      // the proven-good dnsmasq offer (len+1). ref beads local-sim-brpn.
+      // Some UEFI PXE ROMs (Dell iDRAC7) over-read an unterminated opt-67 and mangle the NBP
+      // filename ("ipxe-amd64.efi" -> "ipxe-amd64.efiij") -> PXE-E18; NUL-terminate as dnsmasq does.
       options.push({ code: OPT_BOOTFILE, value: Buffer.concat([Buffer.from(bootfile, 'ascii'), Buffer.from([0])]) });
       options.push({ code: OPT_VENDOR_ENCAP, value: pxeVendorEncap() });
     }
@@ -691,9 +713,8 @@ export class DhcpEngine {
     const suppressBootfile = isIpxeUserClass(request.options.get(OPT_USER_CLASS));
     if (bootBootfile !== '' && !suppressBootfile) {
       if (requests(OPT_BOOTFILE)) {
-        // Some UEFI PXE ROMs (Dell iDRAC7) over-read an unterminated opt-67 value and mangle the
-        // NBP filename -> PXE-E18. NUL-terminate it to match the proven-good dnsmasq offer (len+1).
-        // ref beads local-sim-brpn.
+        // Some UEFI PXE ROMs (Dell iDRAC7) over-read an unterminated opt-67 and mangle the NBP
+        // filename -> PXE-E18; NUL-terminate it as dnsmasq does (len+1).
         options.push({
           code: OPT_BOOTFILE,
           value: Buffer.concat([Buffer.from(bootBootfile, 'ascii'), Buffer.from([0])]),
@@ -790,13 +811,8 @@ export class DhcpEngine {
     return { wire: max, expiresAt: Math.floor(now + max) };
   }
 
-  // Direct single-server TFTP boot (this authoritative path), NOT proxyDHCP. We hand a real NBP
-  // via siaddr(next-server)+opt66+opt67 — a plain dnsmasq dhcp-boot offer. We deliberately do NOT
-  // emit opt60 (OPT_VENDOR_CLASS 'PXEClient') or opt43 (OPT_VENDOR_ENCAP discovery-control): some
-  // Dell UEFI firmware treats those as a PXE-boot-server-discovery invitation, completes DORA, then
-  // abandons the handshake and never TFTPs (PXE-E21, proven on an R620 by A/B vs a plain dnsmasq
-  // offer). proxyDHCP (buildProxyReply, :4011) still carries them — there the vendor handshake is
-  // the whole point. See local-sim-9biw.
+  // Direct dnsmasq-style boot offer, so deliberately no opt60/opt43: Dell UEFI reads those as a
+  // PXE-discovery invitation, completes DORA and never TFTPs (PXE-E21). buildProxyReply keeps them.
   private pxeFields(
     request: DhcpMessage,
     subnet: Subnet,
@@ -807,9 +823,8 @@ export class DhcpEngine {
     const bootfile = this.bootfileFor(request, subnet);
     const options: DhcpOption[] = [{ code: OPT_TFTP_SERVER, value: Buffer.from(subnet.config.tftpServer, 'ascii') }];
     if (bootfile !== '') {
-      // Some UEFI PXE ROMs (Dell iDRAC7) over-read an unterminated opt-67 value and mangle the
-      // NBP filename ("ipxe-amd64.efi" -> "ipxe-amd64.efiij") -> PXE-E18. NUL-terminate it to match
-      // the proven-good dnsmasq offer (len+1). ref beads local-sim-brpn.
+      // Some UEFI PXE ROMs (Dell iDRAC7) over-read an unterminated opt-67 and mangle the NBP
+      // filename ("ipxe-amd64.efi" -> "ipxe-amd64.efiij") -> PXE-E18; NUL-terminate as dnsmasq does.
       options.push({ code: OPT_BOOTFILE, value: Buffer.concat([Buffer.from(bootfile, 'ascii'), Buffer.from([0])]) });
     }
     return { siaddr: subnet.config.tftpServer, bootfile: bootfile || undefined, options };
@@ -833,10 +848,27 @@ export class DhcpEngine {
     const defaultBootfile = override?.bootfile ?? subnet.config.bootfile;
     const archOpt = request.options.get(OPT_CLIENT_ARCH);
     if (archOpt && archOpt.length >= 2) {
-      const byArch = byArchMap.get(archOpt.readUInt16BE(0));
+      const clientArch = archOpt.readUInt16BE(0);
+      this.noteClientArch(request.chaddr, clientArch);
+      const byArch = byArchMap.get(clientArch);
       if (byArch !== undefined) return byArch;
     }
     return defaultBootfile;
+  }
+
+  // PXE-101 diagnoses without refusing: the UEFI stem is still offered, and a machine truly in
+  // legacy mode fails later at the NBP. Latched per MAC, cleared when that MAC returns as UEFI.
+  private noteClientArch(mac: string, clientArch: number): void {
+    if (!isLegacyBiosArch(clientArch)) {
+      this.legacyBiosWarnedMacs.delete(mac);
+      return;
+    }
+    if (!latchMacWarning(this.legacyBiosWarnedMacs, mac)) return;
+    const spec = BOOT_CODES['PXE-101'];
+    const arch = `0x${clientArch.toString(16).padStart(4, '0')}`;
+    const message = `${spec.code} ${spec.title}: ${mac} requested client arch ${arch}. ${spec.remedy}`;
+    if (spec.severity === 'error') this.logger.error(message);
+    else this.logger.warn(message);
   }
 
   private writeThrough(op: () => Promise<void>): void {
@@ -865,6 +897,18 @@ export class DhcpEngine {
 
     this.writeThrough(() => this.leaseStore.put({ ip, mac, hostname: hostname ?? null, expiresAt }));
     return wire;
+  }
+
+  /** Drop the lease on `ip` from memory and the store. Returns false if nothing held it.
+   * Operator revocation, not a protocol event: a later DHCPREQUEST is treated as a new client. */
+  revokeLease(ip: string): boolean {
+    for (const subnet of this.allSubnets) {
+      const mac = subnet.ipOwner(ip);
+      if (mac === undefined) continue;
+      this.forget(subnet, mac, null);
+      return true;
+    }
+    return false;
   }
 
   private forget(subnet: Subnet, mac: string, declinedIp: string | null): void {

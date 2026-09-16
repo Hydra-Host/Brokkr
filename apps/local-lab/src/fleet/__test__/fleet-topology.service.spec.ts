@@ -1,18 +1,12 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { FleetTopologyService } from '../fleet-topology.service';
 
-const { nicState } = vi.hoisted(() => ({
-  nicState: { value: {} as Record<string, { family: string; address: string; internal: boolean }[]> },
-}));
-vi.mock('node:os', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:os')>();
-  return { ...actual, networkInterfaces: () => nicState.value };
-});
+const svc = () => new FleetTopologyService({} as never, {} as never, {} as never);
 
 describe('FleetTopologyService.bakedChainUrl — D3 bake-stamp read', () => {
   const SAVED = process.env.LOCAL_IPXE_BUILDS_DIR;
@@ -21,7 +15,6 @@ describe('FleetTopologyService.bakedChainUrl — D3 bake-stamp read', () => {
   const bakedChainUrl = (svc: FleetTopologyService): string | null =>
     (svc as unknown as { bakedChainUrl(): string | null }).bakedChainUrl();
 
-  const svc = () => new FleetTopologyService({} as never, {} as never, {} as never);
   const writeStamp = (contents: string): void => writeFileSync(join(dir, '.chain-stamp.json'), contents);
 
   beforeEach(() => {
@@ -58,29 +51,66 @@ describe('FleetTopologyService.bakedChainUrl — D3 bake-stamp read', () => {
   });
 });
 
-describe('FleetTopologyService.lanIp — fleet-subnet exclusions', () => {
-  const lanIpOf = (network: { cidr?: string; bmc_cidr?: string }): string =>
-    (
-      new FleetTopologyService(
-        {} as never,
-        { fleetConfig: () => ({ network, defaults: {}, nodes: {} }) } as never,
-        {} as never,
-      ) as unknown as { lanIp(): string }
-    ).lanIp();
+describe('FleetTopologyService.isIpxeBakedFor — bake completeness', () => {
+  const SAVED = process.env.LOCAL_IPXE_BUILDS_DIR;
+  const CHAIN = 'http://198.51.100.14:8000';
+  let dir: string;
 
-  const nic = (address: string) => [{ family: 'IPv4', address, internal: false }];
+  const writeStamp = (url: string): void =>
+    writeFileSync(join(dir, '.chain-stamp.json'), JSON.stringify({ chain_base_url: url }));
+  const writeBinaries = (arches: string[]): void => {
+    for (const arch of arches) {
+      mkdirSync(join(dir, arch), { recursive: true });
+      writeFileSync(join(dir, arch, 'snponly.efi'), 'efi');
+    }
+  };
 
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'lab-ipxe-builds-'));
+    process.env.LOCAL_IPXE_BUILDS_DIR = dir;
+  });
   afterEach(() => {
-    nicState.value = {};
+    if (SAVED === undefined) delete process.env.LOCAL_IPXE_BUILDS_DIR;
+    else process.env.LOCAL_IPXE_BUILDS_DIR = SAVED;
   });
 
-  it('excludes slot-0 data-plane and BMC addresses', () => {
-    nicState.value = { en0: nic('192.168.200.10'), en1: nic('192.168.105.7'), en2: nic('192.168.1.42') };
-    expect(lanIpOf({ cidr: '192.168.200.0/24', bmc_cidr: '192.168.105.0/24' })).toBe('192.168.1.42');
+  it('is baked when every arch binary exists and the stamp names the chain url', () => {
+    writeBinaries(['amd64', 'arm64']);
+    writeStamp(CHAIN);
+    expect(svc().isIpxeBakedFor(CHAIN)).toBe(true);
   });
 
-  it('excludes slot-2 data-plane and BMC addresses', () => {
-    nicState.value = { en0: nic('192.168.107.10'), en1: nic('192.168.202.5'), en2: nic('192.168.1.42') };
-    expect(lanIpOf({ cidr: '192.168.202.0/24', bmc_cidr: '192.168.107.0/24' })).toBe('192.168.1.42');
+  it('is not baked when one arch binary is missing', () => {
+    writeBinaries(['amd64']);
+    writeStamp(CHAIN);
+    expect(svc().isIpxeBakedFor(CHAIN)).toBe(false);
+  });
+
+  it('is not baked when the stamp names another chain url', () => {
+    writeBinaries(['amd64', 'arm64']);
+    writeStamp('http://198.51.100.99:8000');
+    expect(svc().isIpxeBakedFor(CHAIN)).toBe(false);
+  });
+
+  it('is not baked when the stamp is missing', () => {
+    writeBinaries(['amd64', 'arm64']);
+    expect(svc().isIpxeBakedFor(CHAIN)).toBe(false);
+  });
+});
+
+describe('FleetTopologyService.hostFacts — host-info shape', () => {
+  const hostFacts = () =>
+    new FleetTopologyService(
+      {} as never,
+      { fleetConfig: () => ({ network: { cidr: '192.168.200.0/24' }, defaults: {}, nodes: {} }) } as never,
+      {} as never,
+    ).hostFacts();
+
+  it('exposes exactly os, arch and passthrough support, with no lan ip', () => {
+    expect(Object.keys(hostFacts()).sort()).toEqual(['arch', 'os', 'passthroughSupported']);
+  });
+
+  it('omits the lan ip field entirely', () => {
+    expect(hostFacts()).not.toHaveProperty('lanIp');
   });
 });

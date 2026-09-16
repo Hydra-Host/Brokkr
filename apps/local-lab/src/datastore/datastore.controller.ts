@@ -47,7 +47,7 @@ export class DatastoreController {
   }
 
   @TsRestHandler(contract.runPgQuery)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'host-exec' })
   pgQuery() {
     return tsRestHandler(contract.runPgQuery, async ({ body }) => ({
       status: 200 as const,

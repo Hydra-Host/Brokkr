@@ -95,21 +95,47 @@ export function parseNcclOutput(stdout: string): ParsedNcclOutput {
   return out;
 }
 
-const BANDWIDTH_THRESHOLDS: Record<number, number> = {
-  1: 0,
-  2: 10,
-  4: 20,
-  8: 40,
+export type GpuInterconnect = 'nvlink' | 'pcie';
+
+// min avg bus bandwidth (GB/s) to pass, keyed on GPU count within an interconnect family: NVLink
+// fabrics move hundreds of GB/s while a PCIe-only box has no P2P path and stages through host
+// memory for single digits. mis-scoring fails permanently, and shouldRunBenchmarks has no cooldown
+// for testPassed=false, so the benchmark re-runs on every discovery completion.
+const BANDWIDTH_THRESHOLDS: Record<GpuInterconnect, Record<number, number>> = {
+  nvlink: { 1: 0, 2: 10, 4: 20, 8: 40 },
+  // calibrated from 8x RTX PRO 6000 (no NVLink): healthy all_reduce measured 2.4-4.2 GB/s, so sit
+  // below that band and still fail a genuinely broken fabric.
+  pcie: { 1: 0, 2: 0.5, 4: 1, 8: 1.5 },
 };
 
-export function thresholdForGpuCount(gpuCount: number): number {
+export function thresholdForGpuCount(gpuCount: number, interconnect: GpuInterconnect = 'nvlink'): number {
+  const table = BANDWIDTH_THRESHOLDS[interconnect];
   let t = 0;
-  for (const count of Object.keys(BANDWIDTH_THRESHOLDS)
+  for (const count of Object.keys(table)
     .map(Number)
     .sort((a, b) => a - b)) {
-    if (count <= gpuCount) t = BANDWIDTH_THRESHOLDS[count]!;
+    if (count <= gpuCount) t = table[count]!;
   }
   return t;
+}
+
+/**
+ * Classify the GPU interconnect from `nvidia-smi nvlink --status` output. Anything unreadable as
+ * NVLink is deliberately PCIe: under-scoring an NVLink box only softens the check, while
+ * over-scoring a PCIe box fails it permanently and re-triggers the benchmark loop.
+ */
+export function interconnectFromNvlinkStatus(stdout: string, exitCode: number): GpuInterconnect {
+  if (exitCode !== 0) return 'pcie';
+  return /Link\s+\d+:\s*[\d.]+\s*GB\/s/i.test(stdout) ? 'nvlink' : 'pcie';
+}
+
+async function detectInterconnect(): Promise<GpuInterconnect> {
+  try {
+    const { stdout, exit_code } = await run('nvidia-smi', ['nvlink', '--status'], { timeout_ms: 30_000 });
+    return interconnectFromNvlinkStatus(stdout, exit_code);
+  } catch {
+    return 'pcie';
+  }
 }
 
 async function fileExists(p: string): Promise<boolean> {
@@ -155,6 +181,7 @@ export interface NcclResult {
   out_of_bounds_errors?: number;
   total_errors?: number;
   bandwidth_threshold_gbs?: number;
+  interconnect?: GpuInterconnect;
   results_by_size?: NcclSizeResult[];
   raw_output?: string;
 }
@@ -206,7 +233,8 @@ export async function runNccl(): Promise<NcclResult> {
   const rawOutput = stdout;
   const parsed = parseNcclOutput(rawOutput);
 
-  const threshold = thresholdForGpuCount(gpuCount);
+  const interconnect = await detectInterconnect();
+  const threshold = thresholdForGpuCount(gpuCount, interconnect);
   const avgBw = parsed.avg_bus_bandwidth_gbs;
   const passed = avgBw !== null && avgBw > threshold && parsed.out_of_bounds_errors === 0 && parsed.total_errors === 0;
 
@@ -219,6 +247,7 @@ export async function runNccl(): Promise<NcclResult> {
     out_of_bounds_errors: parsed.out_of_bounds_errors,
     total_errors: parsed.total_errors,
     bandwidth_threshold_gbs: threshold,
+    interconnect,
     results_by_size: parsed.results_by_size,
     raw_output: rawOutput,
   };

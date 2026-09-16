@@ -104,7 +104,7 @@ function TestingPage() {
   const runList = runs.data?.status === 200 ? runs.data.body : [];
 
   return (
-    <div className="flex h-[calc(100dvh-7rem)] flex-col">
+    <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1">
         <RunTab runList={runList} runs={runs} />
       </div>
@@ -128,9 +128,11 @@ function RunTab({ runList, runs }: { runList: Run[]; runs: ReturnType<typeof tsr
 
   const scenarioList = scenarios.data?.status === 200 ? scenarios.data.body : [];
   const fleetBody = fleet.data?.status === 200 ? fleet.data.body : null;
-  const NODES = (fleetBody?.mode === 'baremetal' ? fleetBody.baremetal.nodes : (fleetBody?.nodes ?? [])).map(
-    (n, index) => ({ index, label: n.name }),
-  );
+  // the lab's roster is vm rows then bare-metal rows, so the index matches what the runner pins
+  const NODES = [...(fleetBody?.nodes ?? []), ...(fleetBody?.baremetal.nodes ?? [])].map((n, index) => ({
+    index,
+    label: n.name,
+  }));
   const ALL = NODES.map((n) => n.index);
   const nodeLabel = (i: number) => NODES[i]?.label ?? `node ${i}`;
   const busyNodes = new Set(

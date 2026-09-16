@@ -65,9 +65,11 @@ const job = (over: Record<string, unknown> = {}) => ({
 
 const machine = (over: Partial<Machine> = {}): Machine => ({
   name: 'cpu-1',
+  kind: 'vm',
   power: 'on',
   configured: true,
   deviceId: DEVICE,
+  bmc: null,
   ...over,
 });
 

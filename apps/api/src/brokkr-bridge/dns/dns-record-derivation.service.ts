@@ -3,9 +3,9 @@ import { isIPv4 } from 'node:net';
 import { Injectable } from '@nestjs/common';
 import { DNS_LABEL_RE } from '@repo/api-client';
 import { Prisma } from '@repo/database';
+import { ipInCidr } from '@repo/utils';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { getErrorMessage } from 'src/common/error-utils';
-import { ipv4InCidr } from 'src/common/ip-utils';
 import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 
@@ -464,7 +464,7 @@ function ipInPrefix(ip: string, network: string, prefixLength: number): boolean 
   if (ip.includes(':') !== network.includes(':')) return false;
 
   if (!ip.includes(':')) {
-    return ipv4InCidr(ip, `${network}/${prefixLength}`);
+    return ipInCidr(ip, `${network}/${prefixLength}`);
   }
 
   return ipv6InPrefix(ip, network, prefixLength);

@@ -46,7 +46,6 @@ model Organization {
   zones                             Zone[]
   cloudInitTemplates                CloudInitTemplate[]
   devicesAsSupplier                 Device[]                           @relation("DeviceSupplier")
-  devicesAsOrganization             Device[]                           @relation("DeviceOrganization")
   tags                              Tag[]
   racks                             Rack[]
   asns                              Asn[]

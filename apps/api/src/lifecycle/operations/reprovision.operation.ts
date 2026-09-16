@@ -25,6 +25,7 @@ export interface ReprovisionRequest {
 export interface ReprovisionContext {
   baseLayerId: string;
   organizationId: string | null;
+  deploymentId: string | null;
   pubkeys: string[];
 }
 
@@ -53,11 +54,13 @@ export class ReprovisionOperation {
       );
     }
     this.provisionValidator.validateDiskGroupHomogeneity(input.diskLayouts, device.storageDrives);
+    this.provisionValidator.validateDiskGroupSizeLimits(input.diskLayouts, device.storageDrives);
 
     const activeDeployments = device.server?.deployments ?? [];
     return {
       baseLayerId: baseLayer.id,
       organizationId: activeDeployments[0]?.customer.id ?? null,
+      deploymentId: activeDeployments[0]?.id ?? null,
       pubkeys: sshKeys.map((key) => key.key),
     };
   }

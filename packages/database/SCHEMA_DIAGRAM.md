@@ -367,6 +367,8 @@ erDiagram
     IpAddress }o--|| Organization : "organizationId"
 ```
 
+Unique constraints on `Interface` (partial, active rows only — `WHERE "deletedAt" IS NULL`): `(deviceId, name)`, and `(deviceId, lower(macAddress))` where `macAddress IS NOT NULL`. Both are raw-SQL indexes Prisma cannot express, so the model carries no `@@unique`; `InterfaceRecord` pre-checks them for a readable 409.
+
 ## IPAM — Prefixes, VLANs, VRFs, Ranges
 
 ```mermaid

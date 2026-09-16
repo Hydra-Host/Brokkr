@@ -71,6 +71,15 @@ let
     );
   };
 
+  # Better Auth takes a comma list of full origins. Every surface is named twice — once at the public
+  # origin and once at localhost — so moving the public host never locks a developer out of their own
+  # box, and `unique` collapses the pair back to one entry in the loopback default.
+  trustedOrigins =
+    surfaces:
+    lib.concatStringsSep "," (
+      lib.unique (map (s: P.urls.browser.${s}) surfaces ++ map (s: P.urls.local.${s}) surfaces)
+    );
+
   # Non-contract literals: posture flags and derived URLs. These are
   # NOT app-config secrets (so not in secretspec.toml) — the generated secretEnv is merged on top.
   baseHubEnv = {
@@ -96,17 +105,44 @@ let
     HOST = P.bindHost;
 
     # auth + URL roots (CORS + better-auth callbacks) — derived from the port map, not secrets.
-    # BASE_URL is the browser/auth plane (localhost); device callbacks must NOT use it (a provisioned
-    # VM can't reach localhost) — they use PHONE_HOME_BASE_URL below. The hub now honors that knob
-    # (device-tokens.service.ts getPhoneHomeBaseUrl), so BASE_URL no longer needs the gateway workaround.
-    BASE_URL = P.urls.hubBase;
-    ADMIN_BASE_URL = P.urls.hubAdmin;
-    ADMIN_BETTER_AUTH_URL = P.urls.hubAdmin;
-    # hub-admin → hub-api service-to-service base (operator-lifecycle proxy).
-    HUB_API_URL = P.urls.hubBase;
-    # slotted web/api origins so better-auth (auth-client.module.ts) trusts cross-origin calls
-    # from this stack's own vite server — at slots >=1 both ports move off the legacy values.
-    BETTER_AUTH_TRUSTED_ORIGINS = "http://${P.hosts.hubPublic}:${toString P.ports.hubWeb},${P.urls.hubBase}";
+    # These take the BROWSER origin (modules/ports.nix `urls.browser`), which follows lan.bindAddress
+    # and carries a scheme, because better-auth derives the session cookie's `secure` flag from it.
+    # Device callbacks must NOT use them (a provisioned VM can't reach localhost) — they use
+    # PHONE_HOME_BASE_URL below, which the hub honors via device-tokens.service.ts.
+    BASE_URL = P.urls.browser.hubApi;
+    ADMIN_BASE_URL = P.urls.browser.hubAdmin;
+    ADMIN_BETTER_AUTH_URL = P.urls.browser.hubAdmin;
+    # Root for user-facing links, chiefly the emailed password-reset URL. It is the WEB origin, not
+    # the API one: /auth/reset-password exists only in the SPA, and the API serves that SPA only
+    # under NODE_ENV=production, which the local stack never sets.
+    WEB_BASE_URL = P.urls.browser.hubWeb;
+    # hub-admin → hub-api service-to-service base (operator-lifecycle proxy). Pinned to loopback: a
+    # process on this box must not depend on the public host resolving, or on the front door being up.
+    HUB_API_URL = P.urls.dial.hubApi;
+    # slotted web/api origins so better-auth (auth-client.module.ts) trusts cross-origin calls from
+    # this stack's own vite server — at slots >=1 both ports move off the legacy values. The localhost
+    # pair rides along so a developer browsing this box still passes the origin check once the public
+    # host moves off it.
+    BETTER_AUTH_TRUSTED_ORIGINS = trustedOrigins [
+      "hubWeb"
+      "hubApi"
+    ];
+    # createAdminAuthClient falls back to a hardcoded localhost:5174/localhost:3001 pair when it is
+    # passed no trustedOrigins, which no origin off this box can satisfy.
+    ADMIN_BETTER_AUTH_TRUSTED_ORIGINS = trustedOrigins [
+      "hubWebAdmin"
+      "hubAdmin"
+    ];
+    # Only `fronted` has an edge proxy worth trusting outright: under `direct` the hub API binds every
+    # interface, so a LAN client reaches it with no proxy and could forge the header req.ip comes from.
+    TRUST_PROXY =
+      if config.lan.mode == "fronted" then
+        "true"
+      else if config.lan.mode == "direct" then
+        "loopback"
+      else
+        "";
+    ALLOWED_HOSTS = P.allowedHosts;
     # Device-facing phone-home base. A provisioned VM can't reach BASE_URL (localhost), so device
     # callbacks resolve here — the data-plane gateway. Real envs leave this unset and fall back to BASE_URL.
     PHONE_HOME_BASE_URL = "http://${P.hosts.dataPlaneGateway}:${toString P.ports.hubApi.base}";
@@ -240,7 +276,7 @@ let
     if runtimeSecrets then nonSecretEnv else hubEnv
   );
 
-  bm = pkgs.stdenv.isLinux && config.fleet.mode == "baremetal";
+  bm = pkgs.stdenv.isLinux && config.fleet.planes.baremetal;
   hubApiBmEnv = lib.optionalAttrs bm {
     PHONE_HOME_BASE_URL = "http://${config.fleet.baremetal.ifaceIp}:${toString P.ports.hubApi.base}";
   };
@@ -471,10 +507,11 @@ in
   processes.hub-web = {
     process-compose = {
       # API_PROXY_TARGET: vite.config.ts's /api proxy otherwise falls back to localhost:3000,
-      # which is slot 0's hub — wrong for every slotted stack.
+      # which is slot 0's hub — wrong for every slotted stack. A dial-out from this box, so it stays
+      # on loopback whatever the public origin becomes.
       environment = renderEnv ++ [
         "LAB_WEB_UI=Hub"
-        "API_PROXY_TARGET=${P.urls.hubBase}"
+        "API_PROXY_TARGET=${P.urls.dial.hubApi}"
       ];
       depends_on.hub-api.condition = "process_healthy";
       namespace = "hub";
@@ -487,7 +524,7 @@ in
     '';
     ready = {
       http.get = {
-        host = P.hosts.loopback;
+        host = P.probeHost;
         port = P.ports.hubWeb;
         path = "/";
       };
@@ -515,7 +552,7 @@ in
     '';
     ready = {
       http.get = {
-        host = P.hosts.loopback;
+        host = P.probeHost;
         port = P.ports.hubWebAdmin;
         path = "/";
       };

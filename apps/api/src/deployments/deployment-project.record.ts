@@ -103,17 +103,17 @@ export class DeploymentProjectRecord extends createActiveRecord(
     return this.createWithRelations({ ...data, organizationId: ctx.organizationId });
   }
 
-  static async findOrCreateHydraAdminTest(organizationId: string) {
+  static async findOrCreateBrokkrAdminTest(organizationId: string) {
     const client = ActiveRecordRegistry.client;
     return client.$transaction(async (tx) => {
       const existing = await tx.deploymentProject.findFirst({
-        where: { organizationId, name: 'Hydra Admin Test', deletedAt: null },
+        where: { organizationId, name: 'Brokkr Admin Test', deletedAt: null },
       });
       if (existing) {
         return existing;
       }
       return tx.deploymentProject.create({
-        data: { name: 'Hydra Admin Test', organizationId },
+        data: { name: 'Brokkr Admin Test', organizationId },
       });
     });
   }

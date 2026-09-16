@@ -77,6 +77,7 @@ describe('routes/status — bridge status', () => {
         bridge_url: 'http://localhost:8000',
         version: '1.0.0',
         leader_election: { is_leader: true },
+        readiness_error_count: 0,
       })),
     };
     vi.mocked(createBridgeStatusService).mockResolvedValue(service as never);
@@ -88,6 +89,7 @@ describe('routes/status — bridge status', () => {
     const body = recorded.body as Record<string, unknown>;
     expect(body['bridge_url']).toBe('http://localhost:8000');
     expect(body['version']).toBe('1.0.0');
+    expect(body['readiness_error_count']).toBe(0);
     expect(body).toHaveProperty('bridge_pubkeys');
     expect(body).toHaveProperty('leader_election');
   });
@@ -130,6 +132,7 @@ describe('routes/status — bridge status', () => {
         bridge_pubkeys: [],
         bridge_url: 'http://bridge.example.com',
         version: '1.0.0',
+        readiness_error_count: 0,
       })),
     };
     vi.mocked(createBridgeStatusService).mockResolvedValue(service as never);
@@ -138,6 +141,7 @@ describe('routes/status — bridge status', () => {
     await controller.status(makeRequest('bridge.example.com'), reply);
 
     expect(recorded.status).toBe(200);
+    expect(recorded.body).toHaveProperty('readiness_error_count', 0);
     expect(service.getBridgeStatus).toHaveBeenCalledTimes(1);
     expect(service.getBridgeStatus).toHaveBeenCalledWith('http://bridge.example.com');
   });

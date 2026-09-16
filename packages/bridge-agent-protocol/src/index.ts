@@ -3,3 +3,4 @@ export * from './operations/index.js';
 
 export { DEFAULT_COLLECTORS } from './operations/collection.js';
 export type { DefaultCollector } from './operations/collection.js';
+export { NODE_DESC_PATTERN } from './operations/deploy.js';

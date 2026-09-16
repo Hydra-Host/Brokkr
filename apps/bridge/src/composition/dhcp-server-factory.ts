@@ -4,6 +4,7 @@ import { getPeerClientFacingIpv4, getPeerServerIds } from '../bridge-network/bri
 import { createIoredisDriverFactory } from '../common/redis/redis-client/ioredis-driver.js';
 import { RedisClient } from '../common/redis/redis-client/redis.client.js';
 import { loadRedisConfig } from '../common/redis/redis-client/redis.config.js';
+import { dhcpPxeDecision } from '../common/redis/redis-keys.js';
 import { RedisService } from '../common/redis/redis.service.js';
 import type { DhcpAtomValue } from '../dhcp/dhcp-atom-value.schema.js';
 import { DhcpConfigReaderService } from '../dhcp/dhcp-config-reader.service.js';
@@ -11,6 +12,7 @@ import { DhcpServerService } from '../dhcp/dhcp-manager.service.js';
 import { defaultDhcpRuntimeConfig, type DhcpRuntimeConfig } from '../dhcp/dhcp.config.js';
 import type { LeaseStore } from '../dhcp/lease-store/lease-store.js';
 import { RedisLeaseStore, type RedisLeaseCache } from '../dhcp/lease-store/redis-lease-store.js';
+import { PXE_DECISION_TTL_SECONDS } from '../dhcp/pxe-decision.js';
 import { getLeaderConfig } from '../leader-election/leader-election.config.js';
 import { getLeaderService } from '../leader-election/leader-election.service.js';
 import { ContextLogger, logInfo, logWarning } from '../logger/logger.service.js';
@@ -118,6 +120,13 @@ export function buildDhcpServerDeps(env: NodeJS.ProcessEnv = process.env): DhcpS
         readZoneOps: (jobId) => configReader.readZoneOps(jobId),
         publishAtomServedIps: setAtomServedIps,
         onStop: () => redisClient.close(),
+        recordPxeDecision: async (mac, decision, atMs) => {
+          await redisClient.hset(
+            dhcpPxeDecision(mac),
+            { outcome: decision, at: String(atMs) },
+            PXE_DECISION_TTL_SECONDS,
+          );
+        },
       });
       setDhcpServerIdGetter(() => service?.getServerId() ?? '');
       setDhcpStandbyHealthGetter(() => service?.getStandbyHealth() ?? null);

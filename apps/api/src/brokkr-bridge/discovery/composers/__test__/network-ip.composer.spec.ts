@@ -77,6 +77,37 @@ describe('NetworkIpComposer', () => {
     expect(mutation.upserts?.interfaces?.map((i) => i.name).sort()).toEqual(['eno1', 'eno2']);
   });
 
+  it('files address rows under the udev name when the NIC was renamed to ethN', async () => {
+    const ctx = makeCtx({
+      public_ip: { ipv4: '198.51.100.42' },
+      ip_a: [
+        {
+          ifname: 'eth0',
+          altnames: ['enp2s0'],
+          addr_info: [{ family: 'inet', local: '10.0.0.5', scope: 'global', prefixlen: 24 }],
+        },
+      ],
+      route: route('eth0'),
+    });
+    const mutation = await composer.compose(ctx);
+    expect(mutation.upserts?.interfaces).toEqual([{ name: 'enp2s0', ipAddresses: ['10.0.0.5/24'] }]);
+    expect(mutation.upserts?.natMappings).toEqual([{ outsideAddress: '198.51.100.42', insideAddress: '10.0.0.5' }]);
+  });
+
+  it('keeps ethN when the only altname is a USB-IPMI name', async () => {
+    const ctx = makeCtx({
+      ip_a: [
+        {
+          ifname: 'eth0',
+          altnames: ['enx0ac97ac3f1d2'],
+          addr_info: [{ family: 'inet', local: '10.0.0.5', scope: 'global', prefixlen: 24 }],
+        },
+      ],
+    });
+    const mutation = await composer.compose(ctx);
+    expect(mutation.upserts?.interfaces).toEqual([{ name: 'eth0', ipAddresses: ['10.0.0.5/24'] }]);
+  });
+
   it('maps a NATed public IPv6 to the private global IPv6', async () => {
     const ctx = makeCtx({
       public_ip: { ipv6: '2001:db8:public::1' },

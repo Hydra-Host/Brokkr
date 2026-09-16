@@ -7,9 +7,8 @@ import {
 } from '@nestjs/common';
 import { BondParametersSchema, IpAddress, IpamPrefix, IpRange, Vlan, Vrf } from '@repo/api-client';
 import { Prisma } from '@repo/database';
-import { isRecord } from '@repo/utils';
+import { isRecord, networkBase, parseCidr } from '@repo/utils';
 import { ContextService } from 'src/common/context/context.service';
-import { ipv4ToInt } from 'src/common/ip-utils';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { IpAddressRow, IpRangeRow, PrefixRow, VlanRow } from './ipam.types';
 
@@ -745,31 +744,12 @@ export abstract class BaseIpamRepository {
   }
 
   protected parseIpv4Prefix(prefix: string): { network: number; broadcast: number; mask: number } | null {
-    const [ip, maskPart] = prefix.split('/');
-    if (!ip || !maskPart) {
+    const parsed = parseCidr(prefix);
+    const network = networkBase(prefix);
+    if (parsed === null || network === null) {
       return null;
     }
-    const mask = Number(maskPart);
-    if (!Number.isInteger(mask) || mask < 0 || mask > 32) {
-      return null;
-    }
-    const ipInt = ipv4ToInt(ip);
-    if (ipInt === null) {
-      return null;
-    }
-
-    const maskBits = mask === 0 ? 0 : (0xffffffff << (32 - mask)) >>> 0;
-    const network = (ipInt & maskBits) >>> 0;
-    const hostMask = ~maskBits >>> 0;
-    const broadcast = (network | hostMask) >>> 0;
-    return { network, broadcast, mask };
-  }
-
-  protected intToIpv4(value: number): string {
-    const octet1 = (value >>> 24) & 255;
-    const octet2 = (value >>> 16) & 255;
-    const octet3 = (value >>> 8) & 255;
-    const octet4 = value & 255;
-    return `${octet1}.${octet2}.${octet3}.${octet4}`;
+    const broadcast = network + 2 ** (32 - parsed.prefix) - 1;
+    return { network, broadcast, mask: parsed.prefix };
   }
 }

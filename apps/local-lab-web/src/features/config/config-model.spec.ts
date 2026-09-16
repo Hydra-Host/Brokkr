@@ -38,7 +38,7 @@ describe('overriddenByArea', () => {
   it('groups by the page that owns the field and carries its route and anchor', () => {
     const rows = overriddenByArea([
       entry({ path: 'stackDefaults.hub.LOG_LEVEL', value: 'warn', default: 'debug' }),
-      entry({ path: 'fleet.mode', value: 'baremetal', default: 'vm' }),
+      entry({ path: 'fleet.autoStart', value: 'false', default: 'true' }),
     ]);
     expect(rows.map((r) => r.area)).toEqual(['stack', 'fleet']);
     expect(rows[0].rows[0]).toMatchObject({

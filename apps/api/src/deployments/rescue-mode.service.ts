@@ -35,7 +35,7 @@ export class RescueModeService {
     record: RescueMutableRecord;
     rescueOsSlug: string;
     opLabel: string;
-  }): Promise<void> {
+  }): Promise<string> {
     const { deviceId, aggregate, record, rescueOsSlug, opLabel } = opts;
 
     if (aggregate.isLocked) {
@@ -64,7 +64,7 @@ export class RescueModeService {
     record.setRescueLayer(rescueLayer.id);
     await record.save();
 
-    await this.rebootIntoNewBootTarget(deviceId, opLabel);
+    return this.rebootIntoNewBootTarget(deviceId, opLabel);
   }
 
   async deactivate(opts: {
@@ -72,7 +72,7 @@ export class RescueModeService {
     aggregate: Pick<DeploymentAggregate, 'isLocked' | 'rescueLayer'>;
     record: RescueMutableRecord;
     opLabel: string;
-  }): Promise<void> {
+  }): Promise<string> {
     const { deviceId, aggregate, record, opLabel } = opts;
 
     if (!aggregate.rescueLayer) {
@@ -95,20 +95,21 @@ export class RescueModeService {
       );
     }
 
-    await this.rebootIntoNewBootTarget(deviceId, opLabel);
+    return this.rebootIntoNewBootTarget(deviceId, opLabel);
   }
 
-  private async rebootIntoNewBootTarget(deviceId: string, opLabel: string): Promise<void> {
-    const rebootJobId = randomUUID();
-    await this.serverTokenService.writeForDeviceBestEffort(deviceId, { requestId: rebootJobId, opLabel });
+  private async rebootIntoNewBootTarget(deviceId: string, opLabel: string): Promise<string> {
+    const planId = randomUUID();
+    await this.serverTokenService.writeForDeviceBestEffort(deviceId, { requestId: planId, opLabel });
 
     try {
-      const result = await this.deviceRecordPublisher.writeForDevice(deviceId, { requestId: rebootJobId });
+      const result = await this.deviceRecordPublisher.writeForDevice(deviceId, { requestId: planId });
       DeviceRecordPublisher.warnIfPublishSkipped(this.logger, result, opLabel, deviceId);
     } catch (error) {
       this.logger.warn(`Failed to publish device_record for ${opLabel} of ${deviceId}: ${getErrorMessage(error)}`);
     }
 
-    await this.bridgePowerControlService.rebootDevice(deviceId, rebootJobId, { bootDevice: 'pxe' });
+    await this.bridgePowerControlService.rebootDevice(deviceId, planId, { bootDevice: 'pxe' });
+    return planId;
   }
 }

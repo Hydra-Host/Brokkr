@@ -1,12 +1,14 @@
+import { BillingFrequency, DeviceStatus } from '@repo/database/enums';
 import { z } from 'zod';
 import { BooleanQueryParamSchema, IpxeBootUrlSchema } from './common';
 import { availableLayersFields } from './customizations';
 import { InterfaceSchema } from './interface';
 import { IpxeBuildTargetSchema } from './ipam';
 import { PaginationQuerySchema } from './pagination';
+import { zodEnumFromPrisma } from './prisma-enum';
 import { customizationsField, provisionCommonFields, teeField } from './provision';
 
-const BillingFrequencySchema = z.enum(['HOURLY', 'WEEKLY', 'MONTHLY']).describe('Billing cadence for the reservation');
+const BillingFrequencySchema = zodEnumFromPrisma(BillingFrequency).describe('Billing cadence for the reservation');
 
 const DeviceRoleValues = [
   'Hypervisor',
@@ -24,12 +26,10 @@ const DeviceRoleSchema = z.preprocess((val) => {
   return DeviceRoleValues.find((role) => role.toLowerCase() === val.toLowerCase()) ?? val;
 }, z.enum(DeviceRoleValues));
 
-const DeviceStatusValues = ['PLANNED', 'STAGED', 'ACTIVE', 'MAINTENANCE'] as const;
-
 const DeviceStatusSchema = z.preprocess((val) => {
   if (typeof val !== 'string') return val;
-  return DeviceStatusValues.find((s) => s.toLowerCase() === val.toLowerCase()) ?? val;
-}, z.enum(DeviceStatusValues));
+  return (Object.values(DeviceStatus) as string[]).find((s) => s.toLowerCase() === val.toLowerCase()) ?? val;
+}, zodEnumFromPrisma(DeviceStatus));
 
 const statusSchema = z.object({
   value: z.string().describe('Machine-readable status identifier'),
@@ -430,6 +430,16 @@ export const ServerUpdateResponseSchema = z.object({
 });
 
 export type ServerUpdateResponse = z.infer<typeof ServerUpdateResponseSchema>;
+
+export const ProvisionBaremetalResponseSchema = ServerUpdateResponseSchema.extend({
+  jobId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe('Identifier of the lifecycle job created by this provision; correlate it with the job history endpoint'),
+});
+
+export type ProvisionBaremetalResponse = z.infer<typeof ProvisionBaremetalResponseSchema>;
 
 export const CollectInventoryResponseSchema = z.object({
   jobId: z

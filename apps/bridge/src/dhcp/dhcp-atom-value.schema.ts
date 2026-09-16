@@ -5,7 +5,8 @@ import { isIPv4 } from 'node:net';
 
 import { z } from 'zod';
 
-import { isRoutableUnicastIpv4 } from '../bridge-network/ip-utils.js';
+import { isRoutableUnicastIpv4 } from '@repo/utils';
+
 import { isValidHostMaskCidr } from '../vrrp/cidr.js';
 
 const ipv4 = z.string().refine(isIPv4, 'must be a valid IPv4 address');

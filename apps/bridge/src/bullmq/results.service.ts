@@ -172,7 +172,11 @@ export class ResultsService {
     return tracked;
   }
 
-  async enqueueDiscoveryComplete(args: { deviceId: string; jobId?: string | null }): Promise<boolean> {
+  async enqueueDiscoveryComplete(args: {
+    deviceId: string;
+    jobId?: string | null;
+    succeededSteps?: number;
+  }): Promise<boolean> {
     const jobId = args.jobId ?? 'discovery';
     const logJobId = jobId;
     const queue = await this.queueProvider.getResultsQueue();
@@ -185,6 +189,14 @@ export class ResultsService {
     }
 
     const fields = [...(this.inflightFields.get(args.deviceId) ?? [])];
+    const succeededSteps = args.succeededSteps ?? 0;
+    // the hub treats an empty field list as "nothing collected", which is a silent loss when collectors did run
+    if (fields.length === 0 && succeededSteps > 0) {
+      await this.logger.warning(
+        `discovery.complete for ${args.deviceId} leaves with no collector fields although ${succeededSteps} steps succeeded`,
+        { jobId: logJobId },
+      );
+    }
 
     try {
       const payload = buildDiscoveryCompletePayload({

@@ -1,6 +1,8 @@
 import type * as dgram from 'node:dgram';
 
-import { type NetworkInterface, ipInCidr } from '../bridge-network/self-network.js';
+import { ipInCidr } from '@repo/utils';
+
+import type { NetworkInterface } from '../bridge-network/self-network.js';
 import { getErrorMessage } from '../common/error-utils.js';
 import { logDebug } from '../logger/logger.service.js';
 import { DHCP_SERVER_PORT } from './broadcast-socket.js';
@@ -51,7 +53,7 @@ export class ReplySocketSet {
 
   socketFor(address: string): dgram.Socket | null {
     for (const bound of this.byIp.values()) {
-      if (ipInCidr(bound.network, address)) return bound.socket;
+      if (ipInCidr(address, bound.network)) return bound.socket;
     }
     return null;
   }

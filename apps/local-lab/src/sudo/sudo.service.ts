@@ -5,6 +5,11 @@ import { basename, dirname } from 'node:path';
 
 const MAX_CONSECUTIVE_REJECTIONS = 3;
 const REJECTION_COOLDOWN_MS = 30_000;
+const KEEPALIVE_INTERVAL_MS = 60_000;
+
+/** Ceiling on how long one accepted password can hold root, long enough for the slowest op (a full
+ *  fleet rebuild) but not open-ended. Renewal only stops here; the ticket lapses on sudo's own timeout. */
+export const SUDO_MAX_GRACE_MS = 30 * 60_000;
 const SUDOERS_D = '/etc/sudoers.d';
 const PROBE_FALLBACK = '/usr/bin/true';
 const LEGACY_DROP_IN = 'brokkr-sim';
@@ -56,6 +61,7 @@ function installedDropIns(): string[] | null {
 export class SudoService {
   private readonly log = new Logger(SudoService.name);
   private keepAlive?: NodeJS.Timeout;
+  private graceUntil = 0;
   private rejections = 0;
   private cooldownUntil = 0;
   private attemptInFlight = false;
@@ -113,15 +119,28 @@ export class SudoService {
     }
   }
 
+  /** Deadline is set from the accepted password, not from the last renewal, so the renewals can never
+   *  walk it forward — only a fresh password does. */
   private startKeepAlive(): void {
-    clearInterval(this.keepAlive);
-    this.keepAlive = setInterval(async () => {
-      if (!(await this.exitOk(['-n', '-v']))) {
-        clearInterval(this.keepAlive);
-        this.keepAlive = undefined;
-      }
-    }, 60_000);
+    this.stopKeepAlive();
+    this.graceUntil = Date.now() + SUDO_MAX_GRACE_MS;
+    this.keepAlive = setInterval(() => void this.renewGrace(), KEEPALIVE_INTERVAL_MS);
     this.keepAlive.unref?.();
+  }
+
+  private async renewGrace(): Promise<void> {
+    if (Date.now() >= this.graceUntil) {
+      this.log.log('sudo grace expired; a fresh password is needed to reach root again');
+      this.stopKeepAlive();
+      return;
+    }
+    if (!(await this.exitOk(['-n', '-v']))) this.stopKeepAlive();
+  }
+
+  private stopKeepAlive(): void {
+    clearInterval(this.keepAlive);
+    this.keepAlive = undefined;
+    this.graceUntil = 0;
   }
 
   private exitOk(args: string[], stdin?: string): Promise<boolean> {

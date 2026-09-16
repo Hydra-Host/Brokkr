@@ -269,7 +269,7 @@ export function StackPage() {
   );
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:h-[calc(100dvh-7rem)] lg:grid-cols-[320px_1fr]">
+    <div className="grid grid-cols-1 gap-6 lg:h-full lg:grid-cols-[320px_1fr]">
       <div className="space-y-4 pr-1 lg:min-h-0 lg:overflow-auto">
         <SectionHeading>Stack</SectionHeading>
         <p className="text-text-dim text-[11px]">
@@ -484,6 +484,7 @@ export function StackPage() {
             disconnected={stream.disconnected}
           />
         )}
+        {ops.hostTokenDialog}
         {ops.gate && <GateModal gate={ops.gate} />}
       </div>
     </div>
@@ -545,12 +546,23 @@ function ServiceCard({
       ].join(' ')}
     >
       <div className="flex items-center justify-between">
-        <button onClick={onView} className="hover:text-text-primary flex items-center gap-2 text-left">
+        <button
+          onClick={onView}
+          className="hover:text-text-primary flex min-w-0 flex-wrap items-center gap-2 text-left"
+        >
           <span className={`h-2 w-2 rounded-full ${ui.dot}`} />
-          <span className="text-text-primary font-medium">{svc.label}</span>
+          <span className="text-text-primary truncate font-medium">{svc.label}</span>
           <span className="text-text-dim font-mono text-[11px]">:{svc.port}</span>
+          {svc.features?.map((feature) => (
+            <span
+              key={feature}
+              className="border-border-dim text-text-dim shrink-0 rounded-full border px-1.5 py-0.5 text-[10px]"
+            >
+              {feature}
+            </span>
+          ))}
         </button>
-        <span className={`text-[11px] ${ui.text}`}>{note}</span>
+        <span className={`shrink-0 text-[11px] ${ui.text}`}>{note}</span>
       </div>
       {telemetry && <div className="text-text-dim mt-1 font-mono text-[10px]">{telemetry}</div>}
       {svc.detail && svc.health !== 'up' && (

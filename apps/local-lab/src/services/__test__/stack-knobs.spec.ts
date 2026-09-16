@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import type { KnobCatalogEntry } from '../../common/pc-schemas';
@@ -6,11 +9,37 @@ import {
   editablePortsFrom,
   envKnobPath,
   knobsFromCatalog,
+  OBSERVABILITY_PROCS,
   portDefaultsFromCatalog,
   readOnlyPortRows,
   readOnlyPortsFrom,
   servicePortRows,
 } from '../stack-knobs';
+
+const TELEMETRY_NIX = join(__dirname, '..', '..', '..', '..', '..', 'devenv', 'modules', 'telemetry.nix');
+
+const observabilityProcsInDevenv = (): string[] =>
+  readFileSync(TELEMETRY_NIX, 'utf8')
+    .split(/\bprocesses\./)
+    .slice(1)
+    .flatMap((chunk) => {
+      const name = /^([\w-]+)\s*=/.exec(chunk)?.[1];
+      const namespace = /namespace\s*=\s*"([^"]+)"/.exec(chunk)?.[1];
+      return name !== undefined && namespace === 'observability' ? [name] : [];
+    });
+
+describe('OBSERVABILITY_PROCS', () => {
+  it('names every process the devenv puts in the observability namespace', () => {
+    const declared = observabilityProcsInDevenv();
+
+    expect(declared.length).toBeGreaterThan(0);
+    expect([...OBSERVABILITY_PROCS].sort()).toEqual([...new Set(declared)].sort());
+  });
+
+  it('includes the log store', () => {
+    expect(OBSERVABILITY_PROCS).toContain('loki');
+  });
+});
 
 const entry = (over: Partial<KnobCatalogEntry> & { path: string }): KnobCatalogEntry => ({
   label: 'Label',

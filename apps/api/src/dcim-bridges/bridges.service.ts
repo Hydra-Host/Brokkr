@@ -88,7 +88,7 @@ export class BridgesService {
     const summaries = await this.prisma.device.findMany({
       where: {
         role: DeviceRole.Bridge,
-        organizationId: this.organizationId,
+        supplierId: this.organizationId,
         deletedAt: null,
         ...(query.zoneId ? { zoneId: query.zoneId } : {}),
       },
@@ -104,7 +104,7 @@ export class BridgesService {
 
     const pageIds = page.data.map((bridge) => bridge.id);
     const devices = await this.prisma.device.findMany({
-      where: { id: { in: pageIds }, role: DeviceRole.Bridge, organizationId: this.organizationId, deletedAt: null },
+      where: { id: { in: pageIds }, role: DeviceRole.Bridge, supplierId: this.organizationId, deletedAt: null },
       include: bridgeInclude,
     });
 
@@ -120,7 +120,7 @@ export class BridgesService {
 
   async getBridgeById(bridgeId: string): Promise<BridgeResponse> {
     const device = await this.prisma.device.findUnique({
-      where: { id: bridgeId, role: DeviceRole.Bridge, organizationId: this.organizationId, deletedAt: null },
+      where: { id: bridgeId, role: DeviceRole.Bridge, supplierId: this.organizationId, deletedAt: null },
       include: bridgeInclude,
     });
 

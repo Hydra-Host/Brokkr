@@ -3,6 +3,8 @@ import {
   WEBVM_TERMINAL_HTML,
   WEBVM_TERMINAL_ISOLATION_HEADERS,
 } from '@hydrahost/plugin-webvm-terminal/server';
+import { REACT_SINGLETON_DEDUPE } from '@repo/vite-config/dedupe';
+import { DEV_PROXY_FORWARDING, devAllowedHosts, devBindHost, devStrictPort } from '@repo/vite-config/dev-server';
 import tailwindcss from '@tailwindcss/vite';
 import { devtools } from '@tanstack/devtools-vite';
 import tanstackRouter from '@tanstack/router-plugin/vite';
@@ -189,12 +191,7 @@ export default defineConfig(({ mode }) => {
         '~': path.resolve(__dirname, './src'),
       },
       dedupe: [
-        'react',
-        'react-dom',
-        // Context-bearing packages must resolve to ONE module instance across plugin chunks and the main bundle, or the plugin's <Link> fails context lookup.
-        '@tanstack/react-router',
-        '@tanstack/react-query',
-        '@ts-rest/react-query',
+        ...REACT_SINGLETON_DEDUPE,
         // Injected workspace copies resolve from the workspace root, not apps/web/node_modules.
         '@repo/ui',
         'lucide-react',
@@ -243,16 +240,18 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      host: process.env.HOST || undefined,
-      allowedHosts: process.env.HOST === '0.0.0.0' ? true : undefined,
+      host: devBindHost(),
+      allowedHosts: devAllowedHosts(),
+      // The dev bundle carries an injected runtime config, so nothing may read this server cross-origin.
+      cors: false,
       port: Number(process.env.PORT || 5173),
-      strictPort: process.env.VITE_STRICT_PORT === 'true' || !process.env.PORT,
+      strictPort: devStrictPort(),
       // COOP/COEP are NOT set globally — cross-origin isolation breaks embedded third-party
       // iframes (e.g. Stripe Elements); `webvmTerminalHeaders` sets them per-document instead.
       proxy: {
         '/api': {
           target: process.env.API_PROXY_TARGET || 'http://localhost:3000',
-          changeOrigin: true,
+          ...DEV_PROXY_FORWARDING,
         },
       },
     },

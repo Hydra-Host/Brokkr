@@ -11,17 +11,19 @@ import type {
   BareMetalNode,
   BareMetalPowerAction,
   FleetDefaults,
-  FleetMode,
   FleetNetwork,
   FleetNode,
   FleetNodeEffective,
   FleetTombstone,
   HostNic,
+  Machine,
   NicSpec,
   PciDevice,
   RejectedEntry,
+  VerifyFinding,
 } from '@/contract';
 import { isIpv4 } from '@/contract';
+import { BareMetalStatus, groupFindingsByNode, hubWebUrl, type BakeState } from '@/features/config/baremetal-status';
 import { groupByZone } from '@/features/config/fleet-node-groups';
 import { tsr } from '@/lib/api';
 import { useApplyPending } from '@/lib/apply-run';
@@ -31,6 +33,7 @@ import { derivedIp, derivedIpsStale, nodeIpDisplay, type FleetNet } from '@/lib/
 import { saveToastMessage } from '@/lib/pending';
 import { useToast } from '@/lib/toast';
 import { blocksUnsavedNav, canSaveForm, shouldHydrateForm } from '@/lib/unsaved-nav';
+import { usePoll } from '@/lib/use-poll';
 import { useRunTracker } from '@/lib/use-run-tracker';
 
 /** Leaving the route unmounts the fleet editor, so unsaved edits need explicit consent to be dropped. */
@@ -160,7 +163,6 @@ export function ConfigFleetPage() {
     username: 'admin',
     password: 'admin',
   });
-  const [mode, setMode] = useState<FleetMode>('vm');
   const [bmNic, setBmNic] = useState('');
   const [bmArch, setBmArch] = useState<'amd64' | 'arm64'>('amd64');
   const [bmDefaults, setBmDefaults] = useState<{ username: string; password: string }>({ username: '', password: '' });
@@ -168,6 +170,25 @@ export function ConfigFleetPage() {
   const [powerBusy, setPowerBusy] = useState<string | null>(null);
   const [nodeFilter, setNodeFilter] = useState('');
   const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
+  // the probes follow the saved machines, not the unsaved editor rows, so typing a row starts no polling;
+  // the readiness route fans out to every bridge and the hub, so it only polls while a machine is saved
+  const bmSaved = (cfg.data?.status === 200 ? cfg.data.body.baremetal.nodes.length : 0) > 0;
+  const machines = tsr.listMachines.useQuery({
+    queryKey: ['fleet-machines'],
+    refetchInterval: usePoll(30000),
+    enabled: bmSaved,
+  });
+  const readiness = tsr.getFleetBootReadiness.useQuery({
+    queryKey: ['fleet-boot-readiness'],
+    queryData: { query: {} },
+    refetchInterval: usePoll(30000),
+    enabled: bmSaved,
+  });
+  const appLinks = tsr.listAppLinks.useQuery({ queryKey: ['app-links'] });
+  const configureUplink = tsr.startStackRun.useMutation();
+  const { active: configureBusy, track: trackConfigure } = useRunTracker({
+    onTerminal: () => void readiness.refetch(),
+  });
   const [dirty, setDirty] = useState(false);
   useReportDirty('fleet', dirty);
   const [hydrated, setHydrated] = useState(false);
@@ -188,7 +209,6 @@ export function ConfigFleetPage() {
       setNodes(body.nodes.map(toEditNode));
       setBmcDefaults(body.bmcDefaults);
       setFleetDefaults(body.defaults);
-      setMode(body.mode);
       setBmNic(body.baremetal.nics[0] ?? '');
       setBmArch(body.baremetal.arch);
       setBmNodes(body.baremetal.nodes.map((n) => ({ ...n, rowId: nextRowId(), bmc_user: '', bmc_pass: '' })));
@@ -215,12 +235,21 @@ export function ConfigFleetPage() {
       : cfg.data?.status === 200
         ? cfg.data.body.pending
         : undefined;
-  const isModeChange = activePending?.severity === 'mode-change';
+  const isPlanesChange = activePending?.severity === 'planes-change';
   const passthroughOk = host.data?.status === 200 ? host.data.body.passthroughSupported : false;
   const hostLabel = host.data?.status === 200 ? `${host.data.body.os}/${host.data.body.arch}` : '';
   const isLinux = hostLabel.startsWith('linux');
   const pciList = pci.data?.status === 200 ? pci.data.body : [];
   const nicList: HostNic[] = hostNics.data?.status === 200 ? hostNics.data.body : [];
+  const uplink = nicList.find((n) => n.name === bmNic)?.ipv4 ?? null;
+  const startConfigureUplink = () =>
+    configureUplink.mutate(
+      { body: { opId: 'baremetal-uplink-prefix' } },
+      {
+        onSuccess: (r) => trackConfigure(r.body.runId),
+        onError: (err: unknown) => toast.error(thrownBodyError(err) ?? 'configuring the uplink prefix failed to start'),
+      },
+    );
   const srv = cfg.data?.status === 200 ? cfg.data.body : null;
   const tombstones = srv?.tombstones ?? [];
   const zones = (cfg.data?.status === 200 ? cfg.data.body.zones : []) ?? [];
@@ -308,23 +337,11 @@ export function ConfigFleetPage() {
     setBmNodes((ns) => ns.filter((_, k) => k !== i));
     setDirty(true);
   };
-  const selectMode = (next: FleetMode) => {
-    if (next === mode) return;
-    if (next === 'baremetal' && !isLinux) return;
-    const msg =
-      next === 'baremetal'
-        ? 'Switch to bare-metal fleet mode? The VM config is kept and restored when you switch back. Nothing applies until you Save then rebuild.'
-        : 'Switch back to VM fleet mode? The bare-metal config is kept. Nothing applies until you Save then rebuild.';
-    if (!window.confirm(msg)) return;
-    setMode(next);
-    setDirty(true);
-  };
-
+  // a saved row is live, so the block is validated whenever it has rows
   const bmValidationError = (): string | null => {
-    if (mode !== 'baremetal') return null;
-    if (!isLinux) return 'bare-metal mode requires a Linux host';
+    if (bmNodes.length === 0) return null;
+    if (!isLinux) return 'bare-metal machines need a Linux host';
     if (!bmNic) return 'select an uplink NIC';
-    if (bmNodes.length === 0) return 'add at least one machine';
     const names = new Set<string>();
     const macs = new Set<string>();
     const ips = new Set<string>();
@@ -375,7 +392,6 @@ export function ConfigFleetPage() {
   };
 
   const buildPutBody = () => ({
-    mode,
     nodes: nodes.map(toWireNode),
     bmcDefaults,
     defaults: fleetDefaults,
@@ -401,7 +417,10 @@ export function ConfigFleetPage() {
   const netChanged = srv ? NETWORK_FIELDS.filter((k) => net[k] !== srv.network[k]).length : 0;
   const defaultsChanged = srv ? DEFAULT_FIELDS.filter((k) => fleetDefaults[k] !== srv.defaults[k]).length : 0;
   const nodesChanged = srv ? countNodeDiff(nodes, srv.nodes) : 0;
-  const modeChanged = srv ? mode !== srv.mode : false;
+
+  const bakedChainUrl = cfg.data?.status === 200 ? cfg.data.body.bakedChainUrl : null;
+  const bakeStale = activePending?.severity === 'stale-bake';
+  const bake: BakeState = bakedChainUrl === null ? 'missing' : bakeStale ? 'stale' : 'ok';
 
   const saveable = canSaveForm(hydrated, dirty, put.isPending);
   const save = () => {
@@ -444,18 +463,13 @@ export function ConfigFleetPage() {
   const verdictOf = (name: string) => plan?.items.find((i) => i.name === name) ?? null;
 
   const rail: RailItem[] = [
-    { id: 'MODE', label: 'mode', changed: modeChanged ? 1 : 0, note: mode },
-    ...(mode === 'vm'
-      ? [
-          { id: 'NETWORK', label: 'network', changed: netChanged },
-          { id: 'DEFAULTS', label: 'defaults', changed: defaultsChanged },
-          { id: 'NODES', label: 'nodes', changed: nodesChanged, note: `${nodes.length}` },
-        ]
-      : []),
+    { id: 'NETWORK', label: 'network', changed: netChanged },
+    { id: 'DEFAULTS', label: 'defaults', changed: defaultsChanged },
+    { id: 'NODES', label: 'nodes', changed: nodesChanged, note: `${nodes.length}` },
     ...(tombstones.length > 0
       ? [{ id: 'REMOVED', label: 'removed', changed: prune.length, note: `${tombstones.length}` }]
       : []),
-    ...(mode === 'baremetal' ? [{ id: 'BAREMETAL', label: 'bare metal', changed: 0, note: `${bmNodes.length}` }] : []),
+    { id: 'BAREMETAL', label: 'bare metal', changed: 0, note: `${bmNodes.length}` },
   ];
   const select = (id: string) => {
     setActive(id);
@@ -463,7 +477,7 @@ export function ConfigFleetPage() {
   };
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:h-[calc(100dvh-7rem)] lg:grid-cols-[260px_1fr]">
+    <div className="grid grid-cols-1 gap-6 lg:h-full lg:grid-cols-[260px_1fr]">
       <SectionRail
         items={rail}
         activeId={active}
@@ -480,8 +494,8 @@ export function ConfigFleetPage() {
         <ApplyBar
           model={{
             seeded: true,
-            overridden: netChanged + defaultsChanged + nodesChanged + (modeChanged ? 1 : 0),
-            total: NETWORK_FIELDS.length + DEFAULT_FIELDS.length + nodes.length + 1,
+            overridden: netChanged + defaultsChanged + nodesChanged,
+            total: NETWORK_FIELDS.length + DEFAULT_FIELDS.length + nodes.length,
             unsaved: dirty ? 1 : 0,
             cost: plan
               ? `applying costs about ${Math.round(plan.etaSec / 60) || 1}m${plan.dataLoss ? ' and wipes a disk' : ''}`
@@ -513,12 +527,12 @@ export function ConfigFleetPage() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={rebuild}
-            disabled={dirty || isModeChange || applyBusy || rebuildBusy}
+            disabled={dirty || isPlanesChange || applyBusy || rebuildBusy}
             title={
               dirty
                 ? 'save first'
-                : isModeChange
-                  ? 'apply the pending fleet-mode change first'
+                : isPlanesChange
+                  ? 'apply the pending fleet plane change first'
                   : 'nuke + re-seed + rebuild all VMs with this config'
             }
             className="bg-status-offline/20 text-status-offline hover:bg-status-offline/30 rounded-md px-3 py-1 text-[11px] disabled:cursor-not-allowed disabled:opacity-40"
@@ -527,200 +541,196 @@ export function ConfigFleetPage() {
           </button>
           {plan?.reason && <span className="text-status-warning/90 text-[11px]">{plan.reason}</span>}
         </div>
-        {mode === 'vm' && (
-          <>
-            <p className="text-text-dim max-w-3xl text-[11px]">
-              Per-VM hardware. Saving writes your personal <span className="font-mono">stack.local.nix</span>{' '}
-              (gitignored; leaves the committed defaults alone). <b>Rebuild fleet</b> applies it (destructive: nuke →
-              re-seed → rebuild all VMs). Extra disks are blank — discovery picks them up on brokkr-live boot.
-            </p>
-            <div className="border-border-dim bg-bg-secondary flex flex-wrap items-center gap-3 rounded-md border px-3 py-2">
-              <span className="text-text-muted text-[11px]">Default BMC creds</span>
-              <input
-                value={bmcDefaults.username}
-                onChange={(e) => {
-                  setBmcDefaults((b) => ({ ...b, username: e.target.value }));
-                  setDirty(true);
-                }}
-                placeholder="username"
-                title="Default IPMI/Redfish username — applies on Rebuild / re-seed."
-                className="border-border-dim bg-bg-primary text-text-primary focus:border-accent/50 w-32 rounded border px-1.5 py-1 font-mono text-[11px] outline-none"
-              />
-              <input
-                type="password"
-                value={bmcDefaults.password}
-                onChange={(e) => {
-                  setBmcDefaults((b) => ({ ...b, password: e.target.value }));
-                  setDirty(true);
-                }}
-                placeholder="password"
-                title="Default IPMI/Redfish password — applies on Rebuild / re-seed."
-                className="border-border-dim bg-bg-primary text-text-primary focus:border-accent/50 w-32 rounded border px-1.5 py-1 font-mono text-[11px] outline-none"
-              />
-              <span className="text-text-dim text-[10px]">applies on Rebuild</span>
-            </div>
-
-            <NetworkSection
-              id="NETWORK"
-              net={net}
-              zones={new Set(nodes.map((n) => n.zone)).size}
-              verdict={verdictOf('network')}
-              onPatch={(pn) => {
-                setNet((v) => ({ ...v, ...pn }));
+        <>
+          <p className="text-text-dim max-w-3xl text-[11px]">
+            Per-VM hardware. Saving writes your personal <span className="font-mono">stack.local.nix</span> (gitignored;
+            leaves the committed defaults alone). <b>Rebuild fleet</b> applies it (destructive: nuke → re-seed → rebuild
+            all VMs). Extra disks are blank — discovery picks them up on brokkr-live boot.
+          </p>
+          <div className="border-border-dim bg-bg-secondary flex flex-wrap items-center gap-3 rounded-md border px-3 py-2">
+            <span className="text-text-muted text-[11px]">Default BMC creds</span>
+            <input
+              value={bmcDefaults.username}
+              onChange={(e) => {
+                setBmcDefaults((b) => ({ ...b, username: e.target.value }));
                 setDirty(true);
-                if (pn.cidr !== undefined || pn.bmcCidr !== undefined)
-                  setNodes((ns) => ns.map((n) => ({ ...n, effective_ip: null, effective_bmc_ip: null })));
               }}
+              placeholder="username"
+              title="Default IPMI/Redfish username — applies on Rebuild / re-seed."
+              className="border-border-dim bg-bg-primary text-text-primary focus:border-accent/50 w-32 rounded border px-1.5 py-1 font-mono text-[11px] outline-none"
             />
+            <input
+              type="password"
+              value={bmcDefaults.password}
+              onChange={(e) => {
+                setBmcDefaults((b) => ({ ...b, password: e.target.value }));
+                setDirty(true);
+              }}
+              placeholder="password"
+              title="Default IPMI/Redfish password — applies on Rebuild / re-seed."
+              className="border-border-dim bg-bg-primary text-text-primary focus:border-accent/50 w-32 rounded border px-1.5 py-1 font-mono text-[11px] outline-none"
+            />
+            <span className="text-text-dim text-[10px]">applies on Rebuild</span>
+          </div>
 
-            <div
-              id="DEFAULTS"
-              className="border-border-dim bg-bg-secondary flex flex-wrap items-end gap-3 rounded-md border px-3 py-2"
-            >
-              <span className="text-text-muted self-center text-[11px]">Fleet defaults</span>
-              <NumField
-                rowId="defaults"
-                label="vCPUs"
-                value={fleetDefaults.cpus}
-                effective={SPEC_FALLBACK.cpus}
-                onChange={(v) => {
-                  setFleetDefaults((d) => ({ ...d, cpus: v }));
+          <NetworkSection
+            id="NETWORK"
+            net={net}
+            zones={new Set(nodes.map((n) => n.zone)).size}
+            verdict={verdictOf('network')}
+            onPatch={(pn) => {
+              setNet((v) => ({ ...v, ...pn }));
+              setDirty(true);
+              if (pn.cidr !== undefined || pn.bmcCidr !== undefined)
+                setNodes((ns) => ns.map((n) => ({ ...n, effective_ip: null, effective_bmc_ip: null })));
+            }}
+          />
+
+          <div
+            id="DEFAULTS"
+            className="border-border-dim bg-bg-secondary flex flex-wrap items-end gap-3 rounded-md border px-3 py-2"
+          >
+            <span className="text-text-muted self-center text-[11px]">Fleet defaults</span>
+            <NumField
+              rowId="defaults"
+              label="vCPUs"
+              value={fleetDefaults.cpus}
+              effective={SPEC_FALLBACK.cpus}
+              onChange={(v) => {
+                setFleetDefaults((d) => ({ ...d, cpus: v }));
+                setDirty(true);
+              }}
+              min={1}
+            />
+            <NumField
+              rowId="defaults"
+              label="RAM (MiB)"
+              value={fleetDefaults.memory_mb}
+              effective={SPEC_FALLBACK.memory_mb}
+              onChange={(v) => {
+                setFleetDefaults((d) => ({ ...d, memory_mb: v }));
+                setDirty(true);
+              }}
+              step={512}
+              min={2048}
+            />
+            <NumField
+              rowId="defaults"
+              label="OS disk (GB)"
+              value={fleetDefaults.disk_gb}
+              effective={SPEC_FALLBACK.disk_gb}
+              onChange={(v) => {
+                setFleetDefaults((d) => ({ ...d, disk_gb: v }));
+                setDirty(true);
+              }}
+              min={1}
+            />
+            <label className="flex flex-col gap-0.5">
+              <span className="text-text-label text-[10px] tracking-wide uppercase">arch</span>
+              <select
+                value={fleetDefaults.arch ?? ''}
+                onChange={(e) => {
+                  setFleetDefaults((d) => ({ ...d, arch: e.target.value || null }));
                   setDirty(true);
                 }}
-                min={1}
-              />
-              <NumField
-                rowId="defaults"
-                label="RAM (MiB)"
-                value={fleetDefaults.memory_mb}
-                effective={SPEC_FALLBACK.memory_mb}
-                onChange={(v) => {
-                  setFleetDefaults((d) => ({ ...d, memory_mb: v }));
-                  setDirty(true);
-                }}
-                step={512}
-                min={2048}
-              />
-              <NumField
-                rowId="defaults"
-                label="OS disk (GB)"
-                value={fleetDefaults.disk_gb}
-                effective={SPEC_FALLBACK.disk_gb}
-                onChange={(v) => {
-                  setFleetDefaults((d) => ({ ...d, disk_gb: v }));
-                  setDirty(true);
-                }}
-                min={1}
-              />
-              <label className="flex flex-col gap-0.5">
-                <span className="text-text-label text-[10px] tracking-wide uppercase">arch</span>
-                <select
-                  value={fleetDefaults.arch ?? ''}
-                  onChange={(e) => {
-                    setFleetDefaults((d) => ({ ...d, arch: e.target.value || null }));
-                    setDirty(true);
-                  }}
-                  className="border-border-dim bg-bg-primary text-text-primary focus:border-accent/50 w-24 rounded border px-1.5 py-1 font-mono text-[11px] outline-none"
-                >
-                  <option value="">host</option>
-                  {ARCH_CHOICES.map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <span className="text-text-dim self-center text-[10px]">
-                every node that leaves a field on inherit follows these
-              </span>
-            </div>
-          </>
-        )}
+                className="border-border-dim bg-bg-primary text-text-primary focus:border-accent/50 w-24 rounded border px-1.5 py-1 font-mono text-[11px] outline-none"
+              >
+                <option value="">host</option>
+                {ARCH_CHOICES.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="text-text-dim self-center text-[10px]">
+              every node that leaves a field on inherit follows these
+            </span>
+          </div>
+        </>
         {error && <div className="text-status-offline text-sm">{error}</div>}
         <RejectedWrites rejected={rejected} />
 
-        {mode === 'vm' && (
-          <>
-            <div id="NODES" className="flex flex-wrap items-center gap-2">
-              <input
-                value={nodeFilter}
-                onChange={(e) => setNodeFilter(e.target.value)}
-                placeholder="filter VMs…"
-                aria-label="Filter VMs by name or zone"
-                className="border-border-dim bg-bg-primary text-text-primary placeholder:text-text-label focus:border-accent/50 w-44 rounded border px-2 py-1 font-mono text-[11px] outline-none"
-              />
-              <span className="text-text-dim text-[11px]">
-                {visibleNodes.length} of {nodes.length} VMs
-              </span>
-            </div>
-            {groupByZone(indexedNodes, ({ node }) => node.zone, zones).map((group) => {
-              // grouped over every node, filtered per group: grouping the filtered list made a zone
-              // whose nodes are merely hidden read as one that holds none
-              const shown = group.items.filter(({ node }) => nodeMatchesFilter(node, nodeFilter));
-              return (
-                <div key={group.zone} className="space-y-2">
-                  <div className="flex flex-wrap items-baseline gap-2">
-                    <span
-                      className={`font-mono text-[11px] ${group.undeclared ? 'text-status-warning' : 'text-text-muted'}`}
-                    >
-                      {group.zone}
+        <>
+          <div id="NODES" className="flex flex-wrap items-center gap-2">
+            <input
+              value={nodeFilter}
+              onChange={(e) => setNodeFilter(e.target.value)}
+              placeholder="filter VMs…"
+              aria-label="Filter VMs by name or zone"
+              className="border-border-dim bg-bg-primary text-text-primary placeholder:text-text-label focus:border-accent/50 w-44 rounded border px-2 py-1 font-mono text-[11px] outline-none"
+            />
+            <span className="text-text-dim text-[11px]">
+              {visibleNodes.length} of {nodes.length} VMs
+            </span>
+          </div>
+          {groupByZone(indexedNodes, ({ node }) => node.zone, zones).map((group) => {
+            // grouped over every node, filtered per group: grouping the filtered list made a zone
+            // whose nodes are merely hidden read as one that holds none
+            const shown = group.items.filter(({ node }) => nodeMatchesFilter(node, nodeFilter));
+            return (
+              <div key={group.zone} className="space-y-2">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span
+                    className={`font-mono text-[11px] ${group.undeclared ? 'text-status-warning' : 'text-text-muted'}`}
+                  >
+                    {group.zone}
+                  </span>
+                  <span className="text-text-dim text-[10px]">
+                    {shown.length === group.items.length
+                      ? `${group.items.length} VM${group.items.length === 1 ? '' : 's'}`
+                      : `${shown.length} of ${group.items.length} shown`}
+                  </span>
+                  {group.undeclared && (
+                    <span className="text-status-warning text-[10px]">
+                      no zone declares this — move each VM to a declared zone, or declare it on the zones page
                     </span>
-                    <span className="text-text-dim text-[10px]">
-                      {shown.length === group.items.length
-                        ? `${group.items.length} VM${group.items.length === 1 ? '' : 's'}`
-                        : `${shown.length} of ${group.items.length} shown`}
-                    </span>
-                    {group.undeclared && (
-                      <span className="text-status-warning text-[10px]">
-                        no zone declares this — move each VM to a declared zone, or declare it on the zones page
-                      </span>
-                    )}
-                    {!group.undeclared && group.items.length === 0 && (
-                      <span className="text-text-label text-[10px]">no VMs yet</span>
-                    )}
-                    {group.items.length > 0 && shown.length === 0 && (
-                      <span className="text-text-label text-[10px]">every VM here is hidden by the filter</span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                    {shown.map(({ node, i }) => (
-                      <NodeCard
-                        key={node.rowId}
-                        node={node}
-                        index={i}
-                        zones={zones}
-                        cidr={net.cidr}
-                        bmcCidr={net.bmcCidr}
-                        verdict={verdictOf(node.name)}
-                        pciList={pciList}
-                        passthroughOk={passthroughOk}
-                        hostLabel={hostLabel}
-                        collapsed={!!collapsedNodes[node.rowId]}
-                        claimedElsewhere={Object.fromEntries(
-                          nodes.flatMap((n, j) => (j === i ? [] : n.passthrough.map((a) => [a, n.name] as const))),
-                        )}
-                        defaults={fleetDefaults}
-                        onPatch={(p) => patch(i, p)}
-                        onRemove={() => removeNode(i)}
-                        onToggleCollapsed={() => toggleCollapsed(node.rowId)}
-                        onTogglePci={(addr) => togglePassthrough(i, addr)}
-                      />
-                    ))}
-                  </div>
+                  )}
+                  {!group.undeclared && group.items.length === 0 && (
+                    <span className="text-text-label text-[10px]">no VMs yet</span>
+                  )}
+                  {group.items.length > 0 && shown.length === 0 && (
+                    <span className="text-text-label text-[10px]">every VM here is hidden by the filter</span>
+                  )}
                 </div>
-              );
-            })}
-            {nodes.length > 0 && visibleNodes.length === 0 && (
-              <div className="text-text-dim text-[11px]">no VM matches the filter</div>
-            )}
-            <button
-              onClick={() => addNode()}
-              className="border-border-dim text-text-muted hover:bg-hover-bg w-full rounded-md border border-dashed px-3 py-2 text-sm lg:w-auto"
-            >
-              + Add VM
-            </button>
-          </>
-        )}
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  {shown.map(({ node, i }) => (
+                    <NodeCard
+                      key={node.rowId}
+                      node={node}
+                      index={i}
+                      zones={zones}
+                      cidr={net.cidr}
+                      bmcCidr={net.bmcCidr}
+                      verdict={verdictOf(node.name)}
+                      pciList={pciList}
+                      passthroughOk={passthroughOk}
+                      hostLabel={hostLabel}
+                      collapsed={!!collapsedNodes[node.rowId]}
+                      claimedElsewhere={Object.fromEntries(
+                        nodes.flatMap((n, j) => (j === i ? [] : n.passthrough.map((a) => [a, n.name] as const))),
+                      )}
+                      defaults={fleetDefaults}
+                      onPatch={(p) => patch(i, p)}
+                      onRemove={() => removeNode(i)}
+                      onToggleCollapsed={() => toggleCollapsed(node.rowId)}
+                      onTogglePci={(addr) => togglePassthrough(i, addr)}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {nodes.length > 0 && visibleNodes.length === 0 && (
+            <div className="text-text-dim text-[11px]">no VM matches the filter</div>
+          )}
+          <button
+            onClick={() => addNode()}
+            className="border-border-dim text-text-muted hover:bg-hover-bg w-full rounded-md border border-dashed px-3 py-2 text-sm lg:w-auto"
+          >
+            + Add VM
+          </button>
+        </>
 
         {tombstones.length > 0 && (
           <RemovedSection
@@ -736,44 +746,41 @@ export function ConfigFleetPage() {
 
         <div className="border-border-dim border-t" />
 
-        <FleetModeSection
-          id="MODE"
-          mode={mode}
+        <BareMetalEditor
+          id="BAREMETAL"
           isLinux={isLinux}
-          nodeCount={nodes.length}
-          bmCount={bmNodes.length}
-          onSelect={selectMode}
+          nicList={nicList}
+          bmNic={bmNic}
+          onNic={(v) => {
+            setBmNic(v);
+            setDirty(true);
+          }}
+          bmArch={bmArch}
+          onArch={(v) => {
+            setBmArch(v);
+            setDirty(true);
+          }}
+          bmDefaults={bmDefaults}
+          onDefaults={(d) => {
+            setBmDefaults(d);
+            setDirty(true);
+          }}
+          nodes={bmNodes}
+          onPatch={patchBm}
+          onAdd={addBmNode}
+          onRemove={removeBmNode}
+          onPower={powerAction}
+          powerBusy={powerBusy}
+          bakedChainUrl={bakedChainUrl}
+          bakeStale={bakeStale}
+          machines={machines.data?.status === 200 ? machines.data.body : []}
+          findingsByNode={groupFindingsByNode(readiness.data?.status === 200 ? readiness.data.body.findings : [])}
+          bake={bake}
+          hubWeb={hubWebUrl(appLinks.data?.status === 200 ? appLinks.data.body : [])}
+          uplink={uplink}
+          onConfigure={configureBusy ? null : startConfigureUplink}
+          dirty={dirty}
         />
-
-        {mode === 'baremetal' && (
-          <BareMetalEditor
-            id="BAREMETAL"
-            isLinux={isLinux}
-            nicList={nicList}
-            bmNic={bmNic}
-            onNic={(v) => {
-              setBmNic(v);
-              setDirty(true);
-            }}
-            bmArch={bmArch}
-            onArch={(v) => {
-              setBmArch(v);
-              setDirty(true);
-            }}
-            bmDefaults={bmDefaults}
-            onDefaults={(d) => {
-              setBmDefaults(d);
-              setDirty(true);
-            }}
-            nodes={bmNodes}
-            onPatch={patchBm}
-            onAdd={addBmNode}
-            onRemove={removeBmNode}
-            onPower={powerAction}
-            powerBusy={powerBusy}
-            bakedChainUrl={cfg.data?.status === 200 ? cfg.data.body.bakedChainUrl : null}
-          />
-        )}
       </div>
 
       <UnsavedNavGate dirty={dirty} />
@@ -1310,93 +1317,6 @@ function NumField({
   );
 }
 
-function FleetModeSection({
-  id,
-  mode,
-  isLinux,
-  nodeCount,
-  bmCount,
-  onSelect,
-}: {
-  id: string;
-  mode: FleetMode;
-  isLinux: boolean;
-  nodeCount: number;
-  bmCount: number;
-  onSelect: (m: FleetMode) => void;
-}) {
-  const card = ({
-    id,
-    title,
-    desc,
-    inactiveSummary,
-    disabled,
-    disabledHint,
-  }: {
-    id: FleetMode;
-    title: string;
-    desc: string;
-    inactiveSummary: string;
-    disabled: boolean;
-    disabledHint: string;
-  }) => {
-    const selected = mode === id;
-    return (
-      <button
-        key={id}
-        onClick={() => onSelect(id)}
-        disabled={disabled}
-        title={disabled ? disabledHint : ''}
-        className={[
-          'flex-1 rounded-lg border p-3 text-left transition',
-          selected ? 'border-accent bg-accent/10' : 'border-border-dim hover:bg-hover-bg',
-          disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer',
-        ].join(' ')}
-      >
-        <div className="flex items-center gap-2">
-          <span
-            className={`inline-block size-3 rounded-full border ${selected ? 'border-accent bg-accent' : 'border-border-dim'}`}
-          />
-          <span className="text-text-primary text-sm font-medium">{title}</span>
-          {!selected && (
-            <span className="border-border-dim text-text-dim ml-auto rounded-full border px-1.5 py-0.5 text-[10px]">
-              {inactiveSummary} · inactive
-            </span>
-          )}
-        </div>
-        <p className="text-text-dim mt-1 text-[11px] leading-snug">{disabled ? disabledHint : desc}</p>
-      </button>
-    );
-  };
-  return (
-    <div id={id} className="space-y-2">
-      <SectionHeading>Fleet mode</SectionHeading>
-      <div className="flex flex-col gap-3 sm:flex-row">
-        {card({
-          id: 'vm',
-          title: 'VM fleet',
-          desc: 'libvirt/qemu simulated machines — current behavior.',
-          inactiveSummary: `${nodeCount} VMs saved`,
-          disabled: false,
-          disabledHint: '',
-        })}
-        {card({
-          id: 'baremetal',
-          title: 'Bare metal fleet',
-          desc: 'PXE-boot real machines on a host NIC via DHCP proxy; your router stays the DHCP server.',
-          inactiveSummary: `${bmCount} machines saved`,
-          disabled: !isLinux,
-          disabledHint: 'Bare metal mode needs a Linux host',
-        })}
-      </div>
-      <p className="text-text-dim text-[11px]">
-        Both configurations are kept — switching only changes which one runs. Nothing applies until you Save then
-        rebuild.
-      </p>
-    </div>
-  );
-}
-
 function BareMetalEditor({
   id,
   isLinux,
@@ -1414,6 +1334,14 @@ function BareMetalEditor({
   onPower,
   powerBusy,
   bakedChainUrl,
+  bakeStale,
+  machines,
+  findingsByNode,
+  bake,
+  hubWeb,
+  uplink,
+  onConfigure,
+  dirty,
 }: {
   id: string;
   isLinux: boolean;
@@ -1431,15 +1359,28 @@ function BareMetalEditor({
   onPower: (node: BmEditNode, action: BareMetalPowerAction) => void;
   powerBusy: string | null;
   bakedChainUrl: string | null;
+  bakeStale: boolean;
+  machines: Machine[];
+  findingsByNode: Map<string, VerifyFinding[]>;
+  bake: BakeState;
+  hubWeb: string | null;
+  uplink: string | null;
+  onConfigure: (() => void) | null;
+  dirty: boolean;
 }) {
   if (!isLinux) {
     return (
-      <div className="text-status-warning/80 text-sm">Bare-metal mode needs a Linux host. Switch back to VM fleet.</div>
+      <div id={id} className="text-status-warning/80 text-sm">
+        Bare-metal machines need a Linux host.
+      </div>
     );
   }
-  const selectedNic = nicList.find((n) => n.name === bmNic);
   return (
     <div id={id} className="space-y-4">
+      <p className="text-text-dim text-[11px]">
+        Bare-metal mode adds no process. It turns TFTP, proxy DHCP and strict iPXE on inside the spoke — see the spoke
+        card on Stack.
+      </p>
       <div className="space-y-1.5">
         <SectionHeading>Uplink NIC</SectionHeading>
         <select
@@ -1462,12 +1403,14 @@ function BareMetalEditor({
           PXE boot requests (DHCP proxy). Give this host a static IP or a DHCP reservation on your router — the boot
           binaries embed this address.
         </p>
-        {bakedChainUrl && (
+        {!bakedChainUrl ? (
+          <span className="border-status-warning/40 text-status-warning/80 inline-block rounded-full border px-2 py-0.5 text-[10px]">
+            no iPXE bake yet — the boot binaries carry no address, so machines will not chain here. Run Build then iPXE.
+          </span>
+        ) : (
           <span className="border-border-dim text-text-dim inline-block rounded-full border px-2 py-0.5 text-[10px]">
             baked chain URL: {bakedChainUrl}
-            {selectedNic?.ipv4 && !bakedChainUrl.includes(selectedNic.ipv4.split('/')[0])
-              ? ' · stale — re-apply to rebake'
-              : ''}
+            {bakeStale ? ' · stale — re-bake via Build → iPXE' : ''}
           </span>
         )}
       </div>
@@ -1516,6 +1459,13 @@ function BareMetalEditor({
             onRemove={() => onRemove(i)}
             onPower={(action) => onPower(node, action)}
             powerBusy={powerBusy === node.name}
+            machine={machines.find((m) => m.name === node.name)}
+            findings={findingsByNode.get(node.name) ?? []}
+            bake={bake}
+            hubWeb={hubWeb}
+            uplink={uplink}
+            onConfigure={onConfigure}
+            dirty={dirty}
           />
         ))}
       </div>
@@ -1540,12 +1490,26 @@ function BareMetalCard({
   onRemove,
   onPower,
   powerBusy,
+  machine,
+  findings,
+  bake,
+  hubWeb,
+  uplink,
+  onConfigure,
+  dirty,
 }: {
   node: BmEditNode;
   onPatch: (p: Partial<BmEditNode>) => void;
   onRemove: () => void;
   onPower: (action: BareMetalPowerAction) => void;
   powerBusy: boolean;
+  machine: Machine | undefined;
+  findings: VerifyFinding[];
+  bake: BakeState;
+  hubWeb: string | null;
+  uplink: string | null;
+  onConfigure: (() => void) | null;
+  dirty: boolean;
 }) {
   const [advanced, setAdvanced] = useState(false);
   const macClass = (v: string) =>
@@ -1670,6 +1634,16 @@ function BareMetalCard({
         {powerBtn('reset', 'Reset', 'border-border-dim text-text-muted hover:bg-hover-bg')}
         {powerBtn('powercycle', 'Power cycle', 'border-border-dim text-text-muted hover:bg-hover-bg')}
       </div>
+      <BareMetalStatus
+        machine={machine}
+        findings={findings}
+        bake={bake}
+        hubWeb={hubWeb}
+        pxeMac={node.pxe_mac}
+        uplink={uplink}
+        onConfigure={onConfigure}
+        dirty={dirty}
+      />
     </div>
   );
 }

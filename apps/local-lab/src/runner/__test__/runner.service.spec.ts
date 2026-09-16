@@ -39,6 +39,18 @@ describe('RunnerService.spawnPty childPid tracking', () => {
     await expect(exit).resolves.toBe(0);
     expect(run.childPid).toBeUndefined();
   });
+
+  it('resolves 1 when pty.spawn throws', async () => {
+    vi.mocked(pty.spawn).mockImplementation(() => {
+      throw new Error('posix_spawnp failed.');
+    });
+    const svc = new RunnerService(NULL_RUN_SINK);
+    const run = svc.create({ section: 'test', opId: 'smoke', label: 'pty-spawn-error' });
+
+    await expect(svc.spawnPty(run, 'node', ['-e', ''])).resolves.toBe(1);
+    expect(run.childPid).toBeUndefined();
+    expect(svc.stream(run.runId).backlog).toContain('posix_spawnp failed.');
+  });
 });
 
 describe('RunnerService log ring', () => {

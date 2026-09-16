@@ -4,8 +4,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { getErrorMessage } from '@repo/utils';
 import { ccBuildInfo } from '../common/build-info';
-import { getErrorMessage } from '../common/errors';
 import { SingleFlightCache } from '../common/single-flight-cache';
 import type { FleetStatus, FleetSummary, HttpProbeResult, InitStatus, Machine, Run, Status } from '../contract';
 import { PgService } from '../datastore/pg.service';

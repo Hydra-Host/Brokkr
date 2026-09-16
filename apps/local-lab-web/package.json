@@ -38,6 +38,7 @@
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
+    "@repo/vite-config": "workspace:*",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/router-cli": "^1.158.0",
     "@tanstack/router-plugin": "^1.158.0",

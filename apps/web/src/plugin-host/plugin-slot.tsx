@@ -1,5 +1,6 @@
 import type {
   AddressAutocompleteContribution,
+  AppBannerSlotContribution,
   DashboardWidgetContribution,
   InventoryItemCtaContribution,
   InventoryItemCtaDevice,
@@ -44,7 +45,8 @@ type Props =
       isAuthenticated: boolean;
       sessionPending?: boolean;
     }
-  | { name: 'inventory-item-cta'; category?: string; userEmail?: string; device: InventoryItemCtaDevice };
+  | { name: 'inventory-item-cta'; category?: string; userEmail?: string; device: InventoryItemCtaDevice }
+  | { name: 'app-banner'; pathname: string; organizationId: string };
 
 export function PluginSlot(props: Props) {
   const registry = usePluginRegistry();
@@ -109,6 +111,23 @@ export function PluginSlot(props: Props) {
           return (
             <PluginErrorBoundary key={`${pluginId}:${index}`} pluginId={pluginId}>
               <Component pluginId={pluginId} category={category} userEmail={userEmail} device={device} />
+            </PluginErrorBoundary>
+          );
+        })}
+      </>
+    );
+  }
+
+  if (props.name === 'app-banner') {
+    const { pathname, organizationId } = props;
+    return (
+      <>
+        {entries.map(({ pluginId, contribution }, index) => {
+          const c = contribution as AppBannerSlotContribution;
+          const Component = c.component;
+          return (
+            <PluginErrorBoundary key={`${pluginId}:${index}`} pluginId={pluginId}>
+              <Component pathname={pathname} organizationId={organizationId} />
             </PluginErrorBoundary>
           );
         })}

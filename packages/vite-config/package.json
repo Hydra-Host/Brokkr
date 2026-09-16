@@ -1,0 +1,24 @@
+{
+  "name": "@repo/vite-config",
+  "version": "0.0.0",
+  "description": "Shared Vite dev-server settings for the SPA workspaces.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./dedupe": "./src/dedupe.ts",
+    "./dev-server": "./src/dev-server.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.2",
+    "vitest": "^4.0.17"
+  }
+}

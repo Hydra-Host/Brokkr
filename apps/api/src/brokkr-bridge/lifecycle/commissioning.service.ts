@@ -109,7 +109,7 @@ export class BridgeCommissioningService {
       where: { id: deviceId },
       select: {
         id: true,
-        organizationId: true,
+        supplierId: true,
         zone: { select: { organizationId: true } },
         server: { select: { id: true, storageLayouts: true } },
       },
@@ -162,7 +162,7 @@ export class BridgeCommissioningService {
   }
 
   private async createQualifyDeployment(
-    device: { id: string; organizationId: string | null; zone: { organizationId: string } | null },
+    device: { id: string; supplierId: string | null; zone: { organizationId: string } | null },
     operatingSystemSlug: string,
     jobId: string,
   ): Promise<string> {
@@ -178,7 +178,7 @@ export class BridgeCommissioningService {
       );
     }
 
-    const organizationId = device.organizationId ?? device.zone?.organizationId;
+    const organizationId = device.supplierId ?? device.zone?.organizationId;
     if (!organizationId) {
       throw new BadRequestException(`Device ${device.id} has no owning organization; cannot create qualify deployment`);
     }

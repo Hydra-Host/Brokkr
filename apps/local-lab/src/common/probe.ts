@@ -1,4 +1,4 @@
-import { getErrorMessage } from './errors';
+import { getErrorMessage } from '@repo/utils';
 
 /** Auxiliary read that degrades to null on its own, so one failed probe never discards the reads
  *  beside it. Null is "could not be determined" — callers must not report it as a measured zero. */

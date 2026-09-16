@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { RunnerService, type RunState } from '../runner/runner.service';
-import { readAppliedMode } from './applied-manifest';
+import { planesEqual, readAppliedPlanes } from './applied-manifest';
 import { applyScopeNamespaces } from './apply-scope';
 import { OverlayStoreService } from './overlay-store';
 import {
@@ -152,8 +152,8 @@ export class RedeployService {
     return run;
   }
 
-  private failIfModeChangePending(run: RunState, reason: string): boolean {
-    if (this.overlay.fleetMode() === readAppliedMode()) return false;
+  private failIfPlanesChangePending(run: RunState, reason: string): boolean {
+    if (planesEqual(this.overlay.planes(), readAppliedPlanes())) return false;
     this.log.warn(reason);
     this.runner.emit(run, `${reason}\n`);
     this.runner.finalize(run, 1);
@@ -162,9 +162,9 @@ export class RedeployService {
 
   private async orchestrateRedeploy(run: RunState): Promise<void> {
     if (
-      this.failIfModeChangePending(
+      this.failIfPlanesChangePending(
         run,
-        'redeploy blocked: a fleet-mode change is pending — apply it via Fleet → Apply (fleet-mode-apply) first',
+        'redeploy blocked: a fleet plane change is pending — apply it via Fleet → Apply (fleet-planes-apply) first',
       )
     )
       return;
@@ -200,9 +200,9 @@ export class RedeployService {
 
   private async orchestrateReload(run: RunState, group: StackGroup): Promise<void> {
     if (
-      this.failIfModeChangePending(
+      this.failIfPlanesChangePending(
         run,
-        `reload ${group} blocked: a fleet-mode change is pending — apply it via Fleet → Apply (fleet-mode-apply) first`,
+        `reload ${group} blocked: a fleet plane change is pending — apply it via Fleet → Apply (fleet-planes-apply) first`,
       )
     )
       return;

@@ -137,6 +137,12 @@ let
   # `editable = false` keeps these out of the writable map but still in the catalog; a port declaring
   # no metadata now fails the eval rather than silently vanishing from it.
   readOnlyPorts = {
+    thanosCapnproto = port slotPorts.thanosCapnproto {
+      label = "Thanos cap'n proto";
+      group = "Observability";
+      editable = false;
+      description = "Thanos receive's cap'n proto server. It binds one whether or not the flag is given, and its own default is a fixed 0.0.0.0:19391, so naming it here is what keeps two stacks off each other and keeps the listener on loopback.";
+    };
     thanosQueryHttp = port slotPorts.thanosQueryHttp {
       label = "Thanos query HTTP";
       group = "Observability";
@@ -663,7 +669,7 @@ let
         '';
       };
       fleetNodeCount = knob {
-        type = lib.types.ints.between 1 4;
+        type = lib.types.ints.between 0 4;
         default = if config.stack.slot == 0 then 4 else 1;
         label = "Generated fleet nodes";
         group = "Scale";
@@ -730,17 +736,54 @@ let
       description = "Bring up the local telemetry sink (OTel collector -> Tempo traces + span-metrics -> Thanos, Grafana UI at the `grafana` port) and point the hub's OTLP exporter at it.";
     };
 
-    # LAN exposure toggle. When true, the otherwise loopback-only datastores/services (postgres,
-    # redis, thanos, mailpit, lab, lab-web, hub web) bind 0.0.0.0 for LAN/Tailscale reach instead of
-    # 127.0.0.1 — consumed by modules/ports.nix `bindHost` + devenv.nix (pg_hba / redis protected-mode).
-    # Set via the control center (written into stack.local.nix) or in devenv.local.nix.
-    lan.expose = knob {
-      type = lib.types.bool;
-      default = false;
-      label = "Expose on LAN";
-      group = "Networking";
-      danger = true;
-      description = "Whether the loopback-only datastores/services bind 0.0.0.0 (LAN/Tailscale reach) instead of 127.0.0.1. Written by the control center into stack.local.nix.";
+    # `fronted` exists because a terminator dials 127.0.0.1, so every caller it serves arrives as a
+    # loopback peer and address-based trust stops meaning anything. It demands a token from everybody.
+    lan = {
+      mode = knob {
+        type = lib.types.enum [
+          "loopback"
+          "direct"
+          "fronted"
+        ];
+        default = "loopback";
+        label = "Network mode";
+        group = "Networking";
+        danger = true;
+        description = "How this stack is reached. `loopback` binds 127.0.0.1 and trusts loopback callers. `direct` binds the LAN (lan.bindAddress, else 0.0.0.0) in cleartext and makes off-loopback callers present a token. `fronted` keeps every listener on loopback for a TLS terminator you run yourself, and makes EVERY caller present a token — loopback included, because behind a front door a loopback peer is whoever the front door serves.";
+      };
+      bindAddress = knob {
+        type = lib.types.str;
+        default = "";
+        label = "Bind address";
+        group = "Networking";
+        description = "Single address the `direct` mode listeners bind, instead of every interface. An IPv4 or IPv6 literal only: this value reaches a socket, and a name resolves to several addresses and binds one of them twice. Put a name in lan.publicHost. Empty means 0.0.0.0 under `direct`, and nothing binds outward under `fronted` or `loopback`.";
+      };
+      publicHost = knob {
+        type = lib.types.str;
+        default = "";
+        label = "Public host";
+        group = "Networking";
+        description = "Host a browser reaches this stack at, under `direct` or `fronted`. Unlike lan.bindAddress it never reaches a socket, so it takes a name — the name a `fronted` terminator serves, or the name a `direct` LAN client types. It shapes the browser-facing URLs and the dev servers' Host allowlist. Empty falls back to lan.bindAddress, then to localhost.";
+      };
+      datastoreAuth = knob {
+        type = lib.types.bool;
+        default = true;
+        label = "Datastore credentials";
+        group = "Networking";
+        description = "Require a credential from off-loopback datastore clients under `direct` mode: Postgres scram-sha-256 on the non-loopback pg_hba lines, a Redis requirepass on the default user, basic auth on the Mailpit UI, and Thanos receive pinned back to loopback (it has no authentication of its own). Only Postgres keeps loopback trust, because pg_hba is per-source. A Redis requirepass is connection-global and has no per-source form, so loopback tooling must present the password too, and the readiness probe carries REDISCLI_AUTH. Mailpit basic auth is global in the same way.";
+      };
+
+      # The pre-`lan.mode` boolean, aliased onto it in `config` below. Kept rather than removed: a
+      # removed option is a hard evaluation error in every checkout whose generated stack.local.nix
+      # still sets it, which is every checkout the control center has ever written.
+      expose = knob {
+        type = lib.types.bool;
+        default = false;
+        label = "Expose on LAN (deprecated)";
+        group = "Networking";
+        danger = true;
+        description = "Deprecated alias kept so an existing stack.local.nix still evaluates: true implies lan.mode = \"direct\". Set lan.mode instead — it also reaches the `fronted` posture this boolean cannot express.";
+      };
     };
 
     # Gate that, when true, would run the local hub compute against REMOTE infra (skipping the local
@@ -796,6 +839,24 @@ let
           group = "Identity";
           description = "Postgres database name. Takes effect only on a fresh datadir.";
         };
+      };
+      # Unlike pg.password these apply on every start, so a change costs a redeploy rather than a datadir
+      # wipe — priced that way in packages/local-lab-contract/src/apply-class.ts.
+      redis.password = knob {
+        type = lib.types.str;
+        default = "password";
+        label = "Redis password";
+        group = "Identity";
+        secret = true;
+        description = "Password for the Redis `default` user, applied as requirepass and carried in every derived REDIS_URL. Only used under lan.mode = \"direct\" with lan.datastoreAuth on; keep it URL-safe, since it rides in the connection string's userinfo.";
+      };
+      mailpit.password = knob {
+        type = lib.types.str;
+        default = "password";
+        label = "Mailpit UI password";
+        group = "Identity";
+        secret = true;
+        description = "Password for the Mailpit web UI and API, as HTTP basic auth for the user `brokkr`. Only used under lan.mode = \"direct\" with lan.datastoreAuth on — the catcher holds real password-reset mail, and its API returns message bodies.";
       };
       orgId = knob {
         type = lib.types.str;
@@ -981,6 +1042,10 @@ in
   options = toOptions declared;
 
   config = {
+    # mkDefault (1000) outranks the option's own default (1500) and loses to an explicit lan.mode (100),
+    # so setting both is not a conflict: the three-valued knob wins and the boolean is ignored.
+    lan.mode = lib.mkIf config.lan.expose (lib.mkDefault "direct");
+
     knobMeta = knobsIn "" declared;
     knobCatalog =
       assert lib.assertMsg (strayPinEnv == [ ])

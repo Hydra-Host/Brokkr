@@ -8,6 +8,7 @@ import {
   evaluateIpxeBuilds,
   type FileExists,
   type IpxeBuildInput,
+  type ReadTextFile,
 } from '../ipxe-build-assert.js';
 import type { StartupLogger } from '../startup-deps.types.js';
 
@@ -45,82 +46,91 @@ function presentWith(architectures: readonly string[], filename: string): Set<st
   return present;
 }
 
-const input = (architectures: readonly string[]): IpxeBuildInput => ({ finalBuildsDir: DIR, architectures });
+const BRIDGE_URL = 'http://192.0.2.10:8000';
+
+const input = (architectures: readonly string[]): IpxeBuildInput => ({
+  finalBuildsDir: DIR,
+  architectures,
+  bridgeUrl: BRIDGE_URL,
+});
+
+const matchingStamp: ReadTextFile = async () => JSON.stringify({ chain_base_url: BRIDGE_URL });
 
 describe('evaluateIpxeBuilds', () => {
   it('no finding when only snponly.efi is present for an arch', async () => {
     const arches = ['amd64', 'arm64'];
-    const findings = await evaluateIpxeBuilds(input(arches), existsFrom(presentWith(arches, SNPONLY)));
+    const findings = await evaluateIpxeBuilds(input(arches), existsFrom(presentWith(arches, SNPONLY)), matchingStamp);
     expect(findings).toEqual([]);
   });
 
   it('no finding when only ipxe.efi is present for an arch', async () => {
     const arches = ['amd64', 'arm64'];
-    const findings = await evaluateIpxeBuilds(input(arches), existsFrom(presentWith(arches, IPXE)));
+    const findings = await evaluateIpxeBuilds(input(arches), existsFrom(presentWith(arches, IPXE)), matchingStamp);
     expect(findings).toEqual([]);
   });
 
   it('no finding when only snp.efi is present for an arch', async () => {
     const arches = ['amd64', 'arm64'];
-    const findings = await evaluateIpxeBuilds(input(arches), existsFrom(presentWith(arches, SNP)));
+    const findings = await evaluateIpxeBuilds(input(arches), existsFrom(presentWith(arches, SNP)), matchingStamp);
     expect(findings).toEqual([]);
   });
 
   it('one finding for an arch with none of the three target binaries', async () => {
     const arches = ['amd64', 'arm64'];
     const present = presentWith(['amd64'], SNP);
-    const findings = await evaluateIpxeBuilds(input(arches), existsFrom(present));
-    expect(findings).toEqual([{ arch: 'arm64', dir: join(DIR, 'arm64'), acceptable: IPXE_BUILD_FILENAMES }]);
+    const findings = await evaluateIpxeBuilds(input(arches), existsFrom(present), matchingStamp);
+    expect(findings.map((f) => f.code)).toEqual(['PXE-01']);
+    expect(findings[0]?.message).toContain(join(DIR, 'arm64'));
+    expect(IPXE_BUILD_FILENAMES.every((f) => findings[0]?.message.includes(f))).toBe(true);
   });
 
   it('reports every arch when the builds dir is empty', async () => {
-    const findings = await evaluateIpxeBuilds(input(['amd64', 'arm64']), existsFrom(new Set()));
-    expect(findings).toEqual([
-      { arch: 'amd64', dir: join(DIR, 'amd64'), acceptable: IPXE_BUILD_FILENAMES },
-      { arch: 'arm64', dir: join(DIR, 'arm64'), acceptable: IPXE_BUILD_FILENAMES },
-    ]);
+    const findings = await evaluateIpxeBuilds(input(['amd64', 'arm64']), existsFrom(new Set()), matchingStamp);
+    expect(findings.map((f) => f.code)).toEqual(['PXE-01', 'PXE-01']);
+    expect(findings[0]?.message).toContain(join(DIR, 'amd64'));
+    expect(findings[1]?.message).toContain(join(DIR, 'arm64'));
   });
 });
 
 describe('assertIpxeBuilds', () => {
   it('logs LOUD (error) per arch with no valid binary but does not throw by default', async () => {
     const { logger, errors } = recordingLogger();
-    await expect(assertIpxeBuilds(input(['amd64', 'arm64']), existsFrom(new Set()), logger)).resolves.toBeUndefined();
+    await expect(
+      assertIpxeBuilds(input(['amd64', 'arm64']), existsFrom(new Set()), matchingStamp, logger),
+    ).resolves.toHaveLength(2);
     expect(errors).toHaveLength(2);
     expect(errors[0]).toContain('PXE-01');
     expect(errors.some((e) => e.includes('arch=amd64') && IPXE_BUILD_FILENAMES.every((f) => e.includes(f)))).toBe(true);
     expect(errors.some((e) => e.includes('arch=arm64'))).toBe(true);
-    expect(errors.every((e) => e.includes('Dockerfile.ipxe COPY contract'))).toBe(true);
+    expect(errors.every((e) => e.includes('DISCOVERY_ARCHITECTURES'))).toBe(true);
   });
 
   it('throws under strict when an arch has none of the valid target binaries', async () => {
     const { logger } = recordingLogger();
-    await expect(assertIpxeBuilds(input(['amd64']), existsFrom(new Set()), logger, { strict: true })).rejects.toThrow(
-      /iPXE build assertion failed/,
-    );
+    await expect(
+      assertIpxeBuilds(input(['amd64']), existsFrom(new Set()), matchingStamp, logger, { strict: true }),
+    ).rejects.toThrow(/iPXE build assertion failed/);
   });
 
   it('does not throw under strict when each arch has at least one valid binary', async () => {
     const { logger, errors } = recordingLogger();
     const arches = ['amd64', 'arm64'];
     const present = new Set<string>([join(DIR, 'amd64', IPXE), join(DIR, 'arm64', SNP)]);
-    await assertIpxeBuilds(input(arches), existsFrom(present), logger, { strict: true });
+    await assertIpxeBuilds(input(arches), existsFrom(present), matchingStamp, logger, { strict: true });
     expect(errors).toEqual([]);
   });
 
-  it('under local simulation, downgrades to debug and never errors or throws', async () => {
+  it('with TFTP disabled, downgrades to debug and never errors or throws', async () => {
     const { logger, errors, debugs } = recordingLogger();
     await expect(
-      assertIpxeBuilds(input(['amd64', 'arm64']), existsFrom(new Set()), logger, {
+      assertIpxeBuilds(input(['amd64', 'arm64']), existsFrom(new Set()), matchingStamp, logger, {
         strict: true,
-        localSimulation: true,
+        tftpEnabled: false,
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual([]);
     expect(errors).toEqual([]);
     expect(debugs).toHaveLength(1);
-    expect(debugs[0]).toContain('local simulation');
-    expect(debugs[0]).toContain('amd64');
-    expect(debugs[0]).toContain('arm64');
+    expect(debugs[0]).toContain('TFTP is disabled');
   });
 
   it('skips entirely when no architectures are served', async () => {
@@ -132,6 +142,7 @@ describe('assertIpxeBuilds', () => {
         called = true;
         return false;
       },
+      matchingStamp,
       logger,
       { strict: true },
     );

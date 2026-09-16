@@ -2,7 +2,7 @@ import { dump } from 'js-yaml';
 import { z } from 'zod';
 import { getErrorMessage } from '../common/error-utils';
 
-import type { OperationName, OperationOutput } from '@repo/bridge-agent-protocol';
+import { NODE_DESC_PATTERN, type OperationName, type OperationOutput } from '@repo/bridge-agent-protocol';
 import { isRecord, normalizeSshKey } from '@repo/utils';
 
 import { NonRetryableSagaError } from '../saga-framework/saga-runner.service.js';
@@ -211,19 +211,6 @@ export interface DeployOrchestrationDeps {
 function rawDiskLayoutsField(lifecycleData: Record<string, unknown>): unknown {
   if (!('disk_layouts' in lifecycleData)) return [];
   return lifecycleData['disk_layouts'];
-}
-
-function ensureUnknownArray(target: Record<string, unknown>, key: string): unknown[] {
-  if (!(key in target)) {
-    target[key] = [];
-  }
-  const value = target[key];
-  if (!Array.isArray(value)) {
-    const err = new Error(`expected an array for key '${key}', got ${typeName(value)}`);
-    err.name = 'TypeError';
-    throw err;
-  }
-  return value;
 }
 
 // Only ValueError-equivalents downgrade to `roce.enabled=false`; TypeError/ReferenceError/SyntaxError must propagate.
@@ -488,11 +475,8 @@ export class DeployOrchestrationService {
       const grubDisks: unknown = hasValue(grubDisksRaw) ? grubDisksRaw : [];
       const hostname = (hasValue(osPayload.hostname) ? osPayload.hostname : 'brokkr-host') as string;
 
-      const userData = await this.injectInfinibandUdev(
-        osPayload.user_data,
-        params.nodeDesc ?? null,
-        params.deviceNetworkType ?? null,
-      );
+      const userData = osPayload.user_data;
+      const infinibandVars = this.buildInfinibandVars(params.nodeDesc ?? null, params.deviceNetworkType ?? null);
       const docaCodename = `${distro}${osVersion}`;
 
       const fstabRaw = 'fstab' in storage ? storage['fstab'] : '';
@@ -598,6 +582,7 @@ export class DeployOrchestrationService {
         grub_vars: grubVars,
         luks_already_keyed: alreadyKeyed,
         roce: roceVars,
+        infiniband: infinibandVars,
       };
       if (customizationPayload !== null) {
         payload['customizations'] = customizationPayload;
@@ -634,51 +619,23 @@ export class DeployOrchestrationService {
     }
   }
 
-  private async injectInfinibandUdev(
-    userData: unknown,
+  private buildInfinibandVars(
     nodeDesc: string | null,
     networkType: string | null,
-  ): Promise<unknown> {
-    if (!nodeDesc) return userData;
+  ): { enabled: boolean; node_desc: string } {
+    const disabled = { enabled: false, node_desc: '' };
 
-    if (networkType !== 'infiniband') return userData;
+    if (!nodeDesc || networkType !== 'infiniband') return disabled;
 
-    if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(nodeDesc)) {
-      logWarning(`Skipping InfiniBand node_desc injection: '${nodeDesc}' contains invalid characters`, {
+    if (!NODE_DESC_PATTERN.test(nodeDesc)) {
+      logWarning(`Skipping InfiniBand node_desc config: '${nodeDesc}' contains invalid characters`, {
         jobId: this.jobId,
       });
-      return userData;
+      return disabled;
     }
 
-    let target: Record<string, unknown>;
-    if (userData === null || userData === undefined) {
-      target = {};
-    } else if (isRecord(userData)) {
-      target = userData;
-    } else {
-      throw new TypeError(`'${typeof userData}' object does not support item assignment`);
-    }
-
-    const ibUdevRule =
-      'ACTION=="add", SUBSYSTEM=="infiniband", KERNEL=="mlx5_*", ' +
-      `RUN+="/bin/sh -c 'echo -n ${nodeDesc} %k` +
-      ` > /sys/class/infiniband/%k/node_desc'"`;
-    const writeFiles = ensureUnknownArray(target, 'write_files');
-    writeFiles.push({
-      path: '/etc/udev/rules.d/99-infiniband-node-desc.rules',
-      content: ibUdevRule + '\n',
-      permissions: '0644',
-    });
-
-    const ibCmd =
-      'for d in /sys/class/infiniband/mlx5_*/node_desc; do ' +
-      '[ -e "$d" ] && devName=$(basename $(dirname "$d")) && ' +
-      `echo -n "${nodeDesc} $devName" > "$d"; done`;
-    const runcmd = ensureUnknownArray(target, 'runcmd');
-    runcmd.push(ibCmd);
-    logInfo(`Injected InfiniBand node_desc udev rule: ${nodeDesc}`, { jobId: this.jobId });
-
-    return target;
+    logInfo(`InfiniBand node_desc config enabled: ${nodeDesc}`, { jobId: this.jobId });
+    return { enabled: true, node_desc: nodeDesc };
   }
 }
 

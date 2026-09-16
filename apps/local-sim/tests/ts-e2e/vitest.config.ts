@@ -11,7 +11,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@repo/database': path.resolve(__dirname, '../../../../packages/database/generated/client'),
+      '@repo/database': path.resolve(__dirname, '../../../../packages/database/generated/js/client.js'),
       '@repo/api-client/schemas/common': path.resolve(
         __dirname,
         '../../../../packages/api-client/src/schemas/common.ts',

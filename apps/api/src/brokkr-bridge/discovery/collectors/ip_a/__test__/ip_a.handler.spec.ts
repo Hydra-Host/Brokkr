@@ -45,6 +45,44 @@ describe('IpAHandler', () => {
     expect(mutation.upserts?.interfaces?.map((i) => i.name)).toEqual(['eno1']);
   });
 
+  it('stores the udev name from altnames when we renamed the NIC to ethN', async () => {
+    const parsed = handler.schema.parse([{ ifname: 'eth0', operstate: 'UP', altnames: ['enp34s0f0'] }]);
+    const mutation = await handler.handle(parsed);
+    expect(mutation.upserts?.interfaces?.[0]).toMatchObject({ name: 'enp34s0f0', linkOperUp: true });
+  });
+
+  it('keeps a name udev already chose, even when altnames offers another alias', async () => {
+    const parsed = handler.schema.parse([{ ifname: 'enp34s0f1', operstate: 'DOWN', altnames: ['ens1f1'] }]);
+    const mutation = await handler.handle(parsed);
+    expect(mutation.upserts?.interfaces?.[0]?.name).toBe('enp34s0f1');
+  });
+
+  it('keeps ethN when the only altname is a USB-IPMI name', async () => {
+    const parsed = handler.schema.parse([{ ifname: 'eth2', operstate: 'UP', altnames: ['enx0ac97ac3f1d2'] }]);
+    const mutation = await handler.handle(parsed);
+    expect(mutation.upserts?.interfaces?.[0]?.name).toBe('eth2');
+  });
+
+  it('skips a USB-IPMI altname and takes the udev name behind it', async () => {
+    const parsed = handler.schema.parse([
+      { ifname: 'eth0', operstate: 'UP', altnames: ['enx0ac97ac3f1d2', 'enp34s0f0'] },
+    ]);
+    const mutation = await handler.handle(parsed);
+    expect(mutation.upserts?.interfaces?.[0]?.name).toBe('enp34s0f0');
+  });
+
+  it('skips an empty altname and takes the udev name behind it', async () => {
+    const parsed = handler.schema.parse([{ ifname: 'eth0', operstate: 'UP', altnames: ['', 'enp34s0f0'] }]);
+    const mutation = await handler.handle(parsed);
+    expect(mutation.upserts?.interfaces?.[0]?.name).toBe('enp34s0f0');
+  });
+
+  it('keeps ethN when the NIC reports no altnames', async () => {
+    const parsed = handler.schema.parse([{ ifname: 'eth0', operstate: 'UP' }]);
+    const mutation = await handler.handle(parsed);
+    expect(mutation.upserts?.interfaces?.[0]?.name).toBe('eth0');
+  });
+
   it('skips bonds and vlans by attribute, keeping the members that are real NICs', async () => {
     const parsed = handler.schema.parse([
       { ifname: 'eno1', operstate: 'UP', master: 'bond0' },

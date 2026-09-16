@@ -15,11 +15,13 @@ import {
   bootMacFromEnv,
   buildDiskLayouts,
   buildProvisionPayload,
+  explicitDeviceIdFromEnv,
   pollUntil,
   type DiskLayoutEntry,
-  type Fleet,
+  type FleetPlanes,
   type StorageLayouts,
 } from '../helpers';
+import { readBootTrailLine } from '../lab-boot-trail';
 import {
   OS_SLUG,
   awaitDiscoveryReady,
@@ -122,8 +124,8 @@ function provisionParamsSchema(defaultName: string) {
  * The bench box is Ubuntu-only by operator mandate. `verify-os` asserts RELATIVE to the slug, so
  * without this a debian-* slug would install and then verify green.
  */
-export function requireUbuntuOnBareMetal(mode: Fleet['mode'], slug: string, kind: string): void {
-  if (mode === 'baremetal' && !slug.startsWith('ubuntu-')) {
+export function requireUbuntuOnBareMetal(planes: FleetPlanes, slug: string, kind: string): void {
+  if (planes.baremetal && !slug.startsWith('ubuntu-')) {
     throw new Error(
       `refusing to ${kind} the bare-metal box with base '${slug}': bare-metal runs must use an ubuntu-* base`,
     );
@@ -135,7 +137,7 @@ export function requireUbuntuOnBareMetal(mode: Fleet['mode'], slug: string, kind
  * discovery had — a stale ctx.dataIp turns every later SSH step into an opaque timeout.
  */
 async function refreshBareMetalDataIp(ctx: PlanContext): Promise<void> {
-  if (ctx.fleet.mode !== 'baremetal') return;
+  if (!ctx.fleet.planes.baremetal) return;
   const bootMac = bootMacFromEnv();
   if (!bootMac) return;
   const current = await ctx.hubDb.getDataIpByBootMac(bootMac);
@@ -165,8 +167,8 @@ function provisionStep(kind: 'provision' | 'reprovision', defaultName: string): 
     },
     async run(ctx, params) {
       const resolvedSlug = params.osSlug ?? OS_SLUG;
-      step(`${params.kind}: base OS ${resolvedSlug}`, { metadata: { osSlug: resolvedSlug, mode: ctx.fleet.mode } });
-      requireUbuntuOnBareMetal(ctx.fleet.mode, resolvedSlug, params.kind);
+      step(`${params.kind}: base OS ${resolvedSlug}`, { metadata: { osSlug: resolvedSlug, planes: ctx.fleet.planes } });
+      requireUbuntuOnBareMetal(ctx.fleet.planes, resolvedSlug, params.kind);
       const jobId = await awaitProvisioned(ctx.hubAdmin, ctx.hubDb, ctx.bridgeRedis, ctx.dataIp, ctx.deviceId, {
         kind: params.kind,
         deploymentName: params.deploymentName,
@@ -204,7 +206,10 @@ const powerCycleStep: Step = {
   label: 'Power cycle',
   parseParams() {},
   async run(ctx) {
-    await powerCycle(ctx.hubAdmin, ctx.hubDb, ctx.dataIp, ctx.deviceId);
+    await powerCycle(ctx.hubAdmin, ctx.hubDb, ctx.dataIp, ctx.deviceId, {
+      bareMetal: explicitDeviceIdFromEnv() !== null,
+      bootTrail: () => readBootTrailLine(ctx.deviceId),
+    });
   },
 };
 
@@ -582,7 +587,7 @@ const ipxeCustomStep: Step<IpxeCustomParams> = {
   async run(ctx, params) {
     // wipe-disks.step.ts has no ipxe_url skip, so the accepted provision below NIST-sanitizes every
     // disk and then hands boot to an external URL without installing anything.
-    if (ctx.fleet.mode === 'baremetal') {
+    if (ctx.fleet.planes.baremetal) {
       throw new Error(
         'refusing to run provision-ipxe-custom against the bare-metal box: the provision saga ' +
           'full-wipes every disk and installs nothing, handing boot to an external iPXE URL',

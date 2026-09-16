@@ -2,7 +2,14 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createLabContext, currentCheckout, resolveLabBaseUrl, resolveLabTarget, resolveLabToken } from './client.js';
+import {
+  createLabContext,
+  currentCheckout,
+  resolveHostToken,
+  resolveLabBaseUrl,
+  resolveLabTarget,
+  resolveLabToken,
+} from './client.js';
 import { selectStackTarget } from './target.js';
 
 afterEach(() => {
@@ -22,6 +29,12 @@ function refusalMessage(dir: string): string {
     return error instanceof Error ? error.message : String(error);
   }
   throw new Error('expected a refusal');
+}
+
+function tokenFile(contents: string): string {
+  const path = join(mkdtempSync(join(tmpdir(), 'lab-mcp-token-')), 'host-token');
+  writeFileSync(path, contents);
+  return path;
 }
 
 const emptyRegistry = () => registryDir([]);
@@ -129,11 +142,89 @@ describe('currentCheckout', () => {
 
 describe('resolveLabToken', () => {
   it('prefers the explicit value, then LAB_API_TOKEN, then empty', () => {
+    vi.stubEnv('LAB_API_TOKEN_FILE', undefined);
     expect(resolveLabToken('tok')).toBe('tok');
     vi.stubEnv('LAB_API_TOKEN', 'env-tok');
     expect(resolveLabToken()).toBe('env-tok');
     vi.stubEnv('LAB_API_TOKEN', '');
     expect(resolveLabToken()).toBe('');
+  });
+
+  it('reads LAB_API_TOKEN_FILE when no variable carries one, trimming the trailing newline', () => {
+    vi.stubEnv('LAB_API_TOKEN', undefined);
+    vi.stubEnv('LAB_API_TOKEN_FILE', tokenFile('  file-tok\n'));
+    expect(resolveLabToken()).toBe('file-tok');
+  });
+
+  it('lets LAB_API_TOKEN outrank the file', () => {
+    vi.stubEnv('LAB_API_TOKEN', 'env-tok');
+    vi.stubEnv('LAB_API_TOKEN_FILE', tokenFile('file-tok'));
+    expect(resolveLabToken()).toBe('env-tok');
+  });
+
+  it('lets an explicit value outrank both', () => {
+    vi.stubEnv('LAB_API_TOKEN', 'env-tok');
+    vi.stubEnv('LAB_API_TOKEN_FILE', tokenFile('file-tok'));
+    expect(resolveLabToken('tok')).toBe('tok');
+  });
+
+  it('reads the file past an exported-but-empty LAB_API_TOKEN, which is not a token', () => {
+    vi.stubEnv('LAB_API_TOKEN', '');
+    vi.stubEnv('LAB_API_TOKEN_FILE', tokenFile('file-tok'));
+    expect(resolveLabToken()).toBe('file-tok');
+  });
+
+  it('is empty when the pointed-at file does not exist, rather than throwing', () => {
+    vi.stubEnv('LAB_API_TOKEN', undefined);
+    vi.stubEnv('LAB_API_TOKEN_FILE', join(mkdtempSync(join(tmpdir(), 'lab-mcp-token-')), 'absent'));
+    expect(resolveLabToken()).toBe('');
+  });
+
+  it('is empty when neither a variable nor a file is set', () => {
+    vi.stubEnv('LAB_API_TOKEN', undefined);
+    vi.stubEnv('LAB_API_TOKEN_FILE', undefined);
+    expect(resolveLabToken()).toBe('');
+  });
+});
+
+describe('resolveHostToken', () => {
+  it('prefers the explicit value, then LAB_HOST_TOKEN, then its file', () => {
+    vi.stubEnv('LAB_API_TOKEN', undefined);
+    vi.stubEnv('LAB_API_TOKEN_FILE', undefined);
+    expect(resolveHostToken('tok')).toBe('tok');
+    vi.stubEnv('LAB_HOST_TOKEN', 'env-host');
+    expect(resolveHostToken()).toBe('env-host');
+    vi.stubEnv('LAB_HOST_TOKEN', undefined);
+    vi.stubEnv('LAB_HOST_TOKEN_FILE', tokenFile('  file-host\n'));
+    expect(resolveHostToken()).toBe('file-host');
+  });
+
+  it('falls back to the api token, so a loopback stack needs nothing set', () => {
+    vi.stubEnv('LAB_HOST_TOKEN', undefined);
+    vi.stubEnv('LAB_HOST_TOKEN_FILE', undefined);
+    vi.stubEnv('LAB_API_TOKEN', 'api-tok');
+    expect(resolveHostToken()).toBe('api-tok');
+  });
+
+  it('outranks the api token whenever a host token exists', () => {
+    vi.stubEnv('LAB_API_TOKEN', 'api-tok');
+    vi.stubEnv('LAB_HOST_TOKEN', 'host-tok');
+    expect(resolveHostToken()).toBe('host-tok');
+  });
+
+  it('reads its file past an exported-but-empty LAB_HOST_TOKEN', () => {
+    vi.stubEnv('LAB_API_TOKEN', undefined);
+    vi.stubEnv('LAB_API_TOKEN_FILE', undefined);
+    vi.stubEnv('LAB_HOST_TOKEN', '');
+    vi.stubEnv('LAB_HOST_TOKEN_FILE', tokenFile('file-host'));
+    expect(resolveHostToken()).toBe('file-host');
+  });
+
+  it('is empty when nothing carries a token at all', () => {
+    for (const v of ['LAB_HOST_TOKEN', 'LAB_HOST_TOKEN_FILE', 'LAB_API_TOKEN', 'LAB_API_TOKEN_FILE']) {
+      vi.stubEnv(v, undefined);
+    }
+    expect(resolveHostToken()).toBe('');
   });
 });
 
@@ -243,6 +334,33 @@ describe('createLabContext', () => {
     });
     await ctx.client.getStatus({});
     expect(seen[0]?.['x-lab-token']).toBe('secret');
+  });
+
+  it('sends the host token on the host client and the api token on the ordinary one', async () => {
+    const seen: Record<string, string>[] = [];
+    const api = async (args: { headers: Record<string, string> }) => {
+      seen.push(args.headers);
+      return { status: 200 as const, body: {}, headers: new Headers() };
+    };
+    const ctx = createLabContext({ baseUrl: 'http://lab.test', token: 'api-tok', hostToken: 'host-tok', api });
+    await ctx.client.getStatus({});
+    await ctx.hostClient.getStatus({});
+    expect(seen[0]?.['x-lab-token']).toBe('api-tok');
+    expect(seen[1]?.['x-lab-token']).toBe('host-tok');
+  });
+
+  it('retargets the host client too, so host-exec tools never keep hitting the old stack', async () => {
+    const seen: string[] = [];
+    const api = async (args: { path: string }) => {
+      seen.push(args.path);
+      return { status: 200 as const, body: {}, headers: new Headers() };
+    };
+    vi.stubEnv('LAB_MCP_URL', 'http://first:1');
+    const ctx = createLabContext({ api, hostToken: 'host-tok' });
+    await ctx.hostClient.getStatus({});
+    ctx.setTarget(selectStackTarget({ slot: 0 }, registryDir([{ slot: 0, checkout: '/c', ports: { lab: 3002 } }])));
+    await ctx.hostClient.getStatus({});
+    expect(seen).toEqual(['http://first:1/api/status', 'http://127.0.0.1:3002/api/status']);
   });
 
   it('omits the x-lab-token header when no token is set', async () => {

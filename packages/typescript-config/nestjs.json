@@ -7,6 +7,7 @@
     "experimentalDecorators": true,
     "forceConsistentCasingInFileNames": false,
     "incremental": true,
+    "tsBuildInfoFile": "${configDir}/dist/tsconfig.tsbuildinfo",
     "module": "commonjs",
     "moduleResolution": "node",
     "noFallthroughCasesInSwitch": false,

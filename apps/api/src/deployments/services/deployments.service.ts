@@ -154,6 +154,7 @@ export class DeploymentsService {
       throw new BadRequestException('Cannot reprovision a decommissioned (soft-deleted) device');
     }
     this.provisionValidator.validateDiskGroupHomogeneity(data.diskLayouts, deviceRecord.data.storageDrives ?? []);
+    this.provisionValidator.validateDiskGroupSizeLimits(data.diskLayouts, deviceRecord.data.storageDrives ?? []);
     const hw = ServerSpecHelper.hardwareSummary(deviceRecord.data);
     const customizations = flattenCustomizations(data.customizations);
     if (isTeeRequested(data.operatingSystem, data.tee, customizations)) {
@@ -208,6 +209,7 @@ export class DeploymentsService {
 
     return await this.lifecycleService.requestReboot({
       deviceId: aggregate.server.device.id,
+      deploymentId,
       userId: this.contextService.userId,
       organizationId: this.contextService.organizationId,
       source: this.contextService.requestSource,
@@ -238,6 +240,7 @@ export class DeploymentsService {
     return await this.lifecycleService.requestPowerControl({
       operation: data.operation,
       deviceId: aggregate.server.device.id,
+      deploymentId,
       userId: this.contextService.userId,
       organizationId: this.contextService.organizationId,
       source: this.contextService.requestSource,
@@ -297,7 +300,7 @@ export class DeploymentsService {
     };
   }
 
-  async activateRescueMode(deploymentId: string) {
+  async activateRescueMode(deploymentId: string): Promise<string> {
     this.contextService.requirePermission('deployment', 'update');
     const aggregate = await DeploymentRecord.findActiveAggregateById(deploymentId);
     if (!aggregate) {
@@ -307,7 +310,7 @@ export class DeploymentsService {
     if (!record) {
       throw new NotFoundException('Deployment not found');
     }
-    await this.rescueModeService.activate({
+    return this.rescueModeService.activate({
       deviceId: aggregate.server.device.id,
       aggregate,
       record,
@@ -316,7 +319,7 @@ export class DeploymentsService {
     });
   }
 
-  async deactivateRescueMode(deploymentId: string) {
+  async deactivateRescueMode(deploymentId: string): Promise<string> {
     this.contextService.requirePermission('deployment', 'update');
     const aggregate = await DeploymentRecord.findActiveAggregateById(deploymentId);
     if (!aggregate) {
@@ -326,7 +329,7 @@ export class DeploymentsService {
     if (!record) {
       throw new NotFoundException('Deployment not found');
     }
-    await this.rescueModeService.deactivate({
+    return this.rescueModeService.deactivate({
       deviceId: aggregate.server.device.id,
       aggregate,
       record,

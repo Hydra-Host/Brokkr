@@ -211,6 +211,11 @@ export class RedisClient {
     return this.execute('RPUSH', (d) => d.rpush(prefixed, values), jobId);
   }
 
+  async xadd(key: string, fields: Record<string, string>, maxlen?: number, jobId?: string): Promise<string> {
+    const prefixed = this.key(key);
+    return this.execute('XADD', (d) => d.xadd(prefixed, fields, maxlen), jobId);
+  }
+
   async lrange(key: string, start: number, stop: number, jobId?: string): Promise<string[]> {
     const prefixed = this.key(key);
     return this.execute('LRANGE', (d) => d.lrange(prefixed, start, stop), jobId);

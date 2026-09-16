@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { bridgeInstanceVersion } from '../../common/redis/redis-keys.js';
+import { getDiscoverySyncRecord, resetDiscoverySyncRecordForTests } from '../../composition/discovery-sync-holder.js';
+import type { DiscoveryFlavor } from '../../download/discovery.config.js';
 import { resetDiscoveryFileConfig } from '../../download/discovery.config.js';
 import { resetLeaderConfigForTests } from '../../leader-election/leader-election.config.js';
 import type { FetchLike } from '../brokkr-live-https-sync.service.js';
@@ -12,16 +15,23 @@ import {
   BrokkrLiveHTTPSSyncService,
   buildArchCacheDir,
   buildDiscoveryManifestUrl,
+  buildFlavorBaseUrl,
   classifyDownloadVerification,
   decideCacheAction,
   HTTPSSyncError,
 } from '../brokkr-live-https-sync.service.js';
 import type { SyncVersionCache } from '../discovery-sync.js';
-import { resetDiscoverySyncQueueForTests, syncDiscoveryImages } from '../discovery-sync.js';
+import { discoverySyncVersionKey, resetDiscoverySyncQueueForTests, syncDiscoveryImages } from '../discovery-sync.js';
 import { resetPersistentStorageConfig, resetStorageConfig, resetSyncConfig } from '../sync.config.js';
 
 function sha256Hex(data: string): string {
   return createHash('sha256').update(data, 'utf8').digest('hex');
+}
+
+const ROOT_URL = 'https://assets.test/brokkr-live';
+
+function versionKeyFor(flavor: DiscoveryFlavor, rootUrl: string): string {
+  return bridgeInstanceVersion('bridge-test', discoverySyncVersionKey(flavor, rootUrl));
 }
 
 class FakeVersionCache implements SyncVersionCache {
@@ -52,8 +62,15 @@ describe('pure sync helpers', () => {
     );
   });
 
-  it('buildArchCacheDir joins the arch subdir', () => {
-    expect(buildArchCacheDir('/brokkr/brokkr-live', 'arm64')).toBe('/brokkr/brokkr-live/arm64');
+  it('buildArchCacheDir joins the flavor and arch subdirs', () => {
+    expect(buildArchCacheDir('/brokkr/brokkr-live', 'light', 'arm64')).toBe('/brokkr/brokkr-live/light/arm64');
+  });
+
+  it('buildFlavorBaseUrl appends -light for the light flavor and nothing for full', () => {
+    expect(buildFlavorBaseUrl('https://assets.example/brokkr-live/', 'light')).toBe(
+      'https://assets.example/brokkr-live-light',
+    );
+    expect(buildFlavorBaseUrl('https://assets.example/brokkr-live', 'full')).toBe('https://assets.example/brokkr-live');
   });
 
   it('classifyDownloadVerification checks size before sha', () => {
@@ -121,10 +138,10 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    const synced = await service.syncDiscoveryImages();
+    const synced = await service.syncDiscoveryImages('full');
 
     expect(synced).toBe(1);
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     expect(await readFile(join(archDir, 'brokkr-live-amd64.iso'), 'utf-8')).toBe(isoContent);
     const metadata = JSON.parse(await readFile(join(archDir, '.cache_metadata.json'), 'utf-8'));
     expect(metadata['brokkr-live-amd64.iso'].sha256sum).toBe(sha256Hex(isoContent));
@@ -150,7 +167,7 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     };
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    const synced = await service.syncDiscoveryImages();
+    const synced = await service.syncDiscoveryImages('full');
 
     expect(requested.some((u) => u.endsWith('/riscv64/manifest.json'))).toBe(true);
     expect(requested.some((u) => u.endsWith('/arm64/manifest.json'))).toBe(false);
@@ -173,7 +190,7 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     };
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    const synced = await service.syncDiscoveryImages();
+    const synced = await service.syncDiscoveryImages('full');
 
     expect(requested.some((u) => u.includes('/../'))).toBe(false);
     expect(synced).toBe(1);
@@ -190,9 +207,9 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    await expect(service.syncDiscoveryImages()).rejects.toThrow('sha256sum mismatch');
+    await expect(service.syncDiscoveryImages('full')).rejects.toThrow('sha256sum mismatch');
 
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     const leftover = await readdir(archDir);
     expect(leftover).not.toContain('brokkr-live-amd64.iso.tmp');
     expect(leftover).not.toContain('brokkr-live-amd64.iso');
@@ -209,7 +226,7 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    await expect(service.syncDiscoveryImages()).rejects.toThrow('Size mismatch');
+    await expect(service.syncDiscoveryImages('full')).rejects.toThrow('Size mismatch');
   });
 
   it('rejects a downloadable manifest entry that has no sha256sum and caches nothing', async () => {
@@ -227,10 +244,10 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    await expect(service.syncDiscoveryImages()).rejects.toThrow(HTTPSSyncError);
+    await expect(service.syncDiscoveryImages('full')).rejects.toThrow(HTTPSSyncError);
 
     expect(downloadAttempts).toBe(0);
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     const leftover = await readdir(archDir).catch(() => [] as string[]);
     expect(leftover).not.toContain('no-sha.iso');
     expect(leftover).not.toContain('.cache_metadata.json');
@@ -248,9 +265,9 @@ describe('BrokkrLiveHTTPSSyncService', () => {
       });
 
       const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-      await service.syncDiscoveryImages();
+      await service.syncDiscoveryImages('full');
 
-      const archDir = join(baseDir, 'brokkr-live', 'amd64');
+      const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
       expect(await readFile(join(archDir, 'sim.iso'), 'utf-8')).toBe(content);
       const metadata = JSON.parse(await readFile(join(archDir, '.cache_metadata.json'), 'utf-8'));
       expect(metadata['sim.iso'].sha256sum).toBe(sha256Hex(content));
@@ -276,7 +293,7 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    await expect(service.syncDiscoveryImages()).rejects.toThrow(HTTPSSyncError);
+    await expect(service.syncDiscoveryImages('full')).rejects.toThrow(HTTPSSyncError);
 
     expect(downloadAttempts).toBe(0);
     const escaped = await readFile(join(baseDir, 'escape.iso'), 'utf-8').then(
@@ -289,13 +306,13 @@ describe('BrokkrLiveHTTPSSyncService', () => {
   it('skips an architecture whose manifest is unavailable', async () => {
     const fetchFn = makeFetch({});
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    expect(await service.syncDiscoveryImages()).toBe(0);
+    expect(await service.syncDiscoveryImages('full')).toBe(0);
   });
 
   it('skips re-downloading files whose cached sha matches the manifest', async () => {
     const isoContent = 'cached-bytes';
     const sha = sha256Hex(isoContent);
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     await rm(archDir, { recursive: true, force: true });
     const manifest = { files: [{ name: 'f.iso', size: isoContent.length, sha256sum: sha }] };
 
@@ -309,17 +326,17 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     });
 
     const first = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    await first.syncDiscoveryImages();
+    await first.syncDiscoveryImages('full');
     expect(downloads).toBe(1);
 
     const second = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    await second.syncDiscoveryImages();
+    await second.syncDiscoveryImages('full');
     expect(downloads).toBe(1);
   });
 
   it('cleans up orphaned cache files no longer in the manifest', async () => {
     const isoContent = 'live-bytes';
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     await import('node:fs/promises').then((fs) => fs.mkdir(archDir, { recursive: true }));
     await writeFile(join(archDir, 'stale.iso'), 'old');
 
@@ -330,7 +347,7 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     });
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    await service.syncDiscoveryImages();
+    await service.syncDiscoveryImages('full');
 
     const files = await readdir(archDir);
     expect(files).toContain('f.iso');
@@ -375,9 +392,9 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     };
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    expect(await service.syncDiscoveryImages()).toBe(1);
+    expect(await service.syncDiscoveryImages('full')).toBe(1);
 
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     expect(await readFile(join(archDir, 'f.iso'), 'utf-8')).toBe(full);
     expect(ranges[0]).toBeUndefined();
     expect(ranges[1]).toBe('bytes=6-');
@@ -401,14 +418,14 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     };
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    expect(await service.syncDiscoveryImages()).toBe(1);
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    expect(await service.syncDiscoveryImages('full')).toBe(1);
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     expect(await readFile(join(archDir, 'f.iso'), 'utf-8')).toBe(full);
   });
 
   it('finalizes a complete .tmp on a 416 without re-downloading the body', async () => {
     const full = 'complete-file-bytes';
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     await import('node:fs/promises').then((fs) => fs.mkdir(archDir, { recursive: true }));
     await writeFile(join(archDir, 'f.iso.tmp'), full);
     const manifest = { files: [{ name: 'f.iso', size: full.length, sha256sum: sha256Hex(full) }] };
@@ -430,7 +447,7 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     };
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    expect(await service.syncDiscoveryImages()).toBe(1);
+    expect(await service.syncDiscoveryImages('full')).toBe(1);
     expect(bodyDownloads).toBe(0);
     expect(await readFile(join(archDir, 'f.iso'), 'utf-8')).toBe(full);
   });
@@ -439,7 +456,7 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     const full = 'abcdefghijklmnop';
     const head = full.slice(0, 6);
     const tail = full.slice(6);
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     await import('node:fs/promises').then((fs) => fs.mkdir(archDir, { recursive: true }));
     await writeFile(join(archDir, 'f.iso.tmp'), head);
     const manifest = { files: [{ name: 'f.iso', size: 0, sha256sum: sha256Hex(full) }] };
@@ -458,7 +475,7 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     };
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    expect(await service.syncDiscoveryImages()).toBe(1);
+    expect(await service.syncDiscoveryImages('full')).toBe(1);
     expect(ranges[0]).toBe('bytes=6-');
     expect(await readFile(join(archDir, 'f.iso'), 'utf-8')).toBe(full);
   });
@@ -466,7 +483,7 @@ describe('BrokkrLiveHTTPSSyncService', () => {
   it('discards a leftover partial whose marker sha does not match the manifest entry', async () => {
     const full = 'the-new-artifact-bytes';
     const staleSha = sha256Hex('previous-artifact-bytes');
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     await import('node:fs/promises').then((fs) => fs.mkdir(archDir, { recursive: true }));
     await writeFile(join(archDir, 'f.iso.tmp'), 'previous-artifact-partial');
     await writeFile(join(archDir, 'f.iso.tmp.sha256'), staleSha);
@@ -486,10 +503,54 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     };
 
     const service = new BrokkrLiveHTTPSSyncService('job-1', fetchFn);
-    expect(await service.syncDiscoveryImages()).toBe(1);
+    expect(await service.syncDiscoveryImages('full')).toBe(1);
     expect(ranges[0]).toBeUndefined();
     expect(await readFile(join(archDir, 'f.iso'), 'utf-8')).toBe(full);
     expect(await readdir(archDir)).not.toContain('f.iso.tmp.sha256');
+  });
+  it('moves a legacy arch tree under the full flavor once and reuses its cache', async () => {
+    const content = 'legacy-image';
+    const legacyDir = join(baseDir, 'brokkr-live', 'amd64');
+    await mkdir(legacyDir, { recursive: true });
+    await writeFile(join(legacyDir, 'vmlinuz'), content);
+    await writeFile(
+      join(legacyDir, '.cache_metadata.json'),
+      JSON.stringify({ vmlinuz: { sha256sum: sha256Hex(content), filename: 'vmlinuz', size: content.length } }),
+    );
+    process.env.DISCOVERY_ARCHITECTURES = 'amd64';
+    resetDiscoveryFileConfig();
+    const manifest = { files: [{ name: 'vmlinuz', size: content.length, sha256sum: sha256Hex(content) }] };
+    const requested: string[] = [];
+    const fetchFn: FetchLike = (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.endsWith('/manifest.json')) {
+        return Promise.resolve(new Response(JSON.stringify(manifest), { status: 200 }));
+      }
+      return Promise.resolve(new Response('unexpected', { status: 500 }));
+    };
+
+    const synced = await new BrokkrLiveHTTPSSyncService('job-1', fetchFn).syncDiscoveryImages('full');
+
+    expect(synced).toBe(1);
+    expect(requested.filter((u) => !u.endsWith('/manifest.json'))).toEqual([]);
+    expect(await readFile(join(baseDir, 'brokkr-live', 'full', 'amd64', 'vmlinuz'), 'utf-8')).toBe(content);
+    await expect(stat(legacyDir)).rejects.toThrow();
+  });
+
+  it('leaves a legacy arch tree alone when the full tree already exists', async () => {
+    const legacyDir = join(baseDir, 'brokkr-live', 'amd64');
+    const fullDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
+    await mkdir(legacyDir, { recursive: true });
+    await mkdir(fullDir, { recursive: true });
+    await writeFile(join(legacyDir, 'stale'), 'x');
+    process.env.DISCOVERY_ARCHITECTURES = 'amd64';
+    resetDiscoveryFileConfig();
+    const fetchFn = makeFetch({});
+
+    await new BrokkrLiveHTTPSSyncService('job-1', fetchFn).syncDiscoveryImages('full');
+
+    expect(await readFile(join(legacyDir, 'stale'), 'utf-8')).toBe('x');
   });
 });
 
@@ -501,31 +562,106 @@ describe('syncDiscoveryImages orchestration', () => {
     process.env.PERSISTENT_STORAGE_PATH = baseDir;
     process.env.BROKKR_LIVE_VERSION = '9.9.9';
     process.env.BRIDGE_HOSTNAME = 'bridge-test';
+    process.env.DISCOVERY_BASE_URL = ROOT_URL;
     resetPersistentStorageConfig();
     resetStorageConfig();
     resetSyncConfig();
     resetLeaderConfigForTests();
+    resetDiscoveryFileConfig();
   });
 
   afterEach(async () => {
     delete process.env.PERSISTENT_STORAGE_PATH;
     delete process.env.BROKKR_LIVE_VERSION;
     delete process.env.BRIDGE_HOSTNAME;
+    delete process.env.DISCOVERY_BASE_URL;
+    delete process.env.DISCOVERY_FLAVORS;
+    delete process.env.DISCOVERY_ARCHITECTURES;
     resetPersistentStorageConfig();
     resetStorageConfig();
     resetSyncConfig();
     resetLeaderConfigForTests();
+    resetDiscoveryFileConfig();
+    resetDiscoverySyncRecordForTests();
     await rm(baseDir, { recursive: true, force: true });
   });
 
-  const VERSION_REDIS_KEY = 'bridge:bridge-test:version:brokkr-live-https';
+  const VERSION_REDIS_KEY = versionKeyFor('full', ROOT_URL);
+
+  it('syncs one tree per flavor and arch', async () => {
+    process.env.DISCOVERY_FLAVORS = 'full,light';
+    process.env.DISCOVERY_ARCHITECTURES = 'amd64,arm64';
+    resetSyncConfig();
+    resetDiscoveryFileConfig();
+    const content = 'image';
+    const manifest = {
+      version: '9.9.9',
+      files: [{ name: 'vmlinuz', size: content.length, sha256sum: sha256Hex(content) }],
+    };
+    const requested: string[] = [];
+    const fetchFn: FetchLike = (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.endsWith('/manifest.json')) {
+        return Promise.resolve(new Response(JSON.stringify(manifest), { status: 200 }));
+      }
+      return Promise.resolve(new Response(content, { status: 200 }));
+    };
+    const cache = new FakeVersionCache();
+
+    await syncDiscoveryImages(cache, 'job-1', { syncService: new BrokkrLiveHTTPSSyncService('job-1', fetchFn) });
+
+    expect(requested.filter((u) => u.endsWith('/manifest.json')).map((u) => new URL(u).pathname)).toEqual([
+      '/brokkr-live-light/9.9.9/amd64/manifest.json',
+      '/brokkr-live-light/9.9.9/arm64/manifest.json',
+      '/brokkr-live/9.9.9/amd64/manifest.json',
+      '/brokkr-live/9.9.9/arm64/manifest.json',
+    ]);
+    for (const flavor of ['light', 'full']) {
+      for (const arch of ['amd64', 'arm64']) {
+        expect(await readFile(join(baseDir, 'brokkr-live', flavor, arch, 'vmlinuz'), 'utf-8')).toBe(content);
+      }
+    }
+    expect(cache.store.get(versionKeyFor('light', ROOT_URL))).toBe('9.9.9');
+    expect(cache.store.get(versionKeyFor('full', ROOT_URL))).toBe('9.9.9');
+  });
+
+  it('re-syncs when the base url changes at the same version', async () => {
+    const cache = new FakeVersionCache();
+    cache.store.set(versionKeyFor('full', 'https://old.test/brokkr-live'), '9.9.9');
+    const fs = await import('node:fs/promises');
+    await fs.mkdir(join(baseDir, 'brokkr-live', 'full', 'amd64'), { recursive: true });
+    await writeFile(join(baseDir, 'brokkr-live', 'full', 'amd64', 'f.iso'), 'data');
+
+    const syncService = { syncDiscoveryImages: vi.fn(async () => 1) };
+    await syncDiscoveryImages(cache, 'job-1', { syncService });
+
+    expect(syncService.syncDiscoveryImages).toHaveBeenCalledWith('full');
+    expect(cache.store.get(VERSION_REDIS_KEY)).toBe('9.9.9');
+  });
+
+  it('skips a flavor whose version is cached and syncs the one that is not', async () => {
+    process.env.DISCOVERY_FLAVORS = 'light,full';
+    resetSyncConfig();
+    const cache = new FakeVersionCache();
+    cache.store.set(versionKeyFor('light', ROOT_URL), '9.9.9');
+    const fs = await import('node:fs/promises');
+    await fs.mkdir(join(baseDir, 'brokkr-live', 'light', 'amd64'), { recursive: true });
+    await writeFile(join(baseDir, 'brokkr-live', 'light', 'amd64', 'f.iso'), 'data');
+
+    const syncService = { syncDiscoveryImages: vi.fn(async () => 1) };
+    await syncDiscoveryImages(cache, 'job-1', { syncService });
+
+    expect(syncService.syncDiscoveryImages.mock.calls).toEqual([['full']]);
+    expect(cache.store.get(versionKeyFor('full', ROOT_URL))).toBe('9.9.9');
+  });
 
   it('skips the sync when the cached version matches and files exist on disk', async () => {
     const cache = new FakeVersionCache();
     cache.store.set(VERSION_REDIS_KEY, '9.9.9');
     const fs = await import('node:fs/promises');
-    await fs.mkdir(join(baseDir, 'brokkr-live', 'amd64'), { recursive: true });
-    await writeFile(join(baseDir, 'brokkr-live', 'amd64', 'f.iso'), 'data');
+    await fs.mkdir(join(baseDir, 'brokkr-live', 'full', 'amd64'), { recursive: true });
+    await writeFile(join(baseDir, 'brokkr-live', 'full', 'amd64', 'f.iso'), 'data');
 
     const syncService = { syncDiscoveryImages: vi.fn(async () => 1) };
     await syncDiscoveryImages(cache, 'job-1', { syncService });
@@ -541,6 +677,7 @@ describe('syncDiscoveryImages orchestration', () => {
     const syncService = { syncDiscoveryImages: vi.fn(async () => 1) };
     await syncDiscoveryImages(cache, 'job-1', { syncService });
     expect(syncService.syncDiscoveryImages).toHaveBeenCalledTimes(1);
+    expect(syncService.syncDiscoveryImages).toHaveBeenCalledWith('full');
     expect(cache.deletes).toContain(VERSION_REDIS_KEY);
   });
 
@@ -563,8 +700,8 @@ describe('syncDiscoveryImages orchestration', () => {
     const cache = new FakeVersionCache();
     cache.store.set(VERSION_REDIS_KEY, '9.9.9');
     const fs = await import('node:fs/promises');
-    await fs.mkdir(join(baseDir, 'brokkr-live', 'amd64'), { recursive: true });
-    await writeFile(join(baseDir, 'brokkr-live', 'amd64', 'f.iso'), 'data');
+    await fs.mkdir(join(baseDir, 'brokkr-live', 'full', 'amd64'), { recursive: true });
+    await writeFile(join(baseDir, 'brokkr-live', 'full', 'amd64', 'f.iso'), 'data');
 
     const syncService = { syncDiscoveryImages: vi.fn(async () => 1) };
     await syncDiscoveryImages(cache, 'job-1', { force: true, syncService });
@@ -572,7 +709,7 @@ describe('syncDiscoveryImages orchestration', () => {
     expect(syncService.syncDiscoveryImages).toHaveBeenCalledTimes(1);
   });
 
-  it('propagates sync service failures', async () => {
+  it('propagates sync service failures and records a failed outcome with the error', async () => {
     const cache = new FakeVersionCache();
     const syncService = {
       syncDiscoveryImages: vi.fn(async () => {
@@ -580,6 +717,54 @@ describe('syncDiscoveryImages orchestration', () => {
       }),
     };
     await expect(syncDiscoveryImages(cache, 'job-1', { syncService })).rejects.toThrow('boom');
+
+    expect(getDiscoverySyncRecord()).toMatchObject({
+      outcome: 'failed',
+      error: 'boom',
+      baseUrl: ROOT_URL,
+      version: '9.9.9',
+      flavors: ['full'],
+    });
+  });
+
+  it('records an ok outcome after a pass that synced files', async () => {
+    const before = Date.now();
+    const syncService = { syncDiscoveryImages: vi.fn(async () => 2) };
+
+    await syncDiscoveryImages(new FakeVersionCache(), 'job-1', { syncService });
+
+    const record = getDiscoverySyncRecord();
+    expect(record).toMatchObject({
+      outcome: 'ok',
+      error: null,
+      baseUrl: ROOT_URL,
+      version: '9.9.9',
+      flavors: ['full'],
+    });
+    expect(record?.at).toBeGreaterThanOrEqual(before);
+  });
+
+  it('records a skipped outcome when every flavor was already synced', async () => {
+    const cache = new FakeVersionCache();
+    cache.store.set(VERSION_REDIS_KEY, '9.9.9');
+    const fs = await import('node:fs/promises');
+    await fs.mkdir(join(baseDir, 'brokkr-live', 'full', 'amd64'), { recursive: true });
+    await writeFile(join(baseDir, 'brokkr-live', 'full', 'amd64', 'f.iso'), 'data');
+
+    await syncDiscoveryImages(cache, 'job-1', { syncService: { syncDiscoveryImages: vi.fn(async () => 1) } });
+
+    expect(getDiscoverySyncRecord()).toMatchObject({ outcome: 'skipped', error: null });
+  });
+
+  it('records a failed outcome naming the flavor when a pass produced no files', async () => {
+    const syncService = { syncDiscoveryImages: vi.fn(async () => 0) };
+
+    await syncDiscoveryImages(new FakeVersionCache(), 'job-1', { syncService });
+
+    expect(getDiscoverySyncRecord()).toMatchObject({
+      outcome: 'failed',
+      error: 'discovery sync produced no files for full',
+    });
   });
 });
 

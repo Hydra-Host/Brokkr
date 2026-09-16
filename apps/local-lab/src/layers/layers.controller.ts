@@ -46,7 +46,7 @@ export class LayersController {
   }
 
   @TsRestHandler(contract.primeBlob)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   prime() {
     return tsRestHandler(contract.primeBlob, async ({ body }) => ({
       status: 200 as const,
@@ -55,7 +55,7 @@ export class LayersController {
   }
 
   @TsRestHandler(contract.nukeBlob)
-  @LabRoute({ exposure: 'loopback-only' })
+  @LabRoute({ capability: 'operate' })
   nuke() {
     return tsRestHandler(contract.nukeBlob, async ({ body }) => ({
       status: 200 as const,

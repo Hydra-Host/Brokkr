@@ -33,7 +33,7 @@ export const DeviceRecordSchema = z
       .array(z.string())
       .default([])
       .describe(
-        'Currently always empty ([]); reserved for tags the bridge would surface into chain_service templates.',
+        'Lowercased, sorted slugs of the tags assigned to the device, read by the spoke when it renders the boot chain; always empty on a placeholder.',
       ),
     device_type: z
       .string()

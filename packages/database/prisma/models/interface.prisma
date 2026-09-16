@@ -92,6 +92,8 @@ model Interface {
   // 20260626120000. A plain `@@unique` spans tombstones, so a soft-deleted (decommissioned) interface
   // would block re-commissioning the same box. Prisma can't express partial indexes, so this is
   // intentionally NOT `@@unique`; lookups use findFirst scoped to deletedAt: null.
+  // (deviceId, lower(macAddress)) gets the same treatment via `Interface_active_deviceId_macAddress_unique`
+  // (WHERE "deletedAt" IS NULL AND "macAddress" IS NOT NULL, migration 20260911120100_interface_mac_unique_per_device).
   @@index([deviceId])
   @@index([lagId])
   @@index([parentId])

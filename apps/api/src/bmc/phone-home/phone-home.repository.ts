@@ -1,8 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateDeviceDiagnosticsRequest } from '@repo/api-client';
-import { Prisma, ServerPowerStatus } from '@repo/database';
+import { LifecycleJobPhase, Prisma, ServerPowerStatus } from '@repo/database';
 import { statusSlugToServerLifecycle } from '@repo/device-domain';
+import { LifecycleJobRecord } from '@repo/lifecycle';
 import { PrismaClient } from 'src/prisma/prisma.client';
+
+const ACTIVE_PLAN_PHASES: LifecycleJobPhase[] = [
+  LifecycleJobPhase.DISPATCHED,
+  LifecycleJobPhase.RUNNING,
+  LifecycleJobPhase.AWAITING_PHONE_HOME,
+];
 
 @Injectable()
 export class PhoneHomeRepository {
@@ -18,6 +25,14 @@ export class PhoneHomeRepository {
         server: { select: { lifecycleStatus: true } },
       },
     });
+  }
+
+  async findActivePlanIdForDevice(deviceId: string): Promise<string | null> {
+    const job: LifecycleJobRecord | null = await LifecycleJobRecord.findOneUnscoped({
+      where: { deviceId, phase: { in: ACTIVE_PLAN_PHASES } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return job?.data.id ?? null;
   }
 
   async hasActiveDeployment(deviceUuid: string): Promise<boolean> {

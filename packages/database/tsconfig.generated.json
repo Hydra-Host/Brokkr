@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": false,
+    "skipLibCheck": true,
+    "declaration": true,
+    "esModuleInterop": true,
+    "rootDir": "generated/client",
+    "outDir": "generated/js"
+  },
+  "include": ["generated/client/**/*.ts"]
+}

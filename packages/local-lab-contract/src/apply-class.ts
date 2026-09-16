@@ -4,12 +4,14 @@ import { APPLY_CLASS_RANK, type ApplyClass } from './schemas/stack';
  *  `fleet.`. A knob no save can reach carries no cost and stays null. */
 const RULES: { prefix: string; applyClass: ApplyClass }[] = [
   { prefix: 'ports.', applyClass: 'rebind-recreate' },
-  { prefix: 'lan.expose', applyClass: 'rebind-recreate' },
+  { prefix: 'lan.', applyClass: 'rebind-recreate' },
   { prefix: 'stackDefaults.spoke.', applyClass: 'reload-spoke' },
   { prefix: 'stackDefaults.spoke.AGENT_SSH_FORCE_REDEPLOY', applyClass: 'inert' },
   { prefix: 'stackDefaults.spoke.ANALYTICS_ENABLED', applyClass: 'inert' },
   { prefix: 'stackDefaults.hub.', applyClass: 'reload-hub' },
   { prefix: 'identity.', applyClass: 'datastore-reset' },
+  { prefix: 'identity.redis.', applyClass: 'redeploy' },
+  { prefix: 'identity.mailpit.', applyClass: 'redeploy' },
   { prefix: 'fleet.', applyClass: 'fleet-op' },
   { prefix: 'fleet.zones', applyClass: 'zone-apply' },
   { prefix: 'osLayerCache.', applyClass: 'rebind-recreate' },

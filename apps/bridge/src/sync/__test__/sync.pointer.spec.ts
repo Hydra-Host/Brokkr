@@ -57,7 +57,7 @@ describe('discovery manifest version pointers', () => {
       return Promise.resolve(new Response(content, { status: 200 }));
     };
 
-    await new BrokkrLiveHTTPSSyncService('job-1', fetchFn).syncDiscoveryImages();
+    await new BrokkrLiveHTTPSSyncService('job-1', fetchFn).syncDiscoveryImages('full');
 
     expect(requested.map((url) => new URL(url).pathname)).toEqual([
       '/brokkr-live/latest-stable/amd64/manifest.json',
@@ -83,7 +83,7 @@ describe('discovery manifest version pointers', () => {
       return Promise.resolve(new Response(content, { status: 200 }));
     };
 
-    await new BrokkrLiveHTTPSSyncService('job-1', fetchFn).syncDiscoveryImages();
+    await new BrokkrLiveHTTPSSyncService('job-1', fetchFn).syncDiscoveryImages('full');
 
     expect(requested.map((url) => new URL(url).pathname)).toEqual([
       '/brokkr-live/2.0.0/amd64/manifest.json',
@@ -110,19 +110,17 @@ describe('discovery manifest version pointers', () => {
       return Promise.resolve(new Response(JSON.stringify(manifest), { status: 200 }));
     };
 
-    await expect(new BrokkrLiveHTTPSSyncService('job-1', fetchFn).syncDiscoveryImages()).rejects.toThrow(
+    await expect(new BrokkrLiveHTTPSSyncService('job-1', fetchFn).syncDiscoveryImages('full')).rejects.toThrow(
       "invalid 'version' pointer",
     );
-    expect(requested.map((url) => new URL(url).pathname)).toEqual([
-      '/brokkr-live/latest-stable/amd64/manifest.json',
-    ]);
+    expect(requested.map((url) => new URL(url).pathname)).toEqual(['/brokkr-live/latest-stable/amd64/manifest.json']);
   });
 
   it('discards a partial file when its marker does not match the resolved artifact', async () => {
     process.env.BROKKR_LIVE_VERSION = 'latest-stable';
     resetSyncConfig();
     const content = 'new-image';
-    const archDir = join(baseDir, 'brokkr-live', 'amd64');
+    const archDir = join(baseDir, 'brokkr-live', 'full', 'amd64');
     await mkdir(archDir, { recursive: true });
     await writeFile(join(archDir, 'image.iso.tmp'), 'old-partial');
     await writeFile(join(archDir, 'image.iso.tmp.sha256'), sha256Hex('old-image'));
@@ -140,7 +138,7 @@ describe('discovery manifest version pointers', () => {
       return Promise.resolve(new Response(content, { status: 200 }));
     };
 
-    await new BrokkrLiveHTTPSSyncService('job-1', fetchFn).syncDiscoveryImages();
+    await new BrokkrLiveHTTPSSyncService('job-1', fetchFn).syncDiscoveryImages('full');
 
     expect(ranges).toEqual([null]);
     expect(await readFile(join(archDir, 'image.iso'), 'utf-8')).toBe(content);

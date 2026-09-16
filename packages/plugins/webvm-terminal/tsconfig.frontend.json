@@ -6,7 +6,7 @@
     "composite": true,
     "jsx": "react-jsx",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "tsBuildInfoFile": "./tsconfig.frontend.tsbuildinfo",
+    "tsBuildInfoFile": "./dist/esm/tsconfig.frontend.tsbuildinfo",
     "module": "esnext",
     "moduleResolution": "bundler"
   },

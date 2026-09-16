@@ -1,4 +1,4 @@
-import type { FleetNodeEffective, Machine, ZoneRuntime, ZonesConfig } from '@/contract';
+import type { BareMetalConfig, BareMetalNode, FleetNodeEffective, Machine, ZoneRuntime, ZonesConfig } from '@/contract';
 
 export type Health = 'ok' | 'degraded' | 'unknown';
 
@@ -11,18 +11,30 @@ export interface TopologyBridge {
   leader: boolean;
 }
 
-export interface TopologyNode {
+interface TopologyNodeBase {
   name: string;
   zone: string;
-  /** The effective values, which are what the node actually gets once defaults are applied. */
-  cpus: number;
-  memoryMb: number;
-  diskGb: number;
   arch: string | null;
   /** Null when no live answer covered this node, which is not the same as the domain being off. */
   power: Machine['power'] | null;
   deviceId: string | null;
 }
+
+export interface TopologyVmNode extends TopologyNodeBase {
+  kind: 'vm';
+  /** The effective values, which are what the node actually gets once defaults are applied. */
+  cpus: number;
+  memoryMb: number;
+  diskGb: number;
+}
+
+export interface TopologyBareMetalNode extends TopologyNodeBase {
+  kind: 'baremetal';
+  /** Null when the saved row has no BMC address yet, which the probe reports as unconfigured. */
+  bmcIp: string | null;
+}
+
+export type TopologyNode = TopologyVmNode | TopologyBareMetalNode;
 
 export interface TopologyZone {
   name: string;
@@ -60,7 +72,7 @@ export type Source<T> = { state: 'loading' } | { state: 'ready'; value: T } | { 
 
 export interface TopologyInput {
   zones: Source<ZonesConfig>;
-  fleet: Source<{ nodes: FleetNodeEffective[] }>;
+  fleet: Source<{ nodes: FleetNodeEffective[]; baremetal: BareMetalConfig }>;
   machines: Source<Machine[]>;
   runtime: Source<ZoneRuntime[]>;
 }
@@ -68,12 +80,28 @@ export interface TopologyInput {
 const valueOf = <T>(source: Source<T>): T | null => (source.state === 'ready' ? source.value : null);
 
 const nodeOf = (node: FleetNodeEffective, machine: Machine | undefined): TopologyNode => ({
+  kind: 'vm',
   name: node.name,
   zone: node.zone,
   cpus: node.effective_cpus,
   memoryMb: node.effective_memory_mb,
   diskGb: node.effective_disk_gb,
   arch: node.arch ?? null,
+  power: machine?.power ?? null,
+  deviceId: machine?.deviceId ?? null,
+});
+
+const bareMetalNodeOf = (
+  node: BareMetalNode,
+  zone: string,
+  defaultArch: BareMetalConfig['arch'],
+  machine: Machine | undefined,
+): TopologyNode => ({
+  kind: 'baremetal',
+  name: node.name,
+  zone,
+  arch: node.arch ?? defaultArch,
+  bmcIp: node.bmc_ip === '' ? null : node.bmc_ip,
   power: machine?.power ?? null,
   deviceId: machine?.deviceId ?? null,
 });
@@ -125,7 +153,17 @@ export function buildTopology(input: TopologyInput): TopologyModel {
 
   const declared = zonesBody?.zones ?? [];
   const declaredNames = new Set(declared.map((zone) => zone.name));
-  const nodes = (valueOf(input.fleet)?.nodes ?? []).map((node) => nodeOf(node, machineByName.get(node.name)));
+  const fleetBody = valueOf(input.fleet);
+  const firstZone = declared[0]?.name;
+  const vmNodes = (fleetBody?.nodes ?? []).map((node) => nodeOf(node, machineByName.get(node.name)));
+  // tiles come from the saved roster, not the probe, so a failed BMC read cannot blink a machine out
+  const bareMetalNodes =
+    fleetBody === null
+      ? []
+      : fleetBody.baremetal.nodes.map((node) =>
+          bareMetalNodeOf(node, node.zone ?? firstZone ?? '', fleetBody.baremetal.arch, machineByName.get(node.name)),
+        );
+  const nodes = [...vmNodes, ...bareMetalNodes];
 
   const zones: TopologyZone[] = declared.map((zone) => {
     const runtime = runtimeByName.get(zone.name);

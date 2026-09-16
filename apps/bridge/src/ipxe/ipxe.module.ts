@@ -8,7 +8,7 @@ import {
 import { fetchLiveNetplanForInitrd } from '../bridge-network/initrd-netplan';
 import { NetplanAtomService } from '../bridge-network/netplan-atom.service';
 import { BULLMQ_QUEUE_FACTORY, BullmqQueueService, type BullmqQueueFactory } from '../bullmq/queue.service';
-import { deviceIpxeUrl, deviceServerToken } from '../common/redis/redis-keys';
+import { deviceIpxeUrl, deviceServerToken, ipxeChainHit, normalizeDiscoveryMac } from '../common/redis/redis-keys';
 import { RedisService } from '../common/redis/redis.service';
 import { createRealBullmqQueueFactory } from '../composition/bullmq-factories';
 import { getAtom, type EnqueueRenderRequest } from '../device-record/atom/atom-fetcher';
@@ -22,6 +22,7 @@ import {
 import { DeviceService, type AtomFetcherLike, type GetLiveNetplanFn } from '../devices/device.service';
 import { getLeaderConfig } from '../leader-election/leader-election.config';
 import { logDebug, logError, logInfo, logWarning } from '../logger/logger.service';
+import { PLAN_PERSISTER_PROVIDER, type PlanPersisterProvider } from '../saga-framework/plan-manager-holder';
 import { ZoneCryptoModule } from '../zone-crypto/zone-crypto.module';
 import { ZoneCryptoService } from '../zone-crypto/zone-crypto.service';
 
@@ -39,7 +40,13 @@ import {
 import type { InventoryTriggerLogger } from './chain.types';
 import { IpxeTemplateRenderer, type ServerTokenAtomFetcher } from './ipxe-renderer.service';
 import { getIpxeConfig } from './ipxe.config';
-import { IPXE_PENDING_DEVICE_REGISTRAR, IpxeController, type PendingDeviceRegistrar } from './ipxe.controller';
+import {
+  IPXE_CHAIN_HIT_RECORDER,
+  IPXE_PENDING_DEVICE_REGISTRAR,
+  IpxeController,
+  type ChainHitRecorder,
+  type PendingDeviceRegistrar,
+} from './ipxe.controller';
 
 export const IPXE_RENDER_REQUEST_ENQUEUER = Symbol('IpxeRenderRequestEnqueuer');
 
@@ -205,6 +212,23 @@ const pendingDeviceRegistrarProvider: Provider = {
   inject: [RedisService],
 };
 
+const CHAIN_HIT_TTL_S = 86_400;
+
+const chainHitRecorderProvider: Provider = {
+  provide: IPXE_CHAIN_HIT_RECORDER,
+  useFactory: (redis: RedisService): ChainHitRecorder => {
+    return async (jobId, mac, deviceId): Promise<void> => {
+      await redis.set(
+        ipxeChainHit(normalizeDiscoveryMac(mac)),
+        JSON.stringify({ atMs: Date.now(), deviceId }),
+        CHAIN_HIT_TTL_S,
+        jobId,
+      );
+    };
+  },
+  inject: [RedisService],
+};
+
 const deviceRecordCacheProvider: Provider = {
   provide: DEVICE_RECORD_CACHE,
   useExisting: RedisService,
@@ -236,9 +260,9 @@ const bullmqQueueFactoryProvider: Provider = {
 
 const bullmqQueueServiceProvider: Provider = {
   provide: BullmqQueueService,
-  useFactory: (factory: BullmqQueueFactory, zoneCrypto: ZoneCryptoService) =>
-    new BullmqQueueService(factory, undefined, zoneCrypto),
-  inject: [BULLMQ_QUEUE_FACTORY, ZoneCryptoService],
+  useFactory: (factory: BullmqQueueFactory, zoneCrypto: ZoneCryptoService, planPersister?: PlanPersisterProvider) =>
+    new BullmqQueueService(factory, undefined, zoneCrypto, planPersister),
+  inject: [BULLMQ_QUEUE_FACTORY, ZoneCryptoService, { token: PLAN_PERSISTER_PROVIDER, optional: true }],
 };
 
 @Module({})
@@ -276,6 +300,7 @@ export class IpxeModule {
       inventoryTriggerProvider,
       inventoryTriggerLoggerProvider,
       pendingDeviceRegistrarProvider,
+      chainHitRecorderProvider,
       ChainService,
     ];
 

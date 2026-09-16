@@ -1,42 +1,42 @@
-import { appendFile, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-
 import { isRecord } from '@repo/utils';
-import Redis from 'ioredis';
 import 'reflect-metadata';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { loadRedisConfig } from '../../../../src/common/redis/redis-client';
-import { createIoredisDriverFactory } from '../../../../src/common/redis/redis-client/ioredis-driver';
-import { RedisEncryptor } from '../../../../src/common/redis/redis-client/redis-encryptor';
-import { RedisService } from '../../../../src/common/redis/redis.service';
-import { OobModule } from '../../../../src/oob/oob.module';
+import { deviceIpxeUrl } from '../../../../src/common/redis/redis-keys';
+import { disableTee, enableTee, verifyTee } from '../../../../src/lifecycle-deploy/redfish-operations';
 import { TeeConfigStep } from '../../../../src/oob/redfish/steps/tee-config.step';
+import {
+  clearZoneCrypto,
+  installZoneCrypto,
+  sealedCredPayload,
+} from '../../../../src/oob/steps/__test__/sealed-bmc.testutil';
 import { ProvisionModule } from '../../../../src/provision/provision.module';
 import { buildProvisionSaga } from '../../../../src/provision/provision.workflow';
 import { ArmCustomIpxeBootStep } from '../../../../src/provision/steps/arm-custom-ipxe-boot.step';
+import { SUPERMICRO_BIOS_PATH, SUPERMICRO_RESET_PATH } from '../../../../src/redfish/__test__/supermicro-tee.testutil';
 import type { TeeVerificationResult } from '../../../../src/redfish/vendor/base/tee';
 import type { SagaContext, SagaStepExecutor } from '../../../../src/saga-framework/saga.types';
-import {
-  clearActiveZoneCryptoSnapshot,
-  setActiveZoneCryptoSnapshot,
-  zoneCryptoFromCacheBlob,
-} from '../../../../src/zone-crypto/zone-crypto.service';
 import { BmcStub } from './bmc-stub';
 
-const ZONE = '00000000-0000-0000-0000-111111111111';
-const AT_REST_KEY = 'I1GOxiD9hSt9QvHUdylUSXKW/WHM6PF2dUCovWeSTXg=';
-const LIVE_DEVICE = '00000000-0000-0000-0000-000000000001';
-const STAMP = Date.now();
-const DEVICE_ID = `2455bra0-0000-4000-8000-${String(STAMP).slice(-12)}`;
-const JOB_ID = `sim2455-blast-${STAMP}`;
-const EVIDENCE = `/tmp/sim2455-blastradius-evidence-${STAMP}.txt`;
+const DEVICE_ID = '00000000-0000-0000-0000-0000000000bb';
+const JOB_ID = 'tee-blast-radius';
 const CUSTOMER_URL = 'https://customer.example.com/tee/boot.ipxe';
-const ARMED_KEY = `${ZONE}:device:${DEVICE_ID}:config:ipxe_url`;
+const TDX_KEY = 'TrustDomainExtensions_TDX_';
+const CREDS = sealedCredPayload({ bmcIp: '127.0.0.1', user: 'sim', pass: 'sim' });
+const CUSTOM_TEE_ENABLE = {
+  platform: { slug: 'ipxe-custom-tee', variant: 'tee' },
+  tee_requested: true,
+  tee_enabled: false,
+};
+const STANDARD_TEE_ENABLE = {
+  platform: { slug: 'ubuntu-24.04' },
+  tee_requested: true,
+  tee_enabled: false,
+};
 
 interface TeeOpsLike {
   enableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<boolean>;
-  disableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<unknown>;
+  disableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<boolean>;
   verifyTee(
     deviceId: string,
     bmcIp: string,
@@ -44,15 +44,6 @@ interface TeeOpsLike {
     password: string,
     jobId: string,
   ): Promise<TeeVerificationResult>;
-}
-
-function isTeeOps(value: unknown): value is TeeOpsLike {
-  return (
-    isRecord(value) &&
-    typeof value.enableTee === 'function' &&
-    typeof value.disableTee === 'function' &&
-    typeof value.verifyTee === 'function'
-  );
 }
 
 interface ProviderEntry {
@@ -66,27 +57,41 @@ function isProviderEntry(value: unknown): value is ProviderEntry {
 
 const logLines: string[] = [];
 const recordingLogger = {
-  info: async (message: string) => void logLines.push(`INFO ${message}`),
-  warning: async (message: string) => void logLines.push(`WARN ${message}`),
-  error: async (message: string) => void logLines.push(`ERROR ${message}`),
+  info: (message: string) => {
+    logLines.push(`INFO ${message}`);
+    return Promise.resolve();
+  },
+  warning: (message: string) => {
+    logLines.push(`WARN ${message}`);
+    return Promise.resolve();
+  },
 };
 
-async function note(text: string): Promise<void> {
-  await appendFile(EVIDENCE, `${text}\n`);
-}
-
 const stub = new BmcStub();
-let sealedBmcSecret: unknown;
-let productionOps: TeeOpsLike;
-let admin: Redis;
-let redisService: RedisService;
+const deps = { createRedfishService: stub.createRedfishService };
+const redfishOps: TeeOpsLike = {
+  enableTee: (deviceId, bmcIp, username, password, jobId) =>
+    enableTee(deviceId, bmcIp, username, password, jobId, deps),
+  disableTee: (deviceId, bmcIp, username, password, jobId) =>
+    disableTee(deviceId, bmcIp, username, password, jobId, deps),
+  verifyTee: (deviceId, bmcIp, username, password, jobId) =>
+    verifyTee(deviceId, bmcIp, username, password, jobId, deps),
+};
+
+const armedUrls = new Map<string, string>();
+const ipxeCache = {
+  set: (key: string, value: string) => {
+    armedUrls.set(key, value);
+    return Promise.resolve(armedUrls.size);
+  },
+};
 
 function ctx(payload: Record<string, unknown>, stepName = 'tee_config'): SagaContext {
   return {
-    planId: `sim2455-blast-${STAMP}`,
+    planId: 'tee-blast-radius-plan',
     stepName,
     deviceId: DEVICE_ID,
-    payload: { bmc_ip: '127.0.0.1', secrets: { bmc: sealedBmcSecret }, ...payload },
+    payload: { ...CREDS, ...payload },
     jobId: JOB_ID,
     attempt: 1,
     metadata: {},
@@ -96,206 +101,189 @@ function ctx(payload: Record<string, unknown>, stepName = 'tee_config'): SagaCon
 
 function countingOps(counts: { enable: number; verify: number }, overrides: Partial<TeeOpsLike> = {}): TeeOpsLike {
   return {
-    enableTee: async (...args) => {
+    enableTee: (...args) => {
       counts.enable += 1;
-      return productionOps.enableTee(...args);
+      return redfishOps.enableTee(...args);
     },
-    disableTee: (...args) => productionOps.disableTee(...args),
-    verifyTee: async (...args) => {
+    disableTee: (...args) => redfishOps.disableTee(...args),
+    verifyTee: (...args) => {
       counts.verify += 1;
-      return (overrides.verifyTee ?? productionOps.verifyTee)(...args);
+      return (overrides.verifyTee ?? redfishOps.verifyTee)(...args);
     },
   };
 }
 
-beforeAll(async () => {
-  const port = await stub.start();
-  process.env.LOCAL_SIMULATION_ENABLED = 'true';
-  process.env.SIM_REDFISH_PORT = String(port);
-  process.env.BROKKR_ZONE_ID = ZONE;
-  process.env.BRIDGE_AT_REST_KEY = AT_REST_KEY;
-
-  admin = new Redis('redis://127.0.0.1:6379');
-  const raw = await admin.getBuffer(`${ZONE}:zone_crypto`);
-  if (raw === null) throw new Error('no live zone_crypto blob');
-  const blob = Buffer.from(new RedisEncryptor(AT_REST_KEY).decrypt(raw.toString('utf8')), 'utf8');
-  setActiveZoneCryptoSnapshot(zoneCryptoFromCacheBlob(blob));
-
-  const secretRaw = await admin.get(`${ZONE}:device:${LIVE_DEVICE}:secrets:bmc:user`);
-  if (secretRaw === null) throw new Error('no live sealed BMC secret');
-  const envelope: unknown = JSON.parse(secretRaw);
-  if (!isRecord(envelope) || !isRecord(envelope.value)) throw new Error('unexpected sealed secret envelope');
-  sealedBmcSecret = envelope.value;
-
-  redisService = new RedisService(
-    loadRedisConfig(process.env),
-    createIoredisDriverFactory(loadRedisConfig(process.env)),
-  );
-  await redisService.requireConnection();
-
-  const providers: unknown = Reflect.getMetadata('providers', OobModule);
-  if (!Array.isArray(providers)) throw new Error('OobModule providers metadata missing');
-  const entry = providers.find((item) => isProviderEntry(item) && item.provide === TeeConfigStep);
-  if (!isProviderEntry(entry) || entry.useFactory === undefined) throw new Error('no TeeConfigStep factory');
-  const created = entry.useFactory(recordingLogger);
-  if (!(created instanceof TeeConfigStep)) throw new Error('factory did not build a TeeConfigStep');
-  const ops = { ...created }['redfish'];
-  if (!isTeeOps(ops)) throw new Error('production TeeConfigStep has no wired redfish TEE ops');
-  productionOps = ops;
-
-  await note(`[SETUP] stub BMC 127.0.0.1:${port}; live zone_crypto + sealed BMC secret from ${ZONE}`);
-});
-
-afterAll(async () => {
-  clearActiveZoneCryptoSnapshot();
-  if (admin) {
-    await admin.del(ARMED_KEY);
-    await admin.quit();
-  }
-  await stub.stop();
-  if (redisService) {
-    await redisService.onApplicationShutdown();
-  }
-});
-
-beforeEach(async () => {
+beforeEach(() => {
+  installZoneCrypto();
   stub.mode = 'supermicro';
-  stub.sticky = false;
-  stub.reset(stub.teeNonCompliantAttributes());
+  stub.reset();
   logLines.length = 0;
-  await admin.del(ARMED_KEY);
+  armedUrls.clear();
 });
 
-describe('blast radius of a transient redfish error during tee verification', () => {
-  it('a transient BMC error is reported as checked:false, indistinguishable from unmodeled hardware', async () => {
-    stub.mode = 'malformed';
+afterEach(() => clearZoneCrypto());
 
-    const errored = await productionOps.verifyTee(DEVICE_ID, '127.0.0.1', 'sim', 'sim', JOB_ID);
+describe('blast radius of a redfish readback failure during tee verification', () => {
+  it('reports an unreachable bmc and unmodeled hardware with different reasons', async () => {
+    stub.mode = 'malformed';
+    const unreachable = await redfishOps.verifyTee(DEVICE_ID, '127.0.0.1', 'sim', 'sim', JOB_ID);
 
     stub.mode = 'unmodeled';
-    stub.reset({});
-    const unmodeled = await productionOps.verifyTee(DEVICE_ID, '127.0.0.1', 'sim', 'sim', JOB_ID);
+    const unmodeled = await redfishOps.verifyTee(DEVICE_ID, '127.0.0.1', 'sim', 'sim', JOB_ID);
 
-    await note(
-      `[BLAST CONFLATION] transientRedfishError=${JSON.stringify(errored)} ` +
-        `genuinelyUnmodeledHardware=${JSON.stringify(unmodeled)}`,
-    );
-    expect(errored.checked).toBe(false);
-    expect(unmodeled.checked).toBe(false);
-    expect(errored.checked).toBe(unmodeled.checked);
+    expect(unreachable).toEqual({ ok: false, checked: false, missing: [], reason: 'bmc-unreachable' });
+    expect(unmodeled).toEqual({ ok: true, checked: false, missing: [], reason: 'unmodeled' });
+    expect(unreachable.reason).not.toBe(unmodeled.reason);
   });
 
-  it('the ipxe-custom-tee step skips all retries and hands off a TEE-unapplied device on a transient BMC error', async () => {
+  it('enables tee on the plural tdx key, verifies it, and only then hands the device to the customer ipxe', async () => {
     const counts = { enable: 0, verify: 0 };
-    const step = new TeeConfigStep(
-      countingOps(counts, {
-        verifyTee: async (...args) => {
-          stub.mode = 'malformed';
-          const result = await productionOps.verifyTee(...args);
-          stub.mode = 'supermicro';
-          return result;
-        },
-      }),
-      recordingLogger,
-    );
+    const step = new TeeConfigStep(countingOps(counts), recordingLogger);
 
-    const result = await step.execute(
-      ctx({ platform: { slug: 'ipxe-custom-tee', variant: 'tee' }, tee_requested: true, tee_enabled: false }),
-    );
-
-    const biosAfter = { ...stub.attributes };
-    const armed = await new ArmCustomIpxeBootStep(redisService).execute(
+    const result = await step.execute(ctx(CUSTOM_TEE_ENABLE));
+    const armed = await new ArmCustomIpxeBootStep(ipxeCache).execute(
       ctx(
         { platform: { slug: 'ipxe-custom-tee' }, lifecycle_data: { ipxe_url: CUSTOMER_URL } },
         'arm_custom_ipxe_boot',
       ),
     );
-    const storedUrl = await admin.get(ARMED_KEY);
 
-    await note(
-      `[BLAST NO-RETRY] step=${JSON.stringify(result)} counts=${JSON.stringify(counts)} ` +
-        `logs=${JSON.stringify(logLines)}\n` +
-        `[BLAST TEE-NOT-APPLIED] biosAfterEnable=${JSON.stringify(biosAfter)}\n` +
-        `[BLAST HANDOFF] arm=${JSON.stringify(armed)} liveRedis ${ARMED_KEY}=${String(storedUrl)}`,
-    );
-
-    expect(counts.verify).toBe(1);
-    expect(counts.enable).toBe(1);
-    expect(logLines).toContain('WARN TEE verification is not available for this hardware');
-    expect(logLines.some((line) => line.startsWith('WARN TEE verification failed on attempt'))).toBe(false);
     expect(result).toEqual({ action: 'enabled', success: true });
-    expect(biosAfter['TrustDomainExtension_TDX_']).toBe('Disabled');
+    expect(counts).toEqual({ enable: 1, verify: 1 });
+    expect(stub.attributes[TDX_KEY]).toBe('Enabled');
+    expect(stub.patchedKeys()).toContain(TDX_KEY);
+    expect(stub.patchedKeys()).not.toContain('TrustDomainExtension_TDX_');
+    expect(stub.resets).toBeGreaterThan(0);
+    expect(logLines).toContain('INFO TEE verification succeeded on attempt 1');
     expect(armed).toEqual({ armed: true });
-    expect(storedUrl).toBe(CUSTOMER_URL);
+    expect(armedUrls.get(deviceIpxeUrl(DEVICE_ID))).toBe(CUSTOMER_URL);
   });
 
-  it('the same transient error reported as checked:true retries three times and then fails the step', async () => {
+  it('retries the readback three times on an unreachable bmc without re-enabling, then fails the step', async () => {
     const counts = { enable: 0, verify: 0 };
     const step = new TeeConfigStep(
       countingOps(counts, {
-        verifyTee: () => Promise.resolve({ ok: false, checked: true, missing: [] }),
+        verifyTee: (...args) => {
+          stub.mode = 'malformed';
+          return redfishOps.verifyTee(...args);
+        },
       }),
       recordingLogger,
     );
 
-    await expect(
-      step.execute(
-        ctx({ platform: { slug: 'ipxe-custom-tee', variant: 'tee' }, tee_requested: true, tee_enabled: false }),
-      ),
-    ).rejects.toThrow(/TEE verification failed after three attempts/);
+    await expect(step.execute(ctx(CUSTOM_TEE_ENABLE))).rejects.toThrow(/TEE verification failed after three attempts/);
 
-    await note(`[BLAST CONTROL checked:true] counts=${JSON.stringify(counts)} logs=${JSON.stringify(logLines)}`);
-    expect(counts.verify).toBe(3);
-    expect(counts.enable).toBe(3);
+    expect(counts).toEqual({ enable: 1, verify: 3 });
+    expect(stub.attributes[TDX_KEY]).toBe('Enabled');
+    expect(
+      logLines.filter((line) => line.startsWith('WARN TEE verification could not read the BIOS on attempt')),
+    ).toHaveLength(3);
+    expect(logLines.some((line) => line.startsWith('WARN TEE verification failed on attempt'))).toBe(false);
+    expect(logLines).not.toContain('WARN TEE verification is not available for this hardware');
+    expect(armedUrls.size).toBe(0);
+  });
+
+  it('verifies a standard platform enable and returns the plain enabled result with no ipxe handoff', async () => {
+    const counts = { enable: 0, verify: 0 };
+    let requestsBeforeVerify = -1;
+    const step = new TeeConfigStep(
+      countingOps(counts, {
+        verifyTee: (...args) => {
+          requestsBeforeVerify = stub.requests.length;
+          return redfishOps.verifyTee(...args);
+        },
+      }),
+      recordingLogger,
+    );
+
+    const result = await step.execute(ctx(STANDARD_TEE_ENABLE));
+    const armed = await new ArmCustomIpxeBootStep(ipxeCache).execute(
+      ctx(
+        { platform: STANDARD_TEE_ENABLE.platform, lifecycle_data: { ipxe_url: CUSTOMER_URL } },
+        'arm_custom_ipxe_boot',
+      ),
+    );
+    const lastReset = stub.requests
+      .map((request) => request.method === 'POST' && request.path === SUPERMICRO_RESET_PATH)
+      .lastIndexOf(true);
+    const readbacks = stub.requests
+      .slice(requestsBeforeVerify)
+      .filter((request) => request.method === 'GET' && request.path === SUPERMICRO_BIOS_PATH);
+
+    expect(result).toEqual({ action: 'enabled', success: true });
+    expect(counts).toEqual({ enable: 1, verify: 1 });
+    expect(stub.attributes[TDX_KEY]).toBe('Enabled');
+    expect(lastReset).toBeGreaterThan(-1);
+    expect(requestsBeforeVerify).toBeGreaterThan(lastReset);
+    expect(readbacks).not.toHaveLength(0);
+    expect(logLines).toContain('INFO TEE verification succeeded on attempt 1');
+    expect(armed).toEqual({ skipped: true, reason: 'platform is not ipxe-custom-tee' });
+    expect(armedUrls.size).toBe(0);
+  });
+
+  it('fails a standard platform enable before verifying when unmodeled hardware cannot set tee', async () => {
+    stub.mode = 'unmodeled';
+    const counts = { enable: 0, verify: 0 };
+    const step = new TeeConfigStep(countingOps(counts), recordingLogger);
+
+    await expect(step.execute(ctx(STANDARD_TEE_ENABLE))).rejects.toThrow(/enableTee failed: TEE was not enabled/);
+
+    expect(counts).toEqual({ enable: 1, verify: 0 });
+    expect(logLines).not.toContain('WARN TEE verification is not available for this hardware');
+  });
+
+  it('keeps a standard platform non-blocking when tee is already enabled on unmodeled hardware', async () => {
+    stub.mode = 'unmodeled';
+    const counts = { enable: 0, verify: 0 };
+    const step = new TeeConfigStep(countingOps(counts), recordingLogger);
+
+    const result = await step.execute(ctx({ ...STANDARD_TEE_ENABLE, tee_enabled: true }));
+
+    expect(result).toEqual({ skipped: true, reason: 'current=true, requested=true' });
+    expect(counts).toEqual({ enable: 0, verify: 1 });
+    expect(logLines).toContain('WARN TEE verification is not available for this hardware');
   });
 });
 
 describe('arm_custom_ipxe_boot production wiring and ordering', () => {
-  it('the production ProvisionModule provides and exports the new step', () => {
+  it('the production ProvisionModule provides and exports the step', () => {
     const providers: unknown = Reflect.getMetadata('providers', ProvisionModule);
     const exports: unknown = Reflect.getMetadata('exports', ProvisionModule);
     if (!Array.isArray(providers)) throw new Error('ProvisionModule providers metadata missing');
     const entry = providers.find((item) => isProviderEntry(item) && item.provide === ArmCustomIpxeBootStep);
     if (!isProviderEntry(entry) || entry.useFactory === undefined) throw new Error('no ArmCustomIpxeBootStep factory');
-    const built = entry.useFactory(redisService);
+    const built = entry.useFactory(ipxeCache);
 
     expect(built).toBeInstanceOf(ArmCustomIpxeBootStep);
     expect(Array.isArray(exports) && exports.includes(ArmCustomIpxeBootStep)).toBe(true);
   });
 
-  it('the production workflow places arm_custom_ipxe_boot after deploy_os and before power_off', async () => {
+  it('the production workflow places arm_custom_ipxe_boot after deploy_os and before power_off', () => {
     const stubStep: SagaStepExecutor = { execute: () => Promise.resolve({}) };
     const saga = buildProvisionSaga({
-      resolveDeployTarget: stubStep,
-      ipmiValidation: stubStep,
-      powerOn: stubStep,
       brokkrLiveCheck: stubStep,
-      collectHardware: stubStep,
+      pcPowerOff: stubStep,
+      pcVerifyPowerOff: stubStep,
+      pcSetBootDevice: stubStep,
+      pcVerifyBootDevice: stubStep,
+      pcPowerOn: stubStep,
+      pcVerifyPowerOn: stubStep,
+      waitForBrokkrLive: stubStep,
+      disableOsBoot: stubStep,
       teeConfig: stubStep,
+      waitForAgentSession: stubStep,
+      resolveDeployTarget: stubStep,
       wipeDisks: stubStep,
       prepareStorage: stubStep,
       deployOs: stubStep,
-      armCustomIpxeBoot: new ArmCustomIpxeBootStep(redisService),
+      armCustomIpxeBoot: new ArmCustomIpxeBootStep(ipxeCache),
       ensureSolEnabled: stubStep,
       solActivation: stubStep,
       provisionComplete: stubStep,
-      powerOff: stubStep,
-      verifyPowerOff: stubStep,
-      setBootDevice: stubStep,
-      pcPowerOn: stubStep,
-      pcVerifyPowerOn: stubStep,
-      finalizeProvision: stubStep,
     });
     const names = saga.steps.map((step) => step.name);
-    const compiled = await readFile(join(process.cwd(), 'dist', 'provision', 'provision.workflow.js'), 'utf8');
-
-    await note(
-      `[AC STEP-ORDER] ...${JSON.stringify(names.slice(names.indexOf('deploy_os'), names.indexOf('power_off') + 1))} ` +
-        `liveDistHasStep=${String(compiled.includes("name: 'arm_custom_ipxe_boot'"))}`,
-    );
 
     expect(names.indexOf('arm_custom_ipxe_boot')).toBe(names.indexOf('deploy_os') + 1);
     expect(names.indexOf('power_off')).toBe(names.indexOf('arm_custom_ipxe_boot') + 1);
-    expect(compiled).toContain("name: 'arm_custom_ipxe_boot'");
   });
 });

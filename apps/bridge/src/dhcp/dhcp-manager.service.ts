@@ -3,6 +3,7 @@ import * as dgram from 'node:dgram';
 
 import { getTelemetryMeter } from '@repo/telemetry';
 
+import { BOOT_CODES } from '@repo/utils';
 import { type NetworkInterface, selfInterfaces, selfPrimary } from '../bridge-network/self-network.js';
 import { getErrorMessage } from '../common/error-utils.js';
 import { getLeaderService } from '../leader-election/leader-election.service.js';
@@ -17,6 +18,7 @@ import {
   relayedSubnetCidrs,
 } from './dhcp-atom-mapper.js';
 import type { DhcpAtomValue, DhcpZoneOpsAtomValue } from './dhcp-atom-value.schema.js';
+import { latchMacWarning } from './dhcp-boot-defaults.js';
 import { DhcpParseError, PXE_PORT } from './dhcp-options.js';
 import { validateDhcpPoolConsistency } from './dhcp-pool-validation.js';
 import { DhcpEngine, type DhcpReply } from './dhcp-server.js';
@@ -26,6 +28,7 @@ import { type NativeSocketResult, type PacketSocket, tryCreateNativeSocket } fro
 import { type ReplyTransport, chooseNakRoute, chooseReplyRoute } from './l2/reply-routing.js';
 import type { LeaseStore } from './lease-store/lease-store.js';
 import { type DhcpMessage, parsePacket } from './protocol.js';
+import type { PxeDecision, PxeObserver } from './pxe-decision.js';
 import { ReplySocketSet } from './reply-sockets.js';
 import type { SubnetConfig } from './subnet.js';
 const WILDCARD_ADDRESS = '0.0.0.0';
@@ -45,13 +48,20 @@ interface DhcpLogger {
   error(message: string, context: { jobId: string }): void;
 }
 
+export interface DhcpPrimaryInterface {
+  name: string;
+  ip: string;
+}
+
 export interface DhcpStandbyHealth {
   isLeader: boolean;
   hydrated: boolean;
   answering: boolean;
+  pxePortBound: boolean;
   claimFailureCount: number;
   lastClaimError: string | null;
   hydrateStalledSince: number | null;
+  primaryInterface: DhcpPrimaryInterface | null;
 }
 
 export interface DhcpServerDeps {
@@ -80,6 +90,7 @@ export interface DhcpServerDeps {
   publishAtomServedIps?: (ips: Array<{ interface: string; ip: string; cidr: string }>, relayedCidrs?: string[]) => void;
   /** Releases composition-owned resources (the atom/lease Redis client) on stop. */
   onStop?: () => Promise<void>;
+  recordPxeDecision?: (mac: string, decision: PxeDecision, atMs: number) => Promise<void>;
 }
 
 export class DhcpServerService implements BackgroundService {
@@ -110,6 +121,10 @@ export class DhcpServerService implements BackgroundService {
   private readonly engineRebuilds = getTelemetryMeter('brokkr-bridge').createCounter('brokkr.dhcp.engine_rebuilds', {
     description: 'DHCP engine build/hot-swap/teardown events, by reason',
   });
+  private readonly proxyRefusals = getTelemetryMeter('brokkr-bridge').createCounter('brokkr.dhcp.proxy_refusals', {
+    description: 'PXE requests refused by the proxy allowlist',
+  });
+  private readonly pxeObserver: PxeObserver;
 
   // Stable fingerprint of the last-applied atom config so reconcile only rebuilds on change.
   private lastAtomConfigFingerprint: string | null = null;
@@ -128,6 +143,7 @@ export class DhcpServerService implements BackgroundService {
   private engine: DhcpEngine | null = null;
 
   private serverId = '';
+  private primaryInterface: DhcpPrimaryInterface | null = null;
 
   private socket: dgram.Socket | null = null;
   private pxeSocket: dgram.Socket | null = null;
@@ -183,6 +199,27 @@ export class DhcpServerService implements BackgroundService {
     this.publishAtomServedIps = deps.publishAtomServedIps ?? null;
     this.onStop = deps.onStop ?? null;
 
+    const refusalWarned = new Set<string>();
+    const record = deps.recordPxeDecision;
+    this.pxeObserver = {
+      onDecision: (mac, decision) => {
+        if (decision === 'refused-allowlist') {
+          this.proxyRefusals.add(1);
+          if (latchMacWarning(refusalWarned, mac)) {
+            const spec = BOOT_CODES['PXE-110'];
+            const message = `${spec.code} ${spec.title}: ${mac} is not in the proxy allowlist. ${spec.remedy}`;
+            if (spec.severity === 'error') this.logger.error(message, { jobId: '' });
+            else this.logger.warn(message, { jobId: '' });
+          }
+        }
+        if (record !== undefined) {
+          void record(mac, decision, Date.now()).catch((error) => {
+            void logDebug(`DHCP PXE decision write for ${mac} failed: ${getErrorMessage(error)}`);
+          });
+        }
+      },
+    };
+
     // Registered once here (not on the engine): callbacks read `this.engine` at
     // collection time, so a hot-swap never strands them on a stale reference.
     const meter = getTelemetryMeter('brokkr-bridge');
@@ -221,14 +258,19 @@ export class DhcpServerService implements BackgroundService {
   // host (e.g. br-brokkr) still gets a serverId.
   private refreshServerId(jobId: string): void {
     const served = this.servedInterfaces();
-    const resolve = served.length > 0 ? (): NetworkInterface[] => served : this.resolveInterfaces;
-    const primary = this.resolvePrimary({}, resolve);
+    const candidates = served.length > 0 ? served : this.resolveInterfaces();
+    const resolve = (): NetworkInterface[] => candidates;
+    // client-facing first so a lo alias inside a served subnet never becomes the server-id; the
+    // unfiltered fallback keeps a br-brokkr-only host deriving one (see resolveInterfaces).
+    const primary = this.resolvePrimary({ clientFacingOnly: true }, resolve) ?? this.resolvePrimary({}, resolve);
     if (primary === null) {
       if (this.serverId === '') {
         this.logger.warn('DHCP server: no interface IPv4 to derive a server-id', { jobId });
       }
       return;
     }
+    const chosen = candidates.find((iface) => iface.ip === primary.ip);
+    this.primaryInterface = { name: chosen?.name ?? '', ip: primary.ip };
     if (primary.ip !== this.serverId) {
       const previous = this.serverId;
       this.serverId = primary.ip;
@@ -308,7 +350,10 @@ export class DhcpServerService implements BackgroundService {
   }
 
   private async reconcile(jobId: string): Promise<void> {
-    if (this.reconciling || this.released) return;
+    if (this.reconciling || this.released) {
+      void logDebug(`DHCP reconcile skipped: ${this.reconciling ? 'reconciling' : 'released'}`, { jobId });
+      return;
+    }
     this.reconciling = true;
     try {
       // Refresh before atom mapping — a host that started with no interfaces
@@ -322,6 +367,8 @@ export class DhcpServerService implements BackgroundService {
         // Again after mapping: the pre-map call above can only see the global primary, so a fresh
         // served set would otherwise leave the fallback serverId one poll stale.
         this.refreshServerId(jobId);
+      } else {
+        void logDebug('DHCP reconcile atom step skipped: no reader', { jobId });
       }
 
       const engine = this.engine;
@@ -396,10 +443,38 @@ export class DhcpServerService implements BackgroundService {
         await this.refreshPeerDnsIp(engine, jobId);
         await this.refreshPeerServerIds(engine, jobId);
       }
+
+      // Last in the pass: revocation is not latency-critical, and awaiting it earlier
+      // delays socket reconciliation by a tick.
+      if (leader && this.hydrated && engine !== null) {
+        await this.drainLeaseRevocations(engine, jobId);
+      }
     } catch (error) {
       this.logger.warn(`DHCP reconcile failed: ${getErrorMessage(error)}`, { jobId });
     } finally {
       this.reconciling = false;
+    }
+  }
+
+  /** Apply operator lease revocations the hub queued in Redis.
+   * Leader-only: it holds the lease in memory, and draining on a follower would lose the marker. */
+  private async drainLeaseRevocations(engine: DhcpEngine, jobId: string): Promise<void> {
+    if (this.leaseStore === undefined) return;
+    let ips: string[];
+    try {
+      ips = await this.leaseStore.takeRevocations();
+    } catch (error) {
+      this.logger.warn(`DHCP revocation drain failed: ${getErrorMessage(error)}`, { jobId });
+      return;
+    }
+    for (const ip of ips) {
+      const dropped = engine.revokeLease(ip);
+      this.logger.info(
+        dropped
+          ? `DHCP lease ${ip} revoked by operator request`
+          : `DHCP lease ${ip} revocation requested but no lease was held`,
+        { jobId },
+      );
     }
   }
 
@@ -472,13 +547,19 @@ export class DhcpServerService implements BackgroundService {
 
     const atoms = await this.readAtoms(jobId);
     // Fail-closed: reader error -> keep current engine.
-    if (atoms === null) return;
+    if (atoms === null) {
+      void logDebug('DHCP reconcile atom step skipped: reader error', { jobId });
+      return;
+    }
 
     // No atoms -> tear down: live OFF transition. Fingerprint uses atoms-only
     // (no interfaces to resolve) so a NIC change while empty is a no-op.
     if (atoms.size === 0) {
       const fingerprint = atomConfigFingerprint(atoms, []);
-      if (fingerprint === this.lastAtomConfigFingerprint) return;
+      if (fingerprint === this.lastAtomConfigFingerprint) {
+        void logDebug('DHCP reconcile atom step skipped: unchanged fingerprint', { jobId });
+        return;
+      }
       this.servedInterfaceNames.clear();
       this.publishAtomServedIps?.([]);
       this.tearDownEngine(jobId);
@@ -491,7 +572,10 @@ export class DhcpServerService implements BackgroundService {
     const interfaces = this.resolveInterfaces();
 
     const fingerprint = atomConfigFingerprint(atoms, interfaces);
-    if (fingerprint === this.lastAtomConfigFingerprint) return;
+    if (fingerprint === this.lastAtomConfigFingerprint) {
+      void logDebug('DHCP reconcile atom step skipped: unchanged fingerprint', { jobId });
+      return;
+    }
 
     let mapping: AtomMappingResult;
     try {
@@ -626,10 +710,16 @@ export class DhcpServerService implements BackgroundService {
     const fallbackMode: 'AUTHORITATIVE' | 'PROXY' =
       nonOffModes.size === 1 ? ([...nonOffModes][0] ?? 'AUTHORITATIVE') : 'AUTHORITATIVE';
 
-    const newEngine = DhcpEngine.fromSubnets({ mode: fallbackMode, networks, relayed }, this.now, this.leaseStore, {
-      warn: (message) => this.logger.warn(message, { jobId }),
-      error: (message) => this.logger.error(message, { jobId }),
-    });
+    const newEngine = DhcpEngine.fromSubnets(
+      { mode: fallbackMode, networks, relayed },
+      this.now,
+      this.leaseStore,
+      {
+        warn: (message) => this.logger.warn(message, { jobId }),
+        error: (message) => this.logger.error(message, { jobId }),
+      },
+      this.pxeObserver,
+    );
 
     // Seed peer state from the old engine so peer-opt-54 SELECTING REQUESTs aren't dropped
     // in the window before the next reconcile refreshes them.
@@ -703,9 +793,11 @@ export class DhcpServerService implements BackgroundService {
       isLeader,
       hydrated: this.hydrated,
       answering: this.engine !== null && isLeader && this.hydrated,
+      pxePortBound: this.pxeSocket !== null,
       claimFailureCount: this.claimFailureCount,
       lastClaimError: this.lastClaimError,
       hydrateStalledSince: this.hydrateStalledSinceMs,
+      primaryInterface: this.primaryInterface,
     };
   }
 

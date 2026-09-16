@@ -6,6 +6,7 @@ import { loadRedisConfig, ttlOrNone } from '../common/redis/redis-client/index.j
 import { discoveryPending, NIL_DEVICE_ID, rescueSshPubKeys } from '../common/redis/redis-keys.js';
 import type { DeviceRecord } from '../device-record/device-record.schema.js';
 import { isPlaceholder } from '../device-record/device-record.schema.js';
+import { getSyncConfig } from '../sync/sync.config.js';
 import { getInitrdConfig } from './initrd.config.js';
 
 import { getLogger } from '../logger/logger.service';
@@ -201,15 +202,17 @@ export class InitrdServingService {
 
     const skipCache = initrdType === 'brokkr-discovery';
 
+    // a cached layer built against one brokkr-live version must not be served after the version moves
+    const discoveryVersion = getSyncConfig().brokkrLiveVersion;
     let cacheKey: string;
     let lockKey: string;
     let identityLog: string;
     if (parsed.discoveryMac !== null) {
-      cacheKey = `discovery:${parsed.discoveryMac}:initrd:${initrdType}`;
+      cacheKey = `discovery:${parsed.discoveryMac}:initrd:${initrdType}:${discoveryVersion}`;
       lockKey = `discovery:${parsed.discoveryMac}:initrd:${initrdType}:build`;
       identityLog = `mac=${parsed.discoveryMac}`;
     } else {
-      cacheKey = `device:${parsed.deviceId}:initrd:${initrdType}`;
+      cacheKey = `device:${parsed.deviceId}:initrd:${initrdType}:${discoveryVersion}`;
       lockKey = `device:${parsed.deviceId}:initrd:${initrdType}:build`;
       identityLog = `device_id=${parsed.deviceId}`;
     }

@@ -13,6 +13,8 @@ import {
   LIFECYCLE_WATCHDOG_QUEUE,
   LifecycleJobRecord,
   PHONE_HOME_WATCHDOG_JOB,
+  SYSTEM_JOB_TYPES,
+  TERMINAL_PHASES,
   nextPhaseForBridge,
   type ScheduledJobData,
 } from '@repo/lifecycle';
@@ -30,12 +32,6 @@ import { LoggerService } from '../../logger/logger.service';
 import { LifecycleService } from '../lifecycle.service';
 
 const PHONE_HOME_DEADLINE_MS = 30 * 60 * 1000;
-
-const TERMINAL_PHASES: ReadonlySet<LifecycleJobPhase> = new Set([
-  LifecycleJobPhase.COMPLETED,
-  LifecycleJobPhase.FAILED,
-  LifecycleJobPhase.ABORTED,
-]);
 
 const PROVISION_FAMILY: ReadonlySet<JobType> = new Set([JobType.Provision, JobType.Reprovision]);
 
@@ -444,6 +440,7 @@ export class LifecycleInboundService {
     const deviceId = job.data.deviceId;
     if (!deviceId) return;
     const jobType = job.data.jobType;
+    if (SYSTEM_JOB_TYPES.has(jobType)) return;
 
     if (phase === LifecycleJobPhase.FAILED) {
       const write: ServerStatusWrite =

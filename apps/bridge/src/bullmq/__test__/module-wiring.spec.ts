@@ -180,6 +180,7 @@ async function compileModule() {
         processorConfig: {
           lockWaitWarningSeconds: 60,
           lockWaitHardCapSeconds: 0,
+          agentWaitHardCapSeconds: 0,
           lockLostRedelaySeconds: 90,
         },
         collectionHandlerDispatcherToken: STUB_TOKENS.collDispatcher,
@@ -342,6 +343,7 @@ async function compileModuleWithMockCaches() {
         processorConfig: {
           lockWaitWarningSeconds: 60,
           lockWaitHardCapSeconds: 0,
+          agentWaitHardCapSeconds: 0,
           lockLostRedelaySeconds: 90,
         },
         collectionHandlerDispatcherToken: STUB_TOKENS.collDispatcher,

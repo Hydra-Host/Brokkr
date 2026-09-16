@@ -51,17 +51,22 @@ describe('provision step parseParams', () => {
   });
 });
 
+const BARE_METAL_ONLY = { vm: false, baremetal: true };
+const VM_ONLY = { vm: true, baremetal: false };
+const BOTH_PLANES = { vm: true, baremetal: true };
+
 describe('requireUbuntuOnBareMetal', () => {
-  it('rejects a non-ubuntu base in baremetal mode', () => {
-    expect(() => requireUbuntuOnBareMetal('baremetal', 'debian-12', 'provision')).toThrow(/ubuntu-\* base/);
+  it('rejects a non-ubuntu base when the bare-metal plane is on', () => {
+    expect(() => requireUbuntuOnBareMetal(BARE_METAL_ONLY, 'debian-12', 'provision')).toThrow(/ubuntu-\* base/);
+    expect(() => requireUbuntuOnBareMetal(BOTH_PLANES, 'debian-12', 'provision')).toThrow(/ubuntu-\* base/);
   });
 
-  it('accepts an ubuntu base in baremetal mode', () => {
-    expect(() => requireUbuntuOnBareMetal('baremetal', 'ubuntu-24.04', 'provision')).not.toThrow();
+  it('accepts an ubuntu base when the bare-metal plane is on', () => {
+    expect(() => requireUbuntuOnBareMetal(BARE_METAL_ONLY, 'ubuntu-24.04', 'provision')).not.toThrow();
   });
 
-  it('leaves vm mode unconstrained', () => {
-    expect(() => requireUbuntuOnBareMetal('vm', 'debian-12', 'reprovision')).not.toThrow();
+  it('leaves a vm-only fleet unconstrained', () => {
+    expect(() => requireUbuntuOnBareMetal(VM_ONLY, 'debian-12', 'reprovision')).not.toThrow();
   });
 });
 
@@ -72,14 +77,14 @@ describe('provision-ipxe-custom on bare metal', () => {
         throw new Error('hub must not be called');
       },
     };
-    const ctx = { fleet: { mode: 'baremetal' }, hubAdmin, deviceId: 'd', hubDb: {} };
+    const ctx = { fleet: { planes: BARE_METAL_ONLY }, hubAdmin, deviceId: 'd', hubDb: {} };
     await expect(getStep('provision-ipxe-custom').exec(ctx as never, undefined)).rejects.toThrow(
       /refusing to run provision-ipxe-custom/,
     );
   });
 
-  it('does not gate vm mode', async () => {
-    const ctx = { fleet: { mode: 'vm' }, hubAdmin: {}, deviceId: 'd', hubDb: {} };
+  it('does not gate a vm-only fleet', async () => {
+    const ctx = { fleet: { planes: VM_ONLY }, hubAdmin: {}, deviceId: 'd', hubDb: {} };
     const err = await getStep('provision-ipxe-custom')
       .exec(ctx as never, undefined)
       .then(() => null)

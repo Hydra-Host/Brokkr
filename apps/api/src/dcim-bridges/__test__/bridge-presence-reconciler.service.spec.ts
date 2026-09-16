@@ -90,7 +90,7 @@ describe('BridgePresenceReconcilerService', () => {
       name: 'spoke-1',
       role: DeviceRole.Bridge,
       status: DeviceStatus.ACTIVE,
-      organizationId: ORG,
+      supplierId: ORG,
       zoneId: ZONE,
     });
     expect(arg.create.bridge.create).toMatchObject({
@@ -206,6 +206,81 @@ describe('BridgePresenceReconcilerService', () => {
       expect(tx.interface.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'if-1' }, data: expect.objectContaining({ name: 'bond1' }) }),
       );
+    });
+
+    it('creates a NIC without a MAC when a matched row already keeps that MAC this tick', async () => {
+      const { service, tx, logger } = buildService(
+        {
+          instance_id: 'spoke-1',
+          interfaces_json: ifaceJson([
+            { iface: 'eth0', mac: '00:00:00:00:00:00', subnet: '10.0.0.0/24', ip: '10.0.0.5' },
+            { iface: 'eth1', mac: 'aa:bb:cc:dd:ee:01', subnet: '10.0.1.0/24', ip: '10.0.1.5' },
+          ]),
+        },
+        undefined,
+        [
+          {
+            id: 'if-1',
+            name: 'eth0',
+            macAddress: 'aa:bb:cc:dd:ee:01',
+            type: null,
+            enabled: true,
+            markConnected: true,
+            ipAddresses: [{ id: 'ip-1', address: '10.0.0.5/24' }],
+          },
+        ],
+      );
+
+      await service.handleCron();
+
+      expect(tx.interface.create).toHaveBeenCalledTimes(1);
+      expect(tx.interface.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ name: 'eth1', macAddress: null, type: null }) }),
+      );
+      const macWrites = tx.interface.update.mock.calls.filter((call) => call[0].data.macAddress !== undefined);
+      expect(macWrites).toEqual([]);
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('eth0 and eth1'));
+    });
+
+    it('skips the MAC update on a name-matched NIC when another matched row keeps that MAC', async () => {
+      const { service, tx, logger } = buildService(
+        {
+          instance_id: 'spoke-1',
+          interfaces_json: ifaceJson([
+            { iface: 'eth0', mac: '00:00:00:00:00:00', subnet: '10.0.0.0/24', ip: '10.0.0.5' },
+            { iface: 'eth1', mac: 'aa:bb:cc:dd:ee:01', subnet: '10.0.1.0/24', ip: '10.0.1.5' },
+          ]),
+        },
+        undefined,
+        [
+          {
+            id: 'if-1',
+            name: 'eth0',
+            macAddress: 'aa:bb:cc:dd:ee:01',
+            type: null,
+            enabled: true,
+            markConnected: true,
+            ipAddresses: [],
+          },
+          {
+            id: 'if-2',
+            name: 'eth1',
+            macAddress: 'aa:bb:cc:dd:ee:02',
+            type: null,
+            enabled: true,
+            markConnected: true,
+            ipAddresses: [],
+          },
+        ],
+      );
+
+      await service.handleCron();
+
+      expect(tx.interface.create).not.toHaveBeenCalled();
+      const macWrites = tx.interface.update.mock.calls.filter((call) => call[0].data.macAddress !== undefined);
+      expect(macWrites).toEqual([]);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('eth0 and eth1'));
     });
 
     it('ensures a zone Prefix for each connected subnet (>/32)', async () => {

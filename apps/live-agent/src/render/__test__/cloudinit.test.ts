@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   renderCloudCfg,
   renderCustomUserDataCfg,
+  renderInfinibandCfg,
   renderMetaData,
   renderPhoneHomeScript,
   renderRoceCfg,
@@ -348,6 +349,20 @@ describe('deploy-template injection hardening', () => {
       ).toThrow(/control characters/);
     });
   });
+
+  describe('renderInfinibandCfg', () => {
+    it('rejects a nodeDesc containing a single quote', () => {
+      expect(renderInfinibandCfg({ enabled: true, nodeDesc: "gpu'node" })).toBeNull();
+    });
+
+    it('rejects a nodeDesc containing a newline', () => {
+      expect(renderInfinibandCfg({ enabled: true, nodeDesc: 'gpu\nnode' })).toBeNull();
+    });
+
+    it('rejects a nodeDesc containing a backtick', () => {
+      expect(renderInfinibandCfg({ enabled: true, nodeDesc: 'gpu`node' })).toBeNull();
+    });
+  });
 });
 
 describe('renderRoceCfg', () => {
@@ -365,5 +380,61 @@ describe('renderRoceCfg', () => {
     expect(writeFiles.map((f) => f.path)).toContain('/etc/apt/preferences.d/doca-pin');
     expect(writeFiles.map((f) => f.path)).toContain('/etc/systemd/system/hydra-roce-qos.service');
     expect(runcmd.some((c) => c.includes('https://linux.mellanox.com/repo/doca/X'))).toBe(true);
+  });
+});
+
+describe('renderInfinibandCfg', () => {
+  it('returns null when disabled (no cloud.cfg.d fragment to ship)', () => {
+    expect(renderInfinibandCfg({ enabled: false, nodeDesc: '' })).toBeNull();
+  });
+
+  it('returns null when enabled but nodeDesc is empty', () => {
+    expect(renderInfinibandCfg({ enabled: true, nodeDesc: '' })).toBeNull();
+  });
+
+  it('returns null when nodeDesc contains shell metacharacters', () => {
+    expect(renderInfinibandCfg({ enabled: true, nodeDesc: 'bad name!' })).toBeNull();
+  });
+
+  it('emits the udev rule + systemd oneshot + helper script + per-instance activator (no runcmd)', () => {
+    const out = renderInfinibandCfg({ enabled: true, nodeDesc: 'compute-42' });
+    expect(out).not.toBeNull();
+    expect(out!.startsWith('#cloud-config\n')).toBe(true);
+    const parsed = yaml.load(out!) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('runcmd');
+    const writeFiles = parsed['write_files'] as { path: string; content: string; permissions?: string }[];
+    expect(writeFiles).toHaveLength(4);
+
+    const byPath = Object.fromEntries(writeFiles.map((f) => [f.path, f]));
+
+    expect(byPath['/etc/udev/rules.d/99-infiniband-node-desc.rules']).toBeDefined();
+    expect(byPath['/etc/udev/rules.d/99-infiniband-node-desc.rules']!.content).toContain('SUBSYSTEM=="infiniband"');
+    expect(byPath['/etc/udev/rules.d/99-infiniband-node-desc.rules']!.content).toContain('echo -n compute-42 %k');
+
+    expect(byPath['/etc/systemd/system/brokkr-ib-node-desc.service']).toBeDefined();
+    const unit = byPath['/etc/systemd/system/brokkr-ib-node-desc.service']!.content;
+    expect(unit).toContain('Type=oneshot');
+    expect(unit).toContain('After=network-online.target');
+    expect(unit).toContain('ExecStart=/usr/local/sbin/brokkr-ib-node-desc.sh');
+    expect(unit).toContain('RemainAfterExit=yes');
+    expect(unit).toContain('Restart=on-failure');
+    expect(unit).toContain('WantedBy=multi-user.target');
+
+    expect(byPath['/usr/local/sbin/brokkr-ib-node-desc.sh']).toBeDefined();
+    expect(byPath['/usr/local/sbin/brokkr-ib-node-desc.sh']!.permissions).toBe('0755');
+    const script = byPath['/usr/local/sbin/brokkr-ib-node-desc.sh']!.content;
+    expect(script).toMatch(/^#!\/bin\/sh/);
+    expect(script).toContain("NODE_DESC='compute-42'");
+    expect(script).toContain('ls -1 /sys/class/infiniband/');
+    expect(script).toContain('grep -q INIT');
+    expect(script).toMatch(/for attempt in .*seq 1 12/);
+    expect(script).toMatch(/if \[ "\$current" != "\$expected" \]/);
+    expect(script).toContain('exit $fail');
+
+    expect(byPath['/var/lib/cloud/scripts/per-instance/50-brokkr-ib-node-desc.sh']).toBeDefined();
+    expect(byPath['/var/lib/cloud/scripts/per-instance/50-brokkr-ib-node-desc.sh']!.permissions).toBe('0755');
+    const activator = byPath['/var/lib/cloud/scripts/per-instance/50-brokkr-ib-node-desc.sh']!.content;
+    expect(activator).toContain('systemctl daemon-reload');
+    expect(activator).toContain('systemctl enable --now brokkr-ib-node-desc.service');
   });
 });

@@ -1,5 +1,4 @@
 import { Test } from '@nestjs/testing';
-import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { simDeviceUuid } from '../../common/hub-client';
@@ -9,6 +8,7 @@ import { OverlayStoreService } from '../../services/overlay-store';
 import { FleetOpRegistry } from '../fleet-op-registry';
 import { FleetPowerService } from '../fleet-power.service';
 import { FleetTopologyService } from '../fleet-topology.service';
+import { fakeVirshChild } from './virsh-spawn-harness';
 
 const { spawnMock, slot } = vi.hoisted(() => ({ spawnMock: vi.fn(), slot: { value: 0 } }));
 
@@ -27,15 +27,6 @@ vi.mock('../../ports', async (importOriginal) => {
   };
 });
 
-function fakeChild(stdout: string) {
-  const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter() });
-  setImmediate(() => {
-    child.stdout.emit('data', Buffer.from(stdout));
-    child.emit('close', 0);
-  });
-  return child;
-}
-
 const LIST = [
   ' Id   Name       State',
   '-------------------------',
@@ -48,11 +39,13 @@ const LIST = [
 
 function wireVirsh(tagByDomain: Record<string, string>) {
   spawnMock.mockImplementation((_cmd: string, args: string[]) => {
-    if (args.includes('list')) return fakeChild(LIST);
+    if (args.includes('list')) return fakeVirshChild(LIST);
     if (args.includes('metadata')) {
       const name = args[args.indexOf('metadata') + 1];
       const tag = tagByDomain[name];
-      return fakeChild(tag ? `<brokkr:managed xmlns:brokkr='https://brokkr.local/sim/v1'>${tag}</brokkr:managed>` : '');
+      return fakeVirshChild(
+        tag ? `<brokkr:managed xmlns:brokkr='https://brokkr.local/sim/v1'>${tag}</brokkr:managed>` : '',
+      );
     }
     throw new Error(`unexpected virsh call: ${args.join(' ')}`);
   });
@@ -65,8 +58,11 @@ async function listMachines(names: string[]): Promise<Machine[]> {
     providers: [
       FleetPowerService,
       { provide: RunnerService, useValue: {} },
-      { provide: OverlayStoreService, useValue: {} },
-      { provide: FleetTopologyService, useValue: { nodeNames: vi.fn(() => names) } },
+      { provide: OverlayStoreService, useValue: { planes: () => ({ vm: true, baremetal: false }) } },
+      {
+        provide: FleetTopologyService,
+        useValue: { nodeNames: vi.fn(() => names), baremetalView: () => ({ nodes: [] }) },
+      },
       { provide: FleetOpRegistry, useValue: {} },
     ],
   }).compile();
@@ -84,8 +80,8 @@ describe('FleetPowerService.machines', () => {
     wireVirsh({});
     const machines = await listMachines(['cpu-1', 'cpu-2']);
     expect(machines).toEqual([
-      { name: 'cpu-1', power: 'on', configured: true, deviceId: simDeviceUuid(0) },
-      { name: 'cpu-2', power: 'off', configured: true, deviceId: simDeviceUuid(1) },
+      { name: 'cpu-1', kind: 'vm', power: 'on', configured: true, deviceId: simDeviceUuid(0), bmc: null },
+      { name: 'cpu-2', kind: 'vm', power: 'off', configured: true, deviceId: simDeviceUuid(1), bmc: null },
     ]);
   });
 
@@ -101,9 +97,11 @@ describe('FleetPowerService.machines', () => {
     const machines = await listMachines(['cpu-1', 'cpu-2']);
     expect(machines.find((m) => m.name === 'ghost')).toEqual({
       name: 'ghost',
+      kind: 'vm',
       power: 'on',
       configured: false,
       deviceId: null,
+      bmc: null,
     });
   });
 

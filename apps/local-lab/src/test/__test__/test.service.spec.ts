@@ -120,11 +120,13 @@ function makeDeps() {
     logFile: vi.fn((id: string) => `/tmp/${id}.log`),
   };
   const overlay = {
-    fleetMode: vi.fn((): 'vm' | 'baremetal' => 'vm'),
+    planes: vi.fn(() => ({ vm: true, baremetal: false })),
   };
   const fleet = {
     nodeNames: vi.fn(() => ['cpu-1', 'cpu-2']),
-    baremetalNodes: vi.fn(() => [{ name: 'metal-1', pxeMac: '9c:6b:00:8d:e8:b4' }]),
+    baremetalView: vi.fn(() => ({
+      nodes: [{ name: 'metal-1', pxe_mac: '9c:6b:00:8d:e8:b4', bmc_ip: '192.168.1.50', zone: null }],
+    })),
   };
   const exec = {
     devPubkey: vi.fn(() => ({ pubkey: null })),
@@ -348,34 +350,42 @@ describe('TestService.result vitest json reporter', () => {
   });
 });
 
-describe('TestService bare-metal mode gating', () => {
-  it('disables the VM-simulator-only scenarios in bare-metal mode', () => {
+describe('TestService vm-plane gating', () => {
+  it('disables the VM-simulator-only scenarios when the vm plane is off', () => {
     const { svc, overlay } = makeService();
-    overlay.fleetMode.mockReturnValue('baremetal');
+    overlay.planes.mockReturnValue({ vm: false, baremetal: true });
 
     const byId = new Map(svc.scenarios().map((s) => [s.id, s]));
 
     expect(byId.get('spoke-failover')?.disabled).toBe(true);
-    expect(byId.get('spoke-failover')?.disabledReason).toContain('bare-metal');
+    expect(byId.get('spoke-failover')?.disabledReason).toContain('vm plane is off');
     expect(byId.get('spoke-resume')?.disabled).toBe(true);
     expect(byId.get('lifecycle-quick')?.disabled).toBeUndefined();
   });
 
-  it('leaves them enabled in vm mode', () => {
+  it('leaves them enabled while the vm plane is on', () => {
     const { svc } = makeService();
     const byId = new Map(svc.scenarios().map((s) => [s.id, s]));
     expect(byId.get('spoke-failover')?.disabled).toBeUndefined();
   });
 
-  it('rejects starting a VM-only scenario in bare-metal mode', () => {
+  it('leaves them enabled when both planes are on', () => {
     const { svc, overlay } = makeService();
-    overlay.fleetMode.mockReturnValue('baremetal');
+    overlay.planes.mockReturnValue({ vm: true, baremetal: true });
+    const byId = new Map(svc.scenarios().map((s) => [s.id, s]));
+    expect(byId.get('spoke-failover')?.disabled).toBeUndefined();
+  });
+
+  it('rejects starting a VM-only scenario when the vm plane is off', () => {
+    const { svc, overlay } = makeService();
+    overlay.planes.mockReturnValue({ vm: false, baremetal: true });
     expect(() => svc.start('spoke-failover', 0)).toThrow(BadRequestException);
   });
 
-  it("resolves 'Auto' to the only bare-metal machine", () => {
-    const { svc, runner, overlay } = makeService();
-    overlay.fleetMode.mockReturnValue('baremetal');
+  it("resolves 'Auto' to the only bare-metal machine when the vm plane is off", () => {
+    const { svc, runner, overlay, fleet } = makeService();
+    overlay.planes.mockReturnValue({ vm: false, baremetal: true });
+    fleet.nodeNames.mockReturnValue([]);
 
     svc.start('lifecycle-quick');
 
@@ -387,13 +397,16 @@ describe('TestService bare-metal mode gating', () => {
     });
   });
 
-  it("rejects 'Auto' when the bare-metal fleet has more than one machine", () => {
+  it("rejects 'Auto' when the vm plane is off and more than one machine is saved", () => {
     const { svc, overlay, fleet } = makeService();
-    overlay.fleetMode.mockReturnValue('baremetal');
-    fleet.baremetalNodes.mockReturnValue([
-      { name: 'metal-1', pxeMac: '9c:6b:00:8d:e8:b4' },
-      { name: 'metal-2', pxeMac: '9c:6b:00:8d:ea:b4' },
-    ]);
+    overlay.planes.mockReturnValue({ vm: false, baremetal: true });
+    fleet.nodeNames.mockReturnValue([]);
+    fleet.baremetalView.mockReturnValue({
+      nodes: [
+        { name: 'metal-1', pxe_mac: '9c:6b:00:8d:e8:b4', bmc_ip: '192.168.1.50', zone: null },
+        { name: 'metal-2', pxe_mac: '9c:6b:00:8d:ea:b4', bmc_ip: '192.168.1.51', zone: null },
+      ],
+    });
 
     expect(() => svc.start('lifecycle-quick')).toThrow(BadRequestException);
   });

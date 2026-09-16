@@ -4,12 +4,14 @@ import {
   Eye,
   FileCode2,
   FlaskConical,
+  History,
   KeyRound,
   Mail,
   MapPin,
   Network,
   Power,
   ScanSearch,
+  ScrollText,
   Settings,
 } from 'lucide-react';
 
@@ -21,7 +23,9 @@ import { ButtonLink } from '@repo/ui/components/button-link';
 import { Card, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { TypewriterText } from '@repo/ui/components/typewriter-text';
+import { useCanViewJobHistory } from '~/components/job-history-table';
 import { useDcimDeviceEvents } from '~/hooks/use-device-events';
+import { usePermissions } from '~/hooks/use-permissions';
 import { tsr } from '~/lib/api';
 
 const serverQueryKey = (deviceId: string) => ['server', deviceId] as const;
@@ -82,11 +86,13 @@ function ServerLayout() {
 }
 
 function ServerHeader({ device }: { device: Server }) {
+  const { can } = usePermissions();
   const displayName = device.dcim?.nickname || device.name;
   const deviceId = device.id;
   const { mutate: collectInventory, isPending: isCollecting } = tsr.collectServerInventory.useMutation({
     meta: { successMessage: 'Discovery collection started' },
   });
+  const { canView: canViewJobs } = useCanViewJobHistory();
 
   return (
     <Card>
@@ -140,6 +146,22 @@ function ServerHeader({ device }: { device: Server }) {
             <FlaskConical className="mr-2 h-4 w-4" />
             Test Runs
           </ButtonLink>
+          <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/discovery-runs" params={{ deviceId }}>
+            <ScanSearch className="mr-2 h-4 w-4" />
+            Discovery Runs
+          </ButtonLink>
+          {can('job-log', 'access') && (
+            <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/job-logs" params={{ deviceId }}>
+              <ScrollText className="mr-2 h-4 w-4" />
+              Job Logs
+            </ButtonLink>
+          )}
+          {canViewJobs && (
+            <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/jobs" params={{ deviceId }}>
+              <History className="mr-2 h-4 w-4" />
+              Jobs
+            </ButtonLink>
+          )}
           <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/decommission" params={{ deviceId }}>
             <AlertTriangle className="mr-2 h-4 w-4" />
             Decommission

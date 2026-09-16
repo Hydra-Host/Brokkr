@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTestServer, stubApi, type StubCall } from '../testkit.js';
 
 describe('datastore tools', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it('lab_pg_query posts the sql', async () => {
     const calls: StubCall[] = [];
     const { client } = await createTestServer(
@@ -9,6 +11,32 @@ describe('datastore tools', () => {
     );
     await client.callTool({ name: 'lab_pg_query', arguments: { sql: 'SELECT 1 AS n' } });
     expect(calls[0]?.body).toEqual({ sql: 'SELECT 1 AS n' });
+  });
+
+  it('lab_pg_query presents the host token, not the api token', async () => {
+    vi.stubEnv('LAB_API_TOKEN', 'api-tok');
+    vi.stubEnv('LAB_HOST_TOKEN', 'host-tok');
+    const calls: StubCall[] = [];
+    const { client } = await createTestServer(
+      stubApi({ 'POST /api/datastore/pg/query': { status: 200, body: { columns: ['n'], rows: [[1]] } } }, calls),
+    );
+
+    await client.callTool({ name: 'lab_pg_query', arguments: { sql: 'SELECT 1 AS n' } });
+
+    expect(calls[0]?.headers['x-lab-token']).toBe('host-tok');
+  });
+
+  it('lab_pg_table_rows presents the api token, not the host token', async () => {
+    vi.stubEnv('LAB_API_TOKEN', 'api-tok');
+    vi.stubEnv('LAB_HOST_TOKEN', 'host-tok');
+    const calls: StubCall[] = [];
+    const { client } = await createTestServer(
+      stubApi({ 'GET /api/datastore/pg/tables/public/Server/rows': { status: 200, body: { rows: [] } } }, calls),
+    );
+
+    await client.callTool({ name: 'lab_pg_table_rows', arguments: { schema: 'public', table: 'Server' } });
+
+    expect(calls[0]?.headers['x-lab-token']).toBe('api-tok');
   });
 
   it('lab_pg_table_rows uses schema/table path params and query pagination', async () => {

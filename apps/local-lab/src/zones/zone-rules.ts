@@ -10,7 +10,9 @@ export interface ZoneRulesInput {
   desired: ZoneWrite[];
   declared: { name: string; index: number; bridges: number }[];
   nodeZones: Record<string, string>;
+  // vm nodes only, the write path; occupancyByZone adds the bare-metal machines for the removal guard
   nodesByZone: Record<string, string[]>;
+  occupancyByZone: Record<string, string[]>;
   rename?: { from: string; to: string };
   capacity: number;
   hubZoneNames: string[];
@@ -36,7 +38,7 @@ const firstDuplicate = <T>(values: T[]): T | undefined => {
 /** Every rule the engine enforces when it loads a fleet, plus the ones only the control center can see.
  *  Returns the first refusal so the caller reports one cause rather than a list to triage. */
 export function zoneRefusal(input: ZoneRulesInput): string | null {
-  const { desired, declared, nodeZones, nodesByZone, rename, capacity, hubZoneNames } = input;
+  const { desired, declared, nodeZones, nodesByZone, occupancyByZone, rename, capacity, hubZoneNames } = input;
   const names = desired.map((z) => z.name);
 
   const malformed = desired.find((z) => !ZONE_NAME_RE.test(z.name));
@@ -75,7 +77,7 @@ export function zoneRefusal(input: ZoneRulesInput): string | null {
   const renamedAway = rename ? [rename.from] : [];
   for (const name of removed) {
     if (renamedAway.includes(name)) continue;
-    const owned = nodesByZone[name] ?? [];
+    const owned = occupancyByZone[name] ?? [];
     if (owned.length > 0) {
       return `zone ${name} still owns ${owned.length} node(s) (${owned.join(', ')}); move them before removing it`;
     }

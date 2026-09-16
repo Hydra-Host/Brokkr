@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { NetplanModule } from 'src/brokkr-bridge/netplan/netplan.module';
 import { PrismaModule } from 'src/prisma';
 import { CableController } from './cable/cable.controller';
 import { CableService } from './cable/cable.service';
@@ -25,7 +26,7 @@ import { RearPortController } from './rear-port/rear-port.controller';
 import { RearPortService } from './rear-port/rear-port.service';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, NetplanModule],
   controllers: [
     InterfaceController,
     RackController,

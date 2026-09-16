@@ -5,11 +5,17 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  resetBootReadinessFindingsForTests,
+  setBootReadinessFindings,
+} from '../../composition/boot-readiness-holder.js';
+import {
   resetDhcpStandbyHealthGetterForTests,
   setDhcpStandbyHealthGetter,
 } from '../../composition/dhcp-standby-health-holder.js';
+import { resetDiscoverySyncRecordForTests, setDiscoverySyncRecord } from '../../composition/discovery-sync-holder.js';
 import { setLeaderService } from '../../leader-election/leader-election.service.js';
 import { resetBridgeSshConfigForTests } from '../bridge-ssh.config.js';
+import { bridgeStatusResponseSchema } from '../bridge-status.schema.js';
 import { BridgeStatusService, BridgeStatusServiceError, createBridgeStatusService } from '../bridge-status.service.js';
 
 const VALID_PUBKEY_BLOB = 'AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -32,6 +38,7 @@ describe('BridgeStatusService', () => {
     prevSsh = process.env.SSH_KEY_PATH;
     setLeaderService(null);
     resetBridgeSshConfigForTests();
+    resetBootReadinessFindingsForTests();
     tmp = await mkdtemp(join(tmpdir(), 'bridge-status-'));
   });
 
@@ -43,6 +50,8 @@ describe('BridgeStatusService', () => {
     setLeaderService(null);
     resetBridgeSshConfigForTests();
     resetDhcpStandbyHealthGetterForTests();
+    resetBootReadinessFindingsForTests();
+    resetDiscoverySyncRecordForTests();
     await rm(tmp, { recursive: true, force: true });
   });
 
@@ -180,7 +189,7 @@ describe('BridgeStatusService', () => {
       vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
 
       const result = await service.getBridgeStatus('u');
-      expect(result.leader_election).toBeUndefined();
+      expect(result.leader_election).toBeNull();
       expect(result.bridge_pubkeys).toEqual(['k']);
     });
 
@@ -192,19 +201,22 @@ describe('BridgeStatusService', () => {
         isLeader: true,
         hydrated: true,
         answering: true,
+        pxePortBound: true,
         claimFailureCount: 0,
         lastClaimError: null,
         hydrateStalledSince: null,
+        primaryInterface: null,
       }));
       const service = new BridgeStatusService('test-job');
       vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
 
       const result = await service.getBridgeStatus('u');
-      expect(result.leader_election).toBeUndefined();
+      expect(result.leader_election).toBeNull();
       expect(result.dhcp_standby_health).toEqual({
         is_leader: true,
         hydrated: true,
         answering: true,
+        pxe_port_bound: true,
         claim_failure_count: 0,
         last_claim_error: null,
         hydrate_stalled_since: null,
@@ -216,9 +228,11 @@ describe('BridgeStatusService', () => {
         isLeader: true,
         hydrated: true,
         answering: true,
+        pxePortBound: true,
         claimFailureCount: 0,
         lastClaimError: null,
         hydrateStalledSince: null,
+        primaryInterface: null,
       }));
       const service = new BridgeStatusService('test-job');
       vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
@@ -228,6 +242,7 @@ describe('BridgeStatusService', () => {
         is_leader: true,
         hydrated: true,
         answering: true,
+        pxe_port_bound: true,
         claim_failure_count: 0,
         last_claim_error: null,
         hydrate_stalled_since: null,
@@ -243,15 +258,38 @@ describe('BridgeStatusService', () => {
       expect(result.dhcp_standby_health).toBeUndefined();
     });
 
+    it('readiness_error_count is zero while the startup holder is empty', async () => {
+      const service = new BridgeStatusService('test-job');
+      vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
+
+      const result = await service.getBridgeStatus('u');
+      expect(result.readiness_error_count).toBe(0);
+    });
+
+    it('readiness_error_count counts only error-severity startup findings', async () => {
+      setBootReadinessFindings('ipxe_builds', [
+        { code: 'PXE-01', severity: 'error', message: 'amd64 has no efi binary' },
+        { code: 'PXE-01', severity: 'error', message: 'arm64 has no efi binary' },
+      ]);
+      setBootReadinessFindings('chain_reachability', [{ code: 'PXE-07', severity: 'warn', message: 'dns off' }]);
+      const service = new BridgeStatusService('test-job');
+      vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
+
+      const result = await service.getBridgeStatus('u');
+      expect(result.readiness_error_count).toBe(2);
+    });
+
     it('sanitizes last_claim_error: collapses whitespace and length-caps so raw Redis detail cannot leak', async () => {
       const raw = `redis down\n  at ${'internal-host.example.com:6379 '.repeat(20)}`;
       setDhcpStandbyHealthGetter(() => ({
         isLeader: false,
         hydrated: false,
         answering: false,
+        pxePortBound: false,
         claimFailureCount: 3,
         lastClaimError: raw,
         hydrateStalledSince: null,
+        primaryInterface: null,
       }));
       const service = new BridgeStatusService('test-job');
       vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
@@ -263,6 +301,149 @@ describe('BridgeStatusService', () => {
       expect(sanitized.length).toBeLessThan(raw.length);
       expect(result.dhcp_standby_health?.claim_failure_count).toBe(3);
     });
+  });
+
+  describe('primary_interface', () => {
+    it('reports the primary interface the dhcp server-id came from', async () => {
+      setDhcpStandbyHealthGetter(() => ({
+        isLeader: true,
+        hydrated: true,
+        answering: true,
+        pxePortBound: true,
+        claimFailureCount: 0,
+        lastClaimError: null,
+        hydrateStalledSince: null,
+        primaryInterface: { name: 'eth0', ip: '10.0.0.1' },
+      }));
+      const service = new BridgeStatusService('test-job');
+      vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
+
+      const result = await service.getBridgeStatus('u');
+
+      expect(result.primary_interface).toEqual({ name: 'eth0', ip: '10.0.0.1' });
+      expect(bridgeStatusResponseSchema.parse(result).primary_interface).toEqual(result.primary_interface);
+    });
+
+    it('primary_interface is null when DHCP is off', async () => {
+      setDhcpStandbyHealthGetter(() => null);
+      const service = new BridgeStatusService('test-job');
+      vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
+
+      const result = await service.getBridgeStatus('u');
+
+      expect(result.primary_interface).toBeNull();
+      expect(bridgeStatusResponseSchema.parse(result).primary_interface).toBeNull();
+    });
+
+    it('primary_interface is null when DHCP is active but no primary interface has resolved', async () => {
+      setDhcpStandbyHealthGetter(() => ({
+        isLeader: true,
+        hydrated: true,
+        answering: true,
+        pxePortBound: true,
+        claimFailureCount: 0,
+        lastClaimError: null,
+        hydrateStalledSince: null,
+        primaryInterface: null,
+      }));
+      const service = new BridgeStatusService('test-job');
+      vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
+
+      const result = await service.getBridgeStatus('u');
+
+      expect(result.dhcp_standby_health).toBeDefined();
+      expect(result.primary_interface).toBeNull();
+      expect(bridgeStatusResponseSchema.parse(result).primary_interface).toBeNull();
+    });
+  });
+
+  describe('discovery_sync', () => {
+    it('reports the last sync outcome on the status route', async () => {
+      setDiscoverySyncRecord({
+        at: 1_757_600_000_000,
+        outcome: 'ok',
+        error: null,
+        baseUrl: 'https://assets.test/brokkr-live',
+        version: '9.9.9',
+        flavors: ['light', 'full'],
+      });
+      const service = new BridgeStatusService('test-job');
+      vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
+
+      const result = await service.getBridgeStatus('u');
+
+      expect(result.discovery_sync).toEqual({
+        at: 1_757_600_000_000,
+        outcome: 'ok',
+        error: null,
+        base_url: 'https://assets.test/brokkr-live',
+        version: '9.9.9',
+        flavors: ['light', 'full'],
+      });
+      expect(bridgeStatusResponseSchema.parse(result).discovery_sync).toEqual(result.discovery_sync);
+    });
+
+    it('omits discovery_sync until the first sync pass finishes', async () => {
+      const service = new BridgeStatusService('test-job');
+      vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
+
+      const result = await service.getBridgeStatus('u');
+
+      expect(result.discovery_sync).toBeUndefined();
+      expect(bridgeStatusResponseSchema.parse(result).discovery_sync).toBeUndefined();
+    });
+
+    it('sanitizes the sync error so raw transport detail cannot leak', async () => {
+      const raw = `HTTP 503 fetching\n  ${'https://internal-host.example.com/brokkr-live/manifest.json '.repeat(10)}`;
+      setDiscoverySyncRecord({
+        at: 1,
+        outcome: 'failed',
+        error: raw,
+        baseUrl: 'https://assets.test/brokkr-live',
+        version: '9.9.9',
+        flavors: ['full'],
+      });
+      const service = new BridgeStatusService('test-job');
+      vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
+
+      const result = await service.getBridgeStatus('u');
+
+      const sanitized = result.discovery_sync?.error ?? '';
+      expect(sanitized).not.toContain('\n');
+      expect(sanitized.length).toBeLessThanOrEqual(121);
+      expect(sanitized.length).toBeLessThan(raw.length);
+      expect(result.discovery_sync?.outcome).toBe('failed');
+    });
+  });
+
+  it('emits every payload field through the response schema', async () => {
+    setDhcpStandbyHealthGetter(() => ({
+      isLeader: true,
+      hydrated: false,
+      answering: false,
+      pxePortBound: true,
+      claimFailureCount: 2,
+      lastClaimError: 'redis unreachable',
+      hydrateStalledSince: 1_757_600_000_500,
+      primaryInterface: { name: 'eth0', ip: '10.0.0.1' },
+    }));
+    setDiscoverySyncRecord({
+      at: 1_757_600_000_000,
+      outcome: 'failed',
+      error: 'HTTP 503 fetching manifest',
+      baseUrl: 'https://assets.test/brokkr-live',
+      version: '9.9.9',
+      flavors: ['light', 'full'],
+    });
+    setBootReadinessFindings('ipxe_builds', [
+      { code: 'PXE-01', severity: 'error', message: 'amd64 has no efi binary' },
+    ]);
+    const service = new BridgeStatusService('test-job');
+    vi.spyOn(service, 'getLocalPubkey').mockResolvedValue('k');
+
+    const payload = await service.getBridgeStatus('u');
+
+    expect(bridgeStatusResponseSchema.parse(payload)).toEqual(payload);
   });
 
   describe('createBridgeStatusService factory', () => {

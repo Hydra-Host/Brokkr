@@ -44,6 +44,9 @@
         "OTEL_TRACES_SAMPLER_ARG",
         "PERSISTENT_STORAGE_PATH",
         "PORT",
+        "REDFISH_REBOOT_TIMEOUT_S",
+        "REDFISH_REBOOT_WAITS",
+        "SIM_BMC_CIDR",
         "SIM_REDFISH_PORT",
         "SNMP_MAX_CONCURRENT_OPS",
         "SSH_KEY_PATH"

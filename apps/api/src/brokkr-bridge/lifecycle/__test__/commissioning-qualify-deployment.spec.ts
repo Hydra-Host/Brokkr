@@ -34,10 +34,10 @@ const STORAGE_LAYOUTS: StorageLayoutData = {
   },
 };
 
-function makeDevice(overrides?: Partial<{ organizationId: string | null; zone: { organizationId: string } | null }>) {
+function makeDevice(overrides?: Partial<{ supplierId: string | null; zone: { organizationId: string } | null }>) {
   return {
     id: DEVICE_ID,
-    organizationId: 'org-1',
+    supplierId: 'org-1',
     zone: { organizationId: 'org-1' },
     server: { id: 'server-1', storageLayouts: STORAGE_LAYOUTS },
     ...overrides,
@@ -105,7 +105,7 @@ describe('BridgeCommissioningService — createQualifyDeployment guard paths', (
   });
 
   it('rejects when the device has no owning organization', async () => {
-    mockDeviceFindUnique.mockResolvedValue(makeDevice({ organizationId: null, zone: null }));
+    mockDeviceFindUnique.mockResolvedValue(makeDevice({ supplierId: null, zone: null }));
     mockOsFindUnique.mockResolvedValue({ id: 'os-1' });
     vi.spyOn(LayerRecord, 'findBySlug').mockResolvedValue({ id: 'layer-1', kind: LayerKind.BASE } as any);
 

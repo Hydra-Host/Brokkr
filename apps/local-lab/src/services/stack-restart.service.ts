@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { RESTART_STALE_AFTER_MS, type RestartState } from '@repo/local-lab-contract';
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import type { RunState } from '../runner/runner.service';
 import { RunnerService } from '../runner/runner.service';
 import { SudoService } from '../sudo/sudo.service';

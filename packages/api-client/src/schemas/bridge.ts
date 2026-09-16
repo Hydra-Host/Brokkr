@@ -1,14 +1,16 @@
+import { DeviceTestStatus, DeviceTestType } from '@repo/database/enums';
 import { z } from 'zod';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const DeviceTestTypeSchema = z
-  .enum(['GpuBurnIn', 'NcclPerformance'])
-  .describe('Type of hardware test to run on a device');
-export type DeviceTestTypeEnum = z.infer<typeof DeviceTestTypeSchema>;
+export const DeviceTestTypeSchema = zodEnumFromPrisma(DeviceTestType).describe(
+  'Type of hardware test to run on a device',
+);
+export type DeviceTestTypeEnum = DeviceTestType;
 
-export const DeviceTestStatusSchema = z
-  .enum(['Completed', 'Running'])
-  .describe('Current execution status of a device test run');
-export type DeviceTestStatusEnum = z.infer<typeof DeviceTestStatusSchema>;
+export const DeviceTestStatusSchema = zodEnumFromPrisma(DeviceTestStatus).describe(
+  'Current execution status of a device test run',
+);
+export type DeviceTestStatusEnum = DeviceTestStatus;
 
 export const CreateDeviceTestRunRequestSchema = z.object({
   deviceId: z.string().uuid().describe('Device UUID to run the test on'),

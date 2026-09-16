@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { BootTrailSchema } from '../contract';
+
 /** The bridge's redis client prefixes every key it writes with the zone uuid, so an observer that
  *  wants one zone's runtime state addresses these unprefixed shapes under `{zoneId}:`. */
 const zoneKey = (zoneId: string, key: string): string => `${zoneId}:${key}`;
@@ -11,6 +13,29 @@ export const zoneCryptoKey = (zoneId: string): string => zoneKey(zoneId, 'zone_c
 export const bootstrapLockKey = (zoneId: string): string => zoneKey(zoneId, 'lock:zone_crypto:bootstrap_lock');
 export const workDispatchPattern = (zoneId: string): string => zoneKey(zoneId, 'work:dispatch:*');
 export const workProgressPattern = (zoneId: string): string => zoneKey(zoneId, 'work:progress:*');
+
+/** The bridge keys a machine's boot trail by the mac it saw on the wire: lowercase, colon-separated. A mac
+ *  is unique across zones, so these match under any zone prefix rather than looking the zone up first. */
+const trailMac = (mac: string): string => mac.trim().replace(/-/g, ':').toLowerCase();
+export const dhcpPxeScanPattern = (mac: string): string => `*:dhcp:pxe:${trailMac(mac)}`;
+export const discoveryPendingScanPattern = (mac: string): string => `*:discovery:pending:${trailMac(mac)}`;
+export const ipxeChainHitScanPattern = (mac: string): string => `*:ipxe:chain:${trailMac(mac)}`;
+
+/** The spoke's discovery sync version keys — the legacy single key and the per-flavor ones. The
+ *  instance id names one spoke, so this matches them under any zone prefix. */
+export const syncVersionScanPattern = (instance: string): string => `*:bridge:${instance}:version:brokkr-live-https*`;
+
+// the bridge writes `at` as epoch ms in a string field; the outcome vocabulary is the contract's
+export const PxeDecisionHashSchema = z.object({
+  outcome: BootTrailSchema.shape.pxe.unwrap().shape.outcome,
+  at: z.string().regex(/^\d+$/),
+});
+
+// mirrors the bridge's ipxe chain marker write: a plain string holding json, not a hash like the pxe decision
+export const ChainHitValueSchema = z.object({
+  atMs: z.number().int().nonnegative().describe('Epoch ms when the machine fetched the ipxe chain script'),
+  deviceId: z.string().nullable().describe('Device the bridge matched the mac to; null when it knew none'),
+});
 
 const INSTANCE_SEGMENT = ':bridge:instance:';
 export function instanceIdFromKey(key: string): string | null {

@@ -2,6 +2,7 @@ import { DynamicModule, Module, Provider, type Type } from '@nestjs/common';
 
 import type { RedisEncryptor } from '../common/redis/redis-client/redis-encryptor';
 import { NotificationsService, ResultsQueueProducer, SagaLoggerLike } from './notifications.service';
+import { setPlanManager } from './plan-manager-holder';
 import { PlanManagerConfig, PlanManagerService, RedisLike } from './plan-manager.service';
 import { SagaRunnerService } from './saga-runner.service';
 
@@ -48,8 +49,11 @@ function buildPlanManagerProvider(options: SagaFrameworkModuleOptions): Provider
   if (options.redisToken !== undefined) {
     return {
       provide: PlanManagerService,
-      useFactory: (redis: RedisLike) =>
-        new PlanManagerService(options.planManagerConfig, redis, options.logger, options.encryptor),
+      useFactory: (redis: RedisLike) => {
+        const service = new PlanManagerService(options.planManagerConfig, redis, options.logger, options.encryptor);
+        setPlanManager(service);
+        return service;
+      },
       inject: [options.redisToken],
     };
   }
@@ -61,6 +65,10 @@ function buildPlanManagerProvider(options: SagaFrameworkModuleOptions): Provider
   }
   return {
     provide: PlanManagerService,
-    useFactory: () => new PlanManagerService(options.planManagerConfig, redis, options.logger, options.encryptor),
+    useFactory: () => {
+      const service = new PlanManagerService(options.planManagerConfig, redis, options.logger, options.encryptor);
+      setPlanManager(service);
+      return service;
+    },
   };
 }

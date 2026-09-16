@@ -42,7 +42,7 @@ export const stackRoutes = {
         .optional()
         .default(false)
         .describe(
-          'Override the active-saga guard on a fleet-mode-apply — set only after the user confirmed the "force apply despite N running jobs" prompt; without it the op returns 409 when any in-flight BullMQ jobs exist across the configured zones',
+          'Override the active-saga guard on a fleet-planes-apply — set only after the user confirmed the "force apply despite N running jobs" prompt; without it the op returns 409 when any in-flight BullMQ jobs exist across the configured zones',
         ),
     }),
     responses: {
@@ -54,9 +54,9 @@ export const stackRoutes = {
           .int()
           .optional()
           .describe(
-            'For the fleet-mode-apply active-saga block: the number of in-flight BullMQ jobs across the configured zones. Drives the "force apply despite N jobs" confirm. Absent for a plain lane-contention 409.',
+            'For the fleet-planes-apply active-saga block: the number of in-flight BullMQ jobs across the configured zones. Drives the "force apply despite N jobs" confirm. Absent for a plain lane-contention 409.',
           ),
-      }).describe('A lifecycle op is already running in this domain, or the active-saga guard blocked a mode flip'),
+      }).describe('A lifecycle op is already running in this domain, or the active-saga guard blocked a plane flip'),
     },
     summary: 'Start a stack operation',
     description:

@@ -5,7 +5,7 @@
     "rootDir": ".",
     "composite": true,
     "lib": ["ES2022"],
-    "tsBuildInfoFile": "./tsconfig.backend.tsbuildinfo",
+    "tsBuildInfoFile": "./dist/cjs/tsconfig.backend.tsbuildinfo",
     "module": "commonjs",
     "moduleResolution": "node"
   },

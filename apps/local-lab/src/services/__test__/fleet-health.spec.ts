@@ -166,3 +166,64 @@ describe('deriveFleetStatus', () => {
     expect(s.health).toBe('ready');
   });
 });
+
+describe('deriveFleetStatus — bare-metal vocabulary and unreachable machines', () => {
+  it('says machines, not VMs, when the bare-metal plane is on', () => {
+    const s = deriveFleetStatus(proc({ is_ready: 'Ready' }), prog({}), 3, 3, NOW, undefined, [], {
+      planes: { vm: false, baremetal: true },
+    });
+
+    expect(s.detail).toContain('3/3 machines running');
+    expect(s.detail).not.toContain('VMs');
+  });
+
+  it('keeps saying VMs when only the vm plane is on', () => {
+    const s = deriveFleetStatus(proc({ is_ready: 'Ready' }), prog({}), 3, 3, NOW, undefined, [], {
+      planes: { vm: true, baremetal: false },
+    });
+
+    expect(s.detail).toContain('3/3 VMs running');
+  });
+
+  it('says machines when both planes are on', () => {
+    const s = deriveFleetStatus(proc({ is_ready: 'Ready' }), prog({}), 5, 5, NOW, undefined, [], {
+      planes: { vm: true, baremetal: true },
+    });
+
+    expect(s.detail).toContain('5/5 machines running');
+  });
+
+  it('says VMs when the planes are unknown', () => {
+    const s = deriveFleetStatus(proc({ is_ready: 'Ready' }), prog({}), 3, 3, NOW, undefined, [], { planes: null });
+
+    expect(s.detail).toContain('3/3 VMs running');
+  });
+
+  it('names unreachable machines rather than letting them read as powered off', () => {
+    const s = deriveFleetStatus(proc({ is_ready: 'Ready' }), prog({}), 3, 1, NOW, undefined, [], {
+      planes: { vm: false, baremetal: true },
+      unreachable: 2,
+    });
+
+    expect(s.detail).toContain('1/3 machines running');
+    expect(s.detail).toContain('2 unreachable');
+  });
+
+  it('says nothing about unreachable machines when there are none', () => {
+    const s = deriveFleetStatus(proc({ is_ready: 'Ready' }), prog({}), 3, 3, NOW, undefined, [], {
+      planes: { vm: false, baremetal: true },
+      unreachable: 0,
+    });
+
+    expect(s.detail).not.toContain('unreachable');
+  });
+
+  it('uses the bare-metal noun in the degraded boot-chain message too', () => {
+    const s = deriveFleetStatus(proc({ is_ready: 'Ready' }), prog({}), 2, 2, NOW, undefined, ['spoke'], {
+      planes: { vm: false, baremetal: true },
+    });
+
+    expect(s.health).toBe('degraded');
+    expect(s.detail).toContain('the machines have no boot chain');
+  });
+});

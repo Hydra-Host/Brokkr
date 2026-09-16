@@ -256,7 +256,7 @@ async function main(): Promise<number> {
       const { FastifyAdapter } = await import('@nestjs/platform-fastify');
       const nest = await NestFactory.create<NestFastifyApplication>(
         await AppModule.withPluginBackends(),
-        new FastifyAdapter(),
+        new FastifyAdapter({ trustProxy: true }),
         {
           bufferLogs: false,
         },

@@ -1,11 +1,17 @@
 import { Injectable, Optional } from '@nestjs/common';
+import { z } from 'zod';
+
 import { getErrorMessage } from '../common/error-utils';
 
 import { isRecord } from '@repo/utils';
 
 import { AgentNotConnected, AgentNotResponsive } from '../agent/dispatch/grpc.exceptions';
 import { ContextLogger } from '../logger/logger.service';
-import { LOCK_WAIT_STEP_NAME, type StepTransitionEvent } from '../saga-framework/notifications.service';
+import {
+  AGENT_WAIT_STEP_NAME,
+  LOCK_WAIT_STEP_NAME,
+  type StepTransitionEvent,
+} from '../saga-framework/notifications.service';
 import { LockLost } from '../saga-framework/saga-runner.service';
 import { JobStatus } from '../saga-framework/state.types';
 import { ZoneCryptoService } from '../zone-crypto/zone-crypto.service';
@@ -13,12 +19,11 @@ import { ZoneCryptoService } from '../zone-crypto/zone-crypto.service';
 import { sealBridgeLocalJob } from './bridge-local-sig';
 import {
   AGENT_HANDOFF_REDELAY_SECONDS,
+  AgentWaitExceeded,
   DeviceLockWaitExceeded,
   EnvelopeDeferralBudgetExceeded,
-  HANDOFF_ABANDON_DEADLINE_SECONDS,
   HANDOFF_DEFER_REDIS_KEY_PREFIX,
-  HANDOFF_DEFER_REDIS_TTL_SECONDS,
-  HandoffAbandoned,
+  HANDOFF_REDELAY_ESCALATION,
   JOB_NAME,
   LOCK_LOST_REDELAY_SECONDS,
 } from './bullmq.types';
@@ -83,10 +88,12 @@ function isCrossBridgeError(error: unknown): boolean {
   return error instanceof AgentNotConnected || error instanceof AgentNotResponsive;
 }
 
-interface HandoffDeferState {
-  first_deferred_at: number;
-  attempts: number;
-}
+const handoffDeferStateSchema = z.object({
+  first_deferred_at: z.number().finite().nonnegative(),
+  attempts: z.number().int().nonnegative(),
+});
+
+type HandoffDeferState = z.infer<typeof handoffDeferStateSchema>;
 
 function handoffDeferRedisKey(jobKey: string): string {
   return `${HANDOFF_DEFER_REDIS_KEY_PREFIX}:${jobKey}`;
@@ -95,14 +102,11 @@ function handoffDeferRedisKey(jobKey: string): string {
 function parseHandoffDeferState(raw: string | null): HandoffDeferState | null {
   if (raw === null) return null;
   try {
-    const parsed: unknown = JSON.parse(raw);
-    if (isRecord(parsed) && typeof parsed.first_deferred_at === 'number' && typeof parsed.attempts === 'number') {
-      return { first_deferred_at: parsed.first_deferred_at, attempts: parsed.attempts };
-    }
+    const result = handoffDeferStateSchema.safeParse(JSON.parse(raw));
+    return result.success ? result.data : null;
   } catch {
     return null;
   }
-  return null;
 }
 
 export interface InboundEnvelopeOpener {
@@ -127,6 +131,7 @@ export interface BullmqProcessorConfig {
   lockWaitWarningSeconds: number;
   lockWaitHardCapSeconds: number;
   lockLostRedelaySeconds: number;
+  agentWaitHardCapSeconds: number;
 }
 
 export interface BullmqProcessorLogger {
@@ -150,6 +155,7 @@ const DEFAULT_PROCESSOR_CONFIG: BullmqProcessorConfig = {
   lockWaitWarningSeconds: 60,
   lockWaitHardCapSeconds: 0,
   lockLostRedelaySeconds: LOCK_LOST_REDELAY_SECONDS,
+  agentWaitHardCapSeconds: 0,
 };
 
 @Injectable()
@@ -217,6 +223,7 @@ export class BullmqProcessorService {
         throw error;
       }
       if (error instanceof DeviceLockUnavailable) {
+        await this.clearHandoffDefer(dispatchJob, planIdForLog);
         await this.handleLockContention(
           dispatchJob,
           jobToken,
@@ -231,11 +238,11 @@ export class BullmqProcessorService {
       if (isCrossBridgeError(error)) {
         const reason = getErrorMessage(error);
         await this.cleanupLockWait(lockWaitKey, rawLockWait, planIdForLog);
-        await this.enforceHandoffDeadline(dispatchJob, planIdForLog);
+        const handoffDelayMs = await this.enforceHandoffDeadline(dispatchJob, planIdForLog, reason);
         await this.rescheduleDelayed(
           dispatchJob,
           jobToken,
-          Math.trunc(AGENT_HANDOFF_REDELAY_SECONDS * 1_000),
+          handoffDelayMs,
           `cross-bridge handoff: ${reason}`,
           createdAtMs,
           isBridgeLocal,
@@ -249,6 +256,7 @@ export class BullmqProcessorService {
           { jobId: planIdForLog },
         );
         await this.cleanupLockWait(lockWaitKey, rawLockWait, planIdForLog);
+        await this.clearHandoffDefer(dispatchJob, planIdForLog);
         await this.rescheduleDelayed(
           dispatchJob,
           jobToken,
@@ -292,9 +300,12 @@ export class BullmqProcessorService {
           `(${lockWait.holder_saga_name ?? '?'})`,
         { jobId: planId },
       );
-      await this.planManager.failPlan(planId, hardCapError);
-      await this.notifySafely(this.lockWaitEvent(job, JobStatus.FAILED, lockWait, hardCapError), planId);
-      await this.notifySafely(this.planEvent(job, hardCapError), planId);
+      await this.failPlanTerminally(
+        job,
+        planId,
+        hardCapError,
+        this.lockWaitEvent(job, JobStatus.FAILED, lockWait, hardCapError),
+      );
       throw new DeviceLockWaitExceeded(error.lockKey, elapsed, lockWait.attempts);
     }
 
@@ -362,7 +373,34 @@ export class BullmqProcessorService {
   }
 
   private deviceIdFromJob(job: ProcessableJob<Record<string, unknown>>): unknown {
-    return isRecord(job.data.payload) ? (job.data.payload.device_id ?? '') : '';
+    return isRecord(job.data.payload) ? (job.data.payload.device_id ?? '') : (job.data.device_id ?? '');
+  }
+
+  private async failPlanTerminally(
+    job: ProcessableJob<Record<string, unknown>>,
+    planId: string,
+    error: string,
+    stepEvent: StepTransitionEvent,
+  ): Promise<void> {
+    await this.planManager.failPlan(planId, error);
+    await this.notifySafely(stepEvent, planId);
+    await this.notifySafely(this.planEvent(job, error), planId);
+  }
+
+  private agentWaitEvent(
+    job: ProcessableJob<Record<string, unknown>>,
+    state: HandoffDeferState,
+    error: string,
+  ): StepTransitionEvent {
+    return {
+      planId: String(job.data.plan_id ?? ''),
+      stepName: AGENT_WAIT_STEP_NAME,
+      status: JobStatus.FAILED,
+      deviceId: this.deviceIdFromJob(job),
+      error,
+      result: { agent_wait: state },
+      metadata: this.metadataFromJob(job),
+    };
   }
 
   private metadataFromJob(job: ProcessableJob<Record<string, unknown>>): Record<string, unknown> {
@@ -388,34 +426,41 @@ export class BullmqProcessorService {
     return job.id ?? planId;
   }
 
-  // Bound the "agent not connected" reschedule loop. The sealed-envelope freshness window
-  // (rescheduleDelayed) only fails hub-sealed jobs; locally-enqueued collection.run jobs
-  // behind an enrich are plaintext and re-stamp createdAt each attempt, so they would defer
-  // forever when the device never boots brokkr-live. Track cumulative deferral in Redis and
-  // fail the job with a clear verdict once past HANDOFF_ABANDON_DEADLINE_SECONDS — the normal
-  // short-lived handoff (agent boots within a couple of minutes) never reaches the deadline.
-  private async enforceHandoffDeadline(job: ProcessableJob<Record<string, unknown>>, planId: string): Promise<void> {
+  private async enforceHandoffDeadline(
+    job: ProcessableJob<Record<string, unknown>>,
+    planId: string,
+    reason: string,
+  ): Promise<number> {
     const key = handoffDeferRedisKey(this.handoffDeferJobKey(job, planId));
     const now = Date.now() / 1_000;
-    const existing = parseHandoffDeferState(await this.lockWaitCache.get(key, planId));
+    const raw = await this.lockWaitCache.get(key, planId);
+    const existing = parseHandoffDeferState(raw);
+    if (raw !== null && existing === null) {
+      await this.logger.warning(`Discarding malformed handoff-defer state for job ${job.id ?? ''}`, {
+        jobId: planId,
+      });
+    }
     const state: HandoffDeferState = existing
       ? { first_deferred_at: existing.first_deferred_at, attempts: existing.attempts + 1 }
       : { first_deferred_at: now, attempts: 1 };
     const elapsed = now - state.first_deferred_at;
+    const cap = this.config.agentWaitHardCapSeconds;
+    const ttl = calculateLockWaitTtlSeconds(cap);
+    await this.lockWaitCache.set(key, JSON.stringify(state), ttl, planId);
 
-    if (elapsed >= HANDOFF_ABANDON_DEADLINE_SECONDS) {
-      const verdict = 'discovery agent never connected — device did not boot brokkr-live';
+    if (cap > 0 && elapsed > cap) {
+      const hardCapError = `Agent wait exceeded hard cap (${cap}s): ${reason}`;
       await this.logger.error(
-        `Abandoning ${job.name} for plan ${planId} after ${elapsed.toFixed(0)}s / ${state.attempts} deferrals: ${verdict}`,
+        `Agent wait hard cap exceeded for job ${job.id ?? ''}: ${elapsed.toFixed(0)}s elapsed, ` +
+          `${state.attempts} handoff attempts`,
         { jobId: planId },
       );
-      await this.lockWaitCache.delete(key, planId);
-      await this.planManager.failPlan(planId, verdict);
-      await this.notifySafely(this.planEvent(job, verdict), planId);
-      throw new HandoffAbandoned(elapsed, state.attempts);
+      await this.failPlanTerminally(job, planId, hardCapError, this.agentWaitEvent(job, state, hardCapError));
+      throw new AgentWaitExceeded(String(this.deviceIdFromJob(job)), elapsed, state.attempts);
     }
 
-    await this.lockWaitCache.set(key, JSON.stringify(state), HANDOFF_DEFER_REDIS_TTL_SECONDS, planId);
+    const tier = HANDOFF_REDELAY_ESCALATION.find((entry) => elapsed < entry.maxElapsedSeconds);
+    return Math.trunc((tier?.delaySeconds ?? AGENT_HANDOFF_REDELAY_SECONDS) * 1_000);
   }
 
   private async clearHandoffDefer(job: ProcessableJob<Record<string, unknown>>, planId: string): Promise<void> {

@@ -5,15 +5,17 @@ import { ChangedOnlyContext, ConfigField } from '@/components/config/config-fiel
 import { ConfigSearch } from '@/components/config/config-search';
 import { KnobControl } from '@/components/config/knob-control';
 import { RejectedWrites } from '@/components/config/rejected-writes';
-import { SectionRail, scrollToSection } from '@/components/config/section-rail';
+import { scrollToSection, SectionRail } from '@/components/config/section-rail';
 import { Stepper } from '@/components/config/stepper';
 import { UnsavedNavGate } from '@/components/config/unsaved-nav-gate';
 import { SectionHeading } from '@/components/console';
 import {
   APPLY_CLASS_RANK,
   applyClassFor,
+  LanModeSchema,
   strongestApplyClass,
   type ApplyClass,
+  type LanMode,
   type RejectedEntry,
   type StackConfig,
   type StackKnob,
@@ -96,7 +98,7 @@ export function ConfigStackPage() {
   const save = () => persist(withBranch());
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:h-[calc(100dvh-7rem)] lg:grid-cols-[260px_1fr]">
+    <div className="grid grid-cols-1 gap-6 lg:h-full lg:grid-cols-[260px_1fr]">
       <UnsavedNavGate dirty={form.dirty} what="stack config" />
       <SectionRail
         items={rail}
@@ -322,6 +324,15 @@ function BranchField({ branch }: { branch: Branch }) {
 const TEXT_INPUT =
   'border-border-dim bg-bg-primary text-text-primary focus:border-accent/50 w-full rounded border px-2 py-1 font-mono text-xs outline-none disabled:cursor-not-allowed disabled:opacity-50';
 
+const LAN_MODE_HELP: Record<LanMode, string> = {
+  loopback:
+    'Binds 127.0.0.1 only. A loopback caller is trusted with no token; nothing off this box can reach the stack.',
+  direct:
+    'Binds the LAN — the bind address, else every interface — in cleartext, with no TLS anywhere. Loopback stays trusted; every off-loopback caller must present a token.',
+  fronted:
+    'Binds nothing outward, for a terminator you run yourself (tailscale serve, ssh -L, caddy). It turns the loopback grant OFF: the terminator dials 127.0.0.1, so every caller it serves arrives as a loopback peer, and EVERY caller — loopback included — must then present a token.',
+};
+
 function PlainField({
   path,
   label,
@@ -329,6 +340,7 @@ function PlainField({
   value,
   onSet,
   secret,
+  description,
 }: {
   path: string;
   label: string;
@@ -336,10 +348,11 @@ function PlainField({
   value: string;
   onSet: (v: string) => void;
   secret?: boolean;
+  description?: string;
 }) {
   const prov = model.provenanceOf(path);
   return (
-    <ConfigField prov={prov} path={path} label={label} tag={path} anchor={knobAnchor(path)}>
+    <ConfigField prov={prov} path={path} label={label} tag={path} description={description} anchor={knobAnchor(path)}>
       {({ disabled, id }) => (
         <input
           id={id}
@@ -386,6 +399,24 @@ function IdentityFields({ form, model }: { form: Form; model: Model }) {
         model={model}
         value={form.identity.orgId}
         onSet={(v) => form.updateIdentity((s) => ({ ...s, orgId: v }))}
+      />
+      <PlainField
+        path="identity.redis.password"
+        label="Redis password"
+        model={model}
+        secret
+        description="requirepass on the Redis default user, and the userinfo in every derived REDIS_URL. Keep it URL-safe. Only used under the direct mode with datastore credentials on."
+        value={form.identity.redis.password}
+        onSet={(v) => form.updateIdentity((s) => ({ ...s, redis: { password: v } }))}
+      />
+      <PlainField
+        path="identity.mailpit.password"
+        label="Mailpit UI password"
+        model={model}
+        secret
+        description="HTTP basic auth for the Mailpit UI and API, user `brokkr`. The catcher holds real password-reset mail and its API returns message bodies. Only used under the direct mode with datastore credentials on."
+        value={form.identity.mailpit.password}
+        onSet={(v) => form.updateIdentity((s) => ({ ...s, mailpit: { password: v } }))}
       />
     </div>
   );
@@ -468,10 +499,79 @@ function StackFields({ form, model }: { form: Form; model: Model }) {
         onSet={(v) => form.updateOsLayer((s) => ({ ...s, resolvers: v }))}
       />
       <ConfigField
+        prov={model.provenanceOf('lan.mode')}
+        path="lan.mode"
+        label="Network mode"
+        tag="lan.mode"
+        description={LAN_MODE_HELP[form.lan.mode]}
+        danger
+        anchor={knobAnchor('lan.mode')}
+      >
+        {({ disabled, id }) => (
+          <select
+            id={id}
+            disabled={disabled}
+            value={form.lan.mode}
+            onChange={(e) => {
+              const parsed = LanModeSchema.safeParse(e.target.value);
+              if (parsed.success) form.updateLan((s) => ({ ...s, mode: parsed.data }));
+            }}
+            className={`${TEXT_INPUT} w-40`}
+          >
+            {LanModeSchema.options.map((mode) => (
+              <option key={mode} value={mode}>
+                {mode}
+              </option>
+            ))}
+          </select>
+        )}
+      </ConfigField>
+      <PlainField
+        path="lan.bindAddress"
+        label="Bind address"
+        model={model}
+        description="direct: the single address the listeners bind instead of every interface; empty means 0.0.0.0. An IP literal only, because it reaches a socket — put a name in Public host. Nothing binds outward under fronted or loopback."
+        value={form.lan.bindAddress}
+        onSet={(v) => form.updateLan((s) => ({ ...s, bindAddress: v }))}
+      />
+      <PlainField
+        path="lan.publicHost"
+        label="Public host"
+        model={model}
+        description="The host a browser reaches this stack at under direct or fronted. It never reaches a socket, so unlike the bind address it takes a name: the one your front door serves, or the one a LAN client types. Empty falls back to the bind address, then to localhost."
+        value={form.lan.publicHost}
+        onSet={(v) => form.updateLan((s) => ({ ...s, publicHost: v }))}
+      />
+      <ConfigField
+        prov={model.provenanceOf('lan.datastoreAuth')}
+        path="lan.datastoreAuth"
+        label="Datastore credentials"
+        tag="lan.datastoreAuth"
+        description="Under direct, make off-loopback datastore clients present one: Postgres scram-sha-256, a Redis requirepass, Mailpit basic auth, and Thanos receive pinned back to loopback. Only Postgres keeps loopback trust, because pg_hba is per-source; a Redis requirepass is connection-global, so loopback tooling must present the password too."
+        anchor={knobAnchor('lan.datastoreAuth')}
+      >
+        {({ disabled, id }) => (
+          <button
+            id={id}
+            type="button"
+            disabled={disabled}
+            onClick={() => form.updateLan((s) => ({ ...s, datastoreAuth: !s.datastoreAuth }))}
+            className={`w-fit rounded border px-2 py-1 font-mono text-xs disabled:opacity-50 ${
+              form.lan.datastoreAuth
+                ? 'border-accent/60 text-accent bg-accent/10'
+                : 'border-status-warning/60 text-status-warning/90 bg-status-warning/10'
+            }`}
+          >
+            {form.lan.datastoreAuth ? 'required off loopback' : 'no credential'}
+          </button>
+        )}
+      </ConfigField>
+      <ConfigField
         prov={model.provenanceOf('lan.expose')}
         path="lan.expose"
-        label="LAN access"
+        label="LAN access (deprecated)"
         tag="lan.expose"
+        description="Kept so an overlay written before the mode existed still evaluates: true implies the direct mode. Set the mode instead — it also reaches fronted, which this boolean cannot express."
         danger
         anchor={knobAnchor('lan.expose')}
       >
@@ -480,14 +580,14 @@ function StackFields({ form, model }: { form: Form; model: Model }) {
             id={id}
             type="button"
             disabled={disabled}
-            onClick={() => form.updateLan((s) => ({ expose: !s.expose }))}
+            onClick={() => form.updateLan((s) => ({ ...s, expose: !s.expose }))}
             className={`w-fit rounded border px-2 py-1 font-mono text-xs disabled:opacity-50 ${
               form.lan.expose
                 ? 'border-status-warning/60 text-status-warning/90 bg-status-warning/10'
                 : 'border-border-dim text-text-dim'
             }`}
           >
-            {form.lan.expose ? 'exposed (0.0.0.0)' : 'loopback only'}
+            {form.lan.expose ? 'implies direct' : 'off'}
           </button>
         )}
       </ConfigField>

@@ -24,6 +24,8 @@ const ipInterfaceSchema = z
     master: z.string().optional(),
     // Parent device of a sub-interface — the `@eno1` in `eno1.100@eno1`.
     link: z.string().optional(),
+    // udev names
+    altnames: z.array(z.string()).optional().default([]),
     addr_info: z.array(addrInfoSchema).optional().default([]),
   })
   .passthrough();

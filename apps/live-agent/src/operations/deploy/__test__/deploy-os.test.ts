@@ -176,6 +176,28 @@ describe('deploy.deployOS — pipeline order', () => {
     expect(calls.map((c) => c.op)).toContain('deploy.applyRoceChrootConfig');
   });
 
+  it('writes the infiniband cloud.cfg.d fragment when infiniband is enabled with a node_desc', async () => {
+    const { calls, run } = await loadAndRegister();
+    await run({ ...baseInput, infiniband: { enabled: true, node_desc: 'gpu-node-01' } });
+
+    const writeCall = calls.find((c) => c.op === 'deploy.writeCloudInitFiles');
+    expect(writeCall).toBeDefined();
+    const writeInput = operations['deploy.writeCloudInitFiles'].input.parse(writeCall!.input);
+    const ibFile = writeInput.extra_files.find((f) => f.path === 'etc/cloud/cloud.cfg.d/03-brokkr-infiniband.cfg');
+    expect(ibFile).toBeDefined();
+    expect(ibFile!.content).toContain('gpu-node-01');
+  });
+
+  it('omits the infiniband fragment when infiniband is absent', async () => {
+    const { calls, run } = await loadAndRegister();
+    await run(baseInput);
+
+    const writeCall = calls.find((c) => c.op === 'deploy.writeCloudInitFiles');
+    expect(writeCall).toBeDefined();
+    const writeInput = operations['deploy.writeCloudInitFiles'].input.parse(writeCall!.input);
+    expect(writeInput.extra_files.map((f) => f.path)).not.toContain('etc/cloud/cloud.cfg.d/03-brokkr-infiniband.cfg');
+  });
+
   it('always calls unmountChroot even when a mid-sequence sub-op throws', async () => {
     const { calls, run } = await loadAndRegister();
 

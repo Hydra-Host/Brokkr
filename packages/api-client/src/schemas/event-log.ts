@@ -1,25 +1,25 @@
+import { EventDurability, EventOutcome, EventTier, RequestSource } from '@repo/database/enums';
 import { z } from 'zod';
 import { BooleanQueryParamSchema } from './common';
 import { PaginationQuerySchema } from './pagination';
+import { zodEnumFromPrisma } from './prisma-enum';
 import { ErrorResponseSchema } from './responses';
 
-export const EventTierSchema = z
-  .enum(['EVIDENCE', 'ACTIVITY'])
-  .describe('EVIDENCE for enumerated governance actions; ACTIVITY for every other captured mutation.');
+export const EventTierSchema = zodEnumFromPrisma(EventTier).describe(
+  'EVIDENCE for enumerated governance actions; ACTIVITY for every other captured mutation.',
+);
 
-export const EventDurabilitySchema = z
-  .enum(['ATOMIC', 'POST_COMMIT', 'MIRROR', 'BEST_EFFORT'])
-  .describe(
-    'How durably the row was written. ATOMIC shared the mutation transaction and is the only compliance-grade class; MIRROR projects a record kept primarily in a purpose-built audit table.',
-  );
+export const EventDurabilitySchema = zodEnumFromPrisma(EventDurability).describe(
+  'How durably the row was written. ATOMIC shared the mutation transaction and is the only compliance-grade class; MIRROR projects a record kept primarily in a purpose-built audit table.',
+);
 
-export const EventOutcomeSchema = z
-  .enum(['SUCCEEDED', 'FAILED', 'DENIED'])
-  .describe('Whether the action succeeded, failed after passing its permission check, or was refused.');
+export const EventOutcomeSchema = zodEnumFromPrisma(EventOutcome).describe(
+  'Whether the action succeeded, failed after passing its permission check, or was refused.',
+);
 
-export const EventActorTypeSchema = z
-  .enum(['UI', 'API', 'DEVICE', 'ADMIN', 'SYSTEM'])
-  .describe('Kind of principal that acted. ADMIN is reserved and has no producer in this app.');
+export const EventActorTypeSchema = zodEnumFromPrisma(RequestSource).describe(
+  'Kind of principal that acted. ADMIN is reserved and has no producer in this app.',
+);
 
 export const EventLogEntrySchema = z.object({
   id: z.string().uuid().describe('Unique identifier for the event.'),

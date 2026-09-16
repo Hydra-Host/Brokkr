@@ -8,6 +8,8 @@ interface FormInputProps<T extends FieldValues> extends Omit<React.InputHTMLAttr
   label: string;
   labelRight?: React.ReactNode;
   description?: string;
+  /** Render the label `sr-only`, for table rows with one shared column header. Out of flow, so it adds no row height. */
+  hideLabel?: boolean;
 }
 
 function FormInput<T extends FieldValues>({
@@ -16,6 +18,7 @@ function FormInput<T extends FieldValues>({
   label,
   labelRight,
   description,
+  hideLabel,
   className,
   ...inputProps
 }: FormInputProps<T>) {
@@ -23,21 +26,28 @@ function FormInput<T extends FieldValues>({
     <Controller
       name={name}
       control={control}
-      render={({ field, fieldState }) => (
-        <Field data-invalid={fieldState.invalid} className={className}>
-          {labelRight ? (
-            <div className="flex items-center">
-              <FieldLabel htmlFor={field.name}>{label}</FieldLabel>
-              <div className="ml-auto">{labelRight}</div>
-            </div>
-          ) : (
-            <FieldLabel htmlFor={field.name}>{label}</FieldLabel>
-          )}
-          <Input {...field} {...inputProps} id={field.name} aria-invalid={fieldState.invalid} />
-          {description && <FieldDescription>{description}</FieldDescription>}
-          {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
-        </Field>
-      )}
+      render={({ field, fieldState }) => {
+        const fieldLabel = (
+          <FieldLabel htmlFor={field.name} className={hideLabel ? 'sr-only' : undefined}>
+            {label}
+          </FieldLabel>
+        );
+        return (
+          <Field data-invalid={fieldState.invalid} className={className}>
+            {labelRight ? (
+              <div className="flex items-center">
+                {fieldLabel}
+                <div className="ml-auto">{labelRight}</div>
+              </div>
+            ) : (
+              fieldLabel
+            )}
+            <Input {...field} {...inputProps} id={field.name} aria-invalid={fieldState.invalid} />
+            {description && <FieldDescription>{description}</FieldDescription>}
+            {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+          </Field>
+        );
+      }}
     />
   );
 }

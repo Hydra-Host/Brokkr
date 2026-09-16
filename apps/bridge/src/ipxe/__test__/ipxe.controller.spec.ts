@@ -7,7 +7,12 @@ import { logWarning } from '../../logger/logger.service';
 import { ChainService } from '../chain.service';
 import { IpxeServiceError } from '../ipxe-errors';
 import type { RenderRequest } from '../ipxe-renderer.helpers';
-import { IpxeController, type PendingDeviceFacts, type PendingDeviceRegistrar } from '../ipxe.controller';
+import {
+  IpxeController,
+  type ChainHitRecorder,
+  type PendingDeviceFacts,
+  type PendingDeviceRegistrar,
+} from '../ipxe.controller';
 
 vi.mock('../../logger/logger.service', () => ({
   logInfo: vi.fn(async () => {}),
@@ -121,11 +126,13 @@ function buildController(
   stub: StubChainService,
   registrar?: PendingDeviceRegistrar,
   results?: StubResults,
+  recordChainHit?: ChainHitRecorder,
 ): IpxeController {
   return new IpxeController(
     stub as unknown as ChainService,
     registrar,
     results as unknown as import('../../bullmq/results.service').ResultsService | undefined,
+    recordChainHit,
   );
 }
 
@@ -407,6 +414,81 @@ describe('iPXE controller — /api/chain', () => {
     expect(recorded.status).toBe(200);
     expect(registrar).toHaveBeenCalledTimes(1);
     expect(registrar.mock.calls[0]?.[1]?.serial).toBe('SN-XYZ-1');
+  });
+
+  it('records a chain hit for a device the hub already knows', async () => {
+    const record = realRecord();
+    const stub = stubChain({ resolveResult: record, renderResult: '#!ipxe\nboot' });
+    const registrar = vi.fn(async (): Promise<boolean> => true);
+    const recordChainHit = vi.fn(async (_jobId: string, _mac: string, _deviceId: string | null) => {});
+    const controller = buildController(stub, registrar, undefined, recordChainHit);
+    const { reply, recorded } = recordingReply();
+    await controller.chainEndpoint({ buildarch: 'x86_64', mac: '00-11-22-33-44-55' }, makeRequest(), reply);
+    expect(recorded.status).toBe(200);
+    expect(registrar).not.toHaveBeenCalled();
+    expect(recordChainHit).toHaveBeenCalledTimes(1);
+    expect(recordChainHit.mock.calls[0]?.slice(1)).toEqual(['00-11-22-33-44-55', record.id]);
+  });
+
+  it('records a chain hit for an unknown device before registering it pending', async () => {
+    const stub = stubChain({ resolveResult: ResolveOutcome.UNKNOWN, renderResult: '#!ipxe\nboot' });
+    const registrar = vi.fn(async (): Promise<boolean> => true);
+    const recordChainHit = vi.fn(async (_jobId: string, _mac: string, _deviceId: string | null) => {});
+    const controller = buildController(stub, registrar, undefined, recordChainHit);
+    const { reply, recorded } = recordingReply();
+    await controller.chainEndpoint({ buildarch: 'x86_64', mac: '00:11:22:33:44:55' }, makeRequest(), reply);
+    expect(recorded.status).toBe(200);
+    expect(recordChainHit).toHaveBeenCalledTimes(1);
+    expect(recordChainHit.mock.calls[0]?.slice(1)).toEqual(['00:11:22:33:44:55', null]);
+    expect(registrar).toHaveBeenCalledTimes(1);
+    const hitOrder = recordChainHit.mock.invocationCallOrder[0];
+    const registrarOrder = registrar.mock.invocationCallOrder[0];
+    expect(hitOrder).toBeDefined();
+    expect(registrarOrder).toBeDefined();
+    if (hitOrder === undefined || registrarOrder === undefined) return;
+    expect(hitOrder).toBeLessThan(registrarOrder);
+  });
+
+  it('records a chain hit with a null device id when the record is KNOWN_RECORD_MISSING', async () => {
+    const stub = stubChain({
+      resolveResult: ResolveOutcome.KNOWN_RECORD_MISSING,
+      renderResult: '#!ipxe\nboot',
+    });
+    const registrar = vi.fn(async (): Promise<boolean> => true);
+    const recordChainHit = vi.fn(async (_jobId: string, _mac: string, _deviceId: string | null) => {});
+    const controller = buildController(stub, registrar, undefined, recordChainHit);
+    const { reply, recorded } = recordingReply();
+    await controller.chainEndpoint({ buildarch: 'x86_64', mac: '00:11:22:33:44:55' }, makeRequest(), reply);
+    expect(recorded.status).toBe(200);
+    expect(registrar).not.toHaveBeenCalled();
+    expect(recordChainHit).toHaveBeenCalledTimes(1);
+    expect(recordChainHit.mock.calls[0]?.slice(1)).toEqual(['00:11:22:33:44:55', null]);
+  });
+
+  it('still boots (200) and warns when the chain-hit write rejects', async () => {
+    const stub = stubChain({ resolveResult: realRecord(), renderResult: '#!ipxe\nboot' });
+    const recordChainHit = vi.fn(async (): Promise<void> => {
+      throw new Error('redis down');
+    });
+    const controller = buildController(stub, undefined, undefined, recordChainHit);
+    const { reply, recorded } = recordingReply();
+    await controller.chainEndpoint({ buildarch: 'x86_64', mac: '00:11:22:33:44:55' }, makeRequest(), reply);
+    expect(recorded.status).toBe(200);
+    expect(stub.renderForRecord).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logWarning)).toHaveBeenCalledWith(
+      expect.stringContaining('ipxe:chain marker write failed'),
+      expect.anything(),
+    );
+  });
+
+  it('skips the chain-hit marker when the request carries no mac', async () => {
+    const stub = stubChain({ resolveResult: ResolveOutcome.UNKNOWN, renderResult: '#!ipxe\nboot' });
+    const recordChainHit = vi.fn(async (): Promise<void> => {});
+    const controller = buildController(stub, undefined, undefined, recordChainHit);
+    const { reply, recorded } = recordingReply();
+    await controller.chainEndpoint({ buildarch: 'x86_64', serial: 'SN-XYZ-1' }, makeRequest(), reply);
+    expect(recorded.status).toBe(200);
+    expect(recordChainHit).not.toHaveBeenCalled();
   });
 
   it('passes extracted identifiers to ChainService.resolveRecord', async () => {

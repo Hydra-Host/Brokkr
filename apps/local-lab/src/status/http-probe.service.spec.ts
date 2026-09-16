@@ -110,3 +110,51 @@ describe('HttpProbeService.probe', () => {
     expect(calls).toBe(2);
   });
 });
+
+const jsonResponse = (status: number, body: unknown) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: () => Promise.resolve(body),
+});
+
+describe('HttpProbeService.readJson', () => {
+  it('returns the parsed body on a 2xx response', async () => {
+    stubFetch(() => Promise.resolve(jsonResponse(200, { answering: true })));
+
+    const result = await new HttpProbeService().readJson('http://x/api/status');
+
+    expect(result).toEqual({ ok: true, statusCode: 200, body: { answering: true } });
+  });
+
+  it('reports the status without a body on a non-2xx response', async () => {
+    stubFetch(() => Promise.resolve(jsonResponse(503, { answering: true })));
+
+    const result = await new HttpProbeService().readJson('http://x/api/status');
+
+    expect(result).toEqual({ ok: false, statusCode: 503, detail: 'non-2xx response: 503' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries once and returns the body when the second attempt succeeds', async () => {
+    let calls = 0;
+    stubFetch(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.reject(new DOMException('signal timed out', 'TimeoutError'))
+        : Promise.resolve(jsonResponse(200, { calls }));
+    });
+
+    const result = await new HttpProbeService().readJson('http://x/api/status');
+
+    expect(result).toEqual({ ok: true, statusCode: 200, body: { calls: 2 } });
+  });
+
+  it('reports the failure detail after both attempts fail', async () => {
+    stubFetch(() => Promise.reject(new Error('connect ECONNREFUSED 127.0.0.1:8080')));
+
+    const result = await new HttpProbeService().readJson('http://x/api/status');
+
+    expect(result).toEqual({ ok: false, statusCode: null, detail: 'connect ECONNREFUSED 127.0.0.1:8080' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});

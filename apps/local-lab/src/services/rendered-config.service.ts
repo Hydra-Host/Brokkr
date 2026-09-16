@@ -6,10 +6,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage, isRecord } from '@repo/utils';
 import { parseBoundary, RenderedConfigSchema } from '../common/pc-schemas';
 import { SingleFlightCache } from '../common/single-flight-cache';
-import { isPlainObject } from '../common/type-guards';
 import { APPLY_SCOPE_ALL, describeApplyScope, inApplyScope, type ApplyScope } from './apply-scope';
 import { parseEnvEntries, stripQuoted } from './env-entries';
 import { specMatchesRunning, swapDiffSet } from './mode-drift';
@@ -35,7 +34,16 @@ export type CatalogEntry = {
   port: number | null;
   disabled: boolean;
   webUi?: { label: string; path: string; port: number; loopback: boolean };
+  features?: string[];
 };
+
+export const SERVICE_FEATURE_FLAGS: ReadonlyArray<{ env: string; label: string }> = [
+  { env: 'TFTP_ENABLED', label: 'TFTP' },
+  { env: 'BRIDGE_IPXE_BUILDS_STRICT', label: 'iPXE strict' },
+];
+
+export const featuresFromEnv = (env: ReadonlyMap<string, string>): string[] =>
+  SERVICE_FEATURE_FLAGS.filter((f) => (env.get(f.env) ?? '').toLowerCase() === 'true').map((f) => f.label);
 
 export function resolveCatalog(
   name: string,
@@ -67,13 +75,13 @@ export function extractFleetPaths(cfgPath: string): { source: string; path: stri
     new Logger('extractFleetPaths').debug(`rendered config unreadable (${cfgPath}): ${getErrorMessage(e)}`);
     return null;
   }
-  if (!isPlainObject(doc)) return null;
+  if (!isRecord(doc)) return null;
   const strList = (v: unknown): string[] =>
     Array.isArray(v) ? v.filter((e): e is string => typeof e === 'string') : [];
   const candidates: string[] = [...strList(doc.environment)];
-  const procs = isPlainObject(doc.processes) ? doc.processes : {};
+  const procs = isRecord(doc.processes) ? doc.processes : {};
   for (const spec of Object.values(procs)) {
-    if (isPlainObject(spec)) candidates.push(...strList(spec.environment));
+    if (isRecord(spec)) candidates.push(...strList(spec.environment));
   }
   const env = new Map<string, string>();
   for (const [k, v] of parseEnvEntries(candidates)) env.set(k.trim(), stripQuoted(v));
@@ -94,7 +102,7 @@ function overlayConfigPath(): string {
 
 function submittedProcessNames(cfgPath: string): Set<string> {
   const doc = loadYaml(readFileSync(cfgPath, 'utf8'));
-  if (!isPlainObject(doc) || !isPlainObject(doc.processes)) return new Set();
+  if (!isRecord(doc) || !isRecord(doc.processes)) return new Set();
   return new Set(Object.keys(doc.processes));
 }
 
@@ -238,6 +246,7 @@ export class RenderedConfigService implements OnModuleInit {
         port: probePort,
         disabled: !!p.disabled,
         webUi,
+        features: featuresFromEnv(env),
       });
     }
     return out;
@@ -291,7 +300,7 @@ export class RenderedConfigService implements OnModuleInit {
   ): Promise<{ path: string; namespaces: Map<string, string> }> {
     const doc = loadYaml(readFileSync(cfgPath, 'utf8'));
     const namespaces = new Map<string, string>();
-    if (!isPlainObject(doc) || !isPlainObject(doc.processes))
+    if (!isRecord(doc) || !isRecord(doc.processes))
       throw new Error(`overlay apply refused: ${cfgPath} declares no processes map`);
     const processes = doc.processes;
     const supervised = new Set((await this.pc.listAll()).map((p) => p.name));
@@ -305,7 +314,7 @@ export class RenderedConfigService implements OnModuleInit {
     const revived: string[] = [];
     for (const name of new Set([...Object.keys(processes), ...supervised])) {
       const spec = processes[name];
-      if (isPlainObject(spec)) {
+      if (isRecord(spec)) {
         const namespace = typeof spec.namespace === 'string' ? spec.namespace : '';
         namespaces.set(name, namespace);
         // a process the daemon does not run yet has no spec to preserve, and recreating it kills nothing
@@ -403,16 +412,16 @@ export class RenderedConfigService implements OnModuleInit {
       this.log.debug(`no previously applied config for ${name} (${path}): ${getErrorMessage(e)}`);
       return null;
     }
-    if (!isPlainObject(doc) || !isPlainObject(doc.processes)) return null;
+    if (!isRecord(doc) || !isRecord(doc.processes)) return null;
     const spec = doc.processes[name];
-    if (!isPlainObject(spec)) return null;
+    if (!isRecord(spec)) return null;
     const strList = (v: unknown): string[] =>
       Array.isArray(v) ? v.filter((e): e is string => typeof e === 'string') : [];
     const matches = specMatchesRunning(
       {
         command: typeof spec.command === 'string' ? spec.command : '',
         environment: [...strList(doc.environment), ...strList(spec.environment)],
-        dependsOn: isPlainObject(spec.depends_on) ? Object.keys(spec.depends_on) : [],
+        dependsOn: isRecord(spec.depends_on) ? Object.keys(spec.depends_on) : [],
       },
       info,
     );
@@ -424,7 +433,7 @@ export class RenderedConfigService implements OnModuleInit {
    *  pin uncovered ends here. Command and environment only — the two fields the pin writes verbatim. */
   private async refusePinGap(cfgPath: string, scope: ApplyScope): Promise<void> {
     const doc = loadYaml(readFileSync(cfgPath, 'utf8'));
-    if (!isPlainObject(doc) || !isPlainObject(doc.processes)) return;
+    if (!isRecord(doc) || !isRecord(doc.processes)) return;
     const processes = doc.processes;
     const sameEnv = (a: unknown, b: string[]): boolean =>
       Array.isArray(a) && a.length === b.length && a.every((v, i) => v === b[i]);
@@ -432,7 +441,7 @@ export class RenderedConfigService implements OnModuleInit {
     for (const proc of await this.pc.listAll()) {
       const spec = processes[proc.name];
       // a supervised process the render dropped is refuseSwapBeyondScope's case, not this one
-      if (!isPlainObject(spec)) continue;
+      if (!isRecord(spec)) continue;
       const namespace = typeof spec.namespace === 'string' ? spec.namespace : '';
       if (inApplyScope(scope, proc.name, namespace)) continue;
       const info = await this.pc.processInfo(proc.name);

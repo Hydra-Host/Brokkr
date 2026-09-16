@@ -2,8 +2,14 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { emitTelemetryLog } from '@repo/telemetry';
 
 import { JobIdPrefixFilter, type JobIdPrefixFilterInput } from './context/job-id-prefix-filter';
-import { getJobId as getContextJobId, setJobIdInCurrentContext, shouldPropagateJobId } from './context/job-id.context';
+import {
+  getJobId as getContextJobId,
+  isPlanShapedJobId,
+  setJobIdInCurrentContext,
+  shouldPropagateJobId,
+} from './context/job-id.context';
 import { parseSuppressJobIdPrefixes } from './context/suppress-prefixes';
+import { getJobLogSink } from './job-log-sink-registry';
 import { NUMERIC_LEVELS, resolveLogLevel, type LogLevel } from './log-levels';
 
 export { resolveLogLevel } from './log-levels';
@@ -257,6 +263,7 @@ export class ContextLogger {
   private readonly handler: BridgeAsyncHandler;
   private readonly env: NodeJS.ProcessEnv;
   private readonly level: LogLevel;
+  private readonly jobIdFilter: JobIdPrefixFilter;
 
   constructor(
     @Optional() @Inject(MONITORING_LOG_GATE) private readonly monitoringGate: MonitoringLogGate | null = null,
@@ -264,9 +271,10 @@ export class ContextLogger {
   ) {
     this.env = env;
     this.level = resolveLogLevel(env);
+    this.jobIdFilter = new JobIdPrefixFilter(getSuppressedJobIdPrefixes(env));
     this.handler = new BridgeAsyncHandler(process.stdout, resolveFormatter(env));
     this.handler.setLevel(this.level);
-    this.handler.setFilter(new JobIdPrefixFilter(getSuppressedJobIdPrefixes(env)));
+    this.handler.setFilter(this.jobIdFilter);
   }
 
   getJobId(provided?: string | null): string {
@@ -284,8 +292,19 @@ export class ContextLogger {
     const jobId = this.getJobId(context.jobId);
     if (this.shouldSkipMonitoringLog()) return;
 
-    if (shouldPropagateJobId(jobId)) {
+    const propagateJobId = shouldPropagateJobId(jobId);
+    if (propagateJobId) {
       setJobIdInCurrentContext(jobId);
+    }
+
+    if (propagateJobId && isPlanShapedJobId(jobId) && this.jobIdFilter.accept({ jobId })) {
+      getJobLogSink()?.enqueue(jobId, {
+        timestamp: formatUtcTimestamp(new Date()),
+        log_level: level,
+        message,
+        app_name: context.appName || 'bridge-api',
+        app_class_name: context.appClassName || 'unknown',
+      });
     }
 
     if (NUMERIC_LEVELS[level] < NUMERIC_LEVELS[this.level]) return;

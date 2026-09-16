@@ -77,7 +77,9 @@ describe('LifecycleService', () => {
     dispatchWithoutDeployment: vi.fn().mockResolvedValue(undefined),
   };
   const reprovisionOperation = {
-    assembleContext: vi.fn().mockResolvedValue({ baseLayerId: 'layer-1', organizationId: 'org-1', pubkeys: ['k'] }),
+    assembleContext: vi
+      .fn()
+      .mockResolvedValue({ baseLayerId: 'layer-1', organizationId: 'org-1', deploymentId: 'dep-1', pubkeys: ['k'] }),
     dispatch: vi.fn().mockResolvedValue(undefined),
   };
   const provisionOperation = {
@@ -108,6 +110,7 @@ describe('LifecycleService', () => {
     reprovisionOperation.assembleContext.mockResolvedValue({
       baseLayerId: 'layer-1',
       organizationId: 'org-1',
+      deploymentId: 'dep-1',
       pubkeys: ['k'],
     });
     provisionOperation.assembleContext.mockResolvedValue({ baseLayerId: 'layer-1', pubkeys: ['k'] });
@@ -173,6 +176,39 @@ describe('LifecycleService', () => {
     expect(eventBus.emit).toHaveBeenCalledWith(
       'lifecycle.dispatched',
       expect.objectContaining({ jobType: JobType.PowerOn }),
+    );
+  });
+
+  it('persists the deployment id on reboot and power jobs when supplied', async () => {
+    await service.requestReboot({
+      deviceId: 'device-1',
+      deploymentId: 'dep-1',
+      userId: 'user-1',
+      organizationId: 'org-1',
+      source: RequestSource.API,
+    });
+    expect(client.lifecycleJob.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ jobType: JobType.Reboot, deploymentId: 'dep-1' }) }),
+    );
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      'lifecycle.dispatched',
+      expect.objectContaining({ jobType: JobType.Reboot, deploymentId: 'dep-1' }),
+    );
+
+    await service.requestPowerControl({
+      deviceId: 'device-1',
+      deploymentId: 'dep-1',
+      userId: 'user-1',
+      organizationId: 'org-1',
+      source: RequestSource.API,
+      operation: 'off',
+    });
+    expect(client.lifecycleJob.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ jobType: JobType.PowerOff, deploymentId: 'dep-1' }) }),
+    );
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      'lifecycle.dispatched',
+      expect.objectContaining({ jobType: JobType.PowerOff, deploymentId: 'dep-1' }),
     );
   });
 
@@ -320,17 +356,57 @@ describe('LifecycleService', () => {
     expect(gateBus.runGate).not.toHaveBeenCalled();
     expect(eventBus.emit).toHaveBeenCalledWith(
       'lifecycle.dispatched',
-      expect.objectContaining({ jobType: JobType.Reprovision }),
+      expect.objectContaining({ jobType: JobType.Reprovision, deploymentId: 'dep-1' }),
     );
     expect(client.lifecycleJob.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
+          deploymentId: 'dep-1',
           payload: expect.objectContaining({
+            triggeredBy: 'user-1',
+            source: RequestSource.API,
             request: expect.objectContaining({
               deviceId: 'device-1',
               operatingSystemSlug: 'ubuntu-22',
               deploymentName: 'my-box',
             }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('reprovision records retriedBy as performedBy and keeps the retry audit fields in the payload', async () => {
+    const reprovisionInput = {
+      deviceId: 'device-1',
+      userId: 'user-1',
+      organizationId: 'org-1',
+      deploymentName: 'my-box',
+      operatingSystemSlug: 'ubuntu-22',
+      sshKeyIds: ['key-1'],
+      diskLayouts: [],
+      cloudInit: null,
+      ipxeUrl: null,
+      customizations: null,
+      source: RequestSource.UI,
+    };
+    await service.requestReprovision(reprovisionInput, {
+      retriedFromJobId: 'old-job',
+      retriedBy: 'operator-1',
+      triggeredByEmail: 'op@hydrahost.test',
+    });
+
+    expect(client.lifecycleJob.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          performedBy: 'operator-1',
+          payload: expect.objectContaining({
+            triggeredBy: 'operator-1',
+            triggeredByEmail: 'op@hydrahost.test',
+            source: RequestSource.UI,
+            retriedFromJobId: 'old-job',
+            retriedBy: 'operator-1',
+            request: expect.objectContaining({ userId: 'user-1' }),
           }),
         }),
       }),
@@ -375,7 +451,7 @@ describe('LifecycleService', () => {
       cloudInit: null,
       ipxeUrl: null,
       customizations: null,
-      source: RequestSource.ADMIN,
+      source: RequestSource.UI,
     };
 
     it('uses assembleContextForReplay (not assembleContext) and reaches DISPATCHED', async () => {
@@ -387,6 +463,30 @@ describe('LifecycleService', () => {
       expect(eventBus.emit).toHaveBeenCalledWith(
         'lifecycle.dispatched',
         expect.objectContaining({ jobType: JobType.Provision }),
+      );
+    });
+
+    it('records triggeredBy as the retrying operator and keeps request.userId as the original owner', async () => {
+      await service.requestProvisionAsOperator(input, {
+        retriedFromJobId: 'old-job',
+        retriedBy: 'operator-1',
+        triggeredByEmail: 'op@hydrahost.test',
+      });
+
+      expect(client.lifecycleJob.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            performedBy: 'operator-1',
+            payload: expect.objectContaining({
+              triggeredBy: 'operator-1',
+              triggeredByEmail: 'op@hydrahost.test',
+              source: RequestSource.UI,
+              retriedFromJobId: 'old-job',
+              retriedBy: 'operator-1',
+              request: expect.objectContaining({ userId: 'user-1' }),
+            }),
+          }),
+        }),
       );
     });
 
@@ -1367,6 +1467,61 @@ describe('LifecycleService', () => {
       expect(eventBus.emit).toHaveBeenCalledWith(
         'provision.failed',
         expect.objectContaining({ deploymentId: 'dep-1' }),
+      );
+    });
+  });
+
+  describe('runSystem', () => {
+    const dispatch = vi.fn().mockResolvedValue(undefined);
+
+    it('records an actorless SYSTEM job and walks it REQUESTED → AUTHORIZING → DISPATCHED', async () => {
+      const job = await service.runSystem({
+        jobType: JobType.InventoryCollection,
+        deviceId: 'device-1',
+        zoneId: 'zone-1',
+        source: 'cron',
+        dispatch,
+      });
+
+      expect(client.lifecycleJob.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            jobType: JobType.InventoryCollection,
+            phase: LifecycleJobPhase.REQUESTED,
+            deviceId: 'device-1',
+            deploymentId: null,
+            organizationId: null,
+            performedBy: null,
+            source: RequestSource.SYSTEM,
+            payload: { source: 'cron', zoneId: 'zone-1' },
+          }),
+        }),
+      );
+      expect(dispatch).toHaveBeenCalledWith('job-1');
+      expect(job.data.id).toBe('job-1');
+      expect(job.data.phase).toBe(LifecycleJobPhase.DISPATCHED);
+      expect(gateBus.runGate).not.toHaveBeenCalled();
+      expect(watchdogQueue.add).not.toHaveBeenCalled();
+      expect(eventBus.emit).not.toHaveBeenCalled();
+    });
+
+    it('fails the job and rethrows when the dispatch is refused', async () => {
+      dispatch.mockRejectedValueOnce(new Error('queue down'));
+
+      await expect(
+        service.runSystem({
+          jobType: JobType.Benchmarks,
+          deviceId: 'device-1',
+          zoneId: 'zone-1',
+          source: 'discovery',
+          dispatch,
+        }),
+      ).rejects.toThrow('queue down');
+
+      expect(client.lifecycleJob.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ phase: LifecycleJobPhase.FAILED, error: 'queue down' }),
+        }),
       );
     });
   });

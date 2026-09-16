@@ -4,6 +4,7 @@ import {
   asArray,
   asRecord,
   asString,
+  diffBiosPendingParams,
   isEmptyRecord,
   type JsonRecord,
   logger,
@@ -15,10 +16,16 @@ import { patchStandardPxeBootOverride } from '../base/boot-helpers.js';
 import type { RedfishBootHandler } from '../base/boot.js';
 import type { RedfishDiscoveryHandler } from '../base/discovery.js';
 import type { RedfishPowerHandler } from '../base/power.js';
-import { pollResetRebootWithPendingBios } from '../base/reboot-helpers.js';
+import { pollResetRebootUntilBiosSettled, pollResetRebootWithPendingBios } from '../base/reboot-helpers.js';
 import { registerVendorProfile } from '../base/registry.js';
-import type { RedfishTeeHandler } from '../base/tee.js';
+import type { RedfishTeeHandler, TeeBiosCheck } from '../base/tee.js';
 import { BaseVendorProfile } from '../base/vendor-profile.js';
+import {
+  resolveAttributeName,
+  resolveSupermicroTee,
+  SUPERMICRO_TEE_ATTRIBUTES,
+  SUPERMICRO_TEE_VERIFY_IDS,
+} from './tee-attributes.js';
 
 const APP_CLASS = 'adapters-redfish';
 
@@ -73,7 +80,11 @@ export class SupermicroVendorProfile extends BaseVendorProfile {
         handler.extractString(biosResponse, '@Redfish.Settings_SettingsObject_@odata.id') ?? '';
       if (handler.device.biosPatchEndpoint) {
         const biosPatchResponse = await handler.fetch('GET', handler.device.biosPatchEndpoint, {});
-        handler.device.biosPendingParams = asRecord(biosPatchResponse['Attributes']);
+        // the X14 SD document echoes the whole live map, so only the delta counts as pending
+        handler.device.biosPendingParams = diffBiosPendingParams(
+          Object.entries(asRecord(biosPatchResponse['Attributes'])),
+          handler.device.biosParams,
+        );
         if (!isEmptyRecord(handler.device.biosPendingParams)) {
           handler.device.rebootNeeded = true;
         }
@@ -140,105 +151,58 @@ export class SupermicroVendorProfile extends BaseVendorProfile {
   }
 
   override async setTee(handler: RedfishTeeHandler, newSetting: boolean): Promise<boolean> {
-    // displayNameToAttr is set only on the supermicro discovery path;
-    // unset (never-discovered) is a different error than empty.
-    if (handler.device.displayNameToAttr === undefined) {
-      throw new PropertyAccessError(`'RedfishDevice' cannot read property 'displayNameToAttr' of undefined`);
-    }
-    if (isEmptyRecord(handler.device.displayNameToAttr)) {
-      logger.error('BIOS attribute registry not available for Supermicro TDX configuration', {
-        jobId: handler.jobId,
-        appClassName: APP_CLASS,
-      });
+    const { device } = handler;
+    const context = { jobId: handler.jobId, appClassName: APP_CLASS };
+    if (isEmptyRecord(device.registry)) {
+      logger.error('BIOS attribute registry not available for Supermicro TEE configuration', context);
       return false;
     }
 
-    if (newSetting) {
-      await handler.applySequentialBiosSettings({
-        LimitCPUPAto46Bits: 'Disable',
-        MemoryEncryption_TME_: 'Enabled',
-      });
-      if (handler.device.rebootNeeded) {
-        await handler.reboot();
+    const direction = newSetting ? 'enable' : 'disable';
+    const { stages, failures, skipped } = resolveSupermicroTee(device, direction);
+    for (const skip of skipped) {
+      if (skip.reason === 'hidden') {
+        logger.warning(`tee ${direction}: ${skip.detail}; leaving it untouched`, context);
+      } else {
+        logger.info(`tee ${direction}: ${skip.detail}`, context);
       }
+    }
+    if (failures.length > 0) {
+      const detail = failures.map((failure) => `${failure.id}: ${failure.reason} (${failure.detail})`).join('; ');
+      logger.error(`tee ${direction} cannot proceed on ${device.tag()}: ${detail}`, context);
+      return false;
+    }
 
-      await handler.applySequentialBiosSettings({
-        TotalMemoryEncryptionMulti_Tenant_TME_MT_: 'Enabled',
-        TotalMemoryEncryption_TME_Bypass: 'Enabled',
-      });
-      if (handler.device.rebootNeeded) {
-        await handler.reboot();
+    for (const stage of stages) {
+      const { ok, patched } = await handler.applyTeeStage(stage);
+      if (!ok) {
+        logger.error(`tee ${direction}: stage ${Object.keys(stage).join(', ')} failed; later stages skipped`, context);
+        return false;
       }
-
-      await handler.applySequentialBiosSettings({
-        TrustDomainExtension_TDX_: 'Enabled',
-        TDXSecureArbitrationModeLoader_SEAMLoader_: 'Enabled',
-      });
-      if (handler.device.rebootNeeded) {
-        await handler.reboot();
-      }
-
-      await handler.applySequentialBiosSettings({
-        TME_MT_TDXKeySplit: 1,
-        SWGuardExtensions_SGX_: 'Enabled',
-        SGXPackageInfoIn_BandAccess: 'Enabled',
-      });
-      if (handler.device.rebootNeeded) {
-        await handler.reboot();
-      }
-
-      await handler.setBiosParam('SGXFactoryReset', 'Enabled');
-      if (handler.device.rebootNeeded) {
-        await handler.reboot();
-      }
-    } else {
-      await handler.applySequentialBiosSettings({
-        SGXPackageInfoIn_BandAccess: 'Disable',
-        SWGuardExtensions_SGX_: 'Disable',
-        SGXFactoryReset: 'Disable',
-      });
-      if (handler.device.rebootNeeded) {
-        await handler.reboot();
-      }
-
-      await handler.applySequentialBiosSettings({
-        TDXSecureArbitrationModeLoader_SEAMLoader_: 'Disable',
-        TotalMemoryEncryption_TME_Bypass_: 'Disable',
-        TrustDomainExtension_TDX_: 'Disable',
-        TotalMemoryEncryptionMulti_Tenant_TME_MT_: 'Disable',
-      });
-      if (handler.device.rebootNeeded) {
-        await handler.reboot();
-      }
-
-      await handler.setBiosParam('MemoryEncryption_TME_', 'Disable');
-      if (handler.device.rebootNeeded) {
-        await handler.reboot();
-      }
-
-      await handler.setBiosParam('LimitCPUPAto46Bits', 'Enable');
-      if (handler.device.rebootNeeded) {
-        await handler.reboot();
+      // ResetRequired is null on this registry, so the fence keys off what was actually patched
+      if (patched > 0 || device.rebootNeeded) {
+        await pollResetRebootUntilBiosSettled(handler);
       }
     }
 
-    logger.info(`TEE is now ${newSetting ? 'enabled' : 'disabled'}`, {
-      jobId: handler.jobId,
-      appClassName: APP_CLASS,
-    });
+    logger.info(`TEE is now ${newSetting ? 'enabled' : 'disabled'}`, context);
     return true;
   }
 
   override verifyTee(handler: RedfishTeeHandler) {
-    return Promise.resolve(
-      handler.verifyBiosSettings([
-        ['', 'MemoryEncryption_TME_', ['Enabled']],
-        ['', 'TotalMemoryEncryptionMulti_Tenant_TME_MT_', ['Enabled']],
-        ['', 'TrustDomainExtension_TDX_', ['Enabled']],
-        ['', 'TDXSecureArbitrationModeLoader_SEAMLoader_', ['Enabled']],
-        ['', 'SWGuardExtensions_SGX_', ['Enabled']],
-      ]),
-    );
+    const { device } = handler;
+    const { resolved } = resolveSupermicroTee(device, 'enable');
+    const liveKeys = Object.keys(device.biosParams);
+    const checks = SUPERMICRO_TEE_VERIFY_IDS.map((id): TeeBiosCheck => {
+      const setting = resolved[id];
+      if (setting !== undefined) return ['', setting.key, setting.desired];
+      // unresolved in the registry (none loaded, or this id absent or ambiguous there): match the live attribute
+      // names with the display-form value only; an unresolvable id keeps names[0] so it reads back as missing
+      const attribute = SUPERMICRO_TEE_ATTRIBUTES[id];
+      const lookup = resolveAttributeName(attribute, liveKeys, device.displayNameToAttr);
+      return ['', 'key' in lookup ? lookup.key : attribute.names[0], [attribute.on]];
+    });
+    return Promise.resolve(handler.verifyBiosSettings(checks));
   }
 
   override setBootPxe(handler: RedfishBootHandler): Promise<void> {

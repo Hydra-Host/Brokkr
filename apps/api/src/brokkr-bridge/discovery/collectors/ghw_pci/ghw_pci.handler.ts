@@ -40,6 +40,7 @@ export class GhwPciHandler implements CollectorHandler<GhwPciInput> {
     return {
       upserts: devices.length ? { pciDevices: devices } : undefined,
       warnings,
+      pciDevicesPartial: failures.length > 0,
     };
   }
 }

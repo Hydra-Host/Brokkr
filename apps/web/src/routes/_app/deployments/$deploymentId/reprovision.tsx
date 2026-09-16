@@ -9,13 +9,17 @@ import { z } from 'zod';
 
 import {
   isIpxeCustomOs,
-  isValidMountpoint,
   ReprovisionDeploymentRequestSchema,
-  SUPPORTED_DISK_FORMATS,
+  ReprovisionDiskLayoutSchema,
   validateDiskLayoutEncryption,
 } from '@repo/api-client';
 import { CustomizationLayers, type CustomizationLayersData } from '@repo/domain-ui/provision/customization-layers';
-import { applyDirectModeToSubmission, getDefaultDiskLayouts } from '@repo/domain-ui/provision/disk-layout-selector';
+import {
+  applyDirectModeToSubmission,
+  diskLayoutSizeToBytes,
+  getDefaultDiskLayouts,
+  validateDiskLayoutSizeInputs,
+} from '@repo/domain-ui/provision/disk-layout-selector';
 import { ProvisionAdvancedSettings } from '@repo/domain-ui/provision/provision-advanced-settings';
 import { Alert, AlertDescription } from '@repo/ui/components/alert';
 import {
@@ -50,7 +54,7 @@ import {
   TEE_CHECKBOX_DESCRIPTION,
   TEE_CHECKBOX_LABEL,
 } from '~/lib/provision-customizations';
-import { DEPLOYMENT_PROJECTS_KEY } from '~/lib/query-keys';
+import { DEPLOYMENT_PROJECTS_KEY, LIFECYCLE_JOBS_KEY } from '~/lib/query-keys';
 
 const parentRoute = getRouteApi('/_app/deployments/$deploymentId');
 
@@ -76,19 +80,7 @@ const reprovisionFormSchema = ReprovisionDeploymentRequestSchema.omit({ customiz
     cloudInit: z.string(),
     ipxeUrl: z.string(),
     customizations: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
-    diskLayouts: z.array(
-      z.object({
-        config: z.string().min(1),
-        format: z.enum(SUPPORTED_DISK_FORMATS),
-        mountpoint: z.string().min(1).refine(isValidMountpoint, {
-          message: 'Mountpoint must be an absolute path with up to two "/" and no empty segments',
-        }),
-        diskType: z.string().min(1),
-        disks: z.array(z.string()),
-        encrypt: z.boolean(),
-        wipe: z.boolean(),
-      }),
-    ),
+    diskLayouts: z.array(ReprovisionDiskLayoutSchema.omit({ size: true }).extend({ size: z.string().optional() })),
   })
   .superRefine((data, ctx) => {
     if (isIpxeCustomOs(data.operatingSystem) && !data.ipxeUrl) {
@@ -141,6 +133,7 @@ const reprovisionFormSchema = ReprovisionDeploymentRequestSchema.omit({ customiz
     }
 
     validateDiskLayoutEncryption(data.diskLayouts, ctx, 'reprovision');
+    validateDiskLayoutSizeInputs(data.diskLayouts, ctx);
   });
 
 type ReprovisionFormData = z.infer<typeof reprovisionFormSchema>;
@@ -226,6 +219,7 @@ function ReprovisionForm() {
     const collapsed = applyDirectModeToSubmission(data.diskLayouts);
     const diskLayouts = collapsed.map((layout) => ({
       ...layout,
+      size: diskLayoutSizeToBytes(layout.size),
       wipe: layout.wipe ?? true,
       encrypt: layout.encrypt ?? false,
     }));
@@ -258,6 +252,7 @@ function ReprovisionForm() {
     setShowConfirmDialog(false);
     queryClient.removeQueries({ queryKey: ['deployment', deploymentId] });
     queryClient.removeQueries({ queryKey: DEPLOYMENT_PROJECTS_KEY });
+    void queryClient.invalidateQueries({ queryKey: LIFECYCLE_JOBS_KEY });
     await router.invalidate();
     navigate({
       to: '/deployments/$deploymentId',

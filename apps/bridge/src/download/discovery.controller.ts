@@ -9,7 +9,7 @@ import { JobIdService } from '../common/job-id.service.js';
 import { inventoryDiscoveryImages, type FileStat } from '../startup/discovery-image-assert.js';
 import { DiscoveryFileError, DiscoveryFileService } from './discovery-file.service.js';
 import { discoveryInventoryResponseSchema } from './discovery-inventory.schema.js';
-import { ARCH_SEGMENT_RE, getDiscoveryFileConfig } from './discovery.config.js';
+import { ARCH_SEGMENT_RE, getDiscoveryFileConfig, type DiscoveryFlavor } from './discovery.config.js';
 import { logDebug, logError, logInfo } from './download-logger.js';
 import { discoveryDownloadParamsSchema } from './download.schema.js';
 import { errorResponse } from './error-response.js';
@@ -17,6 +17,8 @@ import { extractJobIdFromRequest } from './extract-job-id.js';
 
 const APP_CLASS_NAME = 'routes-discovery';
 const OCTET_STREAM = 'application/octet-stream';
+// baked chains that predate flavors fetch the tree production served before the split, never the VM-only light one
+const LEGACY_ROUTE_FLAVOR: DiscoveryFlavor = 'full';
 
 interface ByteRange {
   startByte: number;
@@ -81,7 +83,7 @@ export class DiscoveryController {
     private readonly discoveryService: DiscoveryFileService,
   ) {}
 
-  // TS-only (no Python parity equivalent). Returns RELATIVE arch/name only — never the absolute discoveryDir path (unauthenticated surface; see bridge-status.service.ts no-leak convention).
+  // TS-only (no Python parity equivalent). Returns RELATIVE flavor/arch/name only — never the absolute discoveryDir path (unauthenticated surface; see bridge-status.service.ts no-leak convention).
   @Get('api/discovery/inventory')
   async inventory(@Req() req: FastifyRequest, @Res() reply: FastifyReply): Promise<void> {
     const jobId = extractJobIdFromRequest(req);
@@ -96,8 +98,9 @@ export class DiscoveryController {
             return { present: false, sizeBytes: 0, mtimeMs: 0 };
           }
         };
+        const fileConfig = getDiscoveryFileConfig();
         const architectures = await inventoryDiscoveryImages(
-          { discoveryDir: baseDir, architectures: getDiscoveryFileConfig().architectures },
+          { discoveryDir: baseDir, flavors: fileConfig.flavors, architectures: fileConfig.architectures },
           statFile,
         );
         await reply.status(200).send(discoveryInventoryResponseSchema.parse({ architectures }));
@@ -119,7 +122,28 @@ export class DiscoveryController {
         return;
       }
 
-      await this.handleDiscoveryDownload(parsed.data.arch, parsed.data.filename, jobId, req, reply);
+      await this.handleDiscoveryDownload(
+        LEGACY_ROUTE_FLAVOR,
+        parsed.data.arch,
+        parsed.data.filename,
+        jobId,
+        req,
+        reply,
+      );
+    });
+  }
+
+  @Get('api/discovery/:flavor/:arch/:filename')
+  async downloadFileByFlavorPath(
+    @Param('flavor') flavor: string,
+    @Param('arch') arch: string,
+    @Param('filename') filename: string,
+    @Req() req: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    const jobId = extractJobIdFromRequest(req);
+    await this.jobIdService.run(jobId, async () => {
+      await this.handleDiscoveryDownload(flavor, arch, filename, jobId, req, reply);
     });
   }
 
@@ -132,11 +156,12 @@ export class DiscoveryController {
   ): Promise<void> {
     const jobId = extractJobIdFromRequest(req);
     await this.jobIdService.run(jobId, async () => {
-      await this.handleDiscoveryDownload(arch, filename, jobId, req, reply);
+      await this.handleDiscoveryDownload(LEGACY_ROUTE_FLAVOR, arch, filename, jobId, req, reply);
     });
   }
 
   private async handleDiscoveryDownload(
+    flavor: string,
     arch: string,
     filename: string,
     jobId: string,
@@ -144,8 +169,13 @@ export class DiscoveryController {
     reply: FastifyReply,
   ): Promise<void> {
     try {
-      // arch list must come from the same env source as the sync side, else a freshly-synced arch would 400
+      // flavor and arch lists must come from the same env source as the sync side, else a freshly-synced tree would 400
       const fileConfig = getDiscoveryFileConfig();
+      const supportedFlavors = fileConfig.flavors;
+      if (!supportedFlavors.some((supported) => supported === flavor)) {
+        await reply.status(400).send(errorResponse(`Invalid flavor. Supported: ${supportedFlavors.join(', ')}`));
+        return;
+      }
       const supportedArches = fileConfig.architectures;
       if (!ARCH_SEGMENT_RE.test(arch) || !supportedArches.includes(arch)) {
         await reply.status(400).send(errorResponse(`Invalid architecture. Supported: ${supportedArches.join(', ')}`));
@@ -153,7 +183,7 @@ export class DiscoveryController {
       }
 
       const safeFilename = basename(filename);
-      const filePath = join(this.discoveryService.discoveryDir, arch, safeFilename);
+      const filePath = join(this.discoveryService.discoveryDir, flavor, arch, safeFilename);
 
       const exists = await stat(filePath).then(
         () => true,
@@ -179,7 +209,7 @@ export class DiscoveryController {
         }
       }
 
-      logInfo(`Serving discovery file: ${arch}/${safeFilename} (${fileSize} bytes)`, {
+      logInfo(`Serving discovery file: ${flavor}/${arch}/${safeFilename} (${fileSize} bytes)`, {
         jobId,
         appClassName: APP_CLASS_NAME,
       });

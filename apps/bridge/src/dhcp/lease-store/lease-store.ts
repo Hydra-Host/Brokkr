@@ -5,4 +5,6 @@ export interface LeaseStore {
   put(lease: LeaseRecord): Promise<void>;
   delete(lease: LeaseRecord): Promise<void>;
   pruneExpired(nowSeconds: number): Promise<number>;
+  /** Claim and clear pending operator revocations, returning the IPs to drop. */
+  takeRevocations(): Promise<string[]>;
 }

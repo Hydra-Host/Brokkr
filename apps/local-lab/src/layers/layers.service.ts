@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { LayersManifestSchema, type LayersManifest } from '@repo/local-lab-contract';
 import { join } from 'node:path';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { URLS } from '../ports';
 import { RunnerService } from '../runner/runner.service';
 import { OverlayStoreService } from '../services/overlay-store';

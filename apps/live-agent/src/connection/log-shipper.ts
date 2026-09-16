@@ -22,6 +22,8 @@ export interface LogShipperOptions {
   pool: TransportPool;
   flushIntervalMs?: number;
   maxBufferSize?: number;
+  /** Minimum gap between warn/error-triggered eager flushes. See scheduleWarnFlush. */
+  warnFlushMinIntervalMs?: number;
 }
 
 export class LogShipper {
@@ -36,10 +38,14 @@ export class LogShipper {
   private reDropsSinceLastFlush = 0;
   private evictionsDuringFlush = 0;
   private warnFlushScheduled = false;
+  private warnFlushTimer: NodeJS.Timeout | null = null;
+  private lastWarnFlushAt = 0;
+  private readonly warnFlushMinIntervalMs: number;
 
   constructor(private readonly opts: LogShipperOptions) {
     this.max = opts.maxBufferSize ?? 10_000;
     this.intervalMs = opts.flushIntervalMs ?? 2000;
+    this.warnFlushMinIntervalMs = opts.warnFlushMinIntervalMs ?? 1000;
   }
 
   start(): void {
@@ -53,6 +59,11 @@ export class LogShipper {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
+    }
+    if (this.warnFlushTimer) {
+      clearTimeout(this.warnFlushTimer);
+      this.warnFlushTimer = null;
+      this.warnFlushScheduled = false;
     }
   }
 
@@ -79,15 +90,29 @@ export class LogShipper {
     }
   }
 
+  // rate-limited to break the error-logging feedback loop: one RPC per error churns the session's
+  // own HTTP/2 connection, trips flood protection and kills the session, which logs another error.
+  // entries are only delayed, never dropped.
   private scheduleWarnFlush(): void {
     if (this.warnFlushScheduled) return;
     this.warnFlushScheduled = true;
-    setImmediate(() => {
+
+    const run = () => {
+      this.warnFlushTimer = null;
       this.warnFlushScheduled = false;
+      this.lastWarnFlushAt = Date.now();
       this.flush().catch((err) => {
         process.stderr.write(`[log-shipper] flush after warn failed: ${getErrorMessage(err)}\n`);
       });
-    });
+    };
+
+    const wait = this.warnFlushMinIntervalMs - (Date.now() - this.lastWarnFlushAt);
+    if (wait <= 0) {
+      setImmediate(run);
+      return;
+    }
+    this.warnFlushTimer = setTimeout(run, wait);
+    this.warnFlushTimer.unref();
   }
 
   private schedule(): void {

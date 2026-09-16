@@ -2,13 +2,13 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { LabContext } from '../client.js';
 import { runAndCollect, waitShape } from '../runs.js';
-import { call, failOnError } from '../shared.js';
+import { call, callHost, failOnError } from '../shared.js';
 import type { ToolOptions } from './index.js';
 
 export function registerFleetTools(server: McpServer, ctx: LabContext, options: ToolOptions): void {
   server.tool(
     'lab_list_fleet_machines',
-    'Roster of simulated fleet VMs with current power state (names like cpu-1…cpu-4).',
+    'Roster of fleet machines — every enabled VM node and every saved bare-metal machine — with current power state and kind.',
     {},
     () =>
       call(ctx, async (client) => {
@@ -20,7 +20,7 @@ export function registerFleetTools(server: McpServer, ctx: LabContext, options: 
 
   server.tool(
     'lab_fleet_power',
-    'Power a fleet VM on/off/cycle through the simulated Redfish BMC (the real provisioning path). 409 while another power/discover op holds the node.',
+    'Power a fleet machine on/off/cycle through its BMC — simulated for a VM, real Redfish for bare metal. A bare-metal machine drives a real BMC, so it requires this server to run with LAB_MCP_ALLOW_DESTRUCTIVE=1; a VM needs no flag. 409 while another power/discover op holds the node.',
     {
       name: z.string().min(1).describe('Fleet node name (e.g. cpu-1)'),
       action: z.enum(['on', 'off', 'cycle']).describe('Power action'),
@@ -31,6 +31,14 @@ export function registerFleetTools(server: McpServer, ctx: LabContext, options: 
         runAndCollect(
           ctx,
           async () => {
+            const machines = await client.listMachines({});
+            failOnError(machines, 'listMachines');
+            const machine = machines.body.find((candidate) => candidate.name === args.name);
+            if (machine?.kind === 'baremetal' && !options.allowDestructive) {
+              throw new Error(
+                `bare-metal power on '${args.name}' is destructive — restart the MCP server with LAB_MCP_ALLOW_DESTRUCTIVE=1 to run it`,
+              );
+            }
             const res = await client.powerMachine({ body: { name: args.name, action: args.action } });
             failOnError(res, 'powerMachine');
             return res.body.runId;
@@ -74,7 +82,7 @@ export function registerFleetTools(server: McpServer, ctx: LabContext, options: 
       timeout_s: z.number().int().min(1).max(300).optional().describe('SSH timeout in seconds (default 30, max 300)'),
     },
     (args) =>
-      call(ctx, async (client) => {
+      callHost(ctx, async (client) => {
         const res = await client.execMachine({
           body: { name: args.name, command: args.command, user: args.user, timeout_s: args.timeout_s },
         });
@@ -109,7 +117,7 @@ export function registerFleetTools(server: McpServer, ctx: LabContext, options: 
 
   server.tool(
     'lab_fleet_verify',
-    'Verify the applied fleet against live state: every node libvirt domain, BMC daemons (ipmi_sim/sushy), fleet-level bindings, orphan domains. A report with findings is still a 200 — read the report, not the status.',
+    'Verify the applied fleet against live state: libvirt domains and BMC daemons for the vm plane, real BMC reachability and hub identity for the bare-metal plane, plus fleet-level bindings. A report with findings is still a 200 — read the report, not the status.',
     {},
     () =>
       call(ctx, async (client) => {

@@ -43,7 +43,7 @@ export class DeploymentsController {
   @TsRestHandler(contract.reprovisionDeployment)
   async reprovisionDeployment() {
     return tsRestHandler(contract.reprovisionDeployment, async ({ params, body }) => {
-      await this.deploymentsService.reprovisionDirectProvisionDeployment(params.id, {
+      const job = await this.deploymentsService.reprovisionDirectProvisionDeployment(params.id, {
         deploymentName: body.deploymentName,
         operatingSystem: body.operatingSystem,
         sshKeyIds: body.sshKeyIds,
@@ -53,57 +53,57 @@ export class DeploymentsController {
         customizations: body.customizations ?? null,
         tee: body.tee,
       });
-      return { status: 200 as const, body: { success: true } };
+      return { status: 200 as const, body: { success: true, jobId: job.data.id } };
     });
   }
 
   @TsRestHandler(contract.rebootDeployment)
   async rebootDevice() {
     return tsRestHandler(contract.rebootDeployment, async ({ params }) => {
-      await this.deploymentsService.rebootDirectProvisionDevice(params.id);
-      return { status: 200 as const, body: { success: true } };
+      const job = await this.deploymentsService.rebootDirectProvisionDevice(params.id);
+      return { status: 200 as const, body: { success: true, jobId: job.data.id } };
     });
   }
 
   @TsRestHandler(contract.powerCycleDeployment)
   async powerCycleDevice() {
     return tsRestHandler(contract.powerCycleDeployment, async ({ params }) => {
-      await this.deploymentsService.rebootDirectProvisionDevice(params.id);
-      return { status: 200 as const, body: { success: true } };
+      const job = await this.deploymentsService.rebootDirectProvisionDevice(params.id);
+      return { status: 200 as const, body: { success: true, jobId: job.data.id } };
     });
   }
 
   @TsRestHandler(contract.powerControlDeployment)
   async powerControlDevice() {
     return tsRestHandler(contract.powerControlDeployment, async ({ params, body }) => {
-      await this.deploymentsService.powerControlDevice(params.id, {
+      const job = await this.deploymentsService.powerControlDevice(params.id, {
         operation: body.operation,
       });
-      return { status: 200 as const, body: { success: true } };
+      return { status: 200 as const, body: { success: true, jobId: job.data.id } };
     });
   }
 
   @TsRestHandler(contract.deprovisionDeployment)
   async deprovisionDevice() {
     return tsRestHandler(contract.deprovisionDeployment, async ({ params }) => {
-      await this.deploymentsService.deprovisionDirectProvisionDevice(params.id);
-      return { status: 200 as const, body: { success: true } };
+      const job = await this.deploymentsService.deprovisionDirectProvisionDevice(params.id);
+      return { status: 200 as const, body: { success: true, jobId: job.data.id } };
     });
   }
 
   @TsRestHandler(contract.activateRescueMode)
   async activateRescueMode() {
     return tsRestHandler(contract.activateRescueMode, async ({ params }) => {
-      await this.deploymentsService.activateRescueMode(params.id);
-      return { status: 200 as const, body: { success: true, message: 'Rescue mode activated' } };
+      const planId = await this.deploymentsService.activateRescueMode(params.id);
+      return { status: 200 as const, body: { success: true, message: 'Rescue mode activated', planId } };
     });
   }
 
   @TsRestHandler(contract.deactivateRescueMode)
   async deactivateRescueMode() {
     return tsRestHandler(contract.deactivateRescueMode, async ({ params }) => {
-      await this.deploymentsService.deactivateRescueMode(params.id);
-      return { status: 200 as const, body: { success: true, message: 'Rescue mode deactivated' } };
+      const planId = await this.deploymentsService.deactivateRescueMode(params.id);
+      return { status: 200 as const, body: { success: true, message: 'Rescue mode deactivated', planId } };
     });
   }
 

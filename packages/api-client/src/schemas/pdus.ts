@@ -1,9 +1,11 @@
+import { PduPowerStatus } from '@repo/database/enums';
 import { z } from 'zod';
 import { BooleanQueryParamSchema } from './common';
 import { PaginationQuerySchema, createPaginatedResponseSchema } from './pagination';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const PduPowerStatusSchema = z.enum(['On', 'Off']);
-export type PduPowerStatus = z.infer<typeof PduPowerStatusSchema>;
+export const PduPowerStatusSchema = zodEnumFromPrisma(PduPowerStatus);
+export type { PduPowerStatus };
 
 export const PduSchema = z.object({
   deviceId: z.string().uuid().describe('Device UUID — the identifier for the PDU-role device.'),

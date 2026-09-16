@@ -23,7 +23,11 @@ export const ZoneDerivedSchema = z.object({
     .describe('Hub Zone.id, derived from the index. Index 0 keeps the legacy UUID, so moving an index moves the row'),
   ordinals: z.array(z.number().int()).describe('Bridge ordinals this zone occupies in the shared spoke band'),
   bridges: z.array(ZoneSpokeSchema).describe('Per-bridge process name and ports, as modules/spoke.nix derives them'),
-  nodeCount: z.number().int().nonnegative().describe('Enabled fleet nodes assigned to this zone'),
+  nodeCount: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Enabled VM nodes plus saved bare-metal machines assigned to this zone'),
 });
 
 export const ZoneSchema = z.object({

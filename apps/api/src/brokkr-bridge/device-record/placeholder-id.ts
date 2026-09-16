@@ -6,7 +6,8 @@ export const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 // Frozen — regenerating it would change every existing placeholder's identity.
 export const PLACEHOLDER_NAMESPACE_UUID = '6f4a1f9e-2c3d-5b7a-9e10-4d2c8f6b3a51';
 
-// Must be stable per bundle (retries resolve to the same placeholder); normalization must match deviceLookup()'s canonical form.
+// Must be stable per bundle (retries resolve to the same placeholder); normalization must match
+// deviceLookup()'s canonical form; the hyphen form is frozen, do not swap it for canonicalMac.
 export function placeholderIdFromBundle(bundle: IpxeIdentifierBundle): string {
   const canonical = JSON.stringify({
     mac: normalizeMac(bundle.mac),

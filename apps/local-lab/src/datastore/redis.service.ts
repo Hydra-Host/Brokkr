@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import type { RedisClient, RedisClientGroup, RedisInfo, RedisScan, RedisValue } from '../contract';
 import { RedisConnectionsService } from './redis-connections.service';
 

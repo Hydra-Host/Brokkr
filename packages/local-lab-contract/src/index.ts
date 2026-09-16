@@ -41,8 +41,10 @@ export const contract = c.router(
   { strictStatusCodes: true },
 );
 
+export { BOOT_CODE_LIST, BOOT_CODES, BOOT_SEVERITIES, type BootCode, type BootSeverity } from '@repo/utils';
 export * from './apply-action';
 export * from './apply-class';
+export * from './capability';
 export * from './ipv4';
 export * from './schemas/audit';
 export * from './schemas/common';

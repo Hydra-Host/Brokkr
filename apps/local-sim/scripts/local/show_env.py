@@ -33,8 +33,8 @@ _DIGEST = (
     ("hub", "stackCounts.hub"),
     ("spoke", "stackCounts.spoke"),
     ("fleet.autoStart", "fleet.autoStart"),
-    ("fleet.mode", "fleet.mode"),
-    ("lan.expose", "lan.expose"),
+    ("lan.mode", "lan.mode"),
+    ("lan.datastoreAuth", "lan.datastoreAuth"),
     ("telemetry", "telemetry.enable"),
 )
 

@@ -41,6 +41,7 @@ let
     thanosHttp = 10902;
     thanosGrpc = 10901;
     thanosRemoteWrite = 19291;
+    thanosCapnproto = 19391; # thanos receive's cap'n proto server — it binds one whether or not we name it
     thanosQueryHttp = 10903; # thanos query frontend — Prometheus HTTP query API (powers the CC datastore browser)
     thanosQueryGrpc = 10904; # thanos query internal gRPC (unused externally, but the component requires an address)
     # local observability sink (modules/telemetry.nix)
@@ -69,6 +70,112 @@ let
       dataPlaneGateway = "192.168.${toString (200 + slot)}.1";
     };
 
+  # These also reach postgresql.conf, redis.conf, a DSN userinfo and process-compose env lists, where
+  # no escaping is expressible. A throw, not an assertion: `devenv eval` checks no assertions.
+  refuse =
+    path: shape: value:
+    if builtins.isString value && builtins.match shape value != null then
+      value
+    else
+      throw "${path}: refusing ${builtins.toJSON value} — it must match /${shape}/. This value reaches configuration files and process environments, where quoting cannot contain it.";
+  # Injection prevention, not RFC validation: a malformed-but-inert host is the module's problem to
+  # report, an embedded newline or quote is not. Colons are for IPv6.
+  hostShape = "[A-Za-z0-9._:-]+";
+  # Credentials ride in a URL userinfo and in redis.conf, so hold them to the unreserved URL set.
+  secretShape = "[A-Za-z0-9._~-]+";
+  safeHost = path: v: if v == "" then v else refuse path hostShape v;
+  safeSecret = path: refuse path secretShape;
+
+  # A bind address reaches a socket, so a name here is not merely inert: it resolves to several
+  # addresses and the loopback entry `bindHostList` adds alongside it then binds one of them twice.
+  # Shape only — a strict parse lives in the contract's isIpv4/isIpv6, which gates the write.
+  ipv4Shape = "[0-9]{1,3}(\\.[0-9]{1,3}){3}";
+  ipv6Shape = "[0-9a-fA-F:]*:[0-9a-fA-F:.]*";
+  # Every spelling that binds every interface. Listing loopback beside one of these binds the same
+  # address twice, which is the EADDRINUSE the bind list guards against.
+  allInterfaces = [
+    "0.0.0.0"
+    "::"
+    "::0"
+    "0:0:0:0:0:0:0:0"
+  ];
+  isAllInterfaces = a: builtins.elem a allInterfaces;
+  safeBindAddress =
+    path: v:
+    if v == "" || builtins.match ipv4Shape v != null || builtins.match ipv6Shape v != null then
+      v
+    else
+      throw "${path}: refusing ${builtins.toJSON v} — it must be an IPv4 or IPv6 literal, or empty for every interface. A hostname belongs in lan.publicHost, which names the host a browser reaches this stack at and never reaches a socket.";
+
+  # Loopback keeps `trust` in every mode: the upstream readiness probe connects as the OS account with
+  # no password, so a blanket credential rule breaks bring-up. Only the non-loopback lines follow the flag.
+  mkHbaConf =
+    { offLoopback, datastoreAuth }:
+    ''
+      local all all trust
+      host  all all 127.0.0.1/32 trust
+      host  all all ::1/128 trust
+    ''
+    + (
+      if !offLoopback then
+        ""
+      else if datastoreAuth then
+        ''
+          host  all all 0.0.0.0/0 scram-sha-256
+          host  all all ::/0 scram-sha-256
+        ''
+      else
+        ''
+          host  all all 0.0.0.0/0 trust
+          host  all all ::/0 trust
+        ''
+    );
+
+  # protected-mode is redis's own guard against an unauthenticated non-loopback client, so it comes
+  # off only where the bind reaches the network. requirepass passwords `default` without narrowing it.
+  mkRedisExtraConf =
+    {
+      offLoopback,
+      datastoreAuth,
+      password,
+    }:
+    if !offLoopback then
+      ""
+    else
+      ''
+        protected-mode no
+      ''
+      + (
+        if datastoreAuth then
+          ''
+            requirepass ${safeSecret "identity.redis.password" password}
+          ''
+        else
+          ""
+      );
+
+  # the catcher holds real password-reset mail and its unauthenticated api returns message bodies, so
+  # the ui must not stay open off loopback. the env form takes a plain pair, the file form wants bcrypt.
+  mkMailpitAuthEnv =
+    {
+      offLoopback,
+      datastoreAuth,
+      password,
+    }:
+    if offLoopback && datastoreAuth then
+      [ "MP_UI_AUTH=brokkr:${safeSecret "identity.mailpit.password" password}" ]
+    else
+      [ ];
+
+  # An IPv6 literal needs brackets before a port is appended, or the last colon group and the port are
+  # indistinguishable. Only where both are present: `listen_addresses` and Redis `bind` carry no port.
+  hostPort =
+    host: port:
+    if builtins.match ".*:.*" host != null then
+      "[${host}]:${toString port}"
+    else
+      "${host}:${toString port}";
+
   # routes derived from the effective map; host:port comes from the args. The postgres URL also
   # depends on identity (user/password/db), which is overridable via config.identity — so it's
   # composed at the use-site (devenv.nix / modules/hub.nix) with `mkPgUrl`, not baked here.
@@ -80,15 +187,36 @@ let
       host ? hosts.loopback,
       port ? ports.postgres,
     }:
-    "postgresql://${user}:${password}@${host}:${toString port}/${db}";
+    "postgresql://${safeSecret "identity.pg.user" user}:${safeSecret "identity.pg.password" password}@${host}:${toString port}/${safeSecret "identity.pg.db" db}";
 
+  # Three sets because a URL's audience decides its host: `browser` is what a person types, `local` is
+  # this box, `dial` is server-to-server. No single `hubBase` — a wrong audience fails at RUN time.
   mkUrls =
-    { ports, hosts }:
     {
-      redis = "redis://${hosts.loopback}:${toString ports.redis}";
-      hubBase = "http://${hosts.hubPublic}:${toString ports.hubApi.base}";
-      hubAdmin = "http://${hosts.hubPublic}:${toString ports.hubAdmin.base}";
+      ports,
+      hosts,
+      publicHost ? hosts.hubPublic,
+      redisPassword ? "",
+    }:
+    let
+      # Redis AUTH goes in the userinfo with an empty username (the `default` ACL user). No escaping
+      # here: the password is a control-center knob, so keep it URL-safe.
+      redisAuth = if redisPassword == "" then "" else ":${redisPassword}@";
+      # http, because this repo terminates no TLS. Better Auth derives the cookie `secure` flag from
+      # it, so an operator serving https pins the hub URLs through stackDefaults.hub instead.
+      originsFor = host: {
+        hubApi = "http://${hostPort host ports.hubApi.base}";
+        hubAdmin = "http://${hostPort host ports.hubAdmin.base}";
+        hubWeb = "http://${hostPort host ports.hubWeb}";
+        hubWebAdmin = "http://${hostPort host ports.hubWebAdmin}";
+      };
+    in
+    {
+      redis = "redis://${redisAuth}${hostPort hosts.loopback ports.redis}";
       osLayer = "http://${hosts.dataPlaneGateway}:${toString ports.nginx}/assets";
+      browser = originsFor publicHost;
+      local = originsFor hosts.hubPublic;
+      dial = originsFor hosts.loopback;
     };
 
   # named env vars spliced onto the lab process so the TS apps read the map (no Nix in TS): numbers
@@ -101,6 +229,7 @@ let
       hosts,
       originHost,
       slot,
+      publicHost ? hosts.hubPublic,
     }:
     [
       "LAB_PORT=${toString ports.lab}"
@@ -120,6 +249,9 @@ let
       "PG_PORT=${toString ports.postgres}"
       "REDIS_PORT=${toString ports.redis}"
       "HUB_PUBLIC_HOST=${hosts.hubPublic}"
+      # A SECOND entry, not a redefinition: the TS mirror reads this and falls back to HUB_PUBLIC_HOST, so
+      # the two audiences stay distinguishable there. They differ only once lan.bindAddress is set.
+      "HUB_BROWSER_HOST=${publicHost}"
       "DATA_PLANE_GATEWAY=${hosts.dataPlaneGateway}"
       "LOOPBACK_HOST=${hosts.loopback}"
       "ASSET_ORIGIN=${originHost}"
@@ -155,6 +287,7 @@ let
         thanosHttp = B + 9;
         thanosGrpc = B + 10;
         thanosRemoteWrite = B + 11;
+        thanosCapnproto = B + 16;
         thanosQueryHttp = B + 12;
         thanosQueryGrpc = B + 13;
         postgres = B + 14;
@@ -188,6 +321,14 @@ in
   defaults = { inherit ports hosts; };
   mkPgUrl = mkPgUrlRaw;
   inherit
+    safeSecret
+    safeHost
+    safeBindAddress
+    isAllInterfaces
+    hostPort
+    mkHbaConf
+    mkRedisExtraConf
+    mkMailpitAuthEnv
     mkUrls
     mkLabPortEnv
     forSlot
@@ -209,22 +350,99 @@ in
         redis = allocated "redis";
       };
       effHosts = hostsFor config.stack.slot;
+      # config.lan.* is declared in modules/overrides.nix, which also aliases the deprecated
+      # lan.expose onto lan.mode — so nothing downstream of here reads the boolean.
+      lanMode = config.lan.mode;
+      # Only `direct` puts a listener on the network. `fronted` keeps every bind on loopback and
+      # moves the trust decision into the lab API instead (LAB_MODE, devenv.nix).
+      offLoopback = lanMode == "direct";
+      bindAddress = safeBindAddress "lan.bindAddress" config.lan.bindAddress;
+      publicHostName = safeHost "lan.publicHost" config.lan.publicHost;
+      bindHost =
+        if !offLoopback then
+          effHosts.loopback
+        else if bindAddress != "" then
+          bindAddress
+        else
+          "0.0.0.0";
+      # Loopback must stay reachable for the readiness probes, but an all-interfaces bind already covers
+      # it, and listing both fails the bind with EADDRINUSE.
+      bindHostList =
+        if bindHost == effHosts.loopback || isAllInterfaces bindHost then
+          [ bindHost ]
+        else
+          [
+            effHosts.loopback
+            bindHost
+          ];
+      # Where a readiness probe dials a process that bound the single bindHost. An all-interfaces bind
+      # covers loopback, but a named one does not, and a probe on loopback then never connects.
+      probeHost = if isAllInterfaces bindHost then effHosts.loopback else bindHost;
+      # Host a browser reaches this stack at. It never reaches a socket, so unlike the bind address it
+      # takes a name. The fallback to bindAddress keeps a checkout that names an IP on its old behaviour.
+      publicHost =
+        if lanMode == "loopback" then
+          effHosts.hubPublic
+        else if publicHostName != "" then
+          publicHostName
+        else if bindAddress != "" then
+          bindAddress
+        else
+          effHosts.hubPublic;
+      # Vite refuses a request whose Host header is a name rather than the address it bound, so name
+      # the hosts this stack is legitimately reached by instead of disabling the check. One list, so
+      # the hub SPAs and the control center cannot answer different names.
+      allowedHosts =
+        if lanMode == "loopback" then
+          ""
+        else
+          builtins.concatStringsSep "," (
+            builtins.foldl' (acc: h: if builtins.elem h acc then acc else acc ++ [ h ])
+              [ ]
+              [
+                publicHost
+                effHosts.hubPublic
+                effHosts.loopback
+              ]
+          );
     in
     {
       ports = effPorts;
       hosts = effHosts;
-      # bind address for the otherwise loopback-only services + the hub-web/commerce-web/lab web+api:
-      # 0.0.0.0 when the LAN toggle is on, else 127.0.0.1. Advertised URLs / readiness probes keep
-      # using hosts.loopback — only the listener bind follows this. (config.lan.expose is declared in
-      # modules/overrides.nix.)
-      bindHost = if config.lan.expose then "0.0.0.0" else effHosts.loopback;
+      inherit
+        lanMode
+        offLoopback
+        bindHost
+        bindHostList
+        probeHost
+        publicHost
+        allowedHosts
+        ;
+      # Re-exported through the effective view as well, because consumers bind `P = … fromConfig config`
+      # and never see this file's top level.
+      inherit
+        safeSecret
+        safeHost
+        safeBindAddress
+        hostPort
+        mkHbaConf
+        mkRedisExtraConf
+        mkMailpitAuthEnv
+        ;
       urls = mkUrls {
         ports = effPorts;
         hosts = effHosts;
+        inherit publicHost;
+        redisPassword =
+          if offLoopback && config.lan.datastoreAuth then
+            safeSecret "identity.redis.password" config.identity.redis.password
+          else
+            "";
       };
       labPortEnv = mkLabPortEnv {
         ports = effPorts;
         hosts = effHosts;
+        inherit publicHost;
         inherit (config.osLayerCache) originHost;
         inherit (config.stack) slot;
       };

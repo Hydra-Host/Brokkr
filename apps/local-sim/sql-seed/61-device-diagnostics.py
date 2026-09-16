@@ -177,7 +177,7 @@ ON CONFLICT (id) DO UPDATE SET
 SELECT
     {q(deployment_id)}, 'Local sim diagnostics history',
     {q(start_date)}::timestamp, {q(end_date)}::timestamp, 'SELF_SERVICE'::"DeploymentType",
-    s.id, u.id, d."organizationId", {q(start_date)}::timestamp, {q(end_date)}::timestamp
+    s.id, u.id, d."supplierId", {q(start_date)}::timestamp, {q(end_date)}::timestamp
 FROM "Server" s
 JOIN "Device" d ON d.id = s."deviceId"
 JOIN "User" u ON u.email = {q(OWNER_EMAIL)}

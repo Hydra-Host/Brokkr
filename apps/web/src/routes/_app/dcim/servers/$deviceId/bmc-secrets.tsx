@@ -126,7 +126,12 @@ function BmcCredentialsCard({
                 </SelectContent>
               </Select>
             )}
-            <Button variant="default" size="sm" onClick={() => setCreating((c) => !c)}>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setCreating((c) => !c)}
+              className="shrink-0 whitespace-nowrap"
+            >
               <Plus className="mr-1 h-4 w-4" />
               Create new version
             </Button>

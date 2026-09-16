@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { APPLY_SCOPE_ALL, applyScopeNamespaces } from '../apply-scope';
 import type { PcProcessConfig, ProcessComposeClient } from '../process-compose.client';
-import { RenderedConfigService } from '../rendered-config.service';
+import { featuresFromEnv, RenderedConfigService } from '../rendered-config.service';
 import { scratchTmpDir, useScratchState } from './isolated-state';
 
 function makeService() {
@@ -530,5 +530,16 @@ describe('RenderedConfigService.applyOverlay — scoped blast radius', () => {
 
     await expect(svc.applyOverlay(writeCfg(), applyScopeNamespaces('hub'))).rejects.toThrow(/redis/);
     expect(pc.projectUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('featuresFromEnv', () => {
+  it('derives no badge from LOCAL_SIMULATION_ENABLED', () => {
+    const env = new Map([
+      ['LOCAL_SIMULATION_ENABLED', 'true'],
+      ['TFTP_ENABLED', 'true'],
+    ]);
+
+    expect(featuresFromEnv(env)).toEqual(['TFTP']);
   });
 });

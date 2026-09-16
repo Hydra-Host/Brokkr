@@ -2,7 +2,7 @@ import { Injectable, Logger, type OnApplicationShutdown } from '@nestjs/common';
 import { linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { labStateDir } from '../common/lab-state';
 
 function lockPath(): string {

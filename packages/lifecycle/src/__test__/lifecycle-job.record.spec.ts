@@ -116,6 +116,85 @@ describe('LifecycleJobRecord.appendEvent', () => {
   });
 });
 
+describe('LifecycleJobRecord.findPageByTargetUnscoped', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    ActiveRecordRegistry.configureForTest(null, null);
+  });
+
+  function mockLifecycleJobDelegate(rows: unknown[] = [], total = rows.length) {
+    const findMany = vi.fn().mockResolvedValue(rows);
+    const count = vi.fn().mockResolvedValue(total);
+    ActiveRecordRegistry.configureForTest({ lifecycleJob: { findMany, count } }, null);
+    return { findMany, count };
+  }
+
+  it('filters by deviceId and applies the createdAt-desc default sort', async () => {
+    const { findMany, count } = mockLifecycleJobDelegate();
+
+    await LifecycleJobRecord.findPageByTargetUnscoped({}, { deviceId: 'device-1' });
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: { deviceId: 'device-1' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: 0,
+      take: 20,
+    });
+    expect(count).toHaveBeenCalledWith({ where: { deviceId: 'device-1' } });
+  });
+
+  it('filters by deploymentId without a deviceId key', async () => {
+    const { findMany, count } = mockLifecycleJobDelegate();
+
+    await LifecycleJobRecord.findPageByTargetUnscoped({}, { deploymentId: 'dep-1' });
+
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { deploymentId: 'dep-1' } }));
+    expect(count).toHaveBeenCalledWith({ where: { deploymentId: 'dep-1' } });
+  });
+
+  it('combines deviceId and deploymentId filters and paginates', async () => {
+    const { findMany, count } = mockLifecycleJobDelegate();
+
+    await LifecycleJobRecord.findPageByTargetUnscoped(
+      { page: 2, pageSize: 10 },
+      { deviceId: 'device-1', deploymentId: 'dep-1' },
+    );
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: { deviceId: 'device-1', deploymentId: 'dep-1' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: 10,
+      take: 10,
+    });
+    expect(count).toHaveBeenCalledWith({ where: { deviceId: 'device-1', deploymentId: 'dep-1' } });
+  });
+
+  it('keeps the target filter when a search term is present', async () => {
+    const { findMany } = mockLifecycleJobDelegate();
+
+    await LifecycleJobRecord.findPageByTargetUnscoped({ search: 'job-a' }, { deploymentId: 'dep-1' });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          deploymentId: 'dep-1',
+          AND: [{ OR: [{ id: { contains: 'job-a', mode: 'insensitive' } }] }],
+        },
+      }),
+    );
+  });
+
+  it('returns the rows with pagination meta', async () => {
+    const rows = [{ id: 'job-1' }, { id: 'job-2' }];
+    mockLifecycleJobDelegate(rows, 5);
+
+    const result = await LifecycleJobRecord.findPageByTargetUnscoped({ page: 2, pageSize: 2 }, { deviceId: 'device-1' });
+
+    expect(result.data).toEqual(rows);
+    expect(result.meta).toEqual({ page: 2, pageSize: 2, totalItems: 5, totalPages: 3 });
+  });
+});
+
 describe('LifecycleJobRecord.claimTransition', () => {
   afterEach(() => {
     vi.restoreAllMocks();

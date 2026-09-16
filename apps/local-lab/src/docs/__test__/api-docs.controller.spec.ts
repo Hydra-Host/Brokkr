@@ -57,7 +57,7 @@ describe('ApiDocsController', () => {
     const res = await fetch(`${base}${path}`, offLoopback());
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({
-      error: 'lab control API requires a valid LAB_API_TOKEN for non-loopback requests',
+      error: 'lab control API requires a valid lab token for non-loopback requests',
     });
   });
 

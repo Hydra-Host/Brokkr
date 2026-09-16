@@ -11,6 +11,7 @@ import { ZoneCryptoConfig } from 'src/zone-crypto/zone-crypto.config';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { DeviceRecordPublisher } from '../../device-record/device-record-publisher.service';
 import { DiscoveryIngressService } from '../../discovery/discovery-ingress.service';
+import { JobLogWriterService } from '../../job-logs/job-log-writer.service';
 import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../../lifecycle/qualify-orchestration.service';
 import { RenderRequestDispatcher } from '../../render-request/render-request-dispatcher.service';
@@ -39,6 +40,7 @@ describe('BridgeResultsConsumer — plaintext-after-activation gate', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         { provide: BridgeResultsConsumer, useClass: TestableConsumer },
+        { provide: JobLogWriterService, useValue: { write: vi.fn() } },
         { provide: SealedEnvelopeService, useValue: { isZoneEnrolled, openBridgeToHub } },
         {
           provide: PrismaClient,

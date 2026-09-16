@@ -193,12 +193,22 @@ describe('initAggregateState', () => {
     expect(initAggregateState([task({ state: 'pending' }), task({ name: 'x', state: 'pending' })])).toBe('pending');
   });
 
-  it('reads completed once anything finished and nothing is outstanding', () => {
-    expect(initAggregateState([task({ state: 'pending' }), task({ name: 'x', state: 'completed' })])).toBe('completed');
+  it('reads pending while a task is still outstanding beside a completed one', () => {
+    expect(initAggregateState([task({ state: 'pending' }), task({ name: 'x', state: 'completed' })])).toBe('pending');
+  });
+
+  it('reads completed once every task finished', () => {
+    expect(initAggregateState([task({ state: 'completed' }), task({ name: 'x', state: 'completed' })])).toBe(
+      'completed',
+    );
   });
 
   it('lets a failure outrank a completion', () => {
     expect(initAggregateState([task({ state: 'completed' }), task({ name: 'x', state: 'failed' })])).toBe('failed');
+  });
+
+  it('counts a cached task as satisfied beside a completed one', () => {
+    expect(initAggregateState([task({ state: 'cached' }), task({ name: 'x', state: 'completed' })])).toBe('completed');
   });
 });
 
@@ -207,7 +217,23 @@ describe('initSummary', () => {
     expect(initSummary([task({ name: 'a' }), task({ name: 'b' })])).toBe('2 completed');
   });
 
+  it('counts a cached task toward the settled total', () => {
+    expect(initSummary([task({ name: 'a', state: 'cached' }), task({ name: 'b' })])).toBe('2 completed');
+  });
+
   it('shows an unknown exit code as a question mark rather than dropping it', () => {
     expect(initSummary([task({ state: 'failed', exitCode: null })])).toBe('hub:migrate failed exit ? · 0/1');
+  });
+});
+
+describe('InitDagStrip cached rows', () => {
+  afterEach(cleanup);
+
+  it('shows a cached task as satisfied on an earlier success, not as never run', () => {
+    renderStrip([task({ state: 'cached' })], true);
+
+    expect(screen.getByText('cached')).toBeTruthy();
+    expect(screen.queryByText('not run')).toBeNull();
+    expect(screen.getAllByTitle(/last run exited 0/).length).toBeGreaterThan(0);
   });
 });

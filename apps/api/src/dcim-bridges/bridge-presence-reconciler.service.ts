@@ -4,11 +4,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DeviceRole, DeviceStatus, InterfaceType, Prisma } from '@repo/database';
 import { formatMacAddress } from '@repo/database/extensions/mac-address';
+import { ipInCidr } from '@repo/utils';
 import Redis from 'ioredis';
 import { uuidv5 } from 'src/brokkr-bridge/device-record/placeholder-id';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { getErrorMessage } from 'src/common/error-utils';
-import { ipv4InCidr } from 'src/common/ip-utils';
 import { ensureIpAddress } from 'src/common/ipam/ensure-ip-address';
 import { REDIS_CLIENT, scanKeys } from 'src/common/redis';
 import { REDIS_KEYS } from 'src/common/redis/redis-keys';
@@ -129,7 +129,7 @@ function extractLiveGateways(entries: ParsedPresenceEntry[]): LiveGateway[] {
     if (!isValidInterfaceName(entry.iface)) continue;
     if (!entry.gateway || isIP(entry.gateway) !== 4) continue;
     if (!isNetworkSubnet(entry.subnet)) continue;
-    if (!ipv4InCidr(entry.gateway, entry.subnet)) continue;
+    if (!ipInCidr(entry.gateway, entry.subnet)) continue;
     const key = `${entry.subnet}|${entry.gateway}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -233,7 +233,7 @@ export class BridgePresenceReconcilerService {
         name: instanceId,
         role: DeviceRole.Bridge,
         status: DeviceStatus.ACTIVE,
-        organizationId,
+        supplierId: organizationId,
         zoneId,
         bridge: {
           create: {
@@ -319,6 +319,8 @@ export class BridgePresenceReconcilerService {
     });
 
     const matched = new Set<string>();
+    // Canonical MAC -> the live NIC name keeping it this tick (see claimMac).
+    const macHolders = new Map<string, string>();
     // In-place renames/creates can transiently collide on the partial unique index (deviceId,
     // name WHERE deletedAt IS NULL) — defer them to teardown → park → create → finalize below.
     const renames: Array<{ id: string; name: string }> = [];
@@ -331,7 +333,10 @@ export class BridgePresenceReconcilerService {
       }
       matched.add(dbIface.id);
       const data: Prisma.InterfaceUncheckedUpdateInput = {};
-      if (nic.mac && normalizeDbMac(dbIface.macAddress) !== nic.mac) data.macAddress = nic.mac;
+      const currentMac = normalizeDbMac(dbIface.macAddress);
+      const nextMac = nic.mac && nic.mac !== currentMac ? this.claimMac(macHolders, deviceId, nic, currentMac) : null;
+      if (nextMac) data.macAddress = nextMac;
+      else if (currentMac) macHolders.set(currentMac, nic.name);
       if (!nic.mac && dbIface.type !== InterfaceType.VIRTUAL) data.type = InterfaceType.VIRTUAL;
       if (!dbIface.enabled) data.enabled = true; // re-enable a NIC that came back
       if (!dbIface.markConnected) data.markConnected = true;
@@ -366,7 +371,9 @@ export class BridgePresenceReconcilerService {
       // Phase 1: park each renamed survivor on a temp name, freeing its OLD name.
       for (const r of renames) await tx.interface.update({ where: { id: r.id }, data: { name: `__tmp__${r.id}` } });
       // Creates are now safe: every conflicting name (departing + vacated-by-rename) has been freed.
-      for (const nic of toCreate) await this.createLiveNic(tx, deviceId, organizationId, nic);
+      for (const nic of toCreate) {
+        await this.createLiveNic(tx, deviceId, organizationId, nic, this.claimMac(macHolders, deviceId, nic, null));
+      }
       // Phase 2: survivors take their final live names.
       for (const r of renames) await tx.interface.update({ where: { id: r.id }, data: { name: r.name } });
     } else {
@@ -375,7 +382,7 @@ export class BridgePresenceReconcilerService {
       const held = new Set(dbIfaces.map((i) => i.name));
       for (const nic of toCreate) {
         if (held.has(nic.name)) continue;
-        await this.createLiveNic(tx, deviceId, organizationId, nic);
+        await this.createLiveNic(tx, deviceId, organizationId, nic, this.claimMac(macHolders, deviceId, nic, null));
       }
     }
 
@@ -387,12 +394,13 @@ export class BridgePresenceReconcilerService {
     deviceId: string,
     organizationId: string,
     nic: LiveNic,
+    macAddress: string | null,
   ): Promise<void> {
     const created = await tx.interface.create({
       data: {
         deviceId,
         name: nic.name,
-        macAddress: nic.mac,
+        macAddress,
         enabled: true,
         markConnected: true,
         type: nic.mac ? null : InterfaceType.VIRTUAL,
@@ -400,6 +408,27 @@ export class BridgePresenceReconcilerService {
       select: { id: true },
     });
     await this.reconcileIps(tx, { interfaceId: created.id, deviceId, organizationId, existingIps: [], ips: nic.ips });
+  }
+
+  // The partial unique index (deviceId, lower(macAddress)) aborts the whole tick if a second live row takes a held MAC,
+  // so the later claimant does not take it: a new row is stored MAC-less, a matched row keeps its currentMac.
+  private claimMac(
+    holders: Map<string, string>,
+    deviceId: string,
+    nic: LiveNic,
+    currentMac: string | null,
+  ): string | null {
+    if (!nic.mac) return null;
+    const holder = holders.get(nic.mac);
+    if (holder !== undefined) {
+      const outcome = currentMac
+        ? `leaving ${nic.name} on its stored ${currentMac}`
+        : `storing ${nic.name} without one`;
+      this.logger.warn(`NICs ${holder} and ${nic.name} on bridge device ${deviceId} share MAC ${nic.mac} — ${outcome}`);
+      return null;
+    }
+    holders.set(nic.mac, nic.name);
+    return nic.mac;
   }
 
   // DB rows may hold hyphen/uppercase MACs (the API's normalizeMac only trims) — canonicalize

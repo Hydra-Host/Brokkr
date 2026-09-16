@@ -34,6 +34,13 @@ const powerFill = (power: TopologyNode['power']): string => POWER_FILL[power ?? 
 const powerTitle = (power: TopologyNode['power']): string =>
   power === null ? 'no live answer covered this node' : `power ${power}`;
 
+const specLine = (node: TopologyNode): string =>
+  node.kind === 'baremetal'
+    ? `${node.bmcIp === null ? 'bmc unset' : `bmc ${node.bmcIp}`}${node.arch ? ` · ${node.arch}` : ''}`
+    : `${node.cpus}c · ${Math.round(node.memoryMb / 1024)}G · ${node.diskGb}G${node.arch ? ` · ${node.arch}` : ''}`;
+const nodeLabel = (node: TopologyNode, zone: string): string =>
+  `node ${node.name} in zone ${zone}${node.kind === 'baremetal' ? ', bare metal' : ''}`;
+
 export function FleetGraph({
   model,
   onSelectZone,
@@ -153,7 +160,7 @@ export function FleetGraph({
                     <g
                       key={tile.key}
                       {...activates(onSelectNode && (() => onSelectNode(node.name)))}
-                      aria-label={`node ${node.name} in zone ${zone.name}`}
+                      aria-label={nodeLabel(node, zone.name)}
                       className={onSelectNode ? 'cursor-pointer' : undefined}
                     >
                       <rect
@@ -165,6 +172,7 @@ export function FleetGraph({
                         fill="var(--color-text-dim)"
                         fillOpacity={0.04}
                         stroke="var(--color-border-dim)"
+                        strokeDasharray={node.kind === 'baremetal' ? '3 2' : undefined}
                       />
                       <circle
                         cx={tile.x + 10}
@@ -176,9 +184,18 @@ export function FleetGraph({
                       <text x={tile.x + 20} y={tile.y + 11} className="fill-text-primary font-mono text-[10px]">
                         {node.name}
                       </text>
+                      {node.kind === 'baremetal' && (
+                        <text
+                          textAnchor="end"
+                          x={tile.x + LANE_WIDTH - 6}
+                          y={tile.y + 11}
+                          className="fill-text-label font-mono text-[8px] tracking-wide uppercase"
+                        >
+                          bare metal
+                        </text>
+                      )}
                       <text x={tile.x + 20} y={tile.y + 21} className="fill-text-dim font-mono text-[9px]">
-                        {node.cpus}c · {Math.round(node.memoryMb / 1024)}G · {node.diskGb}G
-                        {node.arch ? ` · ${node.arch}` : ''}
+                        {specLine(node)}
                       </text>
                     </g>
                   );
@@ -205,7 +222,7 @@ function OrphanLanes({ model, onSelectNode }: { model: TopologyModel; onSelectNo
   const rows: { label: string; items: string[]; why: string }[] = [
     {
       label: 'unassigned',
-      items: model.orphanNodes.map((node) => `${node.name} → ${node.zone}`),
+      items: model.orphanNodes.map((node) => (node.zone === '' ? node.name : `${node.name} → ${node.zone}`)),
       why: 'names a zone nothing declares — a rename leaves this behind',
     },
     { label: 'not in config', items: model.adoptable, why: 'running, and a rebuild would adopt it' },

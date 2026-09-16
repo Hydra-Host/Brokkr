@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { LabContext } from '../client.js';
 import labContractPkg from '../lab-contract.js';
-import { call, failOnError } from '../shared.js';
+import { call, callHost, failOnError } from '../shared.js';
 import type { ToolOptions } from './index.js';
 
 const { QueueCleanableStateSchema, QueueJobStateSchema } = labContractPkg;
@@ -20,7 +20,7 @@ export function registerDatastoreTools(server: McpServer, ctx: LabContext, optio
       sql: z.string().min(1).describe('A single read-only statement: SELECT / WITH…SELECT / EXPLAIN / SHOW'),
     },
     (args) =>
-      call(ctx, async (client) => {
+      callHost(ctx, async (client) => {
         const res = await client.runPgQuery({ body: { sql: args.sql } });
         failOnError(res, 'runPgQuery');
         return res.body;

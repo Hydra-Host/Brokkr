@@ -83,7 +83,7 @@ function ResultsPage() {
   const selectedRun = runList.find((r) => r.runId === selected) ?? null;
 
   return (
-    <div className="flex h-[calc(100dvh-7rem)] flex-col">
+    <div className="flex h-full flex-col">
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 lg:grid-cols-[240px_minmax(0,1fr)_minmax(0,2fr)]">
         <div className="max-h-64 space-y-2 overflow-auto pr-1 lg:max-h-none lg:min-h-0">
           <div className="flex items-center justify-between">

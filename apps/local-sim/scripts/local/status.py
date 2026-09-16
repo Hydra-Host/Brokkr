@@ -58,7 +58,9 @@ def fleet_ready(node_names: list[str], domstate: Callable[[str], str]) -> bool:
 def bm_ready(fleet: Fleet, applied_manifest) -> bool:
     from local import applied as applied_mod
 
-    if applied_manifest is None or applied_manifest.mode != "baremetal":
+    if applied_manifest is None:
+        return False
+    if applied_mod.planes_of(applied_manifest.nodes, applied_manifest.bm_nodes) != (fleet.has_vm, fleet.has_bm):
         return False
     return applied_mod.diff(fleet, applied_manifest, host_os()).in_sync
 
@@ -139,23 +141,26 @@ def main(fleet: str | None, ready_check: bool) -> None:
 
     fleet_path = Path(fleet) if fleet else get_settings().paths.fleet_path
     f = Fleet.model_validate(yaml.safe_load(fleet_path.read_text()))
-
-    if f.mode == "baremetal":
-        from local import applied
-
-        if ready_check:
-            raise SystemExit(0 if bm_ready(f, applied.read()) else 1)
-        _print_bm_table(f)
-        if (accel_footer := _accel_footer()) is not None:
-            Console().print(f"[yellow]{accel_footer}[/yellow]")
-        drift = applied.diff(f, applied.read(), host_os())
-        if not drift.in_sync:
-            Console().print(f"[yellow]{applied.drift_summary_line(drift)}[/yellow]")
-        return
+    from local import applied
 
     if ready_check:
-        raise SystemExit(0 if fleet_ready([n.name for n in f.nodes], _virsh_domstate) else 1)
+        vm_ok = not f.has_vm or fleet_ready([n.name for n in f.nodes], _virsh_domstate)
+        bm_ok = not f.has_bm or bm_ready(f, applied.read())
+        raise SystemExit(0 if vm_ok and bm_ok else 1)
 
+    if f.has_vm:
+        _print_vm_table(f)
+    if f.has_bm:
+        _print_bm_table(f)
+    if (accel_footer := _accel_footer()) is not None:
+        Console().print(f"[yellow]{accel_footer}[/yellow]")
+
+    drift = applied.diff(f, applied.read(), host_os())
+    if not drift.in_sync:
+        Console().print(f"[yellow]{applied.drift_summary_line(drift)}[/yellow]")
+
+
+def _print_vm_table(f: Fleet) -> None:
     table = Table(title="local fleet status")
     table.add_column("name")
     table.add_column("ipmi mac")
@@ -182,14 +187,6 @@ def main(fleet: str | None, ready_check: bool) -> None:
         )
 
     Console().print(table)
-    if (accel_footer := _accel_footer()) is not None:
-        Console().print(f"[yellow]{accel_footer}[/yellow]")
-
-    from local import applied
-
-    drift = applied.diff(f, applied.read(), host_os())
-    if not drift.in_sync:
-        Console().print(f"[yellow]{applied.drift_summary_line(drift)}[/yellow]")
 
 
 if __name__ == "__main__":

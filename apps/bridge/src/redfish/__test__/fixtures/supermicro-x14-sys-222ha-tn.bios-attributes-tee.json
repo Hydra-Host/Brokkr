@@ -1,0 +1,15 @@
+{
+  "HostMemoryFrequency": "Auto",
+  "Intel_R_FlatMemoryModeSupport": "Disabled",
+  "MemoryEncryption_TME_": "Disabled",
+  "TotalMemoryEncryptionMulti_Tenant_TME_MT_": "Disabled",
+  "MemoryIntegrity": "Disabled",
+  "TMEEncryptionAlgorithm": "AES-XTS-256",
+  "TrustDomainExtensions_TDX_": "Disabled",
+  "TrustDomainExtensions_Connect_TDXConnect_": "Disabled",
+  "TDXSecureArbitrationModeLoader_SEAMLoader_": "Disabled",
+  "SGXFactoryReset": "Disabled",
+  "SWGuardExtensions_SGX_": "Disabled",
+  "SGXPackageInfoIn_BandAccess": "Disabled",
+  "SGXPRMRRSizeRequested": "Auto"
+}

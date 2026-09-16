@@ -3,43 +3,53 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { FleetVerifyReportSchema, type FleetVerifyReport } from '@repo/local-lab-contract';
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
+import { SingleFlightCache } from '../common/single-flight-cache';
 import type { RunState } from '../runner/runner.service';
 import { RunnerService } from '../runner/runner.service';
 import { FleetOpRegistry } from './fleet-op-registry';
 
 const execFileP = promisify(execFile);
 
+// the lab owns the bare-metal probe budget it hands the verifier; the exec timeout adds margin for the
+// vm plane and process start, so a run that spends its whole budget still gets to print its report.
+const VERIFY_PROBE_BUDGET_SECONDS = 120;
+const VERIFY_EXEC_TIMEOUT_MS = (VERIFY_PROBE_BUDGET_SECONDS + 60) * 1_000;
+const VERIFY_ARGV = ['-m', 'local.fleet', 'verify', '--probe-budget-seconds', String(VERIFY_PROBE_BUDGET_SECONDS)];
+
 @Injectable()
 export class FleetVerifyService {
   private readonly log = new Logger(FleetVerifyService.name);
-  private cache: { at: number; val: FleetVerifyReport } | null = null;
-  // bumped on every heal so a slow in-flight verify can't overwrite a freshly-cleared cache.
-  private gen = 0;
+  // 5s TTL so the Fleet 30s poll can't double-spawn python on rapid refetches; single-flight so a verify
+  // that outlives the TTL is joined instead of raced by a second python dialling the same BMCs.
+  private readonly report = new SingleFlightCache<FleetVerifyReport>({
+    load: () => this.runVerify(),
+    ttlMs: 5_000,
+    // a heal landing mid-flight invalidates; the reload hands the waiter the post-heal snapshot.
+    maxAttempts: 3,
+    staleMessage: 'fleet verify kept being invalidated by heals — retry once the heal settles',
+    onError: (e) => this.log.warn(`fleet verify failed: ${getErrorMessage(e)}`),
+  });
 
   constructor(
     private readonly runner: RunnerService,
     private readonly opRegistry: FleetOpRegistry,
   ) {}
 
-  /** 5s TTL so the Fleet 30s poll can't double-spawn python on rapid refetches. `verify` exits 2 when
-   *  findings remain (not an error), so stdout is read off the rejection too; a genuine failure throws. */
-  async verify(): Promise<FleetVerifyReport> {
-    if (this.cache && Date.now() - this.cache.at < 5_000) return this.cache.val;
-    const gen = this.gen;
+  verify(): Promise<FleetVerifyReport> {
+    return this.report.get();
+  }
+
+  /** `verify` exits 2 when findings remain (not an error), so stdout is read off the rejection too;
+   *  a genuine failure throws. */
+  private async runVerify(): Promise<FleetVerifyReport> {
     const parse = (stdout: string): FleetVerifyReport => FleetVerifyReportSchema.parse(JSON.parse(stdout));
-    const store = (val: FleetVerifyReport): FleetVerifyReport | Promise<FleetVerifyReport> => {
-      // a heal landed mid-flight, so this report predates the repair; re-run for the post-heal snapshot.
-      if (this.gen !== gen) return this.verify();
-      this.cache = { at: Date.now(), val };
-      return val;
-    };
     try {
-      const { stdout } = await execFileP('python', ['-m', 'local.fleet', 'verify', '--json'], {
+      const { stdout } = await execFileP('python', [...VERIFY_ARGV, '--json'], {
         cwd: this.runner.repoRoot,
-        timeout: 30_000,
+        timeout: VERIFY_EXEC_TIMEOUT_MS,
       });
-      return store(parse(stdout));
+      return parse(stdout);
     } catch (e) {
       // only exit 2 promises a report on stdout; anything else is a genuine failure whose cause must survive
       const exit2Stdout =
@@ -51,8 +61,7 @@ export class FleetVerifyService {
         typeof e.stdout === 'string'
           ? e.stdout
           : undefined;
-      if (exit2Stdout !== undefined) return store(parse(exit2Stdout));
-      this.log.warn(`fleet verify failed: ${getErrorMessage(e)}`);
+      if (exit2Stdout !== undefined) return parse(exit2Stdout);
       throw e;
     }
   }
@@ -70,7 +79,7 @@ export class FleetVerifyService {
     }
     this.log.log('fleet heal: verify --heal');
     void this.runner
-      .spawnPty(run, 'python', ['-m', 'local.fleet', 'verify', '--heal'])
+      .spawnPty(run, 'python', [...VERIFY_ARGV, '--heal'])
       .then((code) => this.runner.finalize(run, code))
       .catch((e) => {
         this.runner.emit(run, `\r\n[heal] error: ${getErrorMessage(e)}\r\n`);
@@ -78,14 +87,9 @@ export class FleetVerifyService {
       })
       // heal repairs the very state verify reports, so drop the memo regardless of outcome.
       .finally(() => {
-        this.invalidate();
+        this.report.invalidate();
         lease.release();
       });
     return run.runId;
-  }
-
-  private invalidate(): void {
-    this.cache = null;
-    this.gen++;
   }
 }

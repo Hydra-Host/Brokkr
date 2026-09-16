@@ -18,7 +18,7 @@ const mk = (
 ) =>
   new FleetStatusService(
     { listAll: async () => pc, tailError, tailTaskLog } as any,
-    { nodeNames: () => names } as any,
+    { nodeNames: () => names, baremetalView: () => ({ nodes: [] }) } as any,
     {
       machines: async () =>
         names.map((name) => ({
@@ -28,7 +28,7 @@ const mk = (
           deviceId: null,
         })),
     } as any,
-    { labBridges: () => bridges } as any,
+    { labBridges: () => bridges, planes: () => ({ vm: true, baremetal: false }) } as any,
     { readProgress: () => prog } as any,
   );
 
@@ -116,14 +116,14 @@ describe('FleetStatusService.status', () => {
         tailError: () => undefined,
         tailTaskLog: () => undefined,
       } as any,
-      { nodeNames: () => ['cpu-1'] } as any,
+      { nodeNames: () => ['cpu-1'], baremetalView: () => ({ nodes: [] }) } as any,
       {
         machines: async () => [
           { name: 'cpu-1', power: 'on', configured: true, deviceId: null },
           { name: 's1-cpu-1', power: 'on', configured: false, deviceId: null },
         ],
       } as any,
-      { labBridges: () => [] } as any,
+      { labBridges: () => [], planes: () => ({ vm: true, baremetal: false }) } as any,
       { readProgress: () => null } as any,
     );
     expect((await svc.status()).machinesRunning).toBe(1);
@@ -194,9 +194,9 @@ describe('FleetStatusService.status with the spoke that serves the boot chain', 
         tailError: () => undefined,
         tailTaskLog: () => undefined,
       } as any,
-      { nodeNames: () => ['cpu-1'] } as any,
+      { nodeNames: () => ['cpu-1'], baremetalView: () => ({ nodes: [] }) } as any,
       { machines: async () => [] } as any,
-      { labBridges: () => [bridge('spoke')] } as any,
+      { labBridges: () => [bridge('spoke')], planes: () => ({ vm: true, baremetal: false }) } as any,
       { readProgress: () => null } as any,
     );
     expect((await svc.status()).health).toBe('idle');
@@ -212,25 +212,70 @@ describe('FleetStatusService.status with a caller-supplied snapshot', () => {
         tailError: () => undefined,
         tailTaskLog: () => undefined,
       } as any,
-      { nodeNames: () => ['cpu-1', 'cpu-2'] } as any,
+      { nodeNames: () => ['cpu-1', 'cpu-2'], baremetalView: () => ({ nodes: [] }) } as any,
       {
         machines: async () => {
           probes += 1;
           return [];
         },
       } as any,
-      { labBridges: () => [] } as any,
+      { labBridges: () => [], planes: () => ({ vm: true, baremetal: false }) } as any,
       { readProgress: () => null } as any,
     );
 
     const result = await svc.status([
-      { name: 'cpu-1', power: 'on', configured: true, deviceId: null },
-      { name: 'cpu-2', power: 'on', configured: true, deviceId: null },
+      { name: 'cpu-1', kind: 'vm', power: 'on', configured: true, deviceId: null, bmc: null },
+      { name: 'cpu-2', kind: 'vm', power: 'on', configured: true, deviceId: null, bmc: null },
     ]);
 
     expect(probes).toBe(0);
     expect(result.machinesRunning).toBe(2);
     expect(result.machinesExpected).toBe(2);
+  });
+});
+
+describe('FleetStatusService.status with bare-metal machines', () => {
+  const bm = (name: string, pxe_mac: string) => ({
+    name,
+    bmc_ip: '10.10.0.5',
+    bmc_mac: 'aa:bb:cc:dd:ee:01',
+    pxe_mac,
+    arch: null,
+    system_id: null,
+  });
+
+  const mkBaremetal = (nodes: ReturnType<typeof bm>[], machines: object[]) =>
+    new FleetStatusService(
+      {
+        listAll: async () => [{ name: 'fleet', status: 'Running', is_ready: 'Ready' }],
+        tailError: () => undefined,
+        tailTaskLog: () => undefined,
+      } as any,
+      { nodeNames: () => [], baremetalView: () => ({ nodes }) } as any,
+      { machines: async () => machines } as any,
+      { labBridges: () => [], planes: () => ({ vm: false, baremetal: true }) } as any,
+      { readProgress: () => null } as any,
+    );
+
+  it('counts registered bare-metal machines when no vm node is enabled', async () => {
+    const svc = mkBaremetal(
+      [bm('metal-1', '00:00:5e:00:53:b1'), bm('metal-2', '00:00:5e:00:53:b2')],
+      [
+        { name: 'metal-1', power: 'on', configured: true, deviceId: null },
+        { name: 'metal-2', power: 'unknown', configured: true, deviceId: null },
+      ],
+    );
+    const s = await svc.status();
+    expect(s.machinesExpected).toBe(2);
+    expect(s.machinesRunning).toBe(1);
+  });
+
+  it('leaves a machine with a blank pxe mac out of the expected count', async () => {
+    const svc = mkBaremetal(
+      [bm('metal-1', '00:00:5e:00:53:b1'), bm('metal-blank', '   ')],
+      [{ name: 'metal-1', power: 'on', configured: true, deviceId: null }],
+    );
+    expect((await svc.status()).machinesExpected).toBe(1);
   });
 });
 

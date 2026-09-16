@@ -9,6 +9,8 @@ export interface StubCall {
   method: string;
   path: string;
   body: unknown;
+  /** Recorded so a test can tell the api-token client from the host-token one. */
+  headers: Record<string, string>;
 }
 
 export interface StubRoute {
@@ -16,12 +18,23 @@ export interface StubRoute {
   body: unknown;
 }
 
+function normalizeHeaders(headers: unknown): Record<string, string> {
+  if (!headers) return {};
+  const source =
+    headers instanceof Headers ? [...headers.entries()] : Object.entries(headers as Record<string, unknown>);
+  const out: Record<string, string> = {};
+  for (const [k, v] of source) {
+    if (typeof v === 'string') out[k.toLowerCase()] = v;
+  }
+  return out;
+}
+
 export function stubApi(routes: Record<string, StubRoute | StubRoute[]>, calls: StubCall[] = []): LabApiFetcher {
   const queue = new Map(
     Object.entries(routes).map(([key, route]) => [key, Array.isArray(route) ? [...route] : [route]]),
   );
   const fetcher: LabApiFetcher = async (args) => {
-    calls.push({ method: args.method, path: args.path, body: args.rawBody });
+    calls.push({ method: args.method, path: args.path, body: args.rawBody, headers: normalizeHeaders(args.headers) });
     // args.path is the full url (baseUrl + path + query) — match on pathname only, ignoring
     // both the host and the query string, so stub keys stay short (e.g. 'GET /api/runs').
     const key = `${args.method} ${new URL(args.path).pathname}`;

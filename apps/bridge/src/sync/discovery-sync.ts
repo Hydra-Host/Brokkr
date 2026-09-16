@@ -1,9 +1,13 @@
+import { createHash } from 'node:crypto';
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { createRunExclusive } from '../common/async/run-exclusive.js';
+import { getErrorMessage } from '../common/error-utils';
 import { loadRedisConfig, ttlOrNone } from '../common/redis/redis-client/redis.config.js';
 import { bridgeInstanceVersion } from '../common/redis/redis-keys.js';
+import { setDiscoverySyncRecord, type DiscoverySyncOutcome } from '../composition/discovery-sync-holder.js';
+import type { DiscoveryFlavor } from '../download/discovery.config.js';
 import { getLeaderConfig } from '../leader-election/leader-election.config.js';
 import { createBrokkrLiveHttpsSyncService } from './brokkr-live-https-sync.service.js';
 import { getStorageConfig, getSyncConfig } from './sync.config.js';
@@ -11,7 +15,7 @@ import { logInfo, logWarning } from './sync.logger.js';
 
 const APP_CLASS_NAME = 'service-sync';
 
-const VERSION_KEY = 'brokkr-live-https';
+const VERSION_KEY_PREFIX = 'brokkr-live-https';
 const VERSION_ALIAS_PREFIX = 'latest-';
 
 let runSyncExclusive = createRunExclusive();
@@ -27,7 +31,7 @@ export interface SyncVersionCache {
 }
 
 export interface DiscoveryImageSyncer {
-  syncDiscoveryImages(): Promise<number>;
+  syncDiscoveryImages(flavor: DiscoveryFlavor): Promise<number>;
 }
 
 export interface SyncDiscoveryImagesOptions {
@@ -39,9 +43,14 @@ function getBridgeVersionKey(suffix: string): string {
   return bridgeInstanceVersion(getLeaderConfig().instanceId, suffix);
 }
 
-export function getSyncValidationPath(versionKey: string, brokkrLiveHttpsDir: string): string | null {
-  if (versionKey === VERSION_KEY) return brokkrLiveHttpsDir;
-  return null;
+// the url hash makes a DISCOVERY_BASE_URL change re-sync even when BROKKR_LIVE_VERSION did not move
+export function discoverySyncVersionKey(flavor: DiscoveryFlavor, baseUrl: string): string {
+  const urlHash = createHash('sha1').update(baseUrl, 'utf8').digest('hex').slice(0, 8);
+  return `${VERSION_KEY_PREFIX}:${flavor}:${urlHash}`;
+}
+
+function getSyncValidationPath(flavor: DiscoveryFlavor, brokkrLiveHttpsDir: string): string {
+  return join(brokkrLiveHttpsDir, flavor);
 }
 
 async function hasFilesRecursive(path: string): Promise<boolean> {
@@ -83,6 +92,7 @@ async function isDirectory(path: string): Promise<boolean> {
 async function checkSyncedVersion(
   cache: SyncVersionCache,
   versionKey: string,
+  flavor: DiscoveryFlavor,
   currentVersion: string,
   jobId: string,
 ): Promise<boolean> {
@@ -91,17 +101,14 @@ async function checkSyncedVersion(
     const cachedVersion = await cache.get(key, jobId);
     if (cachedVersion !== currentVersion) return false;
 
-    const storage = getStorageConfig();
-    const validationPath = getSyncValidationPath(versionKey, storage.brokkrLiveHttpsDir);
-    if (validationPath) {
-      if (!(await isDirectory(validationPath)) || !(await hasFilesRecursive(validationPath))) {
-        logWarning(`Sync version ${currentVersion} cached but ${validationPath} has no files, re-syncing`, {
-          appClassName: APP_CLASS_NAME,
-          jobId,
-        });
-        await cache.delete(key, jobId);
-        return false;
-      }
+    const validationPath = getSyncValidationPath(flavor, getStorageConfig().brokkrLiveHttpsDir);
+    if (!(await isDirectory(validationPath)) || !(await hasFilesRecursive(validationPath))) {
+      logWarning(`Sync version ${currentVersion} cached for ${flavor} but ${validationPath} has no files, re-syncing`, {
+        appClassName: APP_CLASS_NAME,
+        jobId,
+      });
+      await cache.delete(key, jobId);
+      return false;
     }
 
     return true;
@@ -141,47 +148,101 @@ async function clearSyncVersionCache(cache: SyncVersionCache, versionKey: string
   }
 }
 
+interface FlavorSyncResult {
+  ran: DiscoveryFlavor[];
+  empty: DiscoveryFlavor[];
+}
+
+// an empty flavor is a failure to sync, not a quiet pass: the manifests were unreachable or listed nothing
+function passOutcome({ ran, empty }: FlavorSyncResult): DiscoverySyncOutcome {
+  if (ran.length === 0) return 'skipped';
+  return empty.length === 0 ? 'ok' : 'failed';
+}
+
 async function runDiscoveryImageSync(
   cache: SyncVersionCache,
   jobId: string,
   options: SyncDiscoveryImagesOptions = {},
 ): Promise<void> {
-  const { force = false } = options;
+  const syncConfig = getSyncConfig();
+  const record = (outcome: DiscoverySyncOutcome, error: string | null): void =>
+    setDiscoverySyncRecord({
+      at: Date.now(),
+      outcome,
+      error,
+      baseUrl: syncConfig.discoveryBaseUrl,
+      version: syncConfig.brokkrLiveVersion,
+      flavors: syncConfig.discoveryFlavors,
+    });
 
-  if (force) {
-    await clearSyncVersionCache(cache, VERSION_KEY, jobId);
+  let result: FlavorSyncResult;
+  try {
+    result = await syncEachFlavor(cache, jobId, options);
+  } catch (error) {
+    record('failed', getErrorMessage(error));
+    throw error;
   }
+  const outcome = passOutcome(result);
+  record(outcome, outcome === 'failed' ? `discovery sync produced no files for ${result.empty.join(', ')}` : null);
+}
+
+async function syncEachFlavor(
+  cache: SyncVersionCache,
+  jobId: string,
+  options: SyncDiscoveryImagesOptions,
+): Promise<FlavorSyncResult> {
+  const { force = false } = options;
+  const ran: DiscoveryFlavor[] = [];
+  const empty: DiscoveryFlavor[] = [];
 
   const syncConfig = getSyncConfig();
   const currentVersion = syncConfig.brokkrLiveVersion;
   const isAlias = currentVersion.startsWith(VERSION_ALIAS_PREFIX);
+  let syncService: DiscoveryImageSyncer | null = options.syncService ?? null;
 
-  if (!isAlias && (await checkSyncedVersion(cache, VERSION_KEY, currentVersion, jobId))) {
-    logInfo(`Discovery images sync skipped - version ${currentVersion} already synced on this bridge`, {
-      appClassName: APP_CLASS_NAME,
-      jobId,
-    });
-    return;
-  }
+  for (const flavor of syncConfig.discoveryFlavors) {
+    const versionKey = discoverySyncVersionKey(flavor, syncConfig.discoveryBaseUrl);
 
-  logInfo('Starting discovery images sync via HTTPS (sha256sum-based)', { appClassName: APP_CLASS_NAME, jobId });
-
-  const syncService = options.syncService ?? createBrokkrLiveHttpsSyncService(jobId);
-  const syncedCount = await syncService.syncDiscoveryImages();
-
-  if (syncedCount > 0) {
-    if (isAlias) {
-      await clearSyncVersionCache(cache, VERSION_KEY, jobId);
-    } else {
-      await storeSyncedVersion(cache, VERSION_KEY, currentVersion, jobId);
+    if (force) {
+      await clearSyncVersionCache(cache, versionKey, jobId);
     }
-    logInfo('Discovery images sync via HTTPS completed successfully', { appClassName: APP_CLASS_NAME, jobId });
-  } else {
-    logWarning('Discovery images sync via HTTPS produced no files, version not cached', {
+
+    if (!isAlias && (await checkSyncedVersion(cache, versionKey, flavor, currentVersion, jobId))) {
+      logInfo(`Discovery images sync skipped for ${flavor} - version ${currentVersion} already synced on this bridge`, {
+        appClassName: APP_CLASS_NAME,
+        jobId,
+      });
+      continue;
+    }
+
+    logInfo(`Starting ${flavor} discovery images sync via HTTPS (sha256sum-based)`, {
       appClassName: APP_CLASS_NAME,
       jobId,
     });
+
+    syncService ??= createBrokkrLiveHttpsSyncService(jobId);
+    const syncedCount = await syncService.syncDiscoveryImages(flavor);
+    ran.push(flavor);
+
+    if (syncedCount > 0) {
+      if (isAlias) {
+        await clearSyncVersionCache(cache, versionKey, jobId);
+      } else {
+        await storeSyncedVersion(cache, versionKey, currentVersion, jobId);
+      }
+      logInfo(`Discovery images sync via HTTPS completed successfully for ${flavor}`, {
+        appClassName: APP_CLASS_NAME,
+        jobId,
+      });
+    } else {
+      empty.push(flavor);
+      logWarning(`Discovery images sync via HTTPS produced no files for ${flavor}, version not cached`, {
+        appClassName: APP_CLASS_NAME,
+        jobId,
+      });
+    }
   }
+  return { ran, empty };
 }
 
 export function syncDiscoveryImages(

@@ -21,7 +21,7 @@ const OS_SLUG = 'ubuntu-24.04';
 function makeDevice() {
   return {
     id: DEVICE_ID,
-    organizationId: ORG_ID,
+    supplierId: ORG_ID,
     zone: { organizationId: ORG_ID },
     server: {
       id: 'server-1',

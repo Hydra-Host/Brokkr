@@ -54,11 +54,11 @@ export class InventoryController {
   @TsRestHandler(contract.provisionDevice)
   async provisionDevice() {
     return tsRestHandler(contract.provisionDevice, async ({ params, body }) => {
-      await this.inventoryService.provisionDirectProvisionDevice({
+      const { jobId } = await this.inventoryService.provisionDirectProvisionDevice({
         ...body,
         deviceId: params.id,
       });
-      return { status: 200 as const, body: { success: true } };
+      return { status: 200 as const, body: { success: true, ...(jobId ? { jobId } : {}) } };
     });
   }
 }

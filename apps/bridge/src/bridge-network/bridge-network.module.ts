@@ -1,5 +1,6 @@
 import { DynamicModule, Global, Module, Provider } from '@nestjs/common';
 
+import { getRequestClientIp } from '../common/middleware/client-ip.context';
 import { RedisService } from '../common/redis/redis.service';
 import { getApplicationConfig } from '../core/application.config';
 
@@ -41,6 +42,7 @@ function buildResolutionProvider(options: BridgeNetworkModuleOptions): Provider 
         appConfig: appConfigProviderFromEnv(),
         cache,
         interfaceCacheTtlSeconds: DEFAULT_INTERFACE_CACHE_TTL_SECONDS,
+        requestClientIpProvider: getRequestClientIp,
         ...overrides,
       });
     },

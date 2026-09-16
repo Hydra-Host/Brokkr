@@ -5,7 +5,10 @@ import { join } from 'node:path';
 
 import { afterEach, vi } from 'vitest';
 
+import type { FleetPlanes } from '@repo/local-lab-contract';
+
 import { NULL_RUN_SINK } from '../../runner/run-sink';
+import { VM_ONLY } from '../applied-manifest';
 import { RunnerService } from '../../runner/runner.service';
 import { SudoService } from '../../sudo/sudo.service';
 import { OverlayStoreService } from '../overlay-store';
@@ -78,11 +81,17 @@ const catalogOf = (byName: Record<string, string>): Map<string, CatalogEntry> =>
     Object.entries(byName).map(([name, namespace]) => [name, { namespace, label: name, port: null, disabled: false }]),
   );
 
-const withApplied = (mode: 'vm' | 'baremetal'): void => {
+const BOTH_PLANES: FleetPlanes = { vm: true, baremetal: true };
+
+const withApplied = (planes: FleetPlanes): void => {
   const dir = mkdtempSync(join(tmpdir(), 'lab-applied-'));
   process.env.LOCAL_STATE = dir;
   mkdirSync(join(dir, 'state', 'run'), { recursive: true });
-  writeFileSync(join(dir, 'state', 'run', 'fleet-applied.json'), JSON.stringify({ mode }));
+  const manifest = {
+    nodes: planes.vm ? [{ name: 'gpu-1' }] : [],
+    bmNodes: planes.baremetal ? [{ name: 'metal-1' }] : [],
+  };
+  writeFileSync(join(dir, 'state', 'run', 'fleet-applied.json'), JSON.stringify(manifest));
 };
 
 function makeService(procs: PcProcess[]) {
@@ -102,6 +111,7 @@ function makeService(procs: PcProcess[]) {
   };
   const rendered = new RenderedConfigService(pc as unknown as ProcessComposeClient);
   const overlay = new OverlayStoreService(rendered);
+  vi.spyOn(overlay, 'planes').mockReturnValue(VM_ONLY);
   const sudo = new SudoService();
   const runner = new RunnerService(NULL_RUN_SINK);
   const stackRestart = new StackRestartService(sudo, runner);
@@ -233,7 +243,7 @@ describe('RedeployService — telemetry apply coalescing', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(overlay.isRebindPending()).toBe(true);
-    expect(pc.ensureStopped).toHaveBeenCalledTimes(3);
+    expect(pc.ensureStopped).toHaveBeenCalledTimes(4);
     expect(applyOverlay).not.toHaveBeenCalled();
     expect(pc.restart).not.toHaveBeenCalled();
     expect(pc.restartAndWait).not.toHaveBeenCalled();
@@ -263,8 +273,8 @@ describe('RedeployService.applyTelemetry — sink lifecycle', () => {
 
     await applyTelemetry(svc, true);
 
-    expect(pc.ensureRunning).toHaveBeenCalledTimes(3);
-    for (const n of ['otel-collector', 'tempo', 'grafana']) expect(pc.ensureRunning).toHaveBeenCalledWith(n);
+    expect(pc.ensureRunning).toHaveBeenCalledTimes(4);
+    for (const n of ['otel-collector', 'tempo', 'loki', 'grafana']) expect(pc.ensureRunning).toHaveBeenCalledWith(n);
     expect(pc.stop).not.toHaveBeenCalled();
     expect(pc.restartAndWait).toHaveBeenCalledWith('hub-api');
     expect(pc.restartAndWait).toHaveBeenCalledWith('hub-api-1');
@@ -294,8 +304,8 @@ describe('RedeployService.applyTelemetry — sink lifecycle', () => {
 
     await applyTelemetry(svc, false);
 
-    expect(pc.ensureStopped).toHaveBeenCalledTimes(3);
-    for (const n of ['otel-collector', 'tempo', 'grafana']) expect(pc.ensureStopped).toHaveBeenCalledWith(n);
+    expect(pc.ensureStopped).toHaveBeenCalledTimes(4);
+    for (const n of ['otel-collector', 'tempo', 'loki', 'grafana']) expect(pc.ensureStopped).toHaveBeenCalledWith(n);
     expect(pc.ensureRunning).not.toHaveBeenCalled();
   });
 
@@ -305,7 +315,7 @@ describe('RedeployService.applyTelemetry — sink lifecycle', () => {
 
     await applyTelemetry(svc, false, true);
 
-    expect(pc.ensureStopped).toHaveBeenCalledTimes(3);
+    expect(pc.ensureStopped).toHaveBeenCalledTimes(4);
     expect(pc.restart).not.toHaveBeenCalled();
     expect(pc.restartAndWait).not.toHaveBeenCalled();
     expect(pc.ensureRunning).not.toHaveBeenCalled();
@@ -318,7 +328,7 @@ describe('RedeployService.applyTelemetry — sink lifecycle', () => {
 
     await applyTelemetry(svc, true);
 
-    expect(pc.ensureRunning).toHaveBeenCalledTimes(3);
+    expect(pc.ensureRunning).toHaveBeenCalledTimes(4);
     expect(pc.restart).not.toHaveBeenCalled();
     expect(pc.restartAndWait).not.toHaveBeenCalled();
   });
@@ -337,31 +347,31 @@ describe('RedeployService.applyTelemetry — sink lifecycle', () => {
   });
 });
 
-describe('RedeployService mode-pending guards — D1.6', () => {
+describe('RedeployService planes-pending guards — D1.6', () => {
   afterEach(() => {
     delete process.env.LOCAL_STATE;
   });
 
-  it('redeploy is blocked (failed run, no restart) while desired ≠ applied', async () => {
+  it('redeploy is blocked (failed run, no restart) while the desired planes differ from the applied ones', async () => {
     const { svc, pc, overlay } = makeService([proc({ name: 'hub-api', status: 'Running' })]);
-    withApplied('vm');
-    vi.spyOn(overlay, 'fleetMode').mockReturnValue('baremetal');
+    withApplied(VM_ONLY);
+    vi.spyOn(overlay, 'planes').mockReturnValue(BOTH_PLANES);
     const restartSpy = vi.spyOn(svc, 'restart');
 
     const run = svc.redeploy();
     await new Promise((r) => setTimeout(r, 10));
 
     expect(run.status).toBe('failed');
-    expect(run.lines.some((l) => l.includes('fleet-mode change is pending'))).toBe(true);
+    expect(run.lines.some((l) => l.includes('fleet plane change is pending'))).toBe(true);
     expect(pc.restart).not.toHaveBeenCalled();
     expect(pc.restartAndWait).not.toHaveBeenCalled();
     expect(restartSpy).not.toHaveBeenCalled();
   });
 
-  it('reloadGroup is blocked (no applyOverlay, no restart) while desired ≠ applied', async () => {
+  it('reloadGroup is blocked (no applyOverlay, no restart) while the desired planes differ from the applied ones', async () => {
     const { svc, pc, rendered, overlay } = makeService([]);
-    withApplied('vm');
-    vi.spyOn(overlay, 'fleetMode').mockReturnValue('baremetal');
+    withApplied(VM_ONLY);
+    vi.spyOn(overlay, 'planes').mockReturnValue(BOTH_PLANES);
     const applySpy = vi.spyOn(rendered, 'applyOverlay');
 
     const run = svc.reloadGroup('spoke');
@@ -373,10 +383,10 @@ describe('RedeployService mode-pending guards — D1.6', () => {
     expect(pc.restartAndWait).not.toHaveBeenCalled();
   });
 
-  it('reloadGroup proceeds (applyOverlay runs) when desired === applied', async () => {
+  it('reloadGroup proceeds (applyOverlay runs) when the desired planes equal the applied ones', async () => {
     const { svc, rendered, overlay } = makeService([]);
-    withApplied('baremetal');
-    vi.spyOn(overlay, 'fleetMode').mockReturnValue('baremetal');
+    withApplied(BOTH_PLANES);
+    vi.spyOn(overlay, 'planes').mockReturnValue(BOTH_PLANES);
     const applySpy = vi.spyOn(rendered, 'applyOverlay').mockResolvedValue('/repo/cfg.yaml');
     vi.spyOn(rendered, 'catalog').mockResolvedValue(new Map());
 
@@ -389,7 +399,7 @@ describe('RedeployService mode-pending guards — D1.6', () => {
 
 describe('RedeployService — overlay apply is abort-on-throw', () => {
   beforeEach(() => {
-    withApplied('vm');
+    withApplied(VM_ONLY);
   });
   afterEach(() => {
     delete process.env.LOCAL_STATE;
@@ -397,7 +407,7 @@ describe('RedeployService — overlay apply is abort-on-throw', () => {
 
   it('redeploy hot path: applyOverlay rejection fails the run and issues no restarts', async () => {
     const { svc, pc, rendered, overlay } = makeService([proc({ name: 'hub-api' }), proc({ name: 'spoke' })]);
-    vi.spyOn(overlay, 'fleetMode').mockReturnValue('vm');
+    vi.spyOn(overlay, 'planes').mockReturnValue(VM_ONLY);
     vi.spyOn(rendered, 'applyOverlay').mockRejectedValue(new Error('nix eval failed'));
 
     const run = svc.redeploy();
@@ -567,7 +577,7 @@ describe('RedeployService — rebind path delegates to StackRestartService', () 
   beforeEach(() => {
     process.env.DEVENV_ROOT = mkdtempSync(join(tmpdir(), 'lab-rebind-'));
     spawnMock.mockReset();
-    withApplied('vm');
+    withApplied(VM_ONLY);
   });
   afterEach(() => {
     if (origDevenvRoot === undefined) delete process.env.DEVENV_ROOT;
@@ -648,7 +658,7 @@ describe('RedeployService — rebind path delegates to StackRestartService', () 
 
 describe('RedeployService — run bookkeeping', () => {
   beforeEach(() => {
-    withApplied('vm');
+    withApplied(VM_ONLY);
   });
   afterEach(() => {
     delete process.env.LOCAL_STATE;
@@ -723,7 +733,7 @@ describe('RedeployService.reloadGroup — apply blast radius', () => {
   };
 
   beforeEach(() => {
-    withApplied('vm');
+    withApplied(VM_ONLY);
   });
   afterEach(() => {
     delete process.env.LOCAL_STATE;
@@ -732,7 +742,7 @@ describe('RedeployService.reloadGroup — apply blast radius', () => {
   const setup = () => {
     const made = makeService(Object.keys(live).map((name) => proc({ name, status: 'Running', is_ready: 'Ready' })));
     made.pc.processInfo.mockImplementation(async (name: string) => live[name]);
-    vi.spyOn(made.overlay, 'fleetMode').mockReturnValue('vm');
+    vi.spyOn(made.overlay, 'planes').mockReturnValue(VM_ONLY);
     vi.spyOn(made.rendered, 'renderedConfigPath').mockResolvedValue(writeCfg());
     return made;
   };

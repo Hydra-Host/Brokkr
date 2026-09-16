@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import Redis from 'ioredis';
 
-import { getErrorMessage } from '../common/errors';
+import { getErrorMessage } from '@repo/utils';
 import { URLS } from '../ports';
 
 /** `view` follows the datastore browser, which an operator can re-point at any instance; `bridge` is

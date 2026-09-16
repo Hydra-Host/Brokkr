@@ -87,10 +87,8 @@ export class InventoryService {
       throw new NotFoundException('Listing not found');
     }
 
-    if (!InventoryPresenter.reservationInviteBelongsToIdentity(ctx, identity)) {
-      this.logger.warn(
-        `Reservation invite for listing ${deviceId} does not belong to organization ${identity.organizationId}`,
-      );
+    if (!InventoryPresenter.isListedOrInvitee(ctx, identity)) {
+      this.logger.warn(`Listing ${deviceId} is not listed-or-invitee for organization ${identity.organizationId}`);
       throw new NotFoundException('Listing not found');
     }
 
@@ -101,7 +99,9 @@ export class InventoryService {
     return ctx;
   }
 
-  async provisionDirectProvisionDevice(data: ProvisionRequest & { deviceId: string }) {
+  async provisionDirectProvisionDevice(data: ProvisionRequest & { deviceId: string }): Promise<{
+    jobId: string | null;
+  }> {
     this.contextService.requirePermission('inventory', 'create');
     const identity = this.contextService.requireIdentity;
     const listing = await this.getListingContext(data.deviceId, false);
@@ -161,10 +161,15 @@ export class InventoryService {
         );
       }
       this.contextService.requirePermission('lifecycle-request', 'create');
-      return this.lifecycleService.requestInterruptibleProvision({ deviceId: listing.device.id, request });
+      const result = await this.lifecycleService.requestInterruptibleProvision({
+        deviceId: listing.device.id,
+        request,
+      });
+      return { jobId: result.status === 'executing' ? result.incomingJobId : null };
     }
 
-    return this.lifecycleService.requestProvision(request);
+    const job = await this.lifecycleService.requestProvision(request);
+    return { jobId: job.data.id };
   }
 
   async getRegions(query: PaginationQuery) {

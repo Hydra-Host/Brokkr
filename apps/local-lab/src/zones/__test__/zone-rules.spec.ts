@@ -7,6 +7,7 @@ const input = (over: Partial<ZoneRulesInput> = {}): ZoneRulesInput => ({
   declared: [{ name: 'sim-zone', index: 0, bridges: 1 }],
   nodeZones: {},
   nodesByZone: {},
+  occupancyByZone: {},
   rename: undefined,
   capacity: 25,
   hubZoneNames: ['sim-zone'],
@@ -67,9 +68,40 @@ describe('zoneRefusal — the rules only the control center can see', () => {
       { name: 'edge', index: 1, bridges: 1 },
     ];
     const refusal = zoneRefusal(
-      input({ declared, nodesByZone: { edge: ['gpu-1'] }, nodeZones: { 'gpu-1': 'edge' } }),
+      input({
+        declared,
+        nodesByZone: { edge: ['gpu-1'] },
+        occupancyByZone: { edge: ['gpu-1'] },
+        nodeZones: { 'gpu-1': 'edge' },
+      }),
     );
     expect(refusal).toMatch(/zone edge still owns 1 node\(s\) \(gpu-1\)/);
+  });
+
+  it('refuses removing a zone whose only occupant is a bare-metal machine', () => {
+    const declared = [
+      { name: 'sim-zone', index: 0, bridges: 1 },
+      { name: 'edge', index: 1, bridges: 1 },
+    ];
+    expect(zoneRefusal(input({ declared, occupancyByZone: { edge: ['metal-1'] } }))).toMatch(
+      /zone edge still owns 1 node\(s\) \(metal-1\)/,
+    );
+  });
+
+  it('accepts a second zone while a bare-metal machine occupies one of them', () => {
+    const desired = [
+      { name: 'sim-zone', index: 0, bridges: 1 },
+      { name: 'edge', index: 1, bridges: 1 },
+    ];
+    const refusal = zoneRefusal(
+      input({
+        desired,
+        nodesByZone: { 'sim-zone': ['cpu-1'] },
+        occupancyByZone: { 'sim-zone': ['cpu-1'], edge: ['metal-1'] },
+        nodeZones: { 'cpu-1': 'sim-zone' },
+      }),
+    );
+    expect(refusal).toBeNull();
   });
 
   it('allows removing a zone that owns none', () => {
@@ -120,9 +152,7 @@ describe('zoneRefusal — rename', () => {
   });
 
   it('refuses a rename combined with an index move, and says why it cannot be told apart', () => {
-    const refusal = zoneRefusal(
-      renameInput({ desired: [{ name: 'edge', index: 2, bridges: 1 }] }),
-    );
+    const refusal = zoneRefusal(renameInput({ desired: [{ name: 'edge', index: 2, bridges: 1 }] }));
     expect(refusal).toMatch(/two saves/);
   });
 
@@ -135,11 +165,21 @@ describe('zoneRefusal — rename', () => {
   });
 
   it('refuses a target name the hub already holds, since Zone.name has no unique index', () => {
-    expect(zoneRefusal(renameInput({ hubZoneNames: ['sim-zone', 'edge'] }))).toMatch(/already has a Zone row named edge/);
+    expect(zoneRefusal(renameInput({ hubZoneNames: ['sim-zone', 'edge'] }))).toMatch(
+      /already has a Zone row named edge/,
+    );
   });
 
   it('does not treat the renamed-away zone as a removal that owns nodes', () => {
-    expect(zoneRefusal(renameInput({ nodesByZone: { 'sim-zone': ['cpu-1'] }, nodeZones: { 'cpu-1': 'edge' } }))).toBeNull();
+    expect(
+      zoneRefusal(
+        renameInput({
+          nodesByZone: { 'sim-zone': ['cpu-1'] },
+          occupancyByZone: { 'sim-zone': ['cpu-1'] },
+          nodeZones: { 'cpu-1': 'edge' },
+        }),
+      ),
+    ).toBeNull();
   });
 });
 

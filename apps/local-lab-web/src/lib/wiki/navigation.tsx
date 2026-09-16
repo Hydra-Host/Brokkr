@@ -190,7 +190,7 @@ export const NAVIGATION_ENTRIES: WikiEntry[] = [
         <H>How to read it</H>
         <UL>
           <LI>The header says how many bridge ordinals the fleet uses, of the total available.</LI>
-          <LI>One lane per zone, with its index. Lane colour is zone health, not shape.</LI>
+          <LI>One lane per zone, with its index. Lane color is zone health, not shape.</LI>
           <LI>
             A dot per bridge, with its process name and its HTTP and gRPC ports. A star marks the leader. Green is
             online, red is offline, and amber means the presence could not be read.

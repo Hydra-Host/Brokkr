@@ -109,6 +109,7 @@ function spyStore(records: LeaseRecord[] = []): LeaseStore {
     put: vi.fn(async () => undefined),
     delete: vi.fn(async () => undefined),
     pruneExpired: vi.fn(async () => 0),
+    takeRevocations: vi.fn(async () => []),
   };
 }
 

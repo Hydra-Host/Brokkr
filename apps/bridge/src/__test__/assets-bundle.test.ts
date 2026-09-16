@@ -101,6 +101,7 @@ describe('renderer integration smoke — non-empty bytes from new asset path', (
       job_id: 'job-test',
       kernel_network: [],
       pci_realloc_off: false,
+      flavor: 'full',
     });
     expect(discovery.length).toBeGreaterThan(0);
 

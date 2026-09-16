@@ -19,7 +19,6 @@ _VM_FLEET = {
 }
 
 _BM_FLEET = {
-    "mode": "baremetal",
     "network": _NETWORK,
     "defaults": _DEFAULTS,
     "nodes": [],
@@ -85,6 +84,27 @@ def test_baremetal_ready_check_emits_no_footer(run_status, tcg):
 def test_vm_table_has_no_footer_under_kvm(run_status, monkeypatch):
     monkeypatch.setattr(host_os_mod, "detect_accel", lambda: "kvm")
     assert "TCG software emulation" not in run_status(_VM_FLEET).output
+
+
+def test_two_plane_fleet_prints_both_tables(run_status):
+    out = run_status({**_BM_FLEET, "nodes": _VM_FLEET["nodes"]}).output
+    assert "local fleet status" in out
+    assert "bare-metal fleet status" in out
+
+
+def test_vm_only_fleet_prints_no_bare_metal_table(run_status):
+    assert "bare-metal fleet status" not in run_status(_VM_FLEET).output
+
+
+def test_bare_metal_only_fleet_prints_no_vm_table(run_status):
+    assert "local fleet status" not in run_status(_BM_FLEET).output
+
+
+def test_two_plane_ready_check_needs_both_planes(run_status, monkeypatch):
+    monkeypatch.setattr(status, "bm_ready", lambda fleet, manifest: False)
+    assert run_status({**_BM_FLEET, "nodes": _VM_FLEET["nodes"]}, "--ready").exit_code == 1
+    monkeypatch.setattr(status, "bm_ready", lambda fleet, manifest: True)
+    assert run_status({**_BM_FLEET, "nodes": _VM_FLEET["nodes"]}, "--ready").exit_code == 0
 
 
 def _completed(returncode: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:

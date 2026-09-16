@@ -64,6 +64,15 @@ describe('destructive saga step-name sequences', () => {
     ]);
   });
 
+  it('commission retries the disk wipe once via a reboot cycle rewind', () => {
+    const step = COMMISSION_SAGA.steps.find((candidate) => candidate.name === 'disk_wipe');
+
+    expect(step?.maxAttempts).toBe(2);
+    expect(step?.recovery).toEqual([
+      { rewindTo: 'live_reboot_power_off', description: 'Reboot and retry wipe' },
+    ]);
+  });
+
   it('deprovision saga has the expected ordered step sequence', () => {
     expect(stepNames(DEPROVISION_SAGA)).toEqual([
       'disable_os_boot',
@@ -79,6 +88,16 @@ describe('destructive saga step-name sequences', () => {
       'disk_wipe',
       'efi_cleanup',
       'collect_hardware',
+    ]);
+  });
+
+  it('deprovision retries the disk wipe in place then falls back to a full reboot cycle', () => {
+    const step = DEPROVISION_SAGA.steps.find((candidate) => candidate.name === 'disk_wipe');
+
+    expect(step?.maxAttempts).toBe(3);
+    expect(step?.recovery).toEqual([
+      { rewindTo: 'disk_wipe', description: 'Retry disk wipe' },
+      { rewindTo: 'power_off', description: 'Reboot and retry disk wipe' },
     ]);
   });
 });

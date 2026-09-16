@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BrokkrBridgeModule } from 'src/brokkr-bridge/brokkr-bridge.module';
+import { JobLogWriterModule } from 'src/brokkr-bridge/job-logs/job-log-writer.module';
 import { DeviceTokensModule } from 'src/device-tokens/device-tokens.module';
 import { LifecycleModule } from 'src/lifecycle/lifecycle.module';
 import { PrismaModule } from 'src/prisma/prisma.module';
@@ -9,7 +10,7 @@ import { PhoneHomeRepository } from './phone-home/phone-home.repository';
 import { PhoneHomeService } from './phone-home/phone-home.service';
 
 @Module({
-  imports: [BrokkrBridgeModule, DeviceTokensModule, LifecycleModule, PrismaModule],
+  imports: [BrokkrBridgeModule, DeviceTokensModule, JobLogWriterModule, LifecycleModule, PrismaModule],
   controllers: [PhoneHomeController],
   providers: [PhoneHomeService, PhoneHomeRepository, PhoneHomeGuard],
 })

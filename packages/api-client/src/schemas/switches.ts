@@ -1,9 +1,11 @@
+import { SwitchPowerStatus } from '@repo/database/enums';
 import { z } from 'zod';
 import { BooleanQueryParamSchema } from './common';
 import { PaginationQuerySchema, createPaginatedResponseSchema } from './pagination';
+import { zodEnumFromPrisma } from './prisma-enum';
 
-export const SwitchPowerStatusSchema = z.enum(['On', 'Off']);
-export type SwitchPowerStatus = z.infer<typeof SwitchPowerStatusSchema>;
+export const SwitchPowerStatusSchema = zodEnumFromPrisma(SwitchPowerStatus);
+export type { SwitchPowerStatus };
 
 export const SwitchSchema = z.object({
   deviceId: z.string().uuid().describe('Device UUID — the identifier for the Switch-role device.'),

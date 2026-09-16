@@ -4,8 +4,8 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { Subject } from 'rxjs';
 
+import { getErrorMessage } from '@repo/utils';
 import { engineRoot } from '../common/engine-root';
-import { getErrorMessage } from '../common/errors';
 import { type RunSection, type RunStatus } from '../contract';
 import { RUN_SINK, type RunSink } from './run-sink';
 
@@ -169,13 +169,20 @@ export class RunnerService {
     if (run.cancelled) return this.abortBeforeStart(run);
     return new Promise((resolve) => {
       const env = { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1', ...extraEnv };
-      const child = pty.spawn(cmd, args, {
-        name: 'xterm-256color',
-        cols: 140,
-        rows: 1000,
-        cwd: this.repoRoot,
-        env: env as Record<string, string>,
-      });
+      let child: pty.IPty;
+      try {
+        child = pty.spawn(cmd, args, {
+          name: 'xterm-256color',
+          cols: 140,
+          rows: 1000,
+          cwd: this.repoRoot,
+          env: env as Record<string, string>,
+        });
+      } catch (error) {
+        this.emit(run, `[spawn error] ${getErrorMessage(error)}\r\n`);
+        resolve(1);
+        return;
+      }
       run.pty = child;
       run.childPid = child.pid;
       this.toSink('onSpawn', () => this.sink.onSpawn(run));

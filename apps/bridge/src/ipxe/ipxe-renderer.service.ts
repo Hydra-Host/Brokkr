@@ -2,6 +2,7 @@ import * as nunjucks from 'nunjucks';
 
 import { deviceServerToken } from '../common/redis/redis-keys';
 import type { ServerTokenAtom } from '../device-record/atom/server-token.schema';
+import type { DiscoveryFlavor } from '../download/discovery.config';
 import { logDebug } from '../logger/logger.service';
 
 import { IpxeServerTokenUnavailableError, IpxeServiceError } from './ipxe-errors';
@@ -32,6 +33,7 @@ export interface RenderDiscoveryArgs {
   job_id: string;
   kernel_network: ReadonlyArray<string>;
   pci_realloc_off: boolean;
+  flavor: DiscoveryFlavor;
   mac?: string;
   is_placeholder_device?: boolean;
 }
@@ -94,6 +96,7 @@ export class IpxeTemplateRenderer {
       kernel_network: args.kernel_network ?? [],
       platform_type: args.platform_type,
       pci_realloc_off: args.pci_realloc_off,
+      flavor: args.flavor,
     });
   }
 
@@ -155,7 +158,7 @@ export class IpxeTemplateRenderer {
       }
     }
 
-    await logDebug(`iPXE phone home creds resolved from hub atom: token=${token.brokkr_live_token.slice(0, 16)}...`, {
+    await logDebug('iPXE phone home creds resolved from hub atom', {
       jobId: effectiveJobId,
     });
 

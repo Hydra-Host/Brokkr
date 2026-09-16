@@ -8,7 +8,7 @@ import { PrismaClient } from '../prisma/prisma.client';
 import { ZoneCryptoRepository } from '../zone-crypto/zone-crypto.repository';
 import {
   ENROLLMENT_POLL_ATTEMPTS,
-  parseFleetMode,
+  parseFleetPlanes,
   parseFleetYaml,
   simDeviceUuid,
   waitForEnrollment,
@@ -30,8 +30,10 @@ async function main(): Promise<void> {
   }
   const fleetText = readFileSync(fleetPath, 'utf8');
 
-  if (parseFleetMode(fleetText) === 'baremetal') {
-    process.stderr.write('[seed-bmc] bare-metal mode — vm BMC seal skipped (seed:baremetal-bmc owns bm creds)\n');
+  if (!parseFleetPlanes(fleetText).vm) {
+    process.stderr.write(
+      '[seed-bmc] the VM plane is off (no nodes) — vm BMC seal skipped (seed:baremetal-bmc owns bm creds)\n',
+    );
     return;
   }
 

@@ -1,6 +1,6 @@
 import { BondParametersSchema } from '@repo/api-client';
 import { InterfaceType } from '@repo/database';
-import { ipv4InCidr } from 'src/common/ip-utils';
+import { ipInCidr } from '@repo/utils';
 import type { DeviceContext, DeviceWithRelations, PrefixWithRelations } from '../device-context/device-context.types';
 import type { NetplanPhase } from './netplan.service';
 
@@ -158,9 +158,7 @@ export function pickGateway<T extends { vrfId: string | null; routingPriority: n
 // renderers resolve some IPs against a VRF the IP row does not itself carry.
 export function pickPrefixForIp(ctx: DeviceContext, ip: DeviceIp, vrfId: string | null): PrefixWithRelations | null {
   const host = stripMask(ip.address);
-  const candidates = ctx.ipam.prefixes.filter(
-    (p) => ipv4InCidr(host, p.prefix) && (vrfId === null || p.vrfId === vrfId),
-  );
+  const candidates = ctx.ipam.prefixes.filter((p) => ipInCidr(host, p.prefix) && (vrfId === null || p.vrfId === vrfId));
   if (candidates.length === 0) return null;
   if (vrfId === null) {
     const longestMask = Math.max(...candidates.map((p) => Number(extractMask(p.prefix))));
@@ -346,8 +344,8 @@ export function isIpv4(addressWithMask: string): boolean {
   return !host.includes(':');
 }
 
-// Deliberately the mirror image of the shared `ipv4InCidr(ip, cidr)` it wraps — the render
+// Deliberately the mirror image of the shared `ipInCidr(ip, cidr)` it wraps — the render
 // modules were ported with (cidr, host) order, and silently swapping the two resolves every prefix to nothing.
 export function prefixContainsIpv4(cidr: string, host: string): boolean {
-  return ipv4InCidr(host, cidr);
+  return ipInCidr(host, cidr);
 }

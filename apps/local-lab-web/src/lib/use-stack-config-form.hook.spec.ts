@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { StackConfig } from '@/contract';
+import {
+  IdentityConfigSchema,
+  LanConfigSchema,
+  OsLayerCacheSchema,
+  type StackConfig,
+  TelemetryConfigSchema,
+} from '@/contract';
+import { z } from 'zod';
 
 const mocks = vi.hoisted(() => ({ useQuery: vi.fn(), refetch: vi.fn() }));
 vi.mock('@/lib/api', () => ({ tsr: { getStackConfig: { useQuery: mocks.useQuery } } }));
@@ -20,9 +28,14 @@ const config = (over: Partial<StackConfig> = {}): StackConfig => ({
   values: { hub: { LOG_LEVEL: 'debug' }, spoke: { LOG_LEVEL: 'info' } },
   topology: { zones: 1, bridges: 1 },
   slot: 0,
-  identity: { pg: { user: 'brokkr', password: 'password', db: 'brokkr' }, orgId: 'org-1' },
+  identity: {
+    pg: { user: 'brokkr', password: 'password', db: 'brokkr' },
+    orgId: 'org-1',
+    redis: { password: 'password' },
+    mailpit: { password: 'password' },
+  },
   osLayerCache: { originHost: 'assets.local', resolvers: '1.1.1.1' },
-  lan: { expose: false },
+  lan: { mode: 'loopback', bindAddress: '', publicHost: '', datastoreAuth: true, expose: false },
   telemetry: { enable: false },
   ...over,
 });
@@ -121,7 +134,7 @@ describe('useStackConfigForm', () => {
       result.current.setPort('postgres', '6000');
       result.current.updateIdentity((s) => ({ ...s, orgId: 'org-2' }));
       result.current.updateOsLayer((s) => ({ ...s, resolvers: '8.8.8.8' }));
-      result.current.updateLan((s) => ({ expose: !s.expose }));
+      result.current.updateLan((s) => ({ ...s, mode: 'direct' }));
       result.current.updateTelemetry((s) => ({ enable: !s.enable }));
     });
     rerender();
@@ -134,10 +147,54 @@ describe('useStackConfigForm', () => {
         'ports.postgres': '6000',
         'identity.orgId': 'org-2',
         'osLayerCache.resolvers': '8.8.8.8',
-        'lan.expose': 'true',
+        'lan.mode': 'direct',
         'telemetry.enable': 'true',
       },
     });
+  });
+
+  it('sends every network knob the operator touched, and only those', () => {
+    const { result, rerender } = renderHook(() => useStackConfigForm());
+
+    act(() => {
+      result.current.updateLan((s) => ({ ...s, mode: 'fronted', bindAddress: '10.0.0.4', datastoreAuth: false }));
+      result.current.updateIdentity((s) => ({ ...s, redis: { password: 'r-secret' } }));
+      result.current.updateIdentity((s) => ({ ...s, mailpit: { password: 'm-secret' } }));
+    });
+    rerender();
+
+    expect(result.current.saveBody().entries).toEqual({
+      'lan.mode': 'fronted',
+      'lan.bindAddress': '10.0.0.4',
+      'lan.datastoreAuth': 'false',
+      'identity.redis.password': 'r-secret',
+      'identity.mailpit.password': 'm-secret',
+    });
+  });
+
+  it('keeps the deprecated expose alias writable alongside the mode', () => {
+    const { result, rerender } = renderHook(() => useStackConfigForm());
+
+    act(() => result.current.updateLan((s) => ({ ...s, expose: true })));
+    rerender();
+
+    expect(result.current.saveBody().entries).toEqual({ 'lan.expose': 'true' });
+  });
+
+  it('reads the network posture back out of the loaded body', () => {
+    setConfig(
+      config({ lan: { mode: 'fronted', bindAddress: '10.0.0.4', publicHost: '', datastoreAuth: false, expose: true } }),
+    );
+    const { result } = renderHook(() => useStackConfigForm());
+
+    expect(result.current.lan).toEqual({
+      mode: 'fronted',
+      bindAddress: '10.0.0.4',
+      publicHost: '',
+      datastoreAuth: false,
+      expose: true,
+    });
+    expect(result.current.saveBody().entries).toEqual({});
   });
 
   it('clamps the stack slot to 0–46 and collects it into the save body', () => {
@@ -305,5 +362,55 @@ describe('useStackConfigForm', () => {
     rerender();
 
     expect(result.current.saveError).toBeNull();
+  });
+});
+
+type Lan = StackConfig['lan'];
+
+const LAN_PROBES: Record<keyof Lan, { edit: (s: Lan) => Lan; expected: string }> = {
+  mode: { edit: (s) => ({ ...s, mode: 'fronted' }), expected: 'fronted' },
+  bindAddress: { edit: (s) => ({ ...s, bindAddress: '10.0.0.4' }), expected: '10.0.0.4' },
+  publicHost: { edit: (s) => ({ ...s, publicHost: 'dev-box.local' }), expected: 'dev-box.local' },
+  datastoreAuth: { edit: (s) => ({ ...s, datastoreAuth: false }), expected: 'false' },
+  expose: { edit: (s) => ({ ...s, expose: true }), expected: 'true' },
+};
+
+function leafPaths(shape: z.ZodRawShape, prefix: string): string[] {
+  return Object.entries(shape).flatMap(([key, field]) => {
+    const path = `${prefix}.${key}`;
+    const inner = field instanceof z.ZodObject ? (field.shape as z.ZodRawShape) : undefined;
+    return inner === undefined ? [path] : leafPaths(inner, path);
+  });
+}
+
+describe('every config leaf reaches the save payload', () => {
+  it('sends the public host the operator typed', () => {
+    const { result, rerender } = renderHook(() => useStackConfigForm());
+
+    act(() => result.current.updateLan((s) => ({ ...s, publicHost: 'dev-box.local' })));
+    rerender();
+
+    expect(result.current.saveBody().entries).toEqual({ 'lan.publicHost': 'dev-box.local' });
+  });
+
+  it.each(Object.entries(LAN_PROBES))('sends lan.%s', (key, probe) => {
+    const { result, rerender } = renderHook(() => useStackConfigForm());
+
+    act(() => result.current.updateLan(probe.edit));
+    rerender();
+
+    expect(result.current.saveBody().entries).toEqual({ [`lan.${key}`]: probe.expected });
+  });
+
+  it('gives every schema leaf a probe or an explicit writer', () => {
+    const declared = [
+      ...leafPaths(LanConfigSchema.shape as z.ZodRawShape, 'lan'),
+      ...leafPaths(IdentityConfigSchema.shape as z.ZodRawShape, 'identity'),
+      ...leafPaths(OsLayerCacheSchema.shape as z.ZodRawShape, 'osLayerCache'),
+      ...leafPaths(TelemetryConfigSchema.shape as z.ZodRawShape, 'telemetry'),
+    ];
+    const source = readFileSync('src/lib/use-stack-config-form.ts', 'utf8');
+
+    expect(declared.filter((path) => !source.includes(`put('${path}'`))).toEqual([]);
   });
 });
