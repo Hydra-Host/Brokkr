@@ -1,8 +1,8 @@
+import { ResponsiveNavTabs } from '@repo/domain-ui/components/responsive-nav-tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { createFileRoute, Outlet, useLocation, useMatches } from '@tanstack/react-router';
 import { Zap } from 'lucide-react';
-import { ResponsiveNavTabs } from '~/components/responsive-nav-tabs';
 
 export const Route = createFileRoute('/_app/dcim/pdus')({
   staticData: { breadcrumb: 'PDUs', description: 'View and manage the power distribution units in your data centers' },

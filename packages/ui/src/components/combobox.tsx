@@ -91,6 +91,7 @@ function Combobox({
 }: ComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const listRef = React.useRef<HTMLDivElement>(null);
+  const hasValue = value != null && value !== '';
 
   // cmdk bug (issues #389/#374): list scrolls to a stale item on search change — defer past cmdk's scrollSelectedIntoView, then snap to top.
   const handleSearchChange = React.useCallback(
@@ -120,14 +121,14 @@ function Combobox({
             'disabled:cursor-not-allowed disabled:opacity-50',
             '[&>span]:line-clamp-1',
             'relative cursor-pointer',
-            value == null && 'text-text-dim',
+            !hasValue && 'text-text-dim',
             error ? 'border-status-offline focus:border-status-offline' : '',
             triggerClassName,
           )}
           disabled={disabled}
         >
           <span>
-            {value != null
+            {hasValue
               ? (options.find((option) => option.value.toLowerCase() === value.toLowerCase())?.label ?? placeholder)
               : placeholder}
           </span>

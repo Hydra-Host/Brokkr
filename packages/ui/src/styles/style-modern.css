@@ -1,0 +1,150 @@
+/* Modern style: payment-product look — Inter, rounded corners, calm fixed
+   neutrals (color only reaches accents and their tints). Accent remaps onto
+   the mid/deep seeds so dark mode uses the calmer mid tone instead of retro's
+   bright pastel.
+
+   Scoping caveat: the structural rules below match on ANY modern-styled
+   ancestor, so a retro ThemeScope nested inside a modern one still gets the
+   flat/rounded treatment. Nest modern scopes inside retro ones, never the
+   other way around. */
+[data-style='modern'] {
+  --font-mono: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.5rem;
+
+  /* Dark-mode accent lightens the mid seed so dark ink stays readable on it. */
+  --color-accent: light-dark(var(--seed-accent-deep), color-mix(in oklab, var(--seed-accent) 75%, white));
+  --color-accent-dim: light-dark(color-mix(in oklab, var(--seed-accent-deep) 88%, black), var(--seed-accent));
+  --color-accent-glow: var(--color-accent);
+
+  --color-bg-primary: light-dark(#ffffff, #09090b);
+  --color-bg-secondary: light-dark(#f7f7f9, #141417);
+  --color-bg-sidebar: light-dark(#fafafa, #111114);
+  --color-bg-sidebar-alt: light-dark(#f4f4f5, #141417);
+
+  --color-text-primary: light-dark(#1a1d29, #fafafa);
+  --color-text-muted: light-dark(#4f566b, #b8b8c0);
+  --color-text-dim: light-dark(#697386, #8b8b94);
+  --color-text-label: light-dark(#8b93a7, #6b6b76);
+
+  --color-border: light-dark(#d5dbe1, #737185);
+  --color-border-dim: light-dark(#e5e8ee, #2a2836);
+
+  --color-active-bg: light-dark(
+    color-mix(in oklab, var(--color-accent) 9%, #ffffff),
+    color-mix(in oklab, var(--color-accent) 16%, #09090b)
+  );
+  --color-hover-bg: light-dark(#f4f4f6, #18181c);
+  --color-sidebar-section-bg: light-dark(color-mix(in oklab, var(--color-accent) 9%, #ffffff), #1c1c21);
+
+  --color-status-online: light-dark(#15803d, #22c55e);
+  --color-status-offline: light-dark(#dc2626, #ef4444);
+  --color-status-warning: light-dark(#a16207, #eab308);
+
+  --color-sidebar-accent-foreground: var(--color-text-primary);
+  --color-table-header: var(--color-text-primary);
+  --color-input-border: light-dark(#c9d0d9, #737185);
+  --color-input-background: light-dark(#ffffff, #0d0d10);
+}
+
+/* Modern style: hide the terminal corner-tick decorations on cards, inputs,
+   textareas, comboboxes and the filter builder — they clash with rounded
+   corners. */
+[data-style='modern'] [data-slot='card'] > span.absolute,
+[data-style='modern'] input.peer ~ span.absolute,
+[data-style='modern'] textarea.peer ~ span.absolute,
+[data-style='modern'] div.peer.cursor-text > span.absolute,
+[data-style='modern'] button[aria-haspopup='listbox'] > span.absolute,
+[data-style='modern'] button[role='combobox'] > span.absolute,
+[data-style='modern'] .terminal-corners::before,
+[data-style='modern'] .terminal-corners::after,
+[data-style='modern'] .terminal-corners-bottom::before,
+[data-style='modern'] .terminal-corners-bottom::after {
+  display: none;
+}
+
+/* Elements styled with the terminal-corners frame get rounded corners instead,
+   and cards round more generously than their rounded-sm class provides */
+[data-style='modern'] .terminal-corners,
+[data-style='modern'] [data-slot='card'] {
+  border-radius: var(--radius-lg);
+}
+
+/* Modern style: closed, rounded form fields. The components render open
+   top/bottom borders (border-r-0 border-l-0); these unlayered rules win over
+   Tailwind's layered utilities, so the focus / invalid border colors must be
+   re-stated below or they would be permanently overridden. */
+[data-style='modern'] input.peer,
+[data-style='modern'] textarea.peer,
+[data-style='modern'] button[aria-haspopup='listbox'],
+[data-style='modern'] button[role='combobox'],
+[data-style='modern'] div.peer.cursor-text {
+  border-width: 1px;
+  border-radius: var(--radius-md);
+  border-color: var(--color-input-border);
+}
+
+[data-style='modern'] input.peer:focus,
+[data-style='modern'] textarea.peer:focus,
+[data-style='modern'] button[aria-haspopup='listbox']:focus,
+[data-style='modern'] button[role='combobox']:focus,
+[data-style='modern'] div.peer.cursor-text:focus-within {
+  border-color: var(--color-accent);
+}
+
+[data-style='modern'] input.peer[aria-invalid='true'],
+[data-style='modern'] textarea.peer[aria-invalid='true'],
+[data-style='modern'] button[aria-haspopup='listbox'][aria-invalid='true'],
+[data-style='modern'] button[role='combobox'][aria-invalid='true'] {
+  border-color: var(--color-status-offline);
+}
+
+/* Modern style: tab rails keep their side lines; only the outer corner ticks
+   round off, and the item highlight (selected or not) gets rounded edges to
+   match. */
+[data-style='modern'] div:has(> [role='tablist']) > span:first-child {
+  border-top-left-radius: var(--radius-md);
+}
+
+[data-style='modern'] div:has(> [role='tablist']) > span:last-child {
+  border-top-right-radius: var(--radius-md);
+}
+
+[data-style='modern'] [role='tablist'] [role='tab'] {
+  border-radius: var(--radius-sm);
+}
+
+/* Modern style: calm table chrome — drop the segmented per-cell rails and use
+   the single subtle border color everywhere instead of text-level borders */
+[data-style='modern'] .table-segmented-borders :is(td, th)::before,
+[data-style='modern'] .table-segmented-borders :is(td, th)::after {
+  content: none;
+}
+
+[data-style='modern'] table,
+[data-style='modern'] table :is(thead, tbody, tr, th, td) {
+  border-color: var(--color-border-dim);
+}
+
+/* Solid status backgrounds (e.g. destructive buttons) read best with white
+   text; the retro style pairs them with theme foreground in dark mode. */
+[data-style='modern'] .bg-status-offline {
+  color: #ffffff;
+}
+
+/* Sidebar items round like everything else (the component ships rounded-none) */
+[data-style='modern'] [data-sidebar='menu-button'] {
+  border-radius: var(--radius-md);
+}
+
+/* Tables are framed by their bordered container; the table's own outer
+   border-y would double up with it. */
+[data-style='modern'] .table-segmented-borders > table {
+  border-top-width: 0;
+  border-bottom-width: 0;
+}

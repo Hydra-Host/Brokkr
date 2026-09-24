@@ -1,8 +1,18 @@
 import { ActiveRecordRegistry } from '@repo/active-record';
 import { DeviceNetworkType, DeviceRole, DeviceStatus, ServerLifecycleStatus, TeeCapability } from '@repo/database';
 import { deviceSpecColumnsFixture } from '@repo/device-domain/testing';
+import { isRecord } from '@repo/utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InventoryRecord } from '../inventory.record';
+
+function prismaSqlText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(prismaSqlText).join(' ');
+  if (isRecord(value) && Array.isArray(value.strings)) {
+    return `${prismaSqlText(value.strings)} ${prismaSqlText(value.values)}`;
+  }
+  return '';
+}
 
 describe('InventoryRecord', () => {
   const mockDelegate = {
@@ -77,6 +87,16 @@ describe('InventoryRecord', () => {
         server: expect.objectContaining({ isListed: true }),
       });
       expect(args.where.isListed).toBeUndefined();
+      expect(args.where.OR).toBeUndefined();
+    });
+
+    it('findListings keeps null-supplier devices while excluding hidden suppliers', async () => {
+      mockDelegate.findMany.mockResolvedValue([]);
+
+      await InventoryRecord.findListings(undefined, undefined, ['supplier-hidden']);
+
+      const [args] = mockDelegate.findMany.mock.calls[0];
+      expect(args.where.OR).toEqual([{ supplierId: null }, { supplierId: { notIn: ['supplier-hidden'] } }]);
     });
   });
 
@@ -126,12 +146,49 @@ describe('InventoryRecord', () => {
 
       await InventoryRecord.getCategoryAvailability();
 
-      const sqlParts = queryRawMock.mock.calls[0][0] as string[];
-      const sql = sqlParts.join(' ');
+      const sqlParts = queryRawMock.mock.calls[0][0];
+      const sql = Array.isArray(sqlParts) ? sqlParts.join(' ') : String(sqlParts);
       expect(sql).toContain('dep."isInterruptible" = true');
       expect(sql).toContain('"InterruptibleClaim"');
       expect(sql).toContain('dep."endDate" IS NULL');
       expect(sql).not.toContain('ContractTerm');
+    });
+
+    it('listedSupplierIds selects distinct listed supplier ids', async () => {
+      queryRawMock.mockResolvedValue([{ supplierId: 'supplier-1' }]);
+
+      await expect(InventoryRecord.listedSupplierIds()).resolves.toEqual(['supplier-1']);
+
+      const sqlParts = queryRawMock.mock.calls[0][0];
+      const sql = Array.isArray(sqlParts) ? sqlParts.join(' ') : String(sqlParts);
+      expect(sql).toContain('SELECT DISTINCT');
+      expect(sql).toContain('bd."supplierId"');
+      expect(sql).toContain('s."isListed" = true');
+    });
+
+    it('getCategoryAvailability omits supplier exclusion when none are hidden', async () => {
+      queryRawMock.mockResolvedValue([]);
+
+      await InventoryRecord.getCategoryAvailability();
+
+      const sqlParts = queryRawMock.mock.calls[0][0];
+      const sql = Array.isArray(sqlParts) ? sqlParts.join(' ') : String(sqlParts);
+      expect(sql).not.toContain('supplierId" NOT IN');
+    });
+
+    it('getCategoryAvailability and getAllCategoryPrices exclude hidden suppliers', async () => {
+      queryRawMock.mockResolvedValue([]);
+
+      await InventoryRecord.getCategoryAvailability(['supplier-hidden']);
+      await InventoryRecord.getAllCategoryPrices(['supplier-hidden']);
+
+      expect(queryRawMock).toHaveBeenCalledTimes(2);
+      for (const call of queryRawMock.mock.calls) {
+        const sql = prismaSqlText(call);
+        expect(sql).toContain('bd."supplierId" IS NULL OR');
+        expect(sql).toContain('bd."supplierId" NOT IN');
+        expect(sql).toContain('supplier-hidden');
+      }
     });
   });
 

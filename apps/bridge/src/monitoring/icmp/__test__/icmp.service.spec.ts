@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { EventEmitter } from 'node:events';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   IcmpService,
@@ -6,8 +8,64 @@ import {
   createIcmpService,
   formatPingResponse,
   parsePingOutput,
+  pingBinary,
+  resetPingBinary,
+  resolvePingBinary,
   type PingMetrics,
 } from '../icmp.service';
+
+const spawnedArgv: string[][] = [];
+const existingBinaries = new Set<string>();
+let probeStdout = '';
+let probeExitCode = 0;
+let probeSpawnError: Error | null = null;
+
+class FakeChild extends EventEmitter {
+  stdout = new EventEmitter();
+  kill(): boolean {
+    return true;
+  }
+}
+
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+  return {
+    ...actual,
+    accessSync: (path: string) => {
+      if (!existingBinaries.has(path)) throw new Error(`ENOENT: ${path}`);
+    },
+  };
+});
+
+vi.mock('node:child_process', () => ({
+  spawn: (cmd: string, args: readonly string[]) => {
+    spawnedArgv.push([cmd, ...args]);
+    const child = new FakeChild();
+    setImmediate(() => {
+      if (probeSpawnError) {
+        child.emit('error', probeSpawnError);
+        return;
+      }
+      if (probeStdout.length > 0) child.stdout.emit('data', Buffer.from(probeStdout));
+      child.emit('close', probeExitCode, null);
+    });
+    return child;
+  },
+}));
+
+const GNU_SINGLE = `PING 10.0.0.1 (10.0.0.1) 56(84) bytes of data.
+
+--- 10.0.0.1 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 0.044/0.044/0.044/0.000 ms
+`;
+
+const BSD_SINGLE = `PING 10.0.0.1 (10.0.0.1): 56 data bytes
+
+--- 10.0.0.1 ping statistics ---
+1 packets transmitted, 1 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 0.044/0.044/0.044/0.000 ms
+`;
 
 function svc(): IcmpService {
   return new IcmpService('test');
@@ -168,6 +226,43 @@ rtt min/avg/max/mdev = 0.100/0.200/0.300/0.050 ms
     expect(m.packets_sent).toBe(0);
     expect(m.rtt_avg).toBeNull();
   });
+
+  it('parses a gnu single-packet reply', () => {
+    const m = parsePingOutput(GNU_SINGLE, 0);
+    expect(m.success).toBe(true);
+    expect(m.packets_sent).toBe(1);
+    expect(m.packets_received).toBe(1);
+    expect(m.packet_loss).toBe(0);
+    expect(m.reachable).toBe(1);
+    expect(m.rtt_avg).toBe(0.044);
+    expect(m.rtt_mdev).toBe(0);
+  });
+
+  it('parses a bsd single-packet reply', () => {
+    const m = parsePingOutput(BSD_SINGLE, 0);
+    expect(m.success).toBe(true);
+    expect(m.packets_sent).toBe(1);
+    expect(m.packets_received).toBe(1);
+    expect(m.packet_loss).toBe(0);
+    expect(m.reachable).toBe(1);
+    expect(m.rtt_min).toBe(0.044);
+    expect(m.rtt_avg).toBe(0.044);
+    expect(m.rtt_max).toBe(0.044);
+    expect(m.rtt_mdev).toBe(0);
+  });
+
+  it('parses a bsd total loss (rc=2)', () => {
+    const m = parsePingOutput('1 packets transmitted, 0 packets received, 100.0% packet loss\n', 2);
+    expect(m.success).toBe(true);
+    expect(m.reachable).toBe(0);
+    expect(m.packet_loss).toBe(100);
+  });
+
+  it('command not found (rc=127) marks failure', () => {
+    const m = parsePingOutput('', 127);
+    expect(m.success).toBe(false);
+    expect(m.error).toBeDefined();
+  });
 });
 
 describe('computeExtendedRttStats', () => {
@@ -263,5 +358,110 @@ describe('executeBatchPingTest', () => {
         defaultPacketSize: 56,
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe('resolvePingBinary', () => {
+  beforeEach(() => {
+    existingBinaries.clear();
+    resetPingBinary();
+  });
+
+  it('prefers /usr/bin/ping', () => {
+    for (const path of ['/usr/bin/ping', '/bin/ping', '/sbin/ping']) existingBinaries.add(path);
+    expect(resolvePingBinary()).toBe('/usr/bin/ping');
+  });
+
+  it('falls back to /bin/ping then /sbin/ping', () => {
+    existingBinaries.add('/bin/ping');
+    existingBinaries.add('/sbin/ping');
+    expect(resolvePingBinary()).toBe('/bin/ping');
+    existingBinaries.delete('/bin/ping');
+    expect(resolvePingBinary()).toBe('/sbin/ping');
+  });
+
+  it('falls back to the bare name when no candidate exists', () => {
+    expect(resolvePingBinary()).toBe('ping');
+  });
+
+  it('pingBinary memoizes until reset', () => {
+    existingBinaries.add('/sbin/ping');
+    expect(pingBinary()).toBe('/sbin/ping');
+    existingBinaries.add('/usr/bin/ping');
+    expect(pingBinary()).toBe('/sbin/ping');
+    resetPingBinary();
+    expect(pingBinary()).toBe('/usr/bin/ping');
+  });
+});
+
+describe('ping command composition', () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+
+  function setPlatform(value: string): void {
+    Object.defineProperty(process, 'platform', { value, configurable: true });
+  }
+
+  function waitArg(argv: readonly string[]): string {
+    return argv[argv.indexOf('-W') + 1];
+  }
+
+  beforeEach(() => {
+    existingBinaries.clear();
+    existingBinaries.add('/sbin/ping');
+    resetPingBinary();
+    spawnedArgv.length = 0;
+    probeStdout = BSD_SINGLE;
+    probeExitCode = 0;
+    probeSpawnError = null;
+  });
+
+  afterEach(() => {
+    if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform);
+  });
+
+  it('darwin passes -W in milliseconds through the resolved binary', async () => {
+    setPlatform('darwin');
+    const m = await svc().runPingCommandSecure('10.0.0.1', 1, 3, 56);
+    expect(spawnedArgv).toHaveLength(1);
+    expect(spawnedArgv[0][3]).toBe('/sbin/ping');
+    expect(waitArg(spawnedArgv[0])).toBe('3000');
+    expect(m.success).toBe(true);
+    expect(m.reachable).toBe(1);
+  });
+
+  it('linux passes -W in seconds', async () => {
+    setPlatform('linux');
+    probeStdout = GNU_SINGLE;
+    const m = await svc().runPingCommandSecure('10.0.0.1', 1, 3, 56);
+    expect(spawnedArgv[0][3]).toBe('/sbin/ping');
+    expect(waitArg(spawnedArgv[0])).toBe('3');
+    expect(m.reachable).toBe(1);
+  });
+
+  it('extended ping uses the same binary and wait scaling per packet', async () => {
+    setPlatform('darwin');
+    probeStdout = '64 bytes from 10.0.0.1: icmp_seq=0 ttl=64 time=0.044 ms\n';
+    const m = await svc().runExtendedPingSecure('10.0.0.1', 2, 3, 56, 0);
+    expect(spawnedArgv).toHaveLength(2);
+    for (const argv of spawnedArgv) {
+      expect(argv[3]).toBe('/sbin/ping');
+      expect(waitArg(argv)).toBe('3000');
+    }
+    expect(m.packets_received).toBe(2);
+    expect(m.reachable).toBe(1);
+  });
+
+  it('a spawn failure marks the probe as not run', async () => {
+    probeSpawnError = new Error('spawn ENOENT');
+    const m = await svc().runPingCommandSecure('10.0.0.1', 1, 3, 56);
+    expect(m.success).toBe(false);
+    expect(m.reachable).toBe(0);
+  });
+
+  it('a command-not-found exit marks the probe as not run', async () => {
+    probeStdout = '';
+    probeExitCode = 127;
+    const m = await svc().runPingCommandSecure('10.0.0.1', 1, 3, 56);
+    expect(m.success).toBe(false);
   });
 });

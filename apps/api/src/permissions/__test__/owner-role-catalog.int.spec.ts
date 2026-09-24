@@ -1,5 +1,6 @@
-import { isOwnerCapable, MAIN_APP_PERMISSIONS } from '@repo/auth/rbac';
+import { isOwnerCapable } from '@repo/auth/rbac';
 import { createPrismaClient, type PrismaClient } from '@repo/database';
+import { MAIN_APP_PERMISSIONS } from 'src/permissions/permissions.constants';
 import { seedPermissions } from 'src/scripts/rbac/permissions';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 

@@ -824,7 +824,8 @@ To discover available OS slugs for a server, run `brokkr dcim servers <id> --jso
 | `--ipxe-url <url>`        | string  | —              | Custom iPXE script URL (for `ipxe-custom` OS)                                                                                                                                                        |
 | `--customizations <json>` | string  | —              | Layer customizations as JSON object (e.g. `{"gpuDriver":"nvidia-driver-580","miscSoftware":["docker"]}`). Optional, null = un-customized base. See `availableComponentLayersByBase` on server detail |
 | `--project-id <id>`       | string  | —              | Project ID to assign the deployment to                                                                                                                                                               |
-| `--contract-type <type>`  | string  | —              | `ON_DEMAND`, `INTERRUPTIBLE`, `RESERVED_ROLLING`, or `RESERVED`                                                                                                                                      |
+| `--contract-type <type>`  | string  | —              | Only `RESERVED_ROLLING` until commerce billing is ready. Other values are rejected.                                                                                                                  |
+| `--interruptible`         | boolean | false          | Deprecated; always rejected. Use `--contract-type=RESERVED_ROLLING`.                                                                                                                                 |
 | `--force`                 | boolean | false          | Skip confirmation prompt                                                                                                                                                                             |
 | `--json`                  | boolean | false          | Output machine-readable JSON                                                                                                                                                                         |
 
@@ -1916,7 +1917,7 @@ brokkr inventory:rent <id> \
   --name "my-server" \
   --os ubuntu-plucky-vanilla \
   --ssh-keys "uuid1,uuid2" \
-  --contract-type ON_DEMAND \
+  --contract-type RESERVED_ROLLING \
   --project-id <project-uuid> \
   --force \
   --json
@@ -1929,7 +1930,7 @@ brokkr inventory:rent <id> \
 | `--name <name>`           | Deployment name                                                                                                                                                                     |
 | `--os <slug>`             | Base layer slug from `inventory <id>` availableBaseLayers                                                                                                                           |
 | `--ssh-keys <ids>`        | Comma-separated SSH key UUIDs                                                                                                                                                       |
-| `--contract-type <type>`  | `ON_DEMAND` \| `INTERRUPTIBLE` \| `RESERVED_ROLLING` \| `RESERVED`                                                                                                                  |
+| `--contract-type <type>`  | Only `RESERVED_ROLLING` until commerce billing is ready. Other values (and `--interruptible`) are rejected.                                                                         |
 | `--project-id <id>`       | Project UUID to assign the deployment to                                                                                                                                            |
 | `--disk-layout <json>`    | JSON array of disk layout objects (defaults to device's recommended layout)                                                                                                         |
 | `--cloud-init <yaml>`     | Cloud-init user data as YAML string                                                                                                                                                 |

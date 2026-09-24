@@ -328,9 +328,11 @@ describe('composeBootReadiness', () => {
       ['bm-2', 'PXE-111', null],
     ]);
     expect(report.findings[0].detail).toBe(
-      `PXE-110 (error): The bridge refused this machine's PXE request at ${new Date(AT_MS).toISOString()}: its MAC is not in the proxy allowlist.`,
+      `PXE-110 (error): The bridge refused the PXE request from bm-1 at ${new Date(AT_MS).toISOString()}: its MAC is not in the proxy allowlist.`,
     );
-    expect(report.findings[1].detail).toBe('PXE-111 (warn): No PXE request from this machine has reached the bridge.');
+    expect(report.findings[1].detail).toBe(
+      'PXE-111 (warn): No PXE request from bm-2 has reached the bridge since a network boot was expected at 1970-01-01T00:00:00.000Z.',
+    );
     expect(report.summary).toEqual({ checked: 2, ok: 0, findings: 2 });
   });
 

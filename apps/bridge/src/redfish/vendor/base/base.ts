@@ -320,6 +320,7 @@ export class RedfishDevice {
   rebootTimeout: number;
   rebootWaits: number;
   rebootNeeded = false;
+  lastHostResetAt: number | null = null; // epoch seconds
   biosRetryAttempts = 15;
 
   callStack: CallStackEntry[] = [];

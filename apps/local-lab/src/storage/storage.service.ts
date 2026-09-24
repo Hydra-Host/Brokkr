@@ -4,7 +4,7 @@ import { homedir, arch as osArch } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 
-import { getErrorMessage } from '@repo/utils';
+import { buildDiscoveryManifestUrl, discoveryRootUrl, getErrorMessage, withFlavorSuffix } from '@repo/utils';
 import { DiscoveryInventorySchema, type ArchInv } from '../common/discovery-inventory';
 import { sleep } from '../common/sleep';
 import type {
@@ -36,13 +36,6 @@ const RESYNC_TIMEOUT_MS = 180_000;
 // a cold CDN edge answers a multi-KB manifest in well under this; the default 3 s read a slow one as unverified
 const MANIFEST_TIMEOUT_MS = 20_000;
 const NO_SPOKE_ENV = 'spoke env unreadable — path unknown';
-
-// the bridge's own url rule (sync/brokkr-live-https-sync.service.ts), restated because the lab imports neither app
-const FLAVOR_URL_SUFFIX: Record<string, string> = { light: '-light' };
-
-export function flavorBaseUrl(root: string, flavor: string): string {
-  return `${root.replace(/\/+$/, '')}${FLAVOR_URL_SUFFIX[flavor] ?? ''}`;
-}
 
 // the bridge status route is snake_case on the wire; the contract keeps the lab's camelCase
 const wireDiscoverySyncSchema = DiscoverySyncSchema.omit({ baseUrl: true }).extend({ base_url: z.string() });
@@ -318,7 +311,9 @@ export class StorageService {
     const results: StorageVerifyResult['results'] = [];
     for (const a of inv) {
       const local = discoveryDir === null ? {} : readCacheMetadata(join(discoveryDir, a.flavor, a.arch));
-      const manifest = await fetchManifest(`${flavorBaseUrl(baseUrl, a.flavor)}/${version}/${a.arch}/manifest.json`);
+      const manifest = await fetchManifest(
+        buildDiscoveryManifestUrl(discoveryRootUrl(baseUrl), withFlavorSuffix(version, a.flavor), a.arch),
+      );
       for (const f of a.files) {
         results.push({
           flavor: a.flavor,

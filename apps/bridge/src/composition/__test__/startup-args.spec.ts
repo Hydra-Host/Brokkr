@@ -1,14 +1,27 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildStartupArgs, closeZoneCryptoBootstrapCache } from '../startup-args.js';
 
-const { closeSpy } = vi.hoisted(() => ({ closeSpy: vi.fn(() => Promise.resolve()) }));
+const { closeSpy } = vi.hoisted(() => {
+  vi.stubEnv('BRIDGE_API_VERSION', '9.9.9');
+  return { closeSpy: vi.fn(() => Promise.resolve()) };
+});
 
 vi.mock('../../common/redis/redis-client/redis.client.js', () => ({
   RedisClient: class {
     close = closeSpy;
   },
 }));
+
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
+
+describe('buildStartupArgs', () => {
+  it('startup args carry the bridge version from BRIDGE_API_VERSION, not BRIDGE_VERSION', () => {
+    expect(buildStartupArgs({ BRIDGE_VERSION: '0.0.0' }).sync.appConfig.version).toBe('9.9.9');
+  });
+});
 
 describe('closeZoneCryptoBootstrapCache', () => {
   beforeEach(() => {

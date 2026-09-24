@@ -7,7 +7,6 @@ import {
   permissionKeysToRecord,
 } from '@repo/auth';
 import {
-  MAIN_APP_PERMISSIONS,
   normalizePermissionSet,
   RbacResolverService,
   roleBelongsToCatalog,
@@ -20,6 +19,7 @@ import { getErrorMessage } from 'src/common/error-utils';
 import { EventLogService } from 'src/event-log/event-log.service';
 import type { EventLogMetadata, EventLogWrite } from 'src/event-log/event-log.types';
 import { LoggerService } from 'src/logger/logger.service';
+import { MAIN_APP_PERMISSIONS } from 'src/permissions/permissions.constants';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { apiKeysPaginationConfig } from './organization-api-keys.pagination';
 

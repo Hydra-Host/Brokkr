@@ -167,3 +167,58 @@ exit 1'
     [[ "$output" == *"\"$key\":"* ]]
   done
 }
+
+@test "a pinned slot re-points a claim whose bring-up never completed" {
+  stack_registry_claim auto "$WTA" /tmp/devenv-aaa >/dev/null
+  slot=$(stack_registry_claim 4 "$WTA" /tmp/devenv-aaa 1 2>/dev/null)
+  [ "$slot" = 4 ]
+  [ ! -e "$(registry_dir)/stack-0.json" ]
+  [ -e "$(registry_dir)/stack-4.json" ]
+}
+
+@test "re-pointing an unused claim says which slot it released" {
+  stack_registry_claim auto "$WTA" /tmp/devenv-aaa >/dev/null
+  run stack_registry_claim 4 "$WTA" /tmp/devenv-aaa 1
+  [[ "$output" == *"releasing the unused slot-0 claim"* ]]
+}
+
+@test "a claim that already came up still refuses a different slot" {
+  stack_registry_claim auto "$WTA" /tmp/devenv-aaa >/dev/null
+  run stack_registry_claim 4 "$WTA" /tmp/devenv-aaa 0
+  [ "$status" -eq 3 ]
+  [[ "$output" == *stack:reslot* ]]
+  [ -e "$(registry_dir)/stack-0.json" ]
+}
+
+@test "a claim with a live supervisor refuses a different slot even when unapplied" {
+  stack_registry_claim auto "$WTA" /tmp/devenv-aaa >/dev/null
+  stack_registry_refresh_pid 0 "$$" '{}' >/dev/null
+  run stack_registry_claim 4 "$WTA" /tmp/devenv-aaa 1
+  [ "$status" -eq 3 ]
+  [[ "$output" == *stack:reslot* ]]
+  [ -e "$(registry_dir)/stack-0.json" ]
+}
+
+@test "an unapplied re-point does not disturb another checkout's claim" {
+  stack_registry_claim auto "$WTA" /tmp/devenv-aaa >/dev/null
+  stack_registry_claim auto "$WTB" /tmp/devenv-bbb >/dev/null
+  run stack_registry_claim 4 "$WTA" /tmp/devenv-aaa 1
+  [ "$status" -eq 0 ]
+  [ -e "$(registry_dir)/stack-1.json" ]
+  run stack_registry_claim auto "$WTB" /tmp/devenv-bbb
+  [ "$output" = 1 ]
+}
+
+@test "an entry with an unreadable pid is never treated as unused" {
+  stack_registry_claim auto "$WTA" /tmp/devenv-aaa >/dev/null
+  printf 'not json' >"$(registry_dir)/stack-0.json"
+  run _stack_registry_entry_unused_nl "$(registry_dir)/stack-0.json"
+  [ "$status" -ne 0 ]
+}
+
+@test "an auto claim keeps its own slot even when nothing was ever brought up" {
+  stack_registry_claim auto "$WTA" /tmp/devenv-aaa >/dev/null
+  run stack_registry_claim auto "$WTA" /tmp/devenv-aaa 1
+  [ "$status" -eq 0 ]
+  [ "$output" = 0 ]
+}

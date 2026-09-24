@@ -8,6 +8,7 @@ import { FilterBuilder } from '@repo/ui/components/filter-builder';
 import { Input } from '@repo/ui/components/input';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@repo/ui/components/tooltip';
+import { cn } from '@repo/ui/utils';
 import type { useServerTable } from '../hooks/use-server-table';
 import { ServerPagination } from './server-pagination';
 
@@ -26,6 +27,7 @@ interface ServerDataTableProps<TData> {
   onRowClick?: (row: TData) => void;
   onRowSelectionChange?: (count: number) => void;
   tableInstanceRef?: MutableRefObject<TableType<TData> | null>;
+  className?: string;
 }
 
 export function ServerDataTable<TData>({
@@ -43,6 +45,7 @@ export function ServerDataTable<TData>({
   onRowClick,
   onRowSelectionChange,
   tableInstanceRef,
+  className,
 }: ServerDataTableProps<TData>) {
   const hasFilters = table.filterFields && table.filterFields.length > 0;
   const searchRef = useRef<HTMLInputElement>(null);
@@ -66,8 +69,8 @@ export function ServerDataTable<TData>({
   }, []);
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2 md:flex-nowrap md:gap-4">
+    <div className={cn('flex min-h-0 min-w-0 flex-col gap-4', className)}>
+      <div className="flex shrink-0 flex-wrap items-center gap-2 md:flex-nowrap md:gap-4">
         <div className="relative w-full shrink-0 md:w-auto">
           {isFetching ? (
             <Loader2 className="text-muted-foreground absolute top-1/2 left-2 z-10 h-4 w-4 -translate-y-1/2 animate-spin" />
@@ -128,7 +131,7 @@ export function ServerDataTable<TData>({
         {toolbar}
       </div>
 
-      <div className="relative">
+      <div className="relative min-h-0 min-w-0 grow overflow-auto">
         {isFetching && !isPending && (
           <div className="bg-accent/10 absolute top-0 right-0 left-0 z-10 h-0.5 overflow-hidden">
             <div
@@ -140,31 +143,32 @@ export function ServerDataTable<TData>({
         {isPending ? (
           <TableSkeleton columnCount={table.columns.length} />
         ) : (
-          <div>
-            <DataTable
-              columns={table.columns}
-              data={data}
-              name={table.name}
-              emptyMessage={emptyMessage}
-              sorting={table.sorting}
-              onSortingChange={table.onSortingChange}
-              columnVisibility={table.columnVisibility}
-              renderTableActions={renderTableActions}
-              onRowClick={onRowClick}
-              onRowSelectionChange={onRowSelectionChange}
-              tableInstanceRef={tableInstanceRef}
-            />
-          </div>
+          <DataTable
+            columns={table.columns}
+            data={data}
+            name={table.name}
+            emptyMessage={emptyMessage}
+            sorting={table.sorting}
+            onSortingChange={table.onSortingChange}
+            columnVisibility={table.columnVisibility}
+            renderTableActions={renderTableActions}
+            onRowClick={onRowClick}
+            onRowSelectionChange={onRowSelectionChange}
+            tableInstanceRef={tableInstanceRef}
+            overflow="visible"
+          />
         )}
       </div>
 
       {meta && !isPending && (
-        <ServerPagination
-          meta={meta}
-          onPageChange={table.setPage}
-          pageSize={table.pageSize}
-          onPageSizeChange={table.setPageSize}
-        />
+        <div className="shrink-0">
+          <ServerPagination
+            meta={meta}
+            onPageChange={table.setPage}
+            pageSize={table.pageSize}
+            onPageSizeChange={table.setPageSize}
+          />
+        </div>
       )}
     </div>
   );

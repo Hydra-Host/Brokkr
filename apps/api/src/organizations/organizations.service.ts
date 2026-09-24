@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { CreateOrganizationRequest, UpdateOrganizationRequest } from '@repo/api-client';
 import type { SecondaryStorage } from '@repo/auth';
-import { MAIN_APP_PERMISSIONS, RbacResolverService, roleBelongsToCatalog } from '@repo/auth/rbac';
+import { RbacResolverService, roleBelongsToCatalog } from '@repo/auth/rbac';
 import { OrganizationMembershipRole, TenantType } from '@repo/database';
 import { paginateArray, type PaginationQuery } from '@repo/database/pagination';
 import { ContextService } from 'src/common/context/context.service';
@@ -19,6 +19,7 @@ import { getErrorMessage } from 'src/common/error-utils';
 import { DeploymentProjectRecord } from 'src/deployments/deployment-project.record';
 import { EventLogService } from 'src/event-log/event-log.service';
 import { LoggerService } from 'src/logger/logger.service';
+import { MAIN_APP_PERMISSIONS } from 'src/permissions/permissions.constants';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { AllowedOrgTypesProvider } from './allowed-org-types.provider';
 import { OrganizationMembershipsRepository } from './members/organization-members.repository';

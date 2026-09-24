@@ -38,6 +38,7 @@ describe('HTTPS sync retry loop', () => {
     process.env.PERSISTENT_STORAGE_PATH = baseDir;
     process.env.HTTPS_RETRY_ATTEMPTS = '3';
     process.env.HTTPS_RETRY_DELAY = '0';
+    process.env.BROKKR_LIVE_VERSION = '1.2.3';
     resetPersistentStorageConfig();
     resetStorageConfig();
     resetSyncConfig();
@@ -47,6 +48,7 @@ describe('HTTPS sync retry loop', () => {
     delete process.env.PERSISTENT_STORAGE_PATH;
     delete process.env.HTTPS_RETRY_ATTEMPTS;
     delete process.env.HTTPS_RETRY_DELAY;
+    delete process.env.BROKKR_LIVE_VERSION;
     resetPersistentStorageConfig();
     resetStorageConfig();
     resetSyncConfig();
@@ -197,6 +199,7 @@ describe('HTTPS sync per-chunk read timeout', () => {
     process.env.HTTPS_RETRY_ATTEMPTS = '1';
     process.env.HTTPS_RETRY_DELAY = '0';
     process.env.HTTPS_STALL_TIMEOUT = '0';
+    process.env.BROKKR_LIVE_VERSION = '1.2.3';
     resetPersistentStorageConfig();
     resetStorageConfig();
     resetSyncConfig();
@@ -206,6 +209,7 @@ describe('HTTPS sync per-chunk read timeout', () => {
     delete process.env.PERSISTENT_STORAGE_PATH;
     delete process.env.HTTPS_RETRY_ATTEMPTS;
     delete process.env.HTTPS_RETRY_DELAY;
+    delete process.env.BROKKR_LIVE_VERSION;
     delete process.env.HTTPS_STALL_TIMEOUT;
     resetPersistentStorageConfig();
     resetStorageConfig();
@@ -247,6 +251,7 @@ describe('HTTPS sync download stall vs. overall timeout budgets', () => {
     process.env.PERSISTENT_STORAGE_PATH = baseDir;
     process.env.HTTPS_RETRY_ATTEMPTS = '1';
     process.env.HTTPS_RETRY_DELAY = '0';
+    process.env.BROKKR_LIVE_VERSION = '1.2.3';
     resetPersistentStorageConfig();
     resetStorageConfig();
     resetSyncConfig();
@@ -256,6 +261,7 @@ describe('HTTPS sync download stall vs. overall timeout budgets', () => {
     delete process.env.PERSISTENT_STORAGE_PATH;
     delete process.env.HTTPS_RETRY_ATTEMPTS;
     delete process.env.HTTPS_RETRY_DELAY;
+    delete process.env.BROKKR_LIVE_VERSION;
     delete process.env.HTTPS_STALL_TIMEOUT;
     delete process.env.HTTPS_DOWNLOAD_TIMEOUT;
     resetPersistentStorageConfig();

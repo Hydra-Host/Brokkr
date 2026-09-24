@@ -1,11 +1,12 @@
 import * as nunjucks from 'nunjucks';
 
-import { deviceServerToken } from '../common/redis/redis-keys';
-import type { ServerTokenAtom } from '../device-record/atom/server-token.schema';
+import { deviceDeployToken } from '../common/redis/redis-keys';
+import type { AtomFetchRequest } from '../device-record/atom/atom-fetcher';
+import type { DeployTokenAtom } from '../device-record/atom/deploy-token.schema';
 import type { DiscoveryFlavor } from '../download/discovery.config';
 import { logDebug } from '../logger/logger.service';
 
-import { IpxeServerTokenUnavailableError, IpxeServiceError } from './ipxe-errors';
+import { IpxeDeployTokenUnavailableError, IpxeServiceError } from './ipxe-errors';
 import { normalizeMacForInitrd } from './ipxe-renderer.helpers';
 import type { IpxeConfig } from './ipxe.config';
 
@@ -14,14 +15,9 @@ export const RETRY_SLEEP_SECONDS = 5;
 // eslint-disable-next-line no-control-regex -- deliberate: match C0 control chars + DEL
 const CONTROL_CHAR_RE = new RegExp('[\\u0000-\\u001f\\u007f]');
 
-export interface ServerTokenAtomRequest {
-  domain: 'server_token';
-  entityId: string;
-  atomKey: string;
-  jobId: string;
-}
+export type DeployTokenAtomRequest = AtomFetchRequest<'deploy_token'>;
 
-export type ServerTokenAtomFetcher = (request: ServerTokenAtomRequest) => Promise<ServerTokenAtom | null>;
+export type DeployTokenAtomFetcher = (request: DeployTokenAtomRequest) => Promise<DeployTokenAtom | null>;
 
 export interface RenderDiscoveryArgs {
   arch: string;
@@ -71,7 +67,7 @@ export class IpxeTemplateRenderer {
 
   constructor(
     private readonly config: IpxeConfig,
-    private readonly getServerTokenAtom: ServerTokenAtomFetcher,
+    private readonly getDeployTokenAtom: DeployTokenAtomFetcher,
   ) {
     this.env = new nunjucks.Environment(new nunjucks.FileSystemLoader(config.assetsDir), {
       autoescape: false,
@@ -136,22 +132,22 @@ export class IpxeTemplateRenderer {
     const jobId = args.job_id ?? '';
     const effectiveJobId = jobId || `ipxe-${args.device_id}`;
 
-    const token = await this.getServerTokenAtom({
-      domain: 'server_token',
+    const token = await this.getDeployTokenAtom({
+      domain: 'deploy_token',
       entityId: args.device_id,
-      atomKey: deviceServerToken(args.device_id),
+      atomKey: deviceDeployToken(args.device_id),
       jobId: effectiveJobId,
     });
     if (token === null) {
-      throw new IpxeServerTokenUnavailableError(
-        `server_token atom unavailable for device ${args.device_id} (hub render request timed out or returned negative-cache)`,
+      throw new IpxeDeployTokenUnavailableError(
+        `deploy_token atom unavailable for device ${args.device_id} (hub render request timed out or returned negative-cache)`,
       );
     }
 
     for (const [field, value] of [
       ['ipxe_url', args.ipxe_url],
       ['phone_home_endpoint', token.endpoint],
-      ['brokkr_live_token', token.brokkr_live_token],
+      ['deployment_os_token', token.deployment_os_token],
     ] as const) {
       if (CONTROL_CHAR_RE.test(value)) {
         throw new IpxeServiceError(`custom iPXE ${field} contains control characters; refusing to render`);
@@ -165,7 +161,7 @@ export class IpxeTemplateRenderer {
     return this.renderTemplate('custom.ipxe.njk', {
       ipxe_url: args.ipxe_url,
       device_id: args.device_id,
-      brokkr_live_token: token.brokkr_live_token,
+      deployment_os_token: token.deployment_os_token,
       job_id: effectiveJobId,
       phone_home_endpoint: token.endpoint,
     });

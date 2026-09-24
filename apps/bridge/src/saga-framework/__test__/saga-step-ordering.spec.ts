@@ -8,6 +8,7 @@ const stepNames = (saga: { steps: ReadonlyArray<{ name: string }> }): string[] =
 describe('destructive saga step-name sequences', () => {
   it('provision saga has the expected ordered step sequence', () => {
     expect(stepNames(PROVISION_SAGA)).toEqual([
+      'disarm_custom_ipxe_boot',
       'brokkr_live_check',
       'live_reboot_power_off',
       'live_reboot_verify_power_off',

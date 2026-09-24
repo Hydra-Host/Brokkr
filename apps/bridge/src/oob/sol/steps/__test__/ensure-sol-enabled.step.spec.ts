@@ -43,27 +43,18 @@ const ENABLED_RESULT = {
 
 const CREDS = sealedBmcPayload();
 
-function makeStep(opts: { simEnabled: boolean; ensureSolEnabled?: ReturnType<typeof vi.fn> }) {
+function makeStep(opts: { ensureSolEnabled?: ReturnType<typeof vi.fn> } = {}) {
   const ensureSolEnabled = opts.ensureSolEnabled ?? vi.fn().mockResolvedValue(ENABLED_RESULT);
   const service = { ensureSolEnabled };
   const factory = { create: vi.fn().mockResolvedValue(service) };
   const logger = makeLogger();
-  const simMode = { isLocalSimulationEnabled: vi.fn().mockReturnValue(opts.simEnabled) };
-  const step = new EnsureSolEnabledStep(factory, logger, simMode);
-  return { step, factory, ensureSolEnabled, logger, simMode };
+  const step = new EnsureSolEnabledStep(factory, logger);
+  return { step, factory, ensureSolEnabled, logger };
 }
 
 describe('EnsureSolEnabledStep', () => {
-  it('skips with the sim envelope when local simulation is enabled', async () => {
-    const { step, factory, logger } = makeStep({ simEnabled: true });
-    const result = await step.execute(makeContext(CREDS));
-    expect(result).toEqual({ sol_ready: false, reason: 'local_simulation_enabled' });
-    expect(factory.create).not.toHaveBeenCalled();
-    expect(logger.info).toHaveBeenCalledWith('[sim] SOL prerequisites skipped', { jobId: 'job-abc' });
-  });
-
   it('returns the success envelope, spreading the service result onto sol_ready', async () => {
-    const { step, factory, ensureSolEnabled } = makeStep({ simEnabled: false });
+    const { step, factory, ensureSolEnabled } = makeStep();
     const result = await step.execute(makeContext({ ...CREDS, device_id: 'device-1' }));
     expect(result).toEqual({ sol_ready: true, ...ENABLED_RESULT });
     expect(factory.create).toHaveBeenCalledWith('job-abc');
@@ -77,25 +68,25 @@ describe('EnsureSolEnabledStep', () => {
   });
 
   it('passes deviceId null when the payload omits device_id (no shared LAN-channel cache key)', async () => {
-    const { step, ensureSolEnabled } = makeStep({ simEnabled: false });
+    const { step, ensureSolEnabled } = makeStep();
     await step.execute(makeContext(CREDS));
     expect(ensureSolEnabled).toHaveBeenCalledWith(expect.objectContaining({ deviceId: null }));
   });
 
   it('resolves the BMC address from bmc_ip', async () => {
-    const { step, ensureSolEnabled } = makeStep({ simEnabled: false });
+    const { step, ensureSolEnabled } = makeStep();
     await step.execute(makeContext(CREDS));
     expect(ensureSolEnabled).toHaveBeenCalledWith(expect.objectContaining({ bmcIp: '10.0.0.5' }));
   });
 
   it('passes the supplied port through instead of the default', async () => {
-    const { step, ensureSolEnabled } = makeStep({ simEnabled: false });
+    const { step, ensureSolEnabled } = makeStep();
     await step.execute(makeContext({ ...CREDS, port: 6230 }));
     expect(ensureSolEnabled).toHaveBeenCalledWith(expect.objectContaining({ port: 6230 }));
   });
 
   it('returns the non-fatal envelope when the sealed credential payload is absent', async () => {
-    const { step, ensureSolEnabled, logger } = makeStep({ simEnabled: false });
+    const { step, ensureSolEnabled, logger } = makeStep();
     const result = await step.execute(makeContext({ bmc_ip: '10.0.0.5' }));
     expect(result).toMatchObject({ sol_ready: false, reason: expect.stringContaining('BMC credential payload') });
     expect(ensureSolEnabled).not.toHaveBeenCalled();
@@ -104,7 +95,7 @@ describe('EnsureSolEnabledStep', () => {
 
   it('returns the non-fatal error envelope when the service throws', async () => {
     const ensureSolEnabled = vi.fn().mockRejectedValue(new Error('BMC unreachable'));
-    const { step, logger } = makeStep({ simEnabled: false, ensureSolEnabled });
+    const { step, logger } = makeStep({ ensureSolEnabled });
     const result = await step.execute(makeContext(CREDS));
     expect(result).toEqual({ sol_ready: false, reason: 'BMC unreachable' });
     expect(logger.warning).toHaveBeenCalledWith('SOL prerequisite check failed (non-fatal): BMC unreachable', {
@@ -113,7 +104,7 @@ describe('EnsureSolEnabledStep', () => {
   });
 
   it('returns the non-fatal envelope when the sealed secret is absent (bmc_ip alone is not enough)', async () => {
-    const { step, ensureSolEnabled } = makeStep({ simEnabled: false });
+    const { step, ensureSolEnabled } = makeStep();
     const result = await step.execute(makeContext({ bmc_ip: '10.0.0.5' }));
     expect(result).toEqual({ sol_ready: false, reason: expect.stringContaining('Missing or invalid BMC credential') });
     expect(ensureSolEnabled).not.toHaveBeenCalled();

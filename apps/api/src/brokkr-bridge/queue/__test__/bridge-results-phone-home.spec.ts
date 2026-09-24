@@ -5,6 +5,7 @@ import { SealedEnvelopeService } from 'src/crypto/sealed-envelope.service';
 import { DeviceSecretAuditService } from 'src/device-secret/device-secret-audit.service';
 import { DeviceTestRunsService } from 'src/device-test-runs/device-test-runs.service';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { LifecycleInboundService } from 'src/lifecycle/inbound/lifecycle-inbound.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { SanitizationReportService } from 'src/sanitization-reports/sanitization-report.service';
@@ -80,6 +81,7 @@ describe('BridgeResultsConsumer — Brokkr Live phone-home zone correlation', ()
           provide: DeviceTokensService,
           useValue: { revokeBrokkrLiveTokensForDevice: vi.fn().mockResolvedValue(undefined) },
         },
+        { provide: RedisPubSubService, useValue: { publish: vi.fn().mockResolvedValue(undefined) } },
         {
           provide: LifecycleInboundService,
           useValue: { applyStepResult: vi.fn(), applyJobCompleted: vi.fn(), applyPhoneHome: vi.fn() },

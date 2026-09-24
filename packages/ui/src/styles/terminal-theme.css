@@ -178,7 +178,7 @@
 
 .terminal-table-row-selected {
   background: var(--color-accent);
-  color: #0b0f12;
+  color: var(--color-accent-foreground, #0a0e12);
 }
 
 /* Terminal Button Base */
@@ -195,7 +195,7 @@
 
 .terminal-btn-primary {
   background: var(--color-accent);
-  color: #0a0e12;
+  color: var(--color-accent-foreground, #0a0e12);
 }
 
 .terminal-btn-primary:hover {
@@ -210,7 +210,7 @@
 
 .terminal-btn-outline:hover {
   background: var(--color-accent);
-  color: #0a0e12;
+  color: var(--color-accent-foreground, #0a0e12);
 }
 
 .terminal-btn-ghost {

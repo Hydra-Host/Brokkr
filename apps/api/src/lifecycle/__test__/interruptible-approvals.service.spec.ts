@@ -1,11 +1,10 @@
-import { HttpException } from '@nestjs/common';
+import { BadRequestException, HttpException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AdminLifecycleRequestStatus, RequestSource } from '@repo/database';
-import { ContextService } from 'src/common/context/context.service';
+import { ContractType, reservedRollingOnlyRejectionMessage } from '@repo/utils';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { InterruptibleApprovalsService } from '../interruptible-approvals.service';
-import { LifecycleService } from '../lifecycle.service';
 
 const provisionRequest = {
   deviceId: 'incoming-device',
@@ -43,28 +42,13 @@ describe('InterruptibleApprovalsService', () => {
       update: vi.fn().mockResolvedValue({}),
     },
   };
-  const contextService = { userId: 'admin-user' };
-  const lifecycleService = {
-    executeInterruptibleProvision: vi
-      .fn()
-      .mockResolvedValue({ deprovisionJobId: 'd-1', incomingJobId: 'i-1', claimId: 'c-1' }),
-  };
 
   let service: InterruptibleApprovalsService;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     const moduleRef = await Test.createTestingModule({
-      providers: [
-        InterruptibleApprovalsService,
-        { provide: PrismaClient, useValue: prisma },
-        { provide: ContextService, useValue: contextService },
-        { provide: LifecycleService, useValue: lifecycleService },
-        {
-          provide: 'LoggerServiceInterruptibleApprovalsService',
-          useValue: { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-        },
-      ],
+      providers: [InterruptibleApprovalsService, { provide: PrismaClient, useValue: prisma }],
     }).compile();
     service = moduleRef.get(InterruptibleApprovalsService);
   });
@@ -94,42 +78,17 @@ describe('InterruptibleApprovalsService', () => {
   });
 
   describe('authorize', () => {
-    it('executes the eviction and marks the request EXECUTED', async () => {
-      prisma.adminLifecycleRequest.findUnique.mockResolvedValue(pendingRequest());
-
-      const result = await service.authorize('request-1');
-
-      expect(lifecycleService.executeInterruptibleProvision).toHaveBeenCalledWith({
-        deviceId: 'host-device',
-        request: expect.objectContaining({ deviceId: 'incoming-device', deploymentName: 'new-box' }),
-        expectedDeploymentId: 'outgoing-dep',
+    it('rejects interruptible takeovers until commerce billing is ready', async () => {
+      await expect(service.authorize('request-1')).rejects.toMatchObject({
+        response: { message: reservedRollingOnlyRejectionMessage(ContractType.INTERRUPTIBLE) },
       });
-      expect(prisma.adminLifecycleRequest.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'request-1' },
-          data: expect.objectContaining({
-            status: 'EXECUTED',
-            approvedById: 'admin-user',
-          }),
-        }),
-      );
-      expect(result).toEqual({ success: true });
-    });
-
-    it('throws 404 when the request does not exist', async () => {
-      prisma.adminLifecycleRequest.findUnique.mockResolvedValue(null);
-      await expect(service.authorize('missing')).rejects.toBeInstanceOf(HttpException);
-      expect(lifecycleService.executeInterruptibleProvision).not.toHaveBeenCalled();
-    });
-
-    it('throws 400 when the request is not PENDING', async () => {
-      prisma.adminLifecycleRequest.findUnique.mockResolvedValue(
-        pendingRequest({ status: AdminLifecycleRequestStatus.EXECUTED }),
-      );
-
-      await expect(service.authorize('request-1')).rejects.toThrow(/status EXECUTED/);
-      expect(lifecycleService.executeInterruptibleProvision).not.toHaveBeenCalled();
+      expect(prisma.adminLifecycleRequest.findUnique).not.toHaveBeenCalled();
       expect(prisma.adminLifecycleRequest.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects even when a pending request exists', async () => {
+      prisma.adminLifecycleRequest.findUnique.mockResolvedValue(pendingRequest());
+      await expect(service.authorize('request-1')).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
@@ -155,6 +114,11 @@ describe('InterruptibleApprovalsService', () => {
 
       await expect(service.reject('request-1')).rejects.toThrow(/status REJECTED/);
       expect(prisma.adminLifecycleRequest.update).not.toHaveBeenCalled();
+    });
+
+    it('throws 404 when the request does not exist', async () => {
+      prisma.adminLifecycleRequest.findUnique.mockResolvedValue(null);
+      await expect(service.reject('missing')).rejects.toBeInstanceOf(HttpException);
     });
   });
 });

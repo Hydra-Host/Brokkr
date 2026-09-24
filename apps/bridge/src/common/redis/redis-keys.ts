@@ -69,6 +69,10 @@ export function deviceServerToken(deviceId: DeviceId): string {
   return `device:${deviceId}:server_token`;
 }
 
+export function deviceDeployToken(deviceId: DeviceId): string {
+  return `device:${deviceId}:deploy_token`;
+}
+
 export function deviceSecret(deviceId: DeviceId, purpose: string, kind: string): string {
   return `device:${deviceId}:secrets:${purpose.toLowerCase()}:${kind.toLowerCase()}`;
 }

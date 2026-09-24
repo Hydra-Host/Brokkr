@@ -6,6 +6,7 @@ import { DhcpConfigModule } from 'src/brokkr-bridge/dhcp/dhcp-config.module';
 import { CloudInitTemplatesModule } from 'src/cloud-init-templates/cloud-init-templates.module';
 import { DeviceSecretModule } from 'src/device-secret/device-secret.module';
 import { DeviceTestRunsModule } from 'src/device-test-runs/device-test-runs.module';
+import { DeviceTokensModule } from 'src/device-tokens/device-tokens.module';
 import { EmailModule } from 'src/email/email.module';
 import { InventoryModule } from 'src/inventory/inventory.module';
 import { LifecycleModule } from 'src/lifecycle/lifecycle.module';
@@ -40,6 +41,7 @@ import { NetplanModule } from './netplan/netplan.module';
     NetplanModule,
     EmailModule,
     DeviceSecretModule,
+    DeviceTokensModule,
   ],
   controllers: [BaremetalController],
   providers: [DeviceNotificationsService, DeviceNotificationsRepository, BaremetalService],

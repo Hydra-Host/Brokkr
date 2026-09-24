@@ -26,12 +26,25 @@ function makeStep() {
 }
 
 describe('ArmCustomIpxeBootStep', () => {
-  it.each(['ipxe-custom', 'ubuntu-noble'])('skips the %s platform', async (slug) => {
+  it.each(['ipxe-custom', 'ipxe-custom-tee'])('arms the %s platform', async (slug) => {
     const { step, set } = makeStep();
 
     await expect(
       step.execute(makeCtx({ payload: { platform: { slug }, lifecycle_data: { ipxe_url: 'https://boot/ipxe' } } })),
-    ).resolves.toEqual({ skipped: true, reason: 'platform is not ipxe-custom-tee' });
+    ).resolves.toEqual({ armed: true });
+    expect(set).toHaveBeenCalledWith('device:dev-1:config:ipxe_url', 'https://boot/ipxe', 21_600, 'job-1');
+  });
+
+  it('skips a platform that is not a custom iPXE OS', async () => {
+    const { step, set } = makeStep();
+
+    await expect(
+      step.execute(
+        makeCtx({
+          payload: { platform: { slug: 'ubuntu-noble' }, lifecycle_data: { ipxe_url: 'https://boot/ipxe' } },
+        }),
+      ),
+    ).resolves.toEqual({ skipped: true, reason: 'platform is not a custom iPXE OS' });
     expect(set).not.toHaveBeenCalled();
   });
 

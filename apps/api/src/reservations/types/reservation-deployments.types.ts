@@ -46,10 +46,8 @@ export const StorageLayoutsSchema = z.union([StorageLayoutSchema, z.object({}).s
 export type StorageLayouts = z.infer<typeof StorageLayoutsSchema>;
 
 export const IpamConfigSchema = z.object({}).passthrough().nullable();
-export const VirtualNetworkConfigSchema = z.object({}).passthrough().nullable();
 
 export type IpamConfig = z.infer<typeof IpamConfigSchema>;
-export type VirtualNetworkConfig = z.infer<typeof VirtualNetworkConfigSchema>;
 
 export const DeviceMetadataSchema = z.object({
   id: z.number(),
@@ -67,7 +65,6 @@ export const DeviceMetadataSchema = z.object({
   cpuCoreCount: z.number(),
   cpuPhysicalCount: z.number(),
   ipamConfig: IpamConfigSchema,
-  virtualNetworkConfig: VirtualNetworkConfigSchema,
   macAddress: z.string(),
   memory: z.number(),
   nvmeSize: z.number().nullable().optional(),

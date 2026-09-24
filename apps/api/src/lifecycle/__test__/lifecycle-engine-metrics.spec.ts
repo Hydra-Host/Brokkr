@@ -5,6 +5,7 @@ import { ActiveRecordRegistry } from '@repo/active-record';
 import { JobType, LifecycleJobPhase, ServerLifecycleStatus } from '@repo/database';
 import { LIFECYCLE_WATCHDOG_QUEUE, LifecycleJobRecord } from '@repo/lifecycle';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LifecycleInboundService } from '../inbound/lifecycle-inbound.service';
@@ -60,6 +61,7 @@ describe('LifecycleInboundService — brokkr.device_lifecycle.transitions (engin
         { provide: getQueueToken(LIFECYCLE_WATCHDOG_QUEUE), useValue: watchdogQueue },
         { provide: LifecycleService, useValue: lifecycleService },
         { provide: DeviceTokensService, useValue: { runWithDeploymentTokenRevocation: vi.fn() } },
+        { provide: RedisPubSubService, useValue: { publish: vi.fn() } },
         {
           provide: 'LoggerServiceLifecycleInboundService',
           useValue: { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

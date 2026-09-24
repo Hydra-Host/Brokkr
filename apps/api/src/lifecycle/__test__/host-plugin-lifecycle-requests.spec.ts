@@ -81,6 +81,61 @@ describe('HostPluginLifecycleRequests', () => {
     expect(engineRequest).not.toHaveProperty('retriedBy');
   });
 
+  it('forwards retryReason in the audit payload', async () => {
+    await adapter.requestProvision({
+      deviceId: 'device-1',
+      userId: 'user-1',
+      organizationId: 'org-1',
+      deploymentName: 'box',
+      operatingSystemSlug: 'ubuntu-22.04',
+      sshKeyIds: ['11111111-1111-4111-8111-111111111111'],
+      diskLayouts: [DISK_LAYOUT],
+      cloudInit: null,
+      ipxeUrl: null,
+      customizations: null,
+      source: RequestSource.UI,
+      retriedFromJobId: 'job-old',
+      retriedBy: 'operator-1',
+      retryReason: 'BMC hung',
+      triggeredByEmail: 'op@hydrahost.test',
+    });
+
+    expect(lifecycle.requestProvisionAsOperator).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'device-1', userId: 'user-1' }),
+      {
+        retriedFromJobId: 'job-old',
+        retriedBy: 'operator-1',
+        retryReason: 'BMC hung',
+        triggeredByEmail: 'op@hydrahost.test',
+      },
+    );
+    const [engineRequest] = lifecycle.requestProvisionAsOperator.mock.calls[0];
+    expect(engineRequest).not.toHaveProperty('retryReason');
+  });
+
+  it('does not attach retryReason without the retry pair', async () => {
+    await adapter.requestProvision({
+      deviceId: 'device-1',
+      userId: 'user-1',
+      organizationId: 'org-1',
+      deploymentName: 'box',
+      operatingSystemSlug: 'ubuntu-22.04',
+      sshKeyIds: ['11111111-1111-4111-8111-111111111111'],
+      diskLayouts: [DISK_LAYOUT],
+      cloudInit: null,
+      ipxeUrl: null,
+      customizations: null,
+      source: RequestSource.UI,
+      retryReason: 'BMC hung',
+      triggeredByEmail: 'op@hydrahost.test',
+    });
+
+    expect(lifecycle.requestProvisionAsOperator).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'device-1', userId: 'user-1' }),
+      { triggeredByEmail: 'op@hydrahost.test' },
+    );
+  });
+
   it('rejects a bad operatingSystemSlug before calling the engine', async () => {
     await expect(
       adapter.requestReprovision({

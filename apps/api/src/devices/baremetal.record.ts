@@ -29,7 +29,7 @@ const baremetalAggregateInclude = {
         include: {
           deployer: true,
           customer: true,
-          reservation: true,
+          reservation: { include: { reservationInvite: true } },
         },
       },
       serversInReservationInvite: {
@@ -75,6 +75,7 @@ export const BaremetalPersistenceSchema = DeviceSpecColumnsSchema.extend({
   server: z.object({
     id: z.string(),
     lifecycleStatus: z.nativeEnum(ServerLifecycleStatus),
+    updatedAt: z.date(),
     powerStatus: z.nativeEnum(ServerPowerStatus).nullable(),
     ipxeBuildTarget: z.string().nullable(),
     ipxeBuildVersion: z.string().nullable(),
@@ -368,7 +369,7 @@ export class BaremetalRecord extends createActiveRecord(BaremetalPersistenceSche
     };
   }
 
-  // Must mirror `DeviceSpecs.isHealthy`: `lc."deviceId" IS NULL` distinguishes "no completed run" (Healthy) from "run with NULL testPassed" (Unhealthy) — filtering `testPassed IS NOT NULL` in the CTE would diverge from the entity getter.
+  // Must mirror `ServerSpecHelper.isHealthy`: a device with no completed run is null there, so it matches neither filter value here.
   static async getDeviceIdsForHealthFilter(supplierId: string, healthValue: HealthValue): Promise<string[]> {
     const client = ActiveRecordRegistry.client;
 
@@ -386,7 +387,7 @@ export class BaremetalRecord extends createActiveRecord(BaremetalPersistenceSche
       WHERE d."supplierId" = ${supplierId}
         AND d."deletedAt" IS NULL
         AND (
-          (${healthValue} = 'Healthy' AND (lc."deviceId" IS NULL OR lc."testPassed" = true))
+          (${healthValue} = 'Healthy' AND lc."deviceId" IS NOT NULL AND lc."testPassed" = true)
           OR (${healthValue} = 'Unhealthy' AND lc."deviceId" IS NOT NULL AND lc."testPassed" IS DISTINCT FROM true)
         )
     `;

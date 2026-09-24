@@ -12,7 +12,13 @@ import {
 import {
   LIFECYCLE_WATCHDOG_QUEUE,
   LifecycleJobRecord,
+  PHONE_HOME_EVENT_TYPE,
+  PHONE_HOME_OPERATION,
   PHONE_HOME_WATCHDOG_JOB,
+  POWER_WATCHDOG_EVENT_TYPE,
+  POWER_WATCHDOG_OPERATION,
+  STUCK_SWEEP_EVENT_TYPE,
+  STUCK_SWEEP_OPERATION,
   SYSTEM_JOB_TYPES,
   TERMINAL_PHASES,
   nextPhaseForBridge,
@@ -23,6 +29,8 @@ import { Queue } from 'bullmq';
 import { bridgeTimestampToDate, type JobCompletedData, type JobResultData } from 'src/brokkr-bridge/types/queue.types';
 import { DeploymentRecord } from 'src/deployments/deployment.record';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { JOB_EVENT_RECORDED } from 'src/events/events.types';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { ReservationRecord } from 'src/reservations/reservation.record';
 import { createDeviceLifecycleTransitionsCounter } from 'src/telemetry/domain-metrics';
@@ -68,6 +76,7 @@ export class LifecycleInboundService {
     private readonly prisma: PrismaClient,
     private readonly lifecycleService: LifecycleService,
     private readonly deviceTokensService: DeviceTokensService,
+    private readonly redisPubSub: RedisPubSubService,
     @Logger(LifecycleInboundService.name) private readonly logger: LoggerService,
   ) {
     // Pre-register at zero: increase()/rate() can't see a series' birth, so the first
@@ -100,6 +109,7 @@ export class LifecycleInboundService {
       jobId: job.data.id,
       sagaName: data.action_type,
       stepName: data.step_name,
+      operation: data.operation ?? null,
       eventType: data.event_type,
       status: data.status,
       result: this.toJson(data.result),
@@ -110,6 +120,13 @@ export class LifecycleInboundService {
 
     const next = nextPhaseForBridge(job.data.jobType, job.data.phase, data.event_type, data.status);
     await this.transition(job, next, data.error?.message);
+    await this.publishJobEvent(
+      job.data.id,
+      job.data.deviceId,
+      job.data.deploymentId,
+      job.data.organizationId,
+      job.data.phase,
+    );
     return true;
   }
 
@@ -138,6 +155,13 @@ export class LifecycleInboundService {
     ) {
       await this.ensureDeploymentEnded(job);
     }
+    await this.publishJobEvent(
+      job.data.id,
+      job.data.deviceId,
+      job.data.deploymentId,
+      job.data.organizationId,
+      job.data.phase,
+    );
     return true;
   }
 
@@ -151,12 +175,21 @@ export class LifecycleInboundService {
       jobId: job.data.id,
       sagaName: 'phone_home',
       stepName: 'phone_home',
-      eventType: 'phone_home',
+      operation: PHONE_HOME_OPERATION,
+      eventType: PHONE_HOME_EVENT_TYPE,
       status: 'complete',
       occurredAt: new Date(),
     });
 
-    await this.transition(job, LifecycleJobPhase.COMPLETED);
+    if (await this.transition(job, LifecycleJobPhase.COMPLETED)) {
+      await this.publishJobEvent(
+        job.data.id,
+        job.data.deviceId,
+        job.data.deploymentId,
+        job.data.organizationId,
+        LifecycleJobPhase.COMPLETED,
+      );
+    }
   }
 
   async checkPhoneHomeDeadline(jobId: string): Promise<void> {
@@ -171,11 +204,20 @@ export class LifecycleInboundService {
         jobId: job.data.id,
         sagaName: 'phone_home',
         stepName: 'phone_home',
-        eventType: 'phone_home',
+        operation: PHONE_HOME_OPERATION,
+        eventType: PHONE_HOME_EVENT_TYPE,
         status: 'complete',
         occurredAt: new Date(),
       });
-      await this.transition(job, LifecycleJobPhase.COMPLETED);
+      if (await this.transition(job, LifecycleJobPhase.COMPLETED)) {
+        await this.publishJobEvent(
+          job.data.id,
+          job.data.deviceId,
+          job.data.deploymentId,
+          job.data.organizationId,
+          LifecycleJobPhase.COMPLETED,
+        );
+      }
       return;
     }
 
@@ -184,7 +226,8 @@ export class LifecycleInboundService {
       jobId: job.data.id,
       sagaName: 'phone_home',
       stepName: 'phone_home',
-      eventType: 'phone_home',
+      operation: PHONE_HOME_OPERATION,
+      eventType: PHONE_HOME_EVENT_TYPE,
       status: 'failed',
       error: 'phone-home deadline exceeded',
       occurredAt: new Date(),
@@ -192,6 +235,13 @@ export class LifecycleInboundService {
 
     if (await this.transition(job, LifecycleJobPhase.FAILED, 'phone-home deadline exceeded')) {
       this.watchdogTimeouts.add(1);
+      await this.publishJobEvent(
+        job.data.id,
+        job.data.deviceId,
+        job.data.deploymentId,
+        job.data.organizationId,
+        LifecycleJobPhase.FAILED,
+      );
     }
   }
 
@@ -215,7 +265,8 @@ export class LifecycleInboundService {
       jobId: job.data.id,
       sagaName: 'power_watchdog',
       stepName: 'power_watchdog',
-      eventType: 'power_watchdog',
+      operation: POWER_WATCHDOG_OPERATION,
+      eventType: POWER_WATCHDOG_EVENT_TYPE,
       status: 'failed',
       error: 'power saga deadline exceeded',
       occurredAt: new Date(),
@@ -223,6 +274,13 @@ export class LifecycleInboundService {
 
     if (await this.transition(job, LifecycleJobPhase.FAILED, 'power saga deadline exceeded')) {
       this.watchdogTimeouts.add(1);
+      await this.publishJobEvent(
+        job.data.id,
+        job.data.deviceId,
+        job.data.deploymentId,
+        job.data.organizationId,
+        LifecycleJobPhase.FAILED,
+      );
     }
   }
 
@@ -285,11 +343,19 @@ export class LifecycleInboundService {
       jobId: job.data.id,
       sagaName: 'stuck_sweep',
       stepName: 'stuck_sweep',
-      eventType: 'stuck_sweep',
+      operation: STUCK_SWEEP_OPERATION,
+      eventType: STUCK_SWEEP_EVENT_TYPE,
       status: 'failed',
       error: verdict.reason,
       occurredAt: new Date(),
     });
+    await this.publishJobEvent(
+      job.data.id,
+      job.data.deviceId,
+      job.data.deploymentId,
+      job.data.organizationId,
+      verdict.to,
+    );
 
     if (from === LifecycleJobPhase.SCHEDULED && job.data.deploymentId && job.data.organizationId) {
       await DeploymentRecord.clearScheduledInterruption(job.data.deploymentId, job.data.organizationId);
@@ -342,6 +408,30 @@ export class LifecycleInboundService {
     }
   }
 
+  private async publishJobEvent(
+    jobId: string,
+    deviceId: string | null,
+    deploymentId: string | null,
+    organizationId: string | null,
+    phase: string | null,
+  ): Promise<void> {
+    if (deviceId === null) return;
+    try {
+      const device = await this.prisma.device.findUnique({ where: { id: deviceId }, select: { supplierId: true } });
+      await this.redisPubSub.publish({
+        type: JOB_EVENT_RECORDED,
+        deviceId,
+        deploymentId,
+        organizationId,
+        supplierId: device?.supplierId ?? null,
+        jobId,
+        phase,
+      });
+    } catch (error) {
+      this.logger.warn(`Failed to publish job event for ${jobId}: ${getErrorMessage(error)}`);
+    }
+  }
+
   private async loadJob(planId: string): Promise<LifecycleJobRecord | null> {
     const job: LifecycleJobRecord | null = await LifecycleJobRecord.findByIdUnscoped(planId);
     if (!job) {
@@ -375,7 +465,8 @@ export class LifecycleInboundService {
         jobId: job.data.id,
         sagaName: 'phone_home',
         stepName: 'phone_home',
-        eventType: 'phone_home',
+        operation: PHONE_HOME_OPERATION,
+        eventType: PHONE_HOME_EVENT_TYPE,
         status: 'complete',
         occurredAt: new Date(),
       });

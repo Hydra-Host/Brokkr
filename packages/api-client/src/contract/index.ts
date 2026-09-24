@@ -6,6 +6,7 @@ import { asnRoutes } from './asn';
 import { baremetalRoutes } from './baremetal';
 import { bgpRoutes } from './bgp';
 import { bmcRequestsRoutes } from './bmc-requests';
+import { bootTrailRoutes } from './boot-trail';
 import { cduRoutes } from './cdus';
 import { circuitsRoutes } from './circuits';
 import { cloudInitTemplatesRoutes } from './cloud-init-templates';
@@ -23,12 +24,14 @@ import { prefixDnsRoutes, zoneDnsRoutes } from './dns';
 import { dnsRecordsRoutes } from './dns-records';
 import { eventLogRoutes } from './event-log';
 import { gatewaysRoutes } from './gateways';
+import { healthChecksRoutes } from './health-checks';
 import { interruptibleEvictionsRoutes } from './interruptible-evictions';
 import { inventoryRoutes } from './inventory';
 import { ipamRoutes } from './ipam';
 import { ipamRolesRoutes } from './ipam-roles';
 import { jobLogsRoutes } from './job-logs';
 import { jobsRoutes } from './jobs';
+import { notificationsRoutes } from './notifications';
 import { organizationRoutes } from './organizations';
 import { pduRoutes } from './pdus';
 import { pluginsRoutes } from './plugins';
@@ -107,7 +110,10 @@ const platformContract = c.router(
     ...jobLogsRoutes,
     ...jobsRoutes,
     ...deviceSecretRoutes,
+    ...notificationsRoutes,
     ...discoveryRunsRoutes,
+    ...bootTrailRoutes,
+    ...healthChecksRoutes,
     ...dnsRecordsRoutes,
     ...zoneCryptoRoutes,
     ...zonesRoutes,

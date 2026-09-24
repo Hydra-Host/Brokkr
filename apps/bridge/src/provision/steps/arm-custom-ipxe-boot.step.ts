@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { isRecord } from '@repo/utils';
+import { isIpxeCustomOs, isRecord } from '@repo/utils';
 
 import { deviceIpxeUrl } from '../../common/redis/redis-keys';
 import { NonRetryableSagaError } from '../../saga-framework/saga-runner.service';
@@ -17,8 +17,8 @@ export class ArmCustomIpxeBootStep {
 
   async execute(ctx: SagaContext): Promise<Record<string, unknown>> {
     const platform = ctx.payload['platform'];
-    if (!isRecord(platform) || platform['slug'] !== 'ipxe-custom-tee') {
-      return { skipped: true, reason: 'platform is not ipxe-custom-tee' };
+    if (!isRecord(platform) || !isIpxeCustomOs(platform['slug'])) {
+      return { skipped: true, reason: 'platform is not a custom iPXE OS' };
     }
 
     const lifecycleData = ctx.payload['lifecycle_data'];

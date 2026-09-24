@@ -1,3 +1,4 @@
+import { RENDER_DOMAINS } from '@repo/utils';
 import { describe, expect, it } from 'vitest';
 import { renderRequestSchema } from '../../types/render-request.types';
 
@@ -50,7 +51,7 @@ describe('renderRequestSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it.each(['device_record', 'server_token', 'netplan', 'device_secret'] as const)('accepts known domain literal %j', (domain) => {
+  it.each(RENDER_DOMAINS)('accepts known domain literal %j', (domain) => {
     const result = renderRequestSchema.safeParse({ ...BASE, domain });
     expect(result.success).toBe(true);
   });

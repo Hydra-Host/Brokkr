@@ -42,6 +42,8 @@ function buildDeps(
     redisSet?: (k: string, v: string, ttl: number) => Promise<unknown>;
     queue?: { add: Mock<(...args: any[]) => any> } | null;
     icmpPing?: number;
+    icmpResult?: 'success' | 'failure';
+    icmpThrows?: boolean;
     brokkrConnected?: boolean;
     brokkrFactoryThrows?: boolean;
     brokkrConnThrows?: boolean;
@@ -55,7 +57,10 @@ function buildDeps(
   return {
     icmpFactory: {
       create: () => ({
-        executePingTest: async () => ({ metrics: { icmpping: options.icmpPing ?? 1 } }),
+        executePingTest: async () => {
+          if (options.icmpThrows) throw new Error('ping unavailable');
+          return { result: options.icmpResult ?? 'success', metrics: { icmpping: options.icmpPing ?? 1 } };
+        },
       }),
     },
     brokkrLiveFactory: {
@@ -90,7 +95,7 @@ function svc(deps: MockDeps, jobId = 'job-test'): DeviceHealthService {
 function patchInternalMethods(
   service: DeviceHealthService,
   overrides: {
-    checkPing?: (ip: string) => Promise<boolean>;
+    checkPing?: (ip: string) => Promise<boolean | null>;
     checkIpmiPing?: (ip: string) => Promise<boolean>;
     checkRedfishPing?: (ip: string) => Promise<boolean>;
     checkIpmiCreds?: (
@@ -429,7 +434,7 @@ describe('sendStateChange payload shape', () => {
     expect(p.job_id).toBe('custom-job-42');
     expect(p.primary_reachable).toBe(true);
     const o = opts as Record<string, unknown>;
-    expect(o.removeOnComplete).toEqual({ count: 1000 });
+    expect(o.removeOnComplete).toEqual({ count: 0 });
     expect(o.removeOnFail).toEqual({ count: 100 });
   });
 
@@ -490,6 +495,41 @@ describe('checkPing via icmpFactory', () => {
       primaryIp: '10.0.0.2',
     });
     expect(result.primary_reachable).toBe(false);
+  });
+
+  it('returns null when the probe could not run', async () => {
+    const deps = buildDeps({ icmpResult: 'failure', icmpPing: 0 });
+    const service = svc(deps);
+    patchInternalMethods(service, {
+      checkIpmiPing: async () => true,
+      checkRedfishPing: async () => true,
+      checkBrokkrLive: async () => true,
+      persistAndNotify: async () => {},
+    });
+    const result = await service.checkDeviceHealth({
+      deviceId: 'dev-1',
+      bmcIp: '10.0.0.1',
+      primaryIp: '10.0.0.2',
+    });
+    expect(result.primary_reachable).toBeNull();
+    expect(result.bmc_icmp_reachable).toBeNull();
+    expect(result.bmc_ipmi_reachable).toBe(true);
+  });
+
+  it('returns null when the prober throws', async () => {
+    const deps = buildDeps({ icmpThrows: true });
+    const service = svc(deps);
+    patchInternalMethods(service, {
+      checkIpmiPing: async () => true,
+      checkRedfishPing: async () => true,
+      checkBrokkrLive: async () => true,
+      persistAndNotify: async () => {},
+    });
+    const result = await service.checkDeviceHealth({
+      deviceId: 'dev-1',
+      primaryIp: '10.0.0.2',
+    });
+    expect(result.primary_reachable).toBeNull();
   });
 });
 

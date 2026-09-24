@@ -44,6 +44,7 @@ function toJobRef(job: LifecycleJobRecord): PluginLifecycleJobRef {
 function takeAudit(input: {
   retriedFromJobId?: string;
   retriedBy?: string;
+  retryReason?: string;
   triggeredByEmail?: string;
 }): LifecycleJobAudit | undefined {
   const audit: LifecycleJobAudit = {};
@@ -51,6 +52,7 @@ function takeAudit(input: {
   if (input.retriedFromJobId && input.retriedBy) {
     audit.retriedFromJobId = input.retriedFromJobId;
     audit.retriedBy = input.retriedBy;
+    if (input.retryReason) audit.retryReason = input.retryReason;
   }
   if (!audit.triggeredByEmail && !audit.retriedFromJobId) return undefined;
   return audit;

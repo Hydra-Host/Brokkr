@@ -39,6 +39,10 @@ export const DeviceSpecColumnsSchema = z.object({
   networkType: z.nativeEnum(DeviceNetworkType).nullable(),
 
   architecture: z.string().nullable(),
+  // Free-text next-boot override sent to the BMC (null → default pxe). Declared here so list
+  // reads that parse through this schema don't strip it — the detail path skips the parse, so
+  // omitting it silently blanked the list.
+  ipmiBootDeviceOverride: z.string().nullable().optional(),
   uefiBoot: z.boolean().nullable(),
   secureBootEnabled: z.boolean().nullable(),
   iommuEnabled: z.boolean().nullable(),

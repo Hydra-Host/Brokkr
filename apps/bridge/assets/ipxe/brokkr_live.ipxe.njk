@@ -47,6 +47,7 @@ kernel {{ bridge_url }}/api/discovery/{{ flavor }}/{{ arch }}/vmlinuz##params \
 {%- if pci_realloc_off %}
   pci=realloc=off \
 {%- endif %}
+  nohibernate \
   nomodeset
 
 initrd {{ bridge_url }}/api/discovery/{{ flavor }}/{{ arch }}/initrd.img##params

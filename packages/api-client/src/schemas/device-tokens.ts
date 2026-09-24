@@ -45,3 +45,19 @@ export const IssueBrokkrLiveDeviceTokenResponseSchema = z.object({
 export type { DeviceTokenContext, DeviceTokenRevocationReason, DeviceTokenStatus };
 export type DeviceToken = z.infer<typeof DeviceTokenSchema>;
 export type IssueBrokkrLiveDeviceTokenResponse = z.infer<typeof IssueBrokkrLiveDeviceTokenResponseSchema>;
+
+export const DeviceTokenSummarySchema = DeviceTokenSchema.pick({
+  id: true,
+  deviceId: true,
+  context: true,
+  displayId: true,
+  status: true,
+  rotationGeneration: true,
+  expiresAt: true,
+  lastUsedAt: true,
+  lastUsedIp: true,
+  revokedAt: true,
+  revokedReason: true,
+  createdAt: true,
+}).describe('Token status and recency for the device page. Never carries the token or its hash.');
+export type DeviceTokenSummary = z.infer<typeof DeviceTokenSummarySchema>;

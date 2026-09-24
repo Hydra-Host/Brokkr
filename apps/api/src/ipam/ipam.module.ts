@@ -74,6 +74,8 @@ import { VrfService } from './vrf/vrf.service';
     IpamRoleRepository,
     GatewayRepository,
     PrefixService,
+    PrefixRepository,
+    PrefixBootReadinessService,
     IpAddressService,
     IpRangeService,
   ],

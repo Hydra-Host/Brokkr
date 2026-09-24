@@ -13,7 +13,7 @@ import { InstanceOperatorGuard } from 'src/auth/guards/instance-operator.guard';
 import { BrokkrBridgeModule } from 'src/brokkr-bridge/brokkr-bridge.module';
 import { DeploymentsModule } from 'src/deployments/deployments.module';
 import { DeviceTokensModule } from 'src/device-tokens/device-tokens.module';
-import { EmailModule } from 'src/email/email.module';
+import { NotificationsModule } from 'src/notifications/notifications.module';
 import { OrganizationsModule } from 'src/organizations/organizations.module';
 import { HostPluginGateBusModule } from 'src/plugin-host/host-plugin-gate-bus.module';
 import { PrismaModule } from 'src/prisma/prisma.module';
@@ -30,7 +30,9 @@ import { LifecycleRepository } from './lifecycle.repository';
 import { LifecycleService } from './lifecycle.service';
 import { DeploymentLifecycleActionObserver } from './observers/deployment-lifecycle-action.observer';
 import { DeploymentWebhookObserver } from './observers/deployment-webhook.observer';
+import { InfrastructureAlertNotificationObserver } from './observers/infrastructure-alert-notification.observer';
 import { InterruptionEmailObserver } from './observers/interruption-email.observer';
+import { ProvisionOutcomeNotificationObserver } from './observers/provision-outcome-notification.observer';
 import { DeprovisionOperation } from './operations/deprovision.operation';
 import { PowerControlOperation } from './operations/power-control.operation';
 import { ProvisionDispatcher } from './operations/provision-dispatch';
@@ -45,7 +47,7 @@ import { PowerStatusWatchdogCron } from './power-status-watchdog.cron';
     forwardRef(() => BrokkrBridgeModule),
     forwardRef(() => DeploymentsModule),
     DeviceTokensModule,
-    EmailModule,
+    NotificationsModule,
     OrganizationsModule,
     PrismaModule,
     ProvisionModule,
@@ -77,6 +79,8 @@ import { PowerStatusWatchdogCron } from './power-status-watchdog.cron';
     ProvisionOperation,
     DeploymentLifecycleActionObserver,
     InterruptionEmailObserver,
+    ProvisionOutcomeNotificationObserver,
+    InfrastructureAlertNotificationObserver,
     DeploymentWebhookObserver,
     OperatorDeviceOpsService,
   ],

@@ -1,24 +1,7 @@
-import { createFileRoute, getRouteApi } from '@tanstack/react-router';
-
-import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import { DeviceInterfaces } from '~/components/device-interfaces';
-
-const parentRoute = getRouteApi('/_app/dcim/servers/$deviceId');
+import { createFileRoute, redirect } from '@tanstack/react-router';
 
 export const Route = createFileRoute('/_app/dcim/servers/$deviceId/interfaces')({
-  staticData: { breadcrumb: 'Interfaces' },
-  component: ServerInterfaces,
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: '/dcim/servers/$deviceId/networking', params, search: { tab: 'interfaces' }, replace: true });
+  },
 });
-
-function ServerInterfaces() {
-  const device = parentRoute.useLoaderData();
-  useDocumentTitle(device.dcim?.nickname || device.name);
-
-  return (
-    <DeviceInterfaces
-      deviceId={device.id}
-      description="Server network interface configuration"
-      emptyDescription="No network interfaces are configured for this server."
-    />
-  );
-}

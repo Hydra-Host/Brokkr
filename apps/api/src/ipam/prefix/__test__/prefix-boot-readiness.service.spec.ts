@@ -17,7 +17,7 @@ const READY_CONFIG: PrefixDhcpConfig = {
 };
 
 describe('PrefixBootReadinessService', () => {
-  const prefixRepository = { getDhcpConfig: vi.fn(), resolveBootIdentity: vi.fn() };
+  const prefixRepository = { getDhcpConfig: vi.fn(), getProxyAllowlist: vi.fn(), resolveBootIdentity: vi.fn() };
   const contextService = { requirePermission: vi.fn(), organizationId: 'org-1' };
   const service = new PrefixBootReadinessService(prefixRepository, contextService);
 
@@ -29,6 +29,7 @@ describe('PrefixBootReadinessService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     prefixRepository.getDhcpConfig.mockResolvedValue(READY_CONFIG);
+    prefixRepository.getProxyAllowlist.mockResolvedValue([PXE_MAC]);
     prefixRepository.resolveBootIdentity.mockResolvedValue({ pxeDeviceId: 'device-1', bmcDeviceId: 'device-1' });
   });
 
@@ -47,9 +48,16 @@ describe('PrefixBootReadinessService', () => {
     await expect(checkCodes()).resolves.toEqual(['PXE-103']);
   });
 
-  it('reports PXE-104 when the proxy allowlist excludes the MAC', async () => {
-    prefixRepository.getDhcpConfig.mockResolvedValue({ ...READY_CONFIG, dhcpProxyAllowedMacs: [] });
+  it('reports PXE-104 when the effective proxy allowlist excludes the MAC', async () => {
+    prefixRepository.getProxyAllowlist.mockResolvedValue([]);
     await expect(checkCodes()).resolves.toEqual(['PXE-104']);
+  });
+
+  it('passes PXE-104 when only a reservation admits the MAC', async () => {
+    prefixRepository.getDhcpConfig.mockResolvedValue({ ...READY_CONFIG, dhcpProxyAllowedMacs: [] });
+    prefixRepository.getProxyAllowlist.mockResolvedValue([PXE_MAC]);
+    await expect(checkCodes()).resolves.toEqual([]);
+    expect(prefixRepository.getProxyAllowlist).toHaveBeenCalledWith('prefix-1');
   });
 
   it('reports PXE-106 when the MAC and the BMC address resolve to different devices', async () => {
@@ -107,7 +115,8 @@ describe('PrefixBootReadinessService', () => {
     prefixRepository.getDhcpConfig.mockResolvedValue({ ...READY_CONFIG, dhcpMode: null, ipxeBuildTarget: null });
     const withoutDhcp = await checkCodes();
 
-    prefixRepository.getDhcpConfig.mockResolvedValue({ ...READY_CONFIG, dhcpProxyAllowedMacs: [] });
+    prefixRepository.getDhcpConfig.mockResolvedValue(READY_CONFIG);
+    prefixRepository.getProxyAllowlist.mockResolvedValue([]);
     const withProxyRefusal = await checkCodes();
 
     const observed = [...new Set([...withoutDhcp, ...withProxyRefusal])].sort();

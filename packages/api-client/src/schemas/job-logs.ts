@@ -51,3 +51,40 @@ export const DeviceJobsResponseSchema = z.object({
 });
 
 export type DeviceJobsResponse = z.infer<typeof DeviceJobsResponseSchema>;
+
+export const JobSolLogEntrySchema = z.object({
+  index: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Absolute offset of the line in the serial console list, usable as the next cursor'),
+  timestamp: z.string().describe('ISO 8601 timestamp recorded by the bridge when the line was captured'),
+  message: z.string().describe('Serial console line text'),
+});
+
+export type JobSolLogEntry = z.infer<typeof JobSolLogEntrySchema>;
+
+export const JobSolLogsQuerySchema = z.object({
+  cursor: z.coerce
+    .number()
+    .int()
+    .nonnegative()
+    .default(0)
+    .describe('List offset to start reading from; 0 reads from the first captured line'),
+  limit: z.coerce.number().int().min(1).max(1000).default(500).describe('Maximum entries to return per page'),
+});
+
+export type JobSolLogsQuery = z.infer<typeof JobSolLogsQuerySchema>;
+
+export const JobSolLogsResponseSchema = z.object({
+  entries: z.array(JobSolLogEntrySchema).describe('Serial console lines in capture order (oldest first)'),
+  nextCursor: z
+    .number()
+    .int()
+    .nonnegative()
+    .nullable()
+    .describe('List offset for the next page, or null when the page was not full'),
+  complete: z.boolean().describe('Whether the bridge has finished capturing the serial console for this job'),
+});
+
+export type JobSolLogsResponse = z.infer<typeof JobSolLogsResponseSchema>;

@@ -190,9 +190,17 @@ export function loadOptionalPluginEntries(requireFn: RequireFn = createRequire(i
       },
     });
   });
-  loadOptionalManifest(requireFn, '@hydrahost/plugin-operator-hub', 'operatorHubManifest', (plugin) => {
-    entries.push({ plugin, enabled: true, settings: {} });
-  });
+  // Managed edition: known-account inventory self-serve gate (and other proprietary providers).
+  // BOSS-only: instance-operator panel and provision.authorize gate.
+  if (isManagedEditionActive(requireFn)) {
+    loadOptionalManifest(requireFn, '@hydrahost/managed-edition', 'managedEditionManifest', (plugin) => {
+      entries.push({ plugin, enabled: true, settings: {} });
+    });
+  } else {
+    loadOptionalManifest(requireFn, '@hydrahost/plugin-operator-hub', 'operatorHubManifest', (plugin) => {
+      entries.push({ plugin, enabled: true, settings: {} });
+    });
+  }
   loadOptionalManifest(requireFn, '@hydrahost/plugin-commerce', 'commerceManifest', (plugin) => {
     entries.push({
       plugin,
@@ -306,6 +314,21 @@ const pluginsConfig = [...loadOptionalPluginEntries(), ...publicPluginsConfig];
 
 export default pluginsConfig;
 
+function isManagedEditionActive(requireFn: RequireFn): boolean {
+  if (process.env.HH_FORCE_BOSS === 'true') return false;
+  try {
+    requireFn('@hydrahost/managed-edition');
+    return true;
+  } catch (err) {
+    const code = errnoCode(err);
+    if (code !== undefined && MODULE_ABSENT_CODES.has(code)) return false;
+    new Logger('plugins-config').warn(
+      `managed-edition present but failed to load (${code ?? errorMessage(err)}); operator-hub will be registered`,
+    );
+    return false;
+  }
+}
+
 export function loadManagedEditionOverrides(requireFn: RequireFn = createRequire(import.meta.url)): Provider[] {
   // Local-only escape hatch; never set in dev/stg/prod.
   if (process.env.HH_FORCE_BOSS === 'true') {
@@ -314,22 +337,33 @@ export function loadManagedEditionOverrides(requireFn: RequireFn = createRequire
   }
   try {
     // sync-sentinel: dynamic require — absence must be a caught runtime miss. Do not statically import.
-    const managed = requireFn('@hydrahost/managed-edition') as { editionOverrides?: Provider[] };
+    const managed = requireFn('@hydrahost/managed-edition') as {
+      editionOverrides?: Provider[];
+    };
     const overrides = managed.editionOverrides ?? [];
     new Logger('plugins-config').log(`edition: managed (${overrides.length} override(s) active)`);
     return overrides;
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    const code = errnoCode(err);
     if (code !== undefined && MODULE_ABSENT_CODES.has(code)) {
       new Logger('plugins-config').log('edition: BOSS (managed-edition not installed)');
       return [];
     }
     new Logger('plugins-config').warn(
-      `managed-edition present but failed to load (${code ?? (err as Error)?.message}); ` +
+      `managed-edition present but failed to load (${code ?? errorMessage(err)}); ` +
         'degrading to core BOSS editionOverrides ([])',
     );
     return [];
   }
+}
+
+function errnoCode(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null || !('code' in err)) return undefined;
+  return typeof err.code === 'string' ? err.code : undefined;
+}
+
+function errorMessage(err: unknown): string | undefined {
+  return err instanceof Error ? err.message : undefined;
 }
 
 function loadOptionalManifest(
@@ -342,13 +376,13 @@ function loadOptionalManifest(
   try {
     mod = requireFn(specifier) as Record<string, unknown>;
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    const code = errnoCode(err);
     if (code !== undefined && MODULE_ABSENT_CODES.has(code)) {
       new Logger('plugins-config').log(`plugin ${specifier} not installed (BOSS tree) — skipped`);
       return;
     }
     new Logger('plugins-config').warn(
-      `plugin ${specifier} present but failed to load (${code ?? (err as Error)?.message}); skipping`,
+      `plugin ${specifier} present but failed to load (${code ?? errorMessage(err)}); skipping`,
     );
     return;
   }

@@ -11,12 +11,14 @@
 #      can't hold the socket into the next `task up`. No-op on Linux (system libvirtd, not matched).
 #      Gated on no sibling stack's pc.sock answering — the daemon is shared across stacks.
 #
+# Every mode is contained to this checkout's own hub/spoke worktrees, so a sibling checkout — or an
+# unrelated repo whose NestJS build has the same `apps/api/dist/main` path — is never touched.
+#
 # Shared by stack-down (`task down`) + stack-reset/purge. Three modes:
 #   --reap       (default) kill everything matched; exit 0 only if every straggler actually died.
 #   --check      report only; exit 1 if any straggler is present.
 #   --post-down  used only after a verified pc-daemon exit: drops the pc-ancestry exemption for
-#                classes 1/1b (a lingering port-holder is then a mid-shutdown orphan), contained to
-#                this checkout's own hub/spoke worktrees so a sibling checkout is never touched.
+#                classes 1/1b (a lingering port-holder is then a mid-shutdown orphan).
 #
 # Everything below the matchers is behind a `sourced?` guard so the specs can source this file and
 # call the real matchers; sourcing must not parse the caller's argv, kill anything, or exit it.
@@ -108,8 +110,9 @@ cwd_owned_by() { # <cwd> <root> → 0 if cwd belongs to root's checkout
 
 # 1. orphaned prod hub/spoke builds. Match ONLY the node runtime by comm (node | MainThread) to
 # exclude shells/greps whose command line merely contains the pattern and the `/bin/sh -c node …`
-# wrapper. Default/--check exempts anything under a live process-compose; --post-down drops that and
-# instead contains to this checkout's hub/spoke roots.
+# wrapper. `apps/(api|bridge)/dist/main` is ordinary NestJS layout that a sibling repo hits too, so
+# containment to this checkout's hub/spoke roots applies in every mode. Default/--check additionally
+# exempts anything under a live process-compose; --post-down drops that exemption.
 reap_orphan_builds() { # <post-down> <hub-root> <spoke-root>
   local post_down="$1" hub_root="$2" spoke_root="$3" pid comm cmd cwd
   for pid in $(pgrep -f 'apps/.*/dist/main' 2>/dev/null); do
@@ -117,14 +120,21 @@ reap_orphan_builds() { # <post-down> <hub-root> <spoke-root>
     case "$comm" in node | MainThread) ;; *) continue ;; esac
     cmd="$(ps -o command= -p "$pid" 2>/dev/null)"
     printf '%s' "$cmd" | grep -qE 'apps/(api|bridge)/dist/main' || continue
-    if [ "$post_down" = 1 ]; then
-      cwd="$(proc_cwd "$pid")"
-      cwd_owned_by "$cwd" "$hub_root" || cwd_owned_by "$cwd" "$spoke_root" || continue
-    else
-      pc_ancestored "$pid" && continue
+    # an unreadable cwd fails containment: skipping a stranger beats killing one
+    cwd="$(proc_cwd "$pid")"
+    cwd_owned_by "$cwd" "$hub_root" || cwd_owned_by "$cwd" "$spoke_root" || continue
+    if [ "$post_down" != 1 ] && pc_ancestored "$pid"; then
+      continue
     fi
     reap "$pid" "orphaned hub/spoke build: $cmd"
   done
+}
+
+# A pure string test on values the caller already read. port-guard.sh's classifier hands an
+# ours-orphan verdict straight to reap_datastores below, so both must apply the same rule.
+datastore_owned_by() { # <cmd> <cwd> <root>
+  case "$1 $2" in *"$3/.devenv"*) return 0 ;; esac
+  return 1
 }
 
 # `pgrep -x` misses these on macOS (the name it matches is the full store path), so select on the
@@ -137,7 +147,7 @@ reap_datastores() { # <post-down> <repo-root>
       [ "$(proc_binary "$pid")" = "$name" ] || continue
       cmd="$(ps -o command= -p "$pid" 2>/dev/null)"
       cwd="$(proc_cwd "$pid")"
-      case "$cmd $cwd" in *"$root/.devenv"*) ;; *) continue ;; esac
+      datastore_owned_by "$cmd" "$cwd" "$root" || continue
       [ "$post_down" = 1 ] || { pc_ancestored "$pid" && continue; }
       reap "$pid" "orphaned devenv datastore: $name ($cmd)"
     done

@@ -27,8 +27,10 @@
   },
   "dependencies": {
     "@repo/active-record": "workspace:*",
+    "@repo/api-client": "workspace:*",
     "@repo/database": "workspace:*",
     "@repo/layers": "workspace:*",
+    "@repo/lifecycle": "workspace:*",
     "@repo/utils": "workspace:*",
     "zod": "^3.25.0"
   },

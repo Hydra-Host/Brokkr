@@ -226,6 +226,10 @@ describe('HostPluginGateBus', () => {
         organizationId: 'org-4',
         customerUserId: 'user-5',
         internalProvision: false,
+        manualBilling: false,
+        fromInvite: false,
+        knownAccount: false,
+        supplierOrganizationId: 'supplier-org-1',
       },
       { override: true, overrideBy: 'operator-9' },
     );

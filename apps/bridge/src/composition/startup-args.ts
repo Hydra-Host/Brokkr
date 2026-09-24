@@ -1,3 +1,4 @@
+import { getBridgeVersion } from '../bridge-status/bridge.config.js';
 import { createIoredisDriverFactory } from '../common/redis/redis-client/ioredis-driver.js';
 import { RedisClient } from '../common/redis/redis-client/redis.client.js';
 import { loadRedisConfig } from '../common/redis/redis-client/redis.config.js';
@@ -99,7 +100,7 @@ export function buildStartupArgs(env: NodeJS.ProcessEnv = process.env): RunStart
         environment: env.ENVIRONMENT ?? 'prod',
         host: resolveListenHost(env),
         port: parseIntEnv(env.PORT, 8080),
-        version: env.BRIDGE_VERSION ?? '0.0.0',
+        version: getBridgeVersion(),
         zoneId: (env.BROKKR_ZONE_ID ?? '').trim(),
       },
       syncDiscoveryImages: (jobId: string) => runDiscoverySync(discoverySyncVersionCache, jobId),

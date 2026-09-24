@@ -1,6 +1,6 @@
 import { loadOptionalPluginEntries } from '@hydrahost/plugins-config';
 import { Logger } from '@nestjs/common';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const ABSENT = (specifier: string): never => {
   const err = new Error(`Cannot find module '${specifier}'`) as NodeJS.ErrnoException;
@@ -94,6 +94,57 @@ describe('loadOptionalPluginEntries', () => {
       resolving(['@hydrahost/plugin-operator-hub', '@hydrahost/plugin-analytics', '@hydrahost/plugin-hubspot-leads']),
     );
     expect(entries.map((e) => e.plugin.id)).toEqual(['analytics', 'operator-hub', 'hubspot-leads']);
+  });
+
+  describe('operator-hub edition gating', () => {
+    const resolvingManaged =
+      (specifiers: string[]) =>
+      (specifier: string): unknown => {
+        if (specifier === '@hydrahost/managed-edition') {
+          return {
+            editionOverrides: [],
+            managedEditionManifest: { id: 'managed-edition' },
+          };
+        }
+        return resolving(specifiers)(specifier);
+      };
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('omits operator-hub when managed-edition is installed and registers the managed gate plugin', () => {
+      const entries = loadOptionalPluginEntries(
+        resolvingManaged(['@hydrahost/plugin-operator-hub', '@hydrahost/plugin-analytics']),
+      );
+      expect(entries.map((e) => e.plugin.id)).toEqual(['analytics', 'managed-edition']);
+    });
+
+    it('keeps operator-hub when HH_FORCE_BOSS even if managed-edition is installed', () => {
+      vi.stubEnv('HH_FORCE_BOSS', 'true');
+      const entries = loadOptionalPluginEntries(resolvingManaged(['@hydrahost/plugin-operator-hub']));
+      expect(entries.map((e) => e.plugin.id)).toEqual(['operator-hub']);
+    });
+
+    it('keeps operator-hub on the public BOSS tree (managed-edition absent)', () => {
+      const entries = loadOptionalPluginEntries(resolving(['@hydrahost/plugin-operator-hub']));
+      expect(entries.map((e) => e.plugin.id)).toEqual(['operator-hub']);
+    });
+
+    it('keeps operator-hub and warns when managed-edition throws a non-absent error', () => {
+      const spy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const requireFn = (specifier: string): unknown => {
+        if (specifier === '@hydrahost/managed-edition') throw new Error('corrupt');
+        return resolving(['@hydrahost/plugin-operator-hub'])(specifier);
+      };
+      try {
+        const entries = loadOptionalPluginEntries(requireFn);
+        expect(entries.map((e) => e.plugin.id)).toEqual(['operator-hub']);
+        expect(spy.mock.calls.some((call) => String(call[0]).includes('operator-hub will be registered'))).toBe(true);
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 
   it('skips a package that resolves but lacks its manifest export (no throw)', () => {

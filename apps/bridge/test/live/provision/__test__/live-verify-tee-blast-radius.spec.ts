@@ -14,7 +14,7 @@ import { ProvisionModule } from '../../../../src/provision/provision.module';
 import { buildProvisionSaga } from '../../../../src/provision/provision.workflow';
 import { ArmCustomIpxeBootStep } from '../../../../src/provision/steps/arm-custom-ipxe-boot.step';
 import { SUPERMICRO_BIOS_PATH, SUPERMICRO_RESET_PATH } from '../../../../src/redfish/__test__/supermicro-tee.testutil';
-import type { TeeVerificationResult } from '../../../../src/redfish/vendor/base/tee';
+import type { TeeSetResult, TeeVerificationResult } from '../../../../src/redfish/vendor/base/tee';
 import type { SagaContext, SagaStepExecutor } from '../../../../src/saga-framework/saga.types';
 import { BmcStub } from './bmc-stub';
 
@@ -35,8 +35,8 @@ const STANDARD_TEE_ENABLE = {
 };
 
 interface TeeOpsLike {
-  enableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<boolean>;
-  disableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<boolean>;
+  enableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<TeeSetResult>;
+  disableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<TeeSetResult>;
   verifyTee(
     deviceId: string,
     bmcIp: string,
@@ -148,7 +148,7 @@ describe('blast radius of a redfish readback failure during tee verification', (
       ),
     );
 
-    expect(result).toEqual({ action: 'enabled', success: true });
+    expect(result).toEqual({ action: 'enabled', success: true, host_reset_at: expect.any(Number) });
     expect(counts).toEqual({ enable: 1, verify: 1 });
     expect(stub.attributes[TDX_KEY]).toBe('Enabled');
     expect(stub.patchedKeys()).toContain(TDX_KEY);
@@ -210,14 +210,14 @@ describe('blast radius of a redfish readback failure during tee verification', (
       .slice(requestsBeforeVerify)
       .filter((request) => request.method === 'GET' && request.path === SUPERMICRO_BIOS_PATH);
 
-    expect(result).toEqual({ action: 'enabled', success: true });
+    expect(result).toEqual({ action: 'enabled', success: true, host_reset_at: expect.any(Number) });
     expect(counts).toEqual({ enable: 1, verify: 1 });
     expect(stub.attributes[TDX_KEY]).toBe('Enabled');
     expect(lastReset).toBeGreaterThan(-1);
     expect(requestsBeforeVerify).toBeGreaterThan(lastReset);
     expect(readbacks).not.toHaveLength(0);
     expect(logLines).toContain('INFO TEE verification succeeded on attempt 1');
-    expect(armed).toEqual({ skipped: true, reason: 'platform is not ipxe-custom-tee' });
+    expect(armed).toEqual({ skipped: true, reason: 'platform is not a custom iPXE OS' });
     expect(armedUrls.size).toBe(0);
   });
 
@@ -261,6 +261,7 @@ describe('arm_custom_ipxe_boot production wiring and ordering', () => {
   it('the production workflow places arm_custom_ipxe_boot after deploy_os and before power_off', () => {
     const stubStep: SagaStepExecutor = { execute: () => Promise.resolve({}) };
     const saga = buildProvisionSaga({
+      disarmCustomIpxeBoot: stubStep,
       brokkrLiveCheck: stubStep,
       pcPowerOff: stubStep,
       pcVerifyPowerOff: stubStep,

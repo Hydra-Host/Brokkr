@@ -6,6 +6,7 @@ import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { APIError } from 'better-auth/api';
 import { organization, twoFactor } from 'better-auth/plugins';
 
+import { prismaActiveOrganizationSource, resolveActiveOrganizationId } from './active-organization.ts';
 import { deriveUserName } from './name.ts';
 import { comparePassword, hashPassword } from './password.ts';
 
@@ -52,6 +53,7 @@ export const createAuthClient = ({
   minPasswordLength,
   relaxRateLimit = false,
 }: CreateAuthClientOptions) => {
+  const activeOrganizationSource = prismaActiveOrganizationSource(prismaClient);
   return betterAuth({
     basePath: `${API_PREFIX}/auth`,
     advanced: {
@@ -130,7 +132,15 @@ export const createAuthClient = ({
                 message: 'There is an issue with your account, please contact support',
               });
             }
-            return { data: session };
+            // start the session in an organization, so the first requests after sign-in pass the guard
+            // instead of failing until the client picks one
+            const provided =
+              'activeOrganizationId' in session && typeof session.activeOrganizationId === 'string'
+                ? session.activeOrganizationId
+                : null;
+            const activeOrganizationId =
+              provided ?? (await resolveActiveOrganizationId(activeOrganizationSource, session.userId));
+            return { data: { ...session, activeOrganizationId } };
           },
         },
       },

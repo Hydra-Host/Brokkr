@@ -131,11 +131,20 @@ export class InventoryRecord extends createActiveRecord(InventoryPersistenceSche
     return record.data;
   }
 
-  static findListings(category?: DeviceCategory, interruptibleReady?: boolean): Promise<InventoryAggregate[]> {
+  static findListings(
+    category?: DeviceCategory,
+    interruptibleReady?: boolean,
+    excludedSupplierIds: readonly string[] = [],
+  ): Promise<InventoryAggregate[]> {
     // Read live `server.*` values (Device-side copies are a stale backfill); one `server: {}` group so Prisma emits a single Device->Server join.
     return InventoryRecord.findAggregates({
       where: {
         ...InventoryRecord.deviceFilter(category),
+        ...(excludedSupplierIds.length > 0
+          ? {
+              OR: [{ supplierId: null }, { supplierId: { notIn: [...excludedSupplierIds] } }],
+            }
+          : {}),
         server: {
           isListed: true,
           ...(interruptibleReady && { floorHourlyPrice: { not: null } }),
@@ -203,8 +212,24 @@ export class InventoryRecord extends createActiveRecord(InventoryPersistenceSche
     });
   }
 
-  static async getAllCategoryPrices(): Promise<CategoryPrice[]> {
+  static async listedSupplierIds(): Promise<string[]> {
     const client = ActiveRecordRegistry.client;
+    const rows = await client.$queryRaw<Array<{ supplierId: string }>>`
+      SELECT DISTINCT bd."supplierId" AS "supplierId"
+      FROM "Device" bd
+      INNER JOIN "Server" s ON s."deviceId" = bd."id"
+      WHERE
+        s."isListed" = true
+        AND bd."role" = ${DeviceRole.Server}::"DeviceRole"
+        AND bd."deletedAt" IS NULL
+        AND bd."supplierId" IS NOT NULL
+    `;
+    return rows.map((row) => row.supplierId);
+  }
+
+  static async getAllCategoryPrices(excludedSupplierIds: readonly string[] = []): Promise<CategoryPrice[]> {
+    const client = ActiveRecordRegistry.client;
+    const supplierExclusion = InventoryRecord.supplierCatalogExclusionSql(excludedSupplierIds);
     // Pricing/listing columns come from the live `Server` row via the INNER JOIN (Device-side copies are a stale backfill).
     const results = await client.$queryRaw<Array<{ category: string; start_price: string }>>`
       WITH listed AS (
@@ -220,6 +245,7 @@ export class InventoryRecord extends createActiveRecord(InventoryPersistenceSche
         WHERE
           (s."floorHourlyPrice" IS NOT NULL OR s."hourlyPrice" IS NOT NULL)
           AND s."isListed" = true
+          ${supplierExclusion}
           AND bd."role" = ${DeviceRole.Server}::"DeviceRole"
           AND bd."deletedAt" IS NULL
       )
@@ -236,8 +262,9 @@ export class InventoryRecord extends createActiveRecord(InventoryPersistenceSche
     }));
   }
 
-  static async getCategoryAvailability(): Promise<CategoryAvailability[]> {
+  static async getCategoryAvailability(excludedSupplierIds: readonly string[] = []): Promise<CategoryAvailability[]> {
     const client = ActiveRecordRegistry.client;
+    const supplierExclusion = InventoryRecord.supplierCatalogExclusionSql(excludedSupplierIds);
     const results = await client.$queryRaw<Array<{ category: string; stock_status: string; device_count: bigint }>>`
       SELECT
         category,
@@ -280,6 +307,7 @@ export class InventoryRecord extends createActiveRecord(InventoryPersistenceSche
         INNER JOIN "Server" srv ON srv."deviceId" = bd."id"
         WHERE
           srv."isListed" = true
+          ${supplierExclusion}
           AND bd."role" = ${DeviceRole.Server}::"DeviceRole"
           AND bd."deletedAt" IS NULL
           AND (SELECT count(*) FROM "Gpu" g WHERE g."deviceId" = bd."id") > 0
@@ -319,6 +347,13 @@ export class InventoryRecord extends createActiveRecord(InventoryPersistenceSche
       hasPreorder: counts.preorderCount > 0,
       preorderCount: counts.preorderCount,
     }));
+  }
+
+  /** Plugin-hidden suppliers must be excluded here so category prices/availability cannot leak stock. */
+  private static supplierCatalogExclusionSql(excludedSupplierIds: readonly string[]): Prisma.Sql {
+    if (excludedSupplierIds.length === 0) return Prisma.empty;
+    // Keep null-supplier devices: NOT IN would drop them (SQL NULL fails the predicate).
+    return Prisma.sql`AND (bd."supplierId" IS NULL OR bd."supplierId" NOT IN (${Prisma.join(excludedSupplierIds)}))`;
   }
 
   /** DCIM invite-create predicate. Does not require `isListed`; marketplace `findListings` is the listed catalog. */

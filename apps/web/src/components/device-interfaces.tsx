@@ -21,7 +21,7 @@ import { Switch } from '@repo/ui/components/switch';
 import { FormInput } from '@repo/ui/form/form-input';
 import { FormSelect } from '@repo/ui/form/form-select';
 import { cn } from '@repo/ui/utils';
-import { unwrapErrorMessage } from '@repo/utils';
+import { pickDataInterface, unwrapErrorMessage } from '@repo/utils';
 import { useQueryClient } from '@tanstack/react-query';
 import { Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -133,6 +133,9 @@ function InterfaceTable({
   const canEdit = can('dcim', 'update');
   const canAssignIp = can('ipam', 'create');
   const canUnassignIp = can('ipam', 'update');
+  const pxe = pickDataInterface(allInterfaces);
+  const pxeInterfaceId = pxe?.iface.id;
+  const pxeReason = pxe?.tier === 'address' ? 'PXE: holds an IP address' : 'PXE: first data interface by name';
 
   const [editing, setEditing] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -316,6 +319,11 @@ function InterfaceTable({
                           {iface.mgmtOnly && (
                             <Badge variant="outline" className="ml-2 text-xs">
                               MGMT
+                            </Badge>
+                          )}
+                          {iface.id === pxeInterfaceId && (
+                            <Badge variant="outline" className="ml-2 text-xs" title={pxeReason}>
+                              PXE
                             </Badge>
                           )}
                         </span>

@@ -1,9 +1,15 @@
-import { LifecycleGateDeferral, LifecycleGateRejection, PLUGIN_EVENT_BUS } from '@hydrahost/plugin-sdk';
+import {
+  DEFERRED_ABORT_CAUSE_OPERATOR_APPROVAL_REJECTED,
+  LifecycleGateDeferral,
+  LifecycleGateRejection,
+  PLUGIN_EVENT_BUS,
+} from '@hydrahost/plugin-sdk';
 import { getQueueToken } from '@nestjs/bullmq';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ActiveRecordRegistry } from '@repo/active-record';
-import { JobType, LifecycleJobPhase, Prisma, RequestSource } from '@repo/database';
+import { BillingFrequency, JobType, LifecycleJobPhase, RequestSource } from '@repo/database';
+import { ContractType, reservedRollingOnlyRejectionMessage } from '@repo/utils';
 import { TRANSITIONAL_SERVER_POWER_STATUSES } from '@repo/device-domain';
 import {
   LIFECYCLE_SCHEDULED_QUEUE,
@@ -83,15 +89,29 @@ describe('LifecycleService', () => {
     dispatch: vi.fn().mockResolvedValue(undefined),
   };
   const provisionOperation = {
-    assembleContext: vi.fn().mockResolvedValue({ baseLayerId: 'layer-1', pubkeys: ['k'] }),
-    assembleContextForReplay: vi.fn().mockResolvedValue({ baseLayerId: 'layer-1', pubkeys: ['k'] }),
+    assembleContext: vi
+      .fn()
+      .mockResolvedValue({ baseLayerId: 'layer-1', pubkeys: ['k'], supplierOrganizationId: 'supplier-org-1' }),
+    assembleContextForReplay: vi
+      .fn()
+      .mockResolvedValue({ baseLayerId: 'layer-1', pubkeys: ['k'], supplierOrganizationId: 'supplier-org-1' }),
     assembleContextForResume: vi.fn().mockResolvedValue({ pubkeys: ['k'] }),
     createReservation: vi.fn().mockResolvedValue('res-1'),
     createDeployment: vi.fn().mockResolvedValue('dep-1'),
     acceptInvite: vi.fn().mockResolvedValue(undefined),
+    resolveProvisionInviteFlags: vi.fn().mockResolvedValue({ fromInvite: false, manualBilling: false }),
+    isKnownAccount: vi.fn().mockResolvedValue(false),
+    billedLineForDeployment: vi.fn().mockResolvedValue({
+      billingFrequency: BillingFrequency.WEEKLY,
+      reservationPrice: 16_800,
+      deviceName: 'box-1',
+      deviceClass: 'H100',
+      supplierOrganizationId: 'supplier-org-1',
+    }),
     publish: vi.fn().mockResolvedValue(undefined),
   };
   const reservationsService = { endReservation: vi.fn().mockResolvedValue(undefined) };
+  const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   const clusterNetwork = {
     attach: vi.fn().mockResolvedValue(undefined),
     detach: vi.fn().mockResolvedValue(undefined),
@@ -113,11 +133,28 @@ describe('LifecycleService', () => {
       deploymentId: 'dep-1',
       pubkeys: ['k'],
     });
-    provisionOperation.assembleContext.mockResolvedValue({ baseLayerId: 'layer-1', pubkeys: ['k'] });
-    provisionOperation.assembleContextForReplay.mockResolvedValue({ baseLayerId: 'layer-1', pubkeys: ['k'] });
+    provisionOperation.assembleContext.mockResolvedValue({
+      baseLayerId: 'layer-1',
+      pubkeys: ['k'],
+      supplierOrganizationId: 'supplier-org-1',
+    });
+    provisionOperation.assembleContextForReplay.mockResolvedValue({
+      baseLayerId: 'layer-1',
+      pubkeys: ['k'],
+      supplierOrganizationId: 'supplier-org-1',
+    });
     provisionOperation.assembleContextForResume.mockResolvedValue({ pubkeys: ['k'] });
     provisionOperation.createReservation.mockResolvedValue('res-1');
     provisionOperation.createDeployment.mockResolvedValue('dep-1');
+    provisionOperation.resolveProvisionInviteFlags.mockResolvedValue({ fromInvite: false, manualBilling: false });
+    provisionOperation.isKnownAccount.mockResolvedValue(false);
+    provisionOperation.billedLineForDeployment.mockResolvedValue({
+      billingFrequency: BillingFrequency.WEEKLY,
+      reservationPrice: 16_800,
+      deviceName: 'box-1',
+      deviceClass: 'H100',
+      supplierOrganizationId: 'supplier-org-1',
+    });
     reservationsService.endReservation.mockResolvedValue(undefined);
     client = makeMockClient();
     ActiveRecordRegistry.configureForTest(client, null);
@@ -135,10 +172,7 @@ describe('LifecycleService', () => {
         { provide: ClusterNetworkService, useValue: clusterNetwork },
         { provide: getQueueToken(LIFECYCLE_SCHEDULED_QUEUE), useValue: scheduledQueue },
         { provide: getQueueToken(LIFECYCLE_WATCHDOG_QUEUE), useValue: watchdogQueue },
-        {
-          provide: 'LoggerServiceLifecycleService',
-          useValue: { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-        },
+        { provide: 'LoggerServiceLifecycleService', useValue: logger },
       ],
     }).compile();
     service = moduleRef.get(LifecycleService);
@@ -394,6 +428,7 @@ describe('LifecycleService', () => {
       retriedFromJobId: 'old-job',
       retriedBy: 'operator-1',
       triggeredByEmail: 'op@hydrahost.test',
+      retryReason: 'BMC hung',
     });
 
     expect(client.lifecycleJob.create).toHaveBeenCalledWith(
@@ -406,6 +441,7 @@ describe('LifecycleService', () => {
             source: RequestSource.UI,
             retriedFromJobId: 'old-job',
             retriedBy: 'operator-1',
+            retryReason: 'BMC hung',
             request: expect.objectContaining({ userId: 'user-1' }),
           }),
         }),
@@ -471,6 +507,7 @@ describe('LifecycleService', () => {
         retriedFromJobId: 'old-job',
         retriedBy: 'operator-1',
         triggeredByEmail: 'op@hydrahost.test',
+        retryReason: 'BMC hung',
       });
 
       expect(client.lifecycleJob.create).toHaveBeenCalledWith(
@@ -483,6 +520,7 @@ describe('LifecycleService', () => {
               source: RequestSource.UI,
               retriedFromJobId: 'old-job',
               retriedBy: 'operator-1',
+              retryReason: 'BMC hung',
               request: expect.objectContaining({ userId: 'user-1' }),
             }),
           }),
@@ -500,6 +538,8 @@ describe('LifecycleService', () => {
     it('aborts when the provision gate rejects', async () => {
       gateBus.runGate.mockRejectedValueOnce(new LifecycleGateRejection('payment declined'));
       await expect(service.requestProvisionAsOperator(input)).rejects.toBeInstanceOf(LifecycleGateRejection);
+      expect(provisionOperation.createReservation).not.toHaveBeenCalled();
+      expect(provisionOperation.createDeployment).not.toHaveBeenCalled();
       expect(provisionOperation.publish).not.toHaveBeenCalled();
     });
   });
@@ -519,23 +559,38 @@ describe('LifecycleService', () => {
       source: RequestSource.API,
     };
 
-    it('prepares (creates the reservation + deployment), runs the authorize gate, then publishes and emits', async () => {
+    it('rejects isInterruptible provisions at the engine choke point', async () => {
+      await expect(service.requestProvision({ ...input, isInterruptible: true })).rejects.toMatchObject({
+        response: { message: reservedRollingOnlyRejectionMessage(ContractType.INTERRUPTIBLE) },
+      });
+      expect(provisionOperation.assembleContext).not.toHaveBeenCalled();
+      expect(provisionOperation.createReservation).not.toHaveBeenCalled();
+    });
+
+    it('runs the authorize gate, then creates the reservation + deployment, then publishes and emits', async () => {
       const job = await service.requestProvision(input);
 
       expect(provisionOperation.assembleContext).toHaveBeenCalled();
-      expect(provisionOperation.createReservation).toHaveBeenCalledWith(input);
-      expect(provisionOperation.createDeployment).toHaveBeenCalledWith(input, 'layer-1', 'res-1');
       expect(gateBus.runGate).toHaveBeenCalledWith(
         'provision.authorize',
         {
           jobId: 'job-1',
           deviceId: 'device-1',
-          deploymentId: 'dep-1',
+          deploymentId: '',
           organizationId: 'org-1',
           customerUserId: 'user-1',
           internalProvision: false,
+          manualBilling: false,
+          fromInvite: false,
+          knownAccount: false,
+          supplierOrganizationId: 'supplier-org-1',
         },
         { override: false },
+      );
+      expect(provisionOperation.createReservation).toHaveBeenCalledWith(input);
+      expect(provisionOperation.createDeployment).toHaveBeenCalledWith(input, 'layer-1', 'res-1');
+      expect(gateBus.runGate.mock.invocationCallOrder[0]).toBeLessThan(
+        provisionOperation.createReservation.mock.invocationCallOrder[0],
       );
       expect(provisionOperation.publish).toHaveBeenCalledWith(input, 'dep-1', ['k'], 'job-1');
       expect(job.data.deploymentId).toBe('dep-1');
@@ -543,27 +598,173 @@ describe('LifecycleService', () => {
         'lifecycle.dispatched',
         expect.objectContaining({ jobType: JobType.Provision, deploymentId: 'dep-1' }),
       );
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        'provision.started',
+        expect.objectContaining({
+          jobId: 'job-1',
+          deviceId: 'device-1',
+          deploymentId: 'dep-1',
+          organizationId: 'org-1',
+          internalProvision: false,
+          manualBilling: false,
+          billingFrequency: BillingFrequency.WEEKLY,
+          reservationPrice: 16_800,
+          deviceName: 'box-1',
+          deviceClass: 'H100',
+          supplierOrganizationId: 'supplier-org-1',
+        }),
+      );
+    });
+
+    it('threads reservation billingFrequency onto provision.started', async () => {
+      provisionOperation.billedLineForDeployment.mockResolvedValueOnce({
+        billingFrequency: BillingFrequency.MONTHLY,
+        reservationPrice: 50_000,
+        deviceName: 'box-1',
+        deviceClass: 'H100',
+        supplierOrganizationId: 'supplier-org-1',
+      });
+
+      await service.requestProvision(input);
+
+      expect(provisionOperation.billedLineForDeployment).toHaveBeenCalledWith('dep-1');
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        'provision.started',
+        expect.objectContaining({
+          billingFrequency: BillingFrequency.MONTHLY,
+          reservationPrice: 50_000,
+          deviceClass: 'H100',
+        }),
+      );
+    });
+
+    it('still emits provision.started when billed-line lookup fails after dispatch', async () => {
+      provisionOperation.billedLineForDeployment.mockRejectedValueOnce(new Error('deployment missing'));
+
+      const job = await service.requestProvision(input);
+
+      expect(job.data.phase).toBe(LifecycleJobPhase.DISPATCHED);
+      expect(logger.error).toHaveBeenCalledWith(
+        'billedLineForDeployment failed for dep-1: deployment missing — emitting provision.started with identity fallbacks',
+      );
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        'lifecycle.dispatched',
+        expect.objectContaining({ jobType: JobType.Provision, deploymentId: 'dep-1' }),
+      );
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        'provision.started',
+        expect.objectContaining({
+          jobId: 'job-1',
+          deviceId: 'device-1',
+          deploymentId: 'dep-1',
+          billingFrequency: BillingFrequency.WEEKLY,
+          reservationPrice: null,
+          deviceName: 'device-1',
+          deviceClass: 'server',
+          supplierOrganizationId: null,
+        }),
+      );
     });
 
     it('threads internalProvision into the authorize gate payload (so plugins can skip customer gating for DCIM provisions)', async () => {
       await service.requestProvision({ ...input, internalProvision: true });
 
+      expect(provisionOperation.resolveProvisionInviteFlags).not.toHaveBeenCalled();
+      expect(provisionOperation.isKnownAccount).not.toHaveBeenCalled();
       expect(gateBus.runGate).toHaveBeenCalledWith(
         'provision.authorize',
-        expect.objectContaining({ internalProvision: true }),
+        expect.objectContaining({
+          internalProvision: true,
+          manualBilling: false,
+          fromInvite: false,
+          knownAccount: false,
+        }),
+        { override: false },
+      );
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        'provision.started',
+        expect.objectContaining({
+          internalProvision: true,
+          manualBilling: false,
+          billingFrequency: BillingFrequency.WEEKLY,
+        }),
+      );
+    });
+
+    it('threads a missing device supplier onto the authorize gate payload', async () => {
+      provisionOperation.assembleContext.mockResolvedValueOnce({
+        baseLayerId: 'layer-1',
+        pubkeys: ['k'],
+        supplierOrganizationId: null,
+      });
+
+      await service.requestProvision(input);
+
+      expect(gateBus.runGate).toHaveBeenCalledWith(
+        'provision.authorize',
+        expect.objectContaining({ supplierOrganizationId: null }),
         { override: false },
       );
     });
 
-    it('aborts before the gate when prepare (deployment creation) fails', async () => {
-      provisionOperation.createDeployment.mockRejectedValueOnce(new Error('device taken'));
-      await expect(service.requestProvision(input)).rejects.toThrow('device taken');
-      expect(gateBus.runGate).not.toHaveBeenCalled();
-      expect(provisionOperation.publish).not.toHaveBeenCalled();
-      expect(eventBus.emit).not.toHaveBeenCalled();
+    it('threads manualBilling from the applicable invite into the authorize gate payload', async () => {
+      provisionOperation.resolveProvisionInviteFlags.mockResolvedValueOnce({
+        fromInvite: false,
+        manualBilling: true,
+      });
+
+      await service.requestProvision(input);
+
+      expect(provisionOperation.resolveProvisionInviteFlags).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        userId: 'user-1',
+        organizationId: 'org-1',
+      });
+      expect(gateBus.runGate).toHaveBeenCalledWith(
+        'provision.authorize',
+        expect.objectContaining({ manualBilling: true }),
+        { override: false },
+      );
+      expect(provisionOperation.createReservation).toHaveBeenCalledWith(input);
+      expect(provisionOperation.createDeployment).toHaveBeenCalledWith(input, 'layer-1', 'res-1');
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        'provision.started',
+        expect.objectContaining({ manualBilling: true, internalProvision: false }),
+      );
     });
 
-    it('aborts and signals the orphaned deployment when the attach save fails after creation', async () => {
+    it('threads server-derived fromInvite and knownAccount into the authorize gate payload', async () => {
+      provisionOperation.resolveProvisionInviteFlags.mockResolvedValueOnce({
+        fromInvite: true,
+        manualBilling: false,
+      });
+      provisionOperation.isKnownAccount.mockResolvedValueOnce(true);
+
+      await service.requestProvision(input);
+
+      expect(provisionOperation.resolveProvisionInviteFlags).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        userId: 'user-1',
+        organizationId: 'org-1',
+      });
+      expect(provisionOperation.isKnownAccount).toHaveBeenCalledWith('org-1');
+      expect(gateBus.runGate).toHaveBeenCalledWith(
+        'provision.authorize',
+        expect.objectContaining({ fromInvite: true, knownAccount: true }),
+        { override: false },
+      );
+    });
+
+    it('aborts after the gate when prepare (deployment creation) fails', async () => {
+      provisionOperation.createDeployment.mockRejectedValueOnce(new Error('device taken'));
+      await expect(service.requestProvision(input)).rejects.toThrow('device taken');
+      expect(gateBus.runGate).toHaveBeenCalled();
+      expect(provisionOperation.publish).not.toHaveBeenCalled();
+      expect(eventBus.emit).not.toHaveBeenCalledWith('lifecycle.dispatched', expect.anything());
+      expect(eventBus.emit).not.toHaveBeenCalledWith('provision.started', expect.anything());
+    });
+
+    it('aborts during authorize without creating a reservation when the first phase save fails', async () => {
       const client = makeMockClient();
       client.lifecycleJob.update.mockImplementationOnce(() => {
         throw new Error('db blip');
@@ -573,11 +774,10 @@ describe('LifecycleService', () => {
       await expect(service.requestProvision(input)).rejects.toThrow('db blip');
 
       expect(gateBus.runGate).not.toHaveBeenCalled();
+      expect(provisionOperation.createReservation).not.toHaveBeenCalled();
+      expect(provisionOperation.createDeployment).not.toHaveBeenCalled();
       expect(provisionOperation.publish).not.toHaveBeenCalled();
-      expect(eventBus.emit).toHaveBeenCalledWith(
-        'provision.failed',
-        expect.objectContaining({ jobId: 'job-1', deploymentId: 'dep-1', error: 'db blip' }),
-      );
+      expect(eventBus.emit).not.toHaveBeenCalledWith('provision.failed', expect.anything());
       expect(eventBus.emit).not.toHaveBeenCalledWith('lifecycle.dispatched', expect.anything());
     });
 
@@ -603,16 +803,17 @@ describe('LifecycleService', () => {
       expect(provisionOperation.publish).not.toHaveBeenCalled();
     });
 
-    it('emits provision.failed when the authorize gate vetoes after the deployment is created', async () => {
+    it('aborts without creating a reservation or deployment when the authorize gate vetoes', async () => {
       gateBus.runGate.mockRejectedValueOnce(new LifecycleGateRejection('payment declined'));
 
       await expect(service.requestProvision(input)).rejects.toBeInstanceOf(LifecycleGateRejection);
 
+      expect(provisionOperation.createReservation).not.toHaveBeenCalled();
+      expect(provisionOperation.createDeployment).not.toHaveBeenCalled();
+      expect(provisionOperation.acceptInvite).not.toHaveBeenCalled();
       expect(provisionOperation.publish).not.toHaveBeenCalled();
-      expect(eventBus.emit).toHaveBeenCalledWith(
-        'provision.failed',
-        expect.objectContaining({ jobId: 'job-1', deploymentId: 'dep-1', error: 'payment declined' }),
-      );
+      expect(eventBus.emit).not.toHaveBeenCalledWith('provision.failed', expect.anything());
+      expect(eventBus.emit).not.toHaveBeenCalledWith('lifecycle.dispatched', expect.anything());
     });
   });
 
@@ -684,6 +885,18 @@ describe('LifecycleService', () => {
         'lifecycle.dispatched',
         expect.objectContaining({ jobType: JobType.Provision, deploymentId: 'dep-1' }),
       );
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        'provision.started',
+        expect.objectContaining({
+          jobId: 'job-1',
+          deviceId: 'device-1',
+          deploymentId: 'dep-1',
+          organizationId: 'org-1',
+          internalProvision: false,
+          manualBilling: false,
+          billingFrequency: BillingFrequency.WEEKLY,
+        }),
+      );
     });
 
     it('resumeDeferred is a no-op for a job no longer in DEFERRED', async () => {
@@ -694,15 +907,20 @@ describe('LifecycleService', () => {
       expect(provisionOperation.publish).not.toHaveBeenCalled();
     });
 
-    it('abortDeferred terminalizes, signals the orphaned deployment, and ends the reservation', async () => {
+    it('abortDeferred terminalizes, ends the orphaned deployment, and ends the reservation', async () => {
       const job = deferredProvisionJob();
+      const deployment = {
+        data: { reservationId: 'res-1', endDate: null, isLocked: false },
+        endDeployment: vi.fn().mockReturnThis(),
+        save: vi.fn().mockResolvedValue(undefined),
+      };
       vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(job);
-      vi.spyOn(DeploymentRecord, 'findOneUnscoped').mockResolvedValue({
-        data: { reservationId: 'res-1' },
-      } as unknown as Awaited<ReturnType<typeof DeploymentRecord.findOneUnscoped>>);
+      vi.spyOn(DeploymentRecord, 'findOneUnscoped').mockResolvedValue(deployment);
 
       await service.abortDeferred('job-1', 'no payment received');
 
+      expect(deployment.endDeployment).toHaveBeenCalled();
+      expect(deployment.save).toHaveBeenCalled();
       expect(job.data.phase).toBe(LifecycleJobPhase.ABORTED);
       expect(provisionOperation.publish).not.toHaveBeenCalled();
       expect(eventBus.emit).toHaveBeenCalledWith(
@@ -712,23 +930,68 @@ describe('LifecycleService', () => {
       expect(reservationsService.endReservation).toHaveBeenCalledWith('res-1');
     });
 
+    it('abortDeferred ends a locked deployment', async () => {
+      const job = deferredProvisionJob();
+      const deployment = {
+        data: { reservationId: 'res-1', endDate: null, isLocked: true },
+        endDeployment: vi.fn().mockReturnThis(),
+        save: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(job);
+      vi.spyOn(DeploymentRecord, 'findOneUnscoped').mockResolvedValue(deployment);
+
+      await expect(service.abortDeferred('job-1', 'declined')).resolves.toBe(true);
+
+      expect(deployment.endDeployment).toHaveBeenCalled();
+      expect(deployment.save).toHaveBeenCalled();
+      expect(job.data.phase).toBe(LifecycleJobPhase.ABORTED);
+      expect(reservationsService.endReservation).toHaveBeenCalledWith('res-1');
+    });
+
+    it('abortDeferred forwards an operator-approval cause on provision.failed', async () => {
+      const job = deferredProvisionJob();
+      const deployment = {
+        data: { reservationId: 'res-1', endDate: null, isLocked: false },
+        endDeployment: vi.fn().mockReturnThis(),
+        save: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(job);
+      vi.spyOn(DeploymentRecord, 'findOneUnscoped').mockResolvedValue(deployment);
+
+      await service.abortDeferred('job-1', 'dfgdfg', {
+        cause: DEFERRED_ABORT_CAUSE_OPERATOR_APPROVAL_REJECTED,
+      });
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        'provision.failed',
+        expect.objectContaining({
+          jobId: 'job-1',
+          error: 'dfgdfg',
+          cause: DEFERRED_ABORT_CAUSE_OPERATOR_APPROVAL_REJECTED,
+        }),
+      );
+    });
+
+    it('abortDeferred returns true when it aborts and false on a no-op', async () => {
+      const deployment = {
+        data: { reservationId: 'res-1', endDate: null, isLocked: false },
+        endDeployment: vi.fn().mockReturnThis(),
+        save: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.spyOn(DeploymentRecord, 'findOneUnscoped').mockResolvedValue(deployment);
+      const spy = vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(deferredProvisionJob());
+      await expect(service.abortDeferred('job-1', 'declined')).resolves.toBe(true);
+
+      spy.mockResolvedValue(deferredProvisionJob(LifecycleJobPhase.ABORTED));
+      await expect(service.abortDeferred('job-1', 'declined')).resolves.toBe(false);
+    });
+
     it('resumeDeferred returns true when it advances the job and false on a no-op', async () => {
       const spy = vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(deferredProvisionJob());
       await expect(service.resumeDeferred('job-1')).resolves.toBe(true);
 
       spy.mockResolvedValue(deferredProvisionJob(LifecycleJobPhase.DISPATCHED));
       await expect(service.resumeDeferred('job-1')).resolves.toBe(false);
-    });
-
-    it('abortDeferred returns true when it aborts and false on a no-op', async () => {
-      vi.spyOn(DeploymentRecord, 'findOneUnscoped').mockResolvedValue({
-        data: { reservationId: 'res-1' },
-      } as unknown as Awaited<ReturnType<typeof DeploymentRecord.findOneUnscoped>>);
-      const spy = vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(deferredProvisionJob());
-      await expect(service.abortDeferred('job-1', 'declined')).resolves.toBe(true);
-
-      spy.mockResolvedValue(deferredProvisionJob(LifecycleJobPhase.ABORTED));
-      await expect(service.abortDeferred('job-1', 'declined')).resolves.toBe(false);
     });
 
     it('resumeDeferred completes the interruptible claim and emits provision.started for a linked provision', async () => {
@@ -752,7 +1015,15 @@ describe('LifecycleService', () => {
         where: { id: 'claim-1' },
         data: { status: 'Complete' },
       });
-      expect(eventBus.emit).toHaveBeenCalledWith('provision.started', expect.objectContaining({ jobId: 'job-1' }));
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        'provision.started',
+        expect.objectContaining({
+          jobId: 'job-1',
+          internalProvision: false,
+          manualBilling: false,
+          billingFrequency: BillingFrequency.WEEKLY,
+        }),
+      );
     });
   });
 
@@ -1060,208 +1331,53 @@ describe('LifecycleService', () => {
   });
 
   describe('executeInterruptibleProvision', () => {
-    const request = {
-      deviceId: 'incoming-device',
-      userId: 'incoming-user',
-      organizationId: 'incoming-org',
-      deploymentName: 'new-box',
-      operatingSystemSlug: 'ubuntu-22' as const,
-      sshKeyIds: ['key-1'],
-      diskLayouts: [],
-      cloudInit: null,
-      ipxeUrl: null,
-      customizations: null,
-      source: RequestSource.API,
-    };
-    const input = { request, deviceId: 'host-device' };
-
-    function mockOutgoing(
-      over: {
-        interruptibleNoticePeriod?: number | null;
-        customerId?: string;
-        isInterruptible?: boolean;
-        id?: string;
-      } = {},
-    ) {
-      const noticePeriod = 'interruptibleNoticePeriod' in over ? over.interruptibleNoticePeriod : 600_000;
-      vi.spyOn(DeploymentRecord, 'findAggregateUnscoped').mockResolvedValue({
-        id: over.id ?? 'outgoing-dep',
-        customerId: over.customerId ?? 'outgoing-org',
-        interruptibleNoticePeriod: noticePeriod,
-        isInterruptible: over.isInterruptible ?? true,
-      } as unknown as Awaited<ReturnType<typeof DeploymentRecord.findAggregateUnscoped>>);
-      vi.spyOn(DeploymentRecord, 'findOneUnscoped').mockResolvedValue({
-        setScheduledInterruptionTime: vi.fn().mockReturnThis(),
-        save: vi.fn().mockResolvedValue(undefined),
-      } as unknown as Awaited<ReturnType<typeof DeploymentRecord.findOneUnscoped>>);
-    }
-
-    it('creates the claim, parks the incoming provision in REQUESTED, and schedules the linked eviction', async () => {
-      mockOutgoing();
-
-      const result = await service.executeInterruptibleProvision(input);
-
-      expect(client.interruptibleClaim.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            server: { connect: { deviceId: 'host-device' } },
-            organization: { connect: { id: 'incoming-org' } },
-            user: { connect: { id: 'incoming-user' } },
-          }),
-        }),
-      );
-      expect(provisionOperation.createDeployment).not.toHaveBeenCalled();
-      expect(gateBus.runGate).not.toHaveBeenCalled();
-      expect(provisionOperation.publish).not.toHaveBeenCalled();
-
-      expect(scheduledQueue.add).toHaveBeenCalledWith(
-        'resume',
-        { jobId: result.deprovisionJobId },
-        expect.objectContaining({ delay: 600_000 }),
-      );
-      expect(eventBus.emit).toHaveBeenCalledWith(
-        'deployment.interruption.queued',
-        expect.objectContaining({ incomingOrgId: 'incoming-org', deviceId: 'host-device', delayMs: 600_000 }),
-      );
-      expect(result.claimId).toBe('claim-1');
-      expect(result.incomingJobId).not.toBe(result.deprovisionJobId);
-    });
-
-    it('reads the notice period from the outgoing deployment, not a request param', async () => {
-      mockOutgoing({ interruptibleNoticePeriod: 120_000 });
-      const result = await service.executeInterruptibleProvision(input);
-      expect(scheduledQueue.add).toHaveBeenCalledWith(
-        'resume',
-        { jobId: result.deprovisionJobId },
-        expect.objectContaining({ delay: 120_000 }),
-      );
-    });
-
-    it('sets claim.interruptAt from the resolved notice period, matching the grace-timer deadline', async () => {
-      mockOutgoing({ interruptibleNoticePeriod: 120_000 });
-      const before = Date.now();
-      await service.executeInterruptibleProvision(input);
-      const after = Date.now();
-
-      const { interruptAt } = client.interruptibleClaim.create.mock.calls[0][0].data;
-      expect(interruptAt.getTime()).toBeGreaterThanOrEqual(before + 120_000);
-      expect(interruptAt.getTime()).toBeLessThanOrEqual(after + 120_000);
-      expect(interruptAt.getTime()).toBeLessThan(before + 300_000);
-    });
-
-    it('falls back to the default notice period when the outgoing deployment has none', async () => {
-      mockOutgoing({ interruptibleNoticePeriod: null });
-      const result = await service.executeInterruptibleProvision(input);
-      expect(scheduledQueue.add).toHaveBeenCalledWith(
-        'resume',
-        { jobId: result.deprovisionJobId },
-        expect.objectContaining({ delay: 300_000 }),
-      );
-    });
-
-    it('throws 409 when a pending claim already exists for the host (P2002)', async () => {
-      mockOutgoing();
-      client.interruptibleClaim.create.mockRejectedValueOnce(
-        new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: 'x' }),
-      );
-      await expect(service.executeInterruptibleProvision(input)).rejects.toBeInstanceOf(ConflictException);
-      expect(scheduledQueue.add).not.toHaveBeenCalled();
-    });
-
-    it('throws when there is no active deployment to interrupt', async () => {
-      vi.spyOn(DeploymentRecord, 'findAggregateUnscoped').mockResolvedValue(null);
-      await expect(service.executeInterruptibleProvision(input)).rejects.toThrow(/No active deployment/);
-      expect(client.interruptibleClaim.create).not.toHaveBeenCalled();
-    });
-
-    it('refuses to evict a non-interruptible active deployment', async () => {
-      mockOutgoing({ isInterruptible: false });
-      await expect(service.executeInterruptibleProvision(input)).rejects.toBeInstanceOf(ConflictException);
-      expect(client.interruptibleClaim.create).not.toHaveBeenCalled();
-      expect(scheduledQueue.add).not.toHaveBeenCalled();
-    });
-
-    it('refuses when the captured deployment is no longer the active one on the device', async () => {
-      mockOutgoing({ id: 'new-tenant-dep' });
+    it('rejects interruptible takeovers until commerce billing is ready', async () => {
       await expect(
-        service.executeInterruptibleProvision({ ...input, expectedDeploymentId: 'outgoing-dep' }),
-      ).rejects.toBeInstanceOf(ConflictException);
+        service.executeInterruptibleProvision({
+          deviceId: 'host-device',
+          request: {
+            deviceId: 'incoming-device',
+            userId: 'incoming-user',
+            organizationId: 'incoming-org',
+            deploymentName: 'new-box',
+            operatingSystemSlug: 'ubuntu-22',
+            sshKeyIds: ['key-1'],
+            diskLayouts: [],
+            cloudInit: null,
+            ipxeUrl: null,
+            customizations: null,
+            source: RequestSource.API,
+          },
+        }),
+      ).rejects.toMatchObject({
+        response: { message: reservedRollingOnlyRejectionMessage(ContractType.INTERRUPTIBLE) },
+      });
       expect(client.interruptibleClaim.create).not.toHaveBeenCalled();
-      expect(scheduledQueue.add).not.toHaveBeenCalled();
     });
   });
 
   describe('requestInterruptibleProvision', () => {
-    const request = {
-      deviceId: 'incoming-device',
-      userId: 'incoming-user',
-      organizationId: 'incoming-org',
-      deploymentName: 'new-box',
-      operatingSystemSlug: 'ubuntu-22' as const,
-      sshKeyIds: ['key-1'],
-      diskLayouts: [],
-      cloudInit: null,
-      ipxeUrl: null,
-      customizations: null,
-      source: RequestSource.API,
-    };
-    const input = { request, deviceId: 'host-device' };
-
-    function mockOutgoing() {
-      vi.spyOn(DeploymentRecord, 'findAggregateUnscoped').mockResolvedValue({
-        id: 'outgoing-dep',
-        customerId: 'outgoing-org',
-        interruptibleNoticePeriod: 600_000,
-        isInterruptible: true,
-      } as unknown as Awaited<ReturnType<typeof DeploymentRecord.findAggregateUnscoped>>);
-      vi.spyOn(DeploymentRecord, 'findOneUnscoped').mockResolvedValue({
-        setScheduledInterruptionTime: vi.fn().mockReturnThis(),
-        save: vi.fn().mockResolvedValue(undefined),
-      } as unknown as Awaited<ReturnType<typeof DeploymentRecord.findOneUnscoped>>);
-    }
-
-    afterEach(() => {
-      delete process.env.INTERRUPTIBLE_EVICTION_REQUIRES_APPROVAL;
-    });
-
-    it('creates a PENDING DEPROVISION request (no claim/jobs) when approval is required', async () => {
-      mockOutgoing();
-
-      const result = await service.requestInterruptibleProvision(input);
-
-      expect(result).toEqual({ status: 'pending_approval', requestId: 'request-1' });
-      expect(client.adminLifecycleRequest.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            type: 'DEPROVISION',
-            status: 'PENDING',
-            deploymentId: 'outgoing-dep',
-            deviceId: 'host-device',
-            requestedById: 'incoming-user',
-            requestBody: expect.objectContaining({ deploymentName: 'new-box', deviceId: 'incoming-device' }),
-          }),
+    it('rejects interruptible takeovers until commerce billing is ready', async () => {
+      await expect(
+        service.requestInterruptibleProvision({
+          deviceId: 'host-device',
+          request: {
+            deviceId: 'incoming-device',
+            userId: 'incoming-user',
+            organizationId: 'incoming-org',
+            deploymentName: 'new-box',
+            operatingSystemSlug: 'ubuntu-22',
+            sshKeyIds: ['key-1'],
+            diskLayouts: [],
+            cloudInit: null,
+            ipxeUrl: null,
+            customizations: null,
+            source: RequestSource.API,
+          },
         }),
-      );
-      expect(client.interruptibleClaim.create).not.toHaveBeenCalled();
-      expect(scheduledQueue.add).not.toHaveBeenCalled();
-    });
-
-    it('executes the eviction directly when approval is disabled', async () => {
-      process.env.INTERRUPTIBLE_EVICTION_REQUIRES_APPROVAL = 'false';
-      mockOutgoing();
-
-      const result = await service.requestInterruptibleProvision(input);
-
-      expect(result.status).toBe('executing');
-      expect(client.interruptibleClaim.create).toHaveBeenCalled();
-      expect(scheduledQueue.add).toHaveBeenCalled();
-      expect(client.adminLifecycleRequest.create).not.toHaveBeenCalled();
-    });
-
-    it('throws NotFound when there is no active deployment to interrupt', async () => {
-      vi.spyOn(DeploymentRecord, 'findAggregateUnscoped').mockResolvedValue(null);
-
-      await expect(service.requestInterruptibleProvision(input)).rejects.toThrow(/No active deployment/);
+      ).rejects.toMatchObject({
+        response: { message: reservedRollingOnlyRejectionMessage(ContractType.INTERRUPTIBLE) },
+      });
       expect(client.adminLifecycleRequest.create).not.toHaveBeenCalled();
       expect(client.interruptibleClaim.create).not.toHaveBeenCalled();
     });
@@ -1327,15 +1443,26 @@ describe('LifecycleService', () => {
 
       expect(provisionOperation.assembleContextForReplay).toHaveBeenCalled();
       expect(provisionOperation.assembleContext).not.toHaveBeenCalled();
+      expect(gateBus.runGate).toHaveBeenCalledWith(
+        'provision.authorize',
+        expect.objectContaining({
+          jobId: 'incoming-1',
+          deploymentId: '',
+          organizationId: 'incoming-org',
+          manualBilling: false,
+          fromInvite: false,
+          knownAccount: false,
+          supplierOrganizationId: 'supplier-org-1',
+        }),
+      );
       expect(provisionOperation.createReservation).toHaveBeenCalledWith(expect.objectContaining(request));
       expect(provisionOperation.createDeployment).toHaveBeenCalledWith(
         expect.objectContaining(request),
         'layer-1',
         'res-1',
       );
-      expect(gateBus.runGate).toHaveBeenCalledWith(
-        'provision.authorize',
-        expect.objectContaining({ jobId: 'incoming-1', deploymentId: 'dep-1', organizationId: 'incoming-org' }),
+      expect(gateBus.runGate.mock.invocationCallOrder[0]).toBeLessThan(
+        provisionOperation.createReservation.mock.invocationCallOrder[0],
       );
       expect(provisionOperation.publish).toHaveBeenCalledWith(
         expect.objectContaining(request),
@@ -1349,11 +1476,33 @@ describe('LifecycleService', () => {
       });
       expect(eventBus.emit).toHaveBeenCalledWith(
         'provision.started',
-        expect.objectContaining({ deploymentId: 'dep-1' }),
+        expect.objectContaining({
+          jobId: 'incoming-1',
+          deploymentId: 'dep-1',
+          internalProvision: false,
+          manualBilling: false,
+          billingFrequency: BillingFrequency.WEEKLY,
+        }),
       );
       expect(eventBus.emit).toHaveBeenCalledWith(
         'lifecycle.dispatched',
         expect.objectContaining({ jobType: JobType.Provision, deploymentId: 'dep-1' }),
+      );
+    });
+
+    it('threads a missing device supplier onto the authorize gate payload', async () => {
+      vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(parkedJob(LifecycleJobPhase.REQUESTED));
+      provisionOperation.assembleContextForReplay.mockResolvedValueOnce({
+        baseLayerId: 'layer-1',
+        pubkeys: ['k'],
+        supplierOrganizationId: null,
+      });
+
+      await service.startLinkedProvision('incoming-1');
+
+      expect(gateBus.runGate).toHaveBeenCalledWith(
+        'provision.authorize',
+        expect.objectContaining({ supplierOrganizationId: null }),
       );
     });
 
@@ -1367,20 +1516,19 @@ describe('LifecycleService', () => {
       expect(gateBus.runGate).not.toHaveBeenCalled();
     });
 
-    it('aborts the job, releases the claim, and signals the orphaned deployment on a permanent gate veto', async () => {
+    it('aborts the job and releases the claim on a permanent gate veto without creating a reservation or deployment', async () => {
       const job = parkedJob(LifecycleJobPhase.REQUESTED);
       vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(job);
       gateBus.runGate.mockRejectedValueOnce(new LifecycleGateRejection('not allowed'));
 
       await expect(service.startLinkedProvision('incoming-1')).resolves.toBeUndefined();
 
+      expect(provisionOperation.createReservation).not.toHaveBeenCalled();
+      expect(provisionOperation.createDeployment).not.toHaveBeenCalled();
       expect(provisionOperation.publish).not.toHaveBeenCalled();
       expect(client.interruptibleClaim.delete).toHaveBeenCalledWith({ where: { id: 'claim-1' } });
       expect(job.data.phase).toBe(LifecycleJobPhase.ABORTED);
-      expect(eventBus.emit).toHaveBeenCalledWith(
-        'provision.failed',
-        expect.objectContaining({ deploymentId: 'dep-1', jobType: JobType.Provision }),
-      );
+      expect(eventBus.emit).not.toHaveBeenCalledWith('provision.failed', expect.anything());
     });
 
     it('rethrows (no abort) on a transient bridge enqueue failure', async () => {

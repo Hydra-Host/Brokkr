@@ -1,0 +1,56 @@
+/* Color axis. Each color contributes three seeds:
+
+     --seed-accent-strong  bright pastel — retro dark accent
+     --seed-accent         mid tone      — modern dark accent, retro dark dim
+     --seed-accent-deep    light-mode accent (AA on white)
+
+   The shared mapping below turns the seeds into the accent family with the
+   retro mapping; style-modern.css remaps accent/dim onto the mid/deep seeds.
+   Adding a stock color = one seed block here + one THEME_COLORS entry in
+   theme-provider.tsx. */
+:root {
+  --seed-accent-strong: #eceaff;
+  --seed-accent: #857cff;
+  --seed-accent-deep: #635bff;
+}
+
+:root,
+[data-color] {
+  --color-accent: light-dark(var(--seed-accent-deep), var(--seed-accent-strong));
+  --color-accent-dim: light-dark(color-mix(in oklab, var(--seed-accent-deep) 85%, black), var(--seed-accent));
+  --color-accent-glow: var(--color-accent);
+  --color-accent-foreground: light-dark(#ffffff, #0a0e12);
+  --color-active-bar: var(--color-accent);
+  --color-glow-cyan: var(--color-accent);
+  --color-glow-cyan-light: var(--color-accent-dim);
+}
+
+[data-color='violet'] {
+  --seed-accent-strong: #eceaff;
+  --seed-accent: #857cff;
+  --seed-accent-deep: #635bff;
+}
+
+[data-color='blue'] {
+  --seed-accent-strong: #6bc1ff;
+  --seed-accent: #56b0e4;
+  --seed-accent-deep: #2563eb;
+}
+
+[data-color='green'] {
+  --seed-accent-strong: #53ff99;
+  --seed-accent: #3db872;
+  --seed-accent-deep: #15803d;
+}
+
+[data-color='pink'] {
+  --seed-accent-strong: #ffaaf1;
+  --seed-accent: #cc88c1;
+  --seed-accent-deep: #a21caf;
+}
+
+[data-color='gold'] {
+  --seed-accent-strong: #ffdc75;
+  --seed-accent: #eab308;
+  --seed-accent-deep: #a16207;
+}

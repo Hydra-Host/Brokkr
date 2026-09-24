@@ -8,6 +8,7 @@ import {
   RescueModeActionResponseSchema,
 } from '../deployments';
 import { ProvisionRequestSchema as InventoryProvisionRequestSchema } from '../inventory';
+import { LifecycleJobEventsResponseSchema, type LifecycleJobSummary } from '../jobs';
 import { provisionCommonFields, provisionDiskLayoutSchema } from '../provision';
 
 const VALID_LAYOUT = {
@@ -184,5 +185,32 @@ describe('deployment action response schemas', () => {
     expect(deploymentsRoutes.powerCycleDeployment.responses[200]).toBe(DeploymentActionResponseSchema);
     expect(deploymentsRoutes.powerControlDeployment.responses[200]).toBe(DeploymentActionResponseSchema);
     expect(deploymentsRoutes.deprovisionDeployment.responses[200]).toBe(DeploymentActionResponseSchema);
+  });
+});
+
+describe('deployment job routes', () => {
+  const summary: LifecycleJobSummary = {
+    id: '44444444-4444-4444-4444-444444444444',
+    jobType: 'Provision',
+    phase: 'RUNNING',
+    deviceId: 'device-1',
+    deploymentId: 'deployment-1',
+    source: 'UI',
+    performedBy: null,
+    error: null,
+    createdAt: '2026-09-18T15:25:28.000Z',
+    completedAt: null,
+  };
+
+  it('lists the jobs as a paginated page of lifecycle job summaries', () => {
+    const page = deploymentsRoutes.listDeploymentJobs.responses[200].parse({
+      data: [summary],
+      meta: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
+    });
+    expect(page.data).toEqual([summary]);
+  });
+
+  it('serves the step events with the shared lifecycle job events schema', () => {
+    expect(deploymentsRoutes.getDeploymentJobEvents.responses[200]).toBe(LifecycleJobEventsResponseSchema);
   });
 });

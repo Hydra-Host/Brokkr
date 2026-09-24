@@ -103,6 +103,7 @@ describe('LifecycleJobRecord.appendEvent', () => {
           jobId: 'job-1',
           sagaName: 'provision',
           stepName: 'prepare_storage',
+          operation: null,
           eventType: 'stage_changed',
           status: 'running',
           result: { ok: true },

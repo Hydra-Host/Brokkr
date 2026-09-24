@@ -27,6 +27,7 @@ esac'
 999900|$PC|1|$PC -f process-compose.yaml|$OWN
 999201|node|1|node $OWN/apps/api/dist/main|$OWN/apps/api
 999202|node|1|node $OWN/.worktrees/sibling/apps/api/dist/main|$OWN/.worktrees/sibling/apps/api
+999203|node|1|node $SIB/apps/api/dist/main|$SIB/apps/api
 4242|virtqemud|1|virtqemud --timeout 0|
 EOF
   proc_table "$TMP/proctable"
@@ -140,6 +141,19 @@ run_orphan_gate() { # <post-down>
   [ "$status" -eq 1 ]
 }
 
+@test "datastore ownership is one predicate the classifier and the reaper both call" {
+  reaper datastore_owned_by "$REDIS 127.0.0.1:6379" "$OWN/.devenv/state/redis" "$OWN"
+  [ "$status" -eq 0 ]
+  reaper datastore_owned_by "$PG -D $OWN/.devenv/state/postgres" "" "$OWN"
+  [ "$status" -eq 0 ]
+  reaper datastore_owned_by "$PG" "$SIB/.devenv/state/postgres" "$OWN"
+  [ "$status" -ne 0 ]
+  reaper datastore_owned_by "/opt/homebrew/bin/postgres" "/opt/homebrew/var" "$OWN"
+  [ "$status" -ne 0 ]
+  run grep -c '\.devenv"\*' devenv/lib/port-guard.sh
+  [ "$output" -eq 0 ]
+}
+
 @test "datastore matcher reaps this checkout's orphan only" {
   run_datastore_gate 0
   [ "$status" -eq 0 ]
@@ -156,6 +170,13 @@ run_orphan_gate() { # <post-down>
 @test "post-down containment spares a nested worktree stack's hub build" {
   make_nested_worktree
   run_orphan_gate 1
+  [ "$status" -eq 0 ]
+  [ "$(cat "$REAPLOG")" = 999201 ]
+}
+
+@test "default containment spares a nested worktree and a foreign checkout's hub build" {
+  make_nested_worktree
+  run_orphan_gate 0
   [ "$status" -eq 0 ]
   [ "$(cat "$REAPLOG")" = 999201 ]
 }

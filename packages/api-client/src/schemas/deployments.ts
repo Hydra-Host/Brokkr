@@ -160,6 +160,7 @@ const deploymentDeviceDiagnosticsSchema = z.object({
 
 export const DeploymentSchema = z.object({
   id: z.string().describe('Unique identifier for the deployment'),
+  deviceId: z.string().describe('Identifier of the device this deployment runs on'),
   location: z.string().describe('Data center or region where the device is located'),
   status: statusSchema.describe('Current deployment lifecycle status'),
   powerStatus: statusSchema.describe('Current power state of the device'),
@@ -227,7 +228,7 @@ export const RescueModeActionResponseSchema = z.object({
 export type RescueModeActionResponse = z.infer<typeof RescueModeActionResponseSchema>;
 
 export const ExportLogsJobTypeSchema = z
-  .enum(['Provision', 'Reprovision'])
+  .enum(['Provision', 'Reprovision', 'Deprovision'])
   .describe('Type of provisioning job to export logs for');
 
 export type ExportLogsJobType = z.infer<typeof ExportLogsJobTypeSchema>;

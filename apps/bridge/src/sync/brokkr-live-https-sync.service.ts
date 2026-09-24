@@ -1,9 +1,11 @@
+import { buildDiscoveryFileBaseUrl, buildDiscoveryManifestUrl, withFlavorSuffix } from '@repo/utils';
 import { createHash } from 'node:crypto';
 import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { request as httpRequest, type ClientRequestArgs, type IncomingMessage } from 'node:http';
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
 import { join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
+
 import { getErrorMessage } from '../common/error-utils';
 import { getDiscoveryFileConfig, type DiscoveryFlavor } from '../download/discovery.config.js';
 
@@ -40,17 +42,6 @@ export type CacheMetadataEntry = {
 };
 
 export type CacheMetadata = Record<string, CacheMetadataEntry>;
-
-// the light tree is published beside the full one as `<root>-light`; the full tree is the root itself
-const FLAVOR_URL_SUFFIX: Record<DiscoveryFlavor, string> = { full: '', light: '-light' };
-
-export function buildFlavorBaseUrl(rootUrl: string, flavor: DiscoveryFlavor): string {
-  return `${rootUrl.replace(/\/+$/, '')}${FLAVOR_URL_SUFFIX[flavor]}`;
-}
-
-export function buildDiscoveryManifestUrl(baseUrl: string, version: string, arch: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}/${version}/${arch}/manifest.json`;
-}
 
 export function resolveFileVersion(configuredVersion: string, manifest: DiscoveryManifest): string {
   if (!configuredVersion.startsWith('latest-')) return configuredVersion;
@@ -332,8 +323,8 @@ export class BrokkrLiveHTTPSSyncService {
         jobId: this.jobId,
       });
 
-      const fileVersion = resolveFileVersion(this.syncConfig.brokkrLiveVersion, manifest);
-      const baseUrl = `${this.getFlavorBaseUrl(flavor)}/${fileVersion}/${arch}`;
+      const fileVersion = withFlavorSuffix(resolveFileVersion(this.syncConfig.brokkrLiveVersion, manifest), flavor);
+      const baseUrl = buildDiscoveryFileBaseUrl(this.syncConfig.discoveryBaseUrl, fileVersion, arch);
 
       for (const fileInfo of files) {
         await this.syncFile(baseUrl, fileInfo);
@@ -782,12 +773,12 @@ export class BrokkrLiveHTTPSSyncService {
     }
   }
 
-  private getFlavorBaseUrl(flavor: DiscoveryFlavor): string {
-    return buildFlavorBaseUrl(this.syncConfig.discoveryBaseUrl, flavor);
-  }
-
   private getDiscoveryManifestUrl(flavor: DiscoveryFlavor, arch: string): string {
-    return buildDiscoveryManifestUrl(this.getFlavorBaseUrl(flavor), this.syncConfig.brokkrLiveVersion, arch);
+    return buildDiscoveryManifestUrl(
+      this.syncConfig.discoveryBaseUrl,
+      withFlavorSuffix(this.syncConfig.brokkrLiveVersion, flavor),
+      arch,
+    );
   }
 
   private getArchCacheDir(flavor: DiscoveryFlavor, arch: string): string {

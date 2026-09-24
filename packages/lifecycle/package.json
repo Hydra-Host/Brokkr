@@ -23,7 +23,9 @@
   "dependencies": {
     "@hydrahost/plugin-sdk": "workspace:*",
     "@repo/active-record": "workspace:*",
+    "@repo/api-client": "workspace:*",
     "@repo/database": "workspace:*",
+    "@repo/utils": "workspace:*",
     "zod": "^3.25.0"
   },
   "devDependencies": {

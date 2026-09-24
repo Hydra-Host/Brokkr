@@ -45,7 +45,7 @@ function AuthLayout() {
     <div className="bg-bg-secondary flex min-h-svh">
       <div className="relative hidden flex-1 items-center justify-center overflow-hidden lg:flex">
         <div
-          className="text-accent pointer-events-none absolute inset-0 my-12 opacity-90 [[data-theme='hydra-light']_&]:opacity-50 [[data-theme='solarized-light']_&]:opacity-50"
+          className="text-accent pointer-events-none absolute inset-0 my-12 opacity-90 [[data-mode='light']_&]:opacity-50"
           style={connectionsMask}
         />
 

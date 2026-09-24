@@ -1,20 +1,18 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { type DeviceEvent, DeviceEventSchema, SSE_CHANNEL } from '@repo/device-domain';
 import Redis from 'ioredis';
 import { Subject } from 'rxjs';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { createRedisConnectionConfig } from 'src/common/redis/redis.config';
 import { LoggerService } from 'src/logger/logger.service';
-import { DeviceMetadataUpdatedEvent, DeviceMetadataUpdatedEventSchema } from './events.types';
-
-const SSE_CHANNEL = 'sse:device-metadata-updated';
 
 @Injectable()
 export class RedisPubSubService implements OnModuleInit, OnModuleDestroy {
   private publisher: Redis;
   private subscriber: Redis;
 
-  readonly deviceEvents$ = new Subject<DeviceMetadataUpdatedEvent>();
+  readonly deviceEvents$ = new Subject<DeviceEvent>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -40,8 +38,8 @@ export class RedisPubSubService implements OnModuleInit, OnModuleDestroy {
     this.subscriber.on('message', (channel, message) => {
       if (channel !== SSE_CHANNEL) return;
       try {
-        const event = DeviceMetadataUpdatedEventSchema.parse(JSON.parse(message));
-        this.logger.log(`[SSE] Received from Redis: device=${event.deviceId}, deployment=${event.deploymentId}`);
+        const event = DeviceEventSchema.parse(JSON.parse(message));
+        this.logger.log(`[SSE] Received from Redis: type=${event.type}, device=${event.deviceId}`);
         this.deviceEvents$.next(event);
       } catch {
         this.logger.warn('[SSE] Failed to parse Redis pub/sub message');
@@ -56,8 +54,8 @@ export class RedisPubSubService implements OnModuleInit, OnModuleDestroy {
     this.publisher.disconnect();
   }
 
-  async publish(event: DeviceMetadataUpdatedEvent) {
-    this.logger.log(`[SSE] Publishing to Redis: device=${event.deviceId}, deployment=${event.deploymentId}`);
+  async publish(event: DeviceEvent) {
+    this.logger.log(`[SSE] Publishing to Redis: type=${event.type}, device=${event.deviceId}`);
     await this.publisher.publish(SSE_CHANNEL, JSON.stringify(event));
   }
 }

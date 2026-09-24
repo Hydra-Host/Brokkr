@@ -13,6 +13,7 @@ import {
 import type { CollectorContext, DeviceMutation } from '../collectors/collector.types';
 import { ghwBaseboardSchema } from '../collectors/ghw_baseboard/ghw_baseboard.schema';
 import { ghwBiosSchema } from '../collectors/ghw_bios/ghw_bios.schema';
+import { ghwCpuSchema } from '../collectors/ghw_cpu/ghw_cpu.schema';
 import { type GhwGpuInput, ghwGpuSchema } from '../collectors/ghw_gpu/ghw_gpu.schema';
 import { kernelParamsSchema } from '../collectors/kernel_params/kernel_params.schema';
 import { lscpuSchema } from '../collectors/lscpu/lscpu.schema';
@@ -20,6 +21,10 @@ import { nvidiaSchema } from '../collectors/nvidia/nvidia.schema';
 import type { Composer } from './composer.types';
 
 const NVIDIA_CARD_PATTERN = /nvidia/i;
+
+// ghw_cpu reports "GenuineIntel" and kernel_params reports "intel"; no other CPUID vendor id
+// carries the substring, so one test covers both sources.
+const INTEL_CPU_VENDOR_PATTERN = /intel/i;
 
 function hasNvidiaCard(ghwGpu: GhwGpuInput): boolean {
   return ghwGpu.gpu.cards.some((card) =>
@@ -56,6 +61,21 @@ export class TeeComposer implements Composer {
     const sysManufacturer = kernelParams.success
       ? String(kernelParams.data.hardware_analysis?.system_manufacturer ?? '').toLowerCase()
       : '';
+
+    const ghwCpu = ghwCpuSchema.safeParse(ctx.rawBundle.ghw_cpu);
+    const cpuVendors = ghwCpu.success
+      ? ghwCpu.data.cpu.processors.flatMap((processor) => (processor.vendor ? [processor.vendor] : []))
+      : [];
+    if (cpuVendors.length === 0 && kernelParams.success) {
+      const analyzedVendor = String(kernelParams.data.hardware_analysis?.cpu_vendor ?? '');
+      if (analyzedVendor) cpuVendors.push(analyzedVendor);
+    }
+    // TEE_CPU_FAMILIES/TEE_CPU_MODELS are Intel-only CPUID ids; an absent vendor falls through, so
+    // this rejects a known-foreign CPU rather than demanding proof of Intel.
+    const nonIntelVendor = cpuVendors.find((vendor) => !INTEL_CPU_VENDOR_PATTERN.test(vendor));
+    if (nonIntelVendor) {
+      return this.notCapable(ctx, `cpu vendor "${nonIntelVendor}" is not intel`);
+    }
 
     const vendorSources = [biosVendor, baseboardVendor, sysManufacturer];
     const teeVendor =
@@ -124,6 +144,11 @@ export class TeeComposer implements Composer {
   private patch(ctx: CollectorContext, reason: string): DeviceMutation {
     ctx.logger.log(`tee: PATCH — ${reason}`);
     return { serverUpdate: { teeCapable: TeeCapability.PATCH } };
+  }
+
+  private notCapable(ctx: CollectorContext, reason: string): DeviceMutation {
+    ctx.logger.log(`tee: FALSE — ${reason}`);
+    return { serverUpdate: { teeCapable: TeeCapability.FALSE } };
   }
 
   private async refreshAttestation(ctx: CollectorContext): Promise<void> {

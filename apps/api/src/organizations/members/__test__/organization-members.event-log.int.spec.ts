@@ -1,5 +1,5 @@
 import { Reflector } from '@nestjs/core';
-import { MAIN_APP_PERMISSIONS, RbacService } from '@repo/auth/rbac';
+import { RbacService } from '@repo/auth/rbac';
 import { createPrismaClientOptions, OrganizationMembershipRole } from '@repo/database';
 import { randomUUID } from 'crypto';
 import { from } from 'rxjs';
@@ -9,6 +9,7 @@ import { ContextService } from 'src/common/context/context.service';
 import { EventLogInterceptor } from 'src/event-log/event-log.interceptor';
 import { EventLogRepository } from 'src/event-log/event-log.repository';
 import { EventLogService } from 'src/event-log/event-log.service';
+import { MAIN_APP_PERMISSIONS } from 'src/permissions/permissions.constants';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { OrganizationRolesService } from '../../organization-roles.service';

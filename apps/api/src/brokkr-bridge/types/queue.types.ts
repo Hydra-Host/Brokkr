@@ -64,6 +64,11 @@ export type SagaJobData = z.infer<typeof sagaJobDataSchema>;
 export const jobResultDataSchema = z.object({
   plan_id: z.string(),
   step_name: z.string(),
+  operation: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Label the bridge declared on the step; absent from bridges that predate it'),
   status: z.string(),
   device_id: z.string(),
   zone_prefix: z.string(),
@@ -117,6 +122,23 @@ export const benchmarkStepResultSchema = z.object({
   test_passed: z.boolean(),
   data: z.record(z.unknown()),
 });
+
+export const teeConfigStepResultSchema = z.object({
+  action: z.enum(['enabled', 'disabled']).optional(),
+  success: z.boolean().optional(),
+  skipped: z.boolean().optional(),
+  reason: z.string().optional(),
+});
+
+export type TeeConfigStepResult = z.infer<typeof teeConfigStepResultSchema>;
+
+// only a verified state is an observation: an unverified enable or a bare skip writes nothing, and a
+// failed disable throws on the bridge, so `disabled` always reports the real state
+export function observedTeeState(result: TeeConfigStepResult): boolean | null {
+  if (result.action === 'disabled') return false;
+  if (result.success === true && (result.action === 'enabled' || result.skipped === true)) return true;
+  return null;
+}
 
 export const sanitizationReportSchema = z.object({
   version: z.string().optional(),

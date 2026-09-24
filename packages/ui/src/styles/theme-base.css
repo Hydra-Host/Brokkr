@@ -1,0 +1,178 @@
+/* Design tokens.
+
+   Theming is three orthogonal axes written as attributes on <html> (or on any
+   scoping wrapper — see ThemeScope):
+
+     data-style = retro | modern      (style-retro.css / style-modern.css)
+     data-color = violet | blue | green | pink | gold   (colors.css)
+     data-mode  = dark | light        (modes.css, via color-scheme + light-dark())
+
+   The @theme block declares every token (which generates the Tailwind
+   utilities) with retro/violet/dark fallback values; the live values come from
+   the axis files. Scoping wrappers must always set the complete triple —
+   a partial wrapper inherits values already substituted at the root. */
+@theme {
+  /* Background Colors */
+  --color-bg-primary: #0c0a17;
+  --color-bg-secondary: #141120;
+  --color-bg-sidebar: #181526;
+  --color-bg-sidebar-alt: #141120;
+
+  /* Accent Colors */
+  --color-accent: #eceaff;
+  --color-accent-dim: #8f86fa;
+  --color-accent-glow: #8f86fa;
+  --color-accent-foreground: #0a0e12;
+
+  /* Text Colors */
+  --color-text-primary: #f4f2ff;
+  --color-text-muted: #a8a3c4;
+  --color-text-dim: #706b8e;
+  --color-text-label: #5e5980;
+
+  /* Border Colors */
+  --color-border: #a8a3c4;
+  --color-border-dim: #2e2a42;
+
+  /* Status Colors */
+  --color-status-online: #6fec4f;
+  --color-status-offline: #ff383b;
+  --color-status-warning: #fbd424;
+  --color-status-price: #ff8400;
+  --color-status-info: #60a5fa;
+  --color-status-purple: #c084fc;
+
+  /* Glow Effects */
+  --color-glow-cyan: #eceaff;
+  --color-glow-cyan-light: #8f86fa;
+
+  /* Active States */
+  --color-active-bg: #221e36;
+  --color-active-bar: #8f86fa;
+  --color-hover-bg: #1d1a2e;
+  --color-logo-bg: #0c0a17;
+
+  /* Font */
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Border Radius - Sharp for terminal look */
+  --radius-none: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+
+  /* Legacy color mappings for compatibility */
+  --color-background: var(--color-bg-primary);
+  --color-foreground: var(--color-text-primary);
+  --color-primary: var(--color-accent);
+  --color-primary-foreground: #0c0a17;
+
+  --color-secondary: var(--color-bg-secondary);
+  --color-secondary-foreground: var(--color-text-primary);
+  --color-destructive: var(--color-status-offline);
+  --color-destructive-foreground: #ffffff;
+  --color-muted: var(--color-bg-secondary);
+  --color-muted-foreground: var(--color-text-muted);
+
+  --color-popover: var(--color-bg-secondary);
+  --color-popover-foreground: var(--color-text-primary);
+  --color-card: var(--color-bg-secondary);
+  --color-card-foreground: var(--color-text-primary);
+  --color-sidebar: var(--color-bg-sidebar);
+  --color-sidebar-foreground: var(--color-text-muted);
+  --color-sidebar-primary: var(--color-accent);
+  --color-sidebar-primary-foreground: #0c0a17;
+  --color-sidebar-accent: var(--color-active-bg);
+  --color-sidebar-accent-foreground: #0c0a17;
+  --color-sidebar-border: #2e2a42;
+  --color-sidebar-ring: var(--color-accent);
+  --color-sidebar-hover: var(--color-hover-bg);
+  --color-input: var(--color-border);
+  --color-ring: var(--color-accent);
+  --spacing: 0.25rem;
+
+  /* Chart colors - theme derived */
+  --color-chart-1: var(--color-accent);
+  --color-chart-2: var(--color-glow-cyan);
+  --color-chart-3: var(--color-text-muted);
+  --color-chart-4: var(--color-glow-cyan-light);
+  --color-chart-5: var(--color-status-price);
+  --color-chart-6: #c8c5e0;
+  --color-chart-7: #a5a2ba;
+  --color-chart-8: #d5d3e8;
+  --color-chart-9: #7a7890;
+  --color-chart-10: #8e8ca5;
+
+  /* Table specific colors */
+  --color-table-header: var(--color-accent);
+  --color-table-body: var(--color-text-primary);
+
+  /* Input specific colors */
+  --color-input-border: var(--color-text-muted);
+  --color-input-background: var(--color-bg-primary);
+  --color-input-foreground: var(--color-text-primary);
+  --color-input-placeholder: var(--color-text-dim);
+  --color-input-error: var(--color-status-offline);
+
+  /* Tabs */
+  --color-tabs-active: var(--color-active-bg);
+
+  /* Sidebar specific */
+  --color-sidebar-section-bg: #241f3a;
+}
+
+/* var()-composed tokens bake the referenced value at the element that declares
+   them, so they must be re-declared on every theme scope for nested ThemeScope
+   wrappers to resolve against their own axis tokens instead of the root's. */
+:root,
+[data-style],
+[data-color],
+[data-mode] {
+  --color-background: var(--color-bg-primary);
+  --color-foreground: var(--color-text-primary);
+  --color-primary: var(--color-accent);
+  --color-primary-foreground: var(--color-accent-foreground);
+  --color-secondary: var(--color-bg-secondary);
+  --color-secondary-foreground: var(--color-text-primary);
+  --color-destructive: var(--color-status-offline);
+  --color-destructive-foreground: #ffffff;
+  --color-muted: var(--color-bg-secondary);
+  --color-muted-foreground: var(--color-text-muted);
+  --color-popover: light-dark(#ffffff, var(--color-bg-secondary));
+  --color-popover-foreground: var(--color-text-primary);
+  --color-card: light-dark(#ffffff, var(--color-bg-secondary));
+  --color-card-foreground: var(--color-text-primary);
+  --color-sidebar: var(--color-bg-sidebar);
+  --color-sidebar-foreground: var(--color-text-muted);
+  --color-sidebar-primary: var(--color-accent);
+  --color-sidebar-primary-foreground: var(--color-accent-foreground);
+  --color-sidebar-accent: var(--color-active-bg);
+  --color-sidebar-accent-foreground: light-dark(var(--color-text-primary), var(--color-bg-primary));
+  --color-sidebar-border: var(--color-border-dim);
+  --color-sidebar-ring: var(--color-accent);
+  --color-sidebar-hover: var(--color-hover-bg);
+  --color-input: var(--color-border);
+  --color-ring: var(--color-accent);
+  --color-logo-bg: var(--color-bg-primary);
+
+  --color-chart-1: var(--color-accent);
+  --color-chart-2: var(--color-glow-cyan);
+  --color-chart-3: var(--color-text-muted);
+  --color-chart-4: var(--color-glow-cyan-light);
+  --color-chart-5: var(--color-status-price);
+  --color-chart-6: color-mix(in oklab, var(--color-accent) 20%, light-dark(#9a9aa6, #c6c6d2));
+  --color-chart-7: color-mix(in oklab, var(--color-accent) 12%, light-dark(#7c7c88, #a2a2b0));
+  --color-chart-8: color-mix(in oklab, var(--color-accent) 28%, light-dark(#b4b4c0, #d4d4de));
+  --color-chart-9: color-mix(in oklab, var(--color-accent) 10%, light-dark(#5e5e6a, #787886));
+  --color-chart-10: color-mix(in oklab, var(--color-accent) 16%, light-dark(#8a8a96, #8c8c9a));
+
+  --color-table-header: light-dark(var(--color-text-primary), var(--color-accent));
+  --color-table-body: var(--color-text-primary);
+  --color-input-foreground: var(--color-text-primary);
+  --color-input-placeholder: var(--color-text-dim);
+  --color-input-error: var(--color-status-offline);
+  --color-tabs-active: var(--color-active-bg);
+}

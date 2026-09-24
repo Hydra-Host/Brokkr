@@ -30,6 +30,7 @@ export class BaremetalPresenter {
       role: device.role,
       deletedAt: device.deletedAt?.toISOString() ?? null,
       zoneName: ServerSpecHelper.zoneName(device),
+      zoneId: device.zoneId ?? null,
       status: {
         value: status,
         label: capitalizeFirstLetter(status),
@@ -93,7 +94,12 @@ export class BaremetalPresenter {
       defaultDiskLayouts: ServerSpecHelper.defaultDiskLayouts(device),
       deployment: activeDeployment
         ? {
-            deployerEmail: activeDeployment.deployer?.email ?? null,
+            id: activeDeployment.id,
+            // DC-created invites stamp the supplier org; Hydra/admin stamps HYDRAHOST_ORGANIZATION_ID; marketplace has no invite.
+            deployerEmail:
+              activeDeployment.reservation?.reservationInvite?.organizationId === device.supplierId
+                ? (activeDeployment.deployer?.email ?? null)
+                : null,
             reservation: reservationData
               ? {
                   price: reservationData.price,

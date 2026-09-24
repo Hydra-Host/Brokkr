@@ -1,3 +1,4 @@
+import { InventoryVisibilityFilterRegistry } from '@hydrahost/plugin-sdk';
 import { BadRequestException, ConflictException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   type DeviceCategory,
@@ -16,7 +17,7 @@ import {
   resolveZoneBuildId,
   type CustomizationCatalog,
 } from '@repo/layers';
-import { normalizeArchForArtifact } from '@repo/utils';
+import { normalizeArchForArtifact, provisionContractTypeWriteRejection } from '@repo/utils';
 import { CloudInitTemplatesService } from 'src/cloud-init-templates/cloud-init-templates.service';
 import { ContextService } from 'src/common/context/context.service';
 import { Logger } from 'src/common/decorators/logger.decorator';
@@ -30,7 +31,6 @@ import { CloudInitProcessor, flattenCustomizations, ProvisionValidatorService } 
 import { WebhookDeliveryService } from 'src/webhook/webhook-delivery.service';
 import { WebhookRepository } from 'src/webhook/webhook.repository';
 import { WebhookEventDTO } from 'src/webhook/webhook.types';
-import { DeviceHealthService } from './device-health.service';
 import { InventoryListingContext, InventoryPresenter } from './inventory.presenter';
 import { InventoryAggregate, InventoryRecord } from './inventory.record';
 
@@ -39,7 +39,6 @@ export class InventoryService {
   constructor(
     private readonly webhookDeliveryService: WebhookDeliveryService,
     private readonly webhookRepo: WebhookRepository,
-    private readonly deviceHealthService: DeviceHealthService,
     private readonly lifecycleService: LifecycleService,
     private readonly contextService: ContextService,
     private readonly prisma: PrismaClient,
@@ -51,7 +50,11 @@ export class InventoryService {
 
   async getListings(filters?: string, page = 1, pageSize = 12) {
     const { category, status, interruptibleReady } = this.parseInventoryFilters(filters);
-    const devices = await InventoryRecord.findListings(category, interruptibleReady);
+    const devices = await InventoryRecord.findListings(
+      category,
+      interruptibleReady,
+      await this.excludedListedSupplierIds(),
+    );
 
     const listCatalog: CustomizationCatalog = { bases: await this.loadBaseLayers(), componentsByBase: {} };
     let contexts = devices.map((device) => this.buildContext(device, listCatalog));
@@ -87,7 +90,10 @@ export class InventoryService {
       throw new NotFoundException('Listing not found');
     }
 
-    if (!InventoryPresenter.isListedOrInvitee(ctx, identity)) {
+    const catalogVisible =
+      !aggregate.supplierId ||
+      (await InventoryVisibilityFilterRegistry.excludedSupplierIds([aggregate.supplierId])).length === 0;
+    if (!InventoryPresenter.isListedOrInvitee(ctx, identity, catalogVisible)) {
       this.logger.warn(`Listing ${deviceId} is not listed-or-invitee for organization ${identity.organizationId}`);
       throw new NotFoundException('Listing not found');
     }
@@ -130,7 +136,14 @@ export class InventoryService {
     const cloudInitContent = await this.cloudInitTemplatesService.resolveAndSave(data);
     const processedCloudInit = this.cloudInitProcessor.process(cloudInitContent);
 
-    const isInterruptible = data.isInterruptible ?? false;
+    const contractTypeRejection = provisionContractTypeWriteRejection({
+      contractType: data.contractType,
+      isInterruptible: data.isInterruptible,
+    });
+    if (contractTypeRejection) {
+      throw new BadRequestException(contractTypeRejection);
+    }
+    const isInterruptible = false;
 
     const request: EngineProvisionRequest = {
       deviceId: listing.device.id,
@@ -155,17 +168,9 @@ export class InventoryService {
     const isTakeover = !!occupying && occupying.isInterruptible && occupying.customerId !== identity.organizationId;
 
     if (isTakeover) {
-      if (!isInterruptible) {
-        throw new BadRequestException(
-          'This host is occupied by an interruptible deployment; only an interruptible request can take it over',
-        );
-      }
-      this.contextService.requirePermission('lifecycle-request', 'create');
-      const result = await this.lifecycleService.requestInterruptibleProvision({
-        deviceId: listing.device.id,
-        request,
-      });
-      return { jobId: result.status === 'executing' ? result.incomingJobId : null };
+      throw new BadRequestException(
+        'This host is occupied by an interruptible deployment; interruptible takeovers are unavailable until commerce billing is ready',
+      );
     }
 
     const job = await this.lifecycleService.requestProvision(request);
@@ -183,13 +188,18 @@ export class InventoryService {
   }
 
   async getCategoryPrices(query: PaginationQuery) {
-    const prices = await InventoryRecord.getAllCategoryPrices();
+    const prices = await InventoryRecord.getAllCategoryPrices(await this.excludedListedSupplierIds());
     return paginateArray(prices, query, { searchableFields: [], defaultPageSize: 100 });
   }
 
   async getCategoryAvailability(query: PaginationQuery) {
-    const availability = await InventoryRecord.getCategoryAvailability();
+    const availability = await InventoryRecord.getCategoryAvailability(await this.excludedListedSupplierIds());
     return paginateArray(availability, query, { searchableFields: [], defaultPageSize: 100 });
+  }
+
+  private async excludedListedSupplierIds(): Promise<string[]> {
+    if (!InventoryVisibilityFilterRegistry.hasFilters()) return [];
+    return InventoryVisibilityFilterRegistry.excludedSupplierIds(await InventoryRecord.listedSupplierIds());
   }
 
   private removeIncorrectGpuListings(category: DeviceCategory, listings: InventoryListing[]) {

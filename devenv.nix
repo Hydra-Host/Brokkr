@@ -867,6 +867,13 @@ in
     # that enterShell trigger; the hook + check task stay intact.
     "devenv:treefmt:run".before = lib.mkForce [ ];
 
+    # same class, different task. `devenv:git-hooks:run` is `prek run -a` — every hook over every
+    # file — wired `before` enterTest, which is itself `after` enterShell. devenv >=2.3 selects a
+    # root's dependents AND their prerequisites, so shell entry pulls the whole-repo run in through
+    # that pair; both edges have to go. Upstream fix: cachix/devenv#3207; drop these once released.
+    "devenv:enterTest".after = lib.mkForce [ ];
+    "devenv:git-hooks:run".before = lib.mkForce [ ];
+
     # every tier, including the ones that need nix or mutate this checkout — `task test:devenv`
     # is the container-safe subset CI gates on.
     "devenv:test" = {

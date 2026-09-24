@@ -13,6 +13,7 @@ import {
   DeviceSecretActorType,
   DeviceSecretKind,
   DeviceSecretPurpose,
+  DeviceTokenRevocationReason,
   JobType,
   WebhookEventType,
 } from '@repo/database';
@@ -23,7 +24,7 @@ import {
   resolveZoneBuildId,
   type CustomizationCatalog,
 } from '@repo/layers';
-import { mibSizesToGib, normalizeArchForArtifact } from '@repo/utils';
+import { mibSizesToGib, normalizeArchForArtifact, provisionContractTypeWriteRejection } from '@repo/utils';
 import { DhcpConfigPublisherService } from 'src/brokkr-bridge/dhcp/dhcp-config-publisher.service';
 import { BridgeCommissioningService } from 'src/brokkr-bridge/lifecycle/commissioning.service';
 import { BridgeInventoryCollectionService } from 'src/brokkr-bridge/lifecycle/inventory-collection.service';
@@ -31,9 +32,10 @@ import { CloudInitTemplatesService } from 'src/cloud-init-templates/cloud-init-t
 import { ContextService } from 'src/common/context/context.service';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { DeviceAggregate } from 'src/common/device.types';
-import { getErrorMessage } from 'src/common/error-utils';
+import { ensureError, getErrorMessage } from 'src/common/error-utils';
 import { softDeleteDeviceNetworkAndSecrets } from 'src/common/ipam/soft-delete-device-network';
 import { DeviceSecretService, SecretStorageUnavailableError } from 'src/device-secret/device-secret.service';
+import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
 import { BaremetalRecord } from 'src/devices/baremetal.record';
 import { InventoryService } from 'src/inventory/inventory.service';
 import { LifecycleService } from 'src/lifecycle/lifecycle.service';
@@ -61,6 +63,7 @@ export class BaremetalService {
     private readonly eventEmitter: EventEmitter2,
     private readonly deviceSecretService: DeviceSecretService,
     private readonly dhcpPublisher: DhcpConfigPublisherService,
+    private readonly deviceTokensService: DeviceTokensService,
     @Logger(BaremetalService.name) private readonly logger: LoggerService,
   ) {}
 
@@ -220,6 +223,32 @@ export class BaremetalService {
         );
       });
 
+      const decommissionNote = `Device ${aggregate.id} decommissioned`;
+      try {
+        await this.deviceTokensService.revokeBrokkrLiveTokensForDevice(
+          aggregate.id,
+          DeviceTokenRevocationReason.MANUAL,
+          decommissionNote,
+        );
+      } catch (error) {
+        this.logger.error(
+          `Failed to revoke BROKKR_LIVE tokens for decommissioned device ${aggregate.id}: ${getErrorMessage(error)}`,
+          ensureError(error).stack,
+        );
+      }
+      try {
+        await this.deviceTokensService.revokeDeploymentTokensForDevice(
+          aggregate.id,
+          DeviceTokenRevocationReason.MANUAL,
+          decommissionNote,
+        );
+      } catch (error) {
+        this.logger.error(
+          `Failed to revoke DEPLOYMENT_OS tokens for decommissioned device ${aggregate.id}: ${getErrorMessage(error)}`,
+          ensureError(error).stack,
+        );
+      }
+
       this.eventEmitter.emit(DeviceLifecycleEvent.SoftDeleted, { deviceId: aggregate.id });
 
       await this.inventoryService.tryTriggerListingEvent(WebhookEventType.DEVICE_LISTING_DECOMMISSIONED, aggregate.id);
@@ -321,6 +350,14 @@ export class BaremetalService {
     const cloudInitContent = await this.cloudInitTemplatesService.resolveAndSave(body);
     const processedCloudInit = this.cloudInitProcessor.process(cloudInitContent);
 
+    const contractTypeRejection = provisionContractTypeWriteRejection({
+      contractType: body.contractType,
+      isInterruptible: body.isInterruptible,
+    });
+    if (contractTypeRejection) {
+      throw new BadRequestException(contractTypeRejection);
+    }
+
     return this.lifecycleService.requestProvision({
       deviceId: record.data.id,
       userId,
@@ -337,6 +374,7 @@ export class BaremetalService {
       passwordHash: null,
       source: this.contextService.requestSource,
       internalProvision: true,
+      isInterruptible: false,
     });
   }
 }

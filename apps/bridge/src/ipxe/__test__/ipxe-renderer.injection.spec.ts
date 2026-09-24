@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveAssetsDir } from '../../core/application.config.js';
 import { IpxeServiceError } from '../ipxe-errors.js';
-import { IpxeTemplateRenderer, type ServerTokenAtomFetcher } from '../ipxe-renderer.service.js';
+import { IpxeTemplateRenderer, type DeployTokenAtomFetcher } from '../ipxe-renderer.service.js';
 import type { IpxeConfig } from '../ipxe.config.js';
 
 function realConfig(): IpxeConfig {
@@ -20,9 +20,9 @@ function realConfig(): IpxeConfig {
 
 function tokenFetcher(
   endpoint = 'https://hub/api/v1/bmc/phone-home',
-  token = 'live-token-hex',
-): ServerTokenAtomFetcher {
-  return async () => ({ brokkr_live_token: token, endpoint, exp: 1_730_000_000 });
+  token = 'deploy-token-hex',
+): DeployTokenAtomFetcher {
+  return async () => ({ deployment_os_token: token, endpoint });
 }
 
 describe('custom.ipxe.njk injection surface', () => {

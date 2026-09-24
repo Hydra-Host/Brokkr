@@ -5,6 +5,7 @@ import {
   ConfigAtomWriter,
   NETPLAN_LIVE_TTL_SECONDS,
   TTL_NEGATIVE_CACHE_SECONDS,
+  deployToken,
   deviceSecret,
   netplanConfig,
   serverToken,
@@ -33,6 +34,8 @@ describe('RenderRequestDispatcher', () => {
   let dispatcher: RenderRequestDispatcher;
   let mintForCtx: Mock;
   let writeAtomForCtx: Mock;
+  let mintDeployForCtx: Mock;
+  let writeDeployAtomForCtx: Mock;
   let resolveZoneContext: Mock;
   let deviceFindUnique: Mock;
   let writeRecordForDevice: Mock;
@@ -57,6 +60,10 @@ describe('RenderRequestDispatcher', () => {
       exp: 1_900_000_000,
     });
     writeAtomForCtx = vi.fn().mockResolvedValue(undefined);
+    mintDeployForCtx = vi
+      .fn()
+      .mockResolvedValue({ deployment_os_token: 'dep_os', endpoint: 'https://hub/phone-home' });
+    writeDeployAtomForCtx = vi.fn().mockResolvedValue(undefined);
     resolveZoneContext = vi.fn().mockResolvedValue(makeCtx());
     deviceFindUnique = vi.fn().mockResolvedValue({ id: DEVICE_UUID });
     writeRecordForDevice = vi.fn().mockResolvedValue({ written: true });
@@ -76,7 +83,7 @@ describe('RenderRequestDispatcher', () => {
         RenderRequestDispatcher,
         {
           provide: ServerTokenService,
-          useValue: { mintForCtx, writeAtomForCtx },
+          useValue: { mintForCtx, writeAtomForCtx, mintDeployForCtx, writeDeployAtomForCtx },
         },
         {
           provide: DeviceContextService,
@@ -258,6 +265,94 @@ describe('RenderRequestDispatcher', () => {
       expect(writeAtomError).toHaveBeenCalledWith(
         BASE.zone_id,
         serverToken(DEVICE_UUID),
+        expect.stringContaining('token mint unreachable'),
+        TTL_NEGATIVE_CACHE_SECONDS,
+        { request_id: BASE.request_id },
+      );
+    });
+  });
+
+  describe("domain='deploy_token'", () => {
+    it('looks up the Device by UUID entity_id and mints+writes the deploy_token atom', async () => {
+      const req: RenderRequest = {
+        ...BASE,
+        domain: 'deploy_token',
+        params: { entity_id: DEVICE_UUID },
+        reason: 'missing',
+      };
+
+      await dispatcher.dispatch(req);
+
+      expect(deviceFindUnique).toHaveBeenCalledOnce();
+      expect(deviceFindUnique).toHaveBeenCalledWith({
+        where: { id: DEVICE_UUID },
+        select: { id: true },
+      });
+      expect(resolveZoneContext).toHaveBeenCalledWith(DEVICE_UUID);
+      expect(mintDeployForCtx).toHaveBeenCalledOnce();
+      expect(mintDeployForCtx).toHaveBeenCalledWith(makeCtx());
+      expect(writeDeployAtomForCtx).toHaveBeenCalledOnce();
+      expect(writeDeployAtomForCtx).toHaveBeenCalledWith(
+        makeCtx(),
+        { deployment_os_token: 'dep_os', endpoint: 'https://hub/phone-home' },
+        { requestId: BASE.request_id },
+      );
+      expect(mintForCtx).not.toHaveBeenCalled();
+      expect(writeAtomForCtx).not.toHaveBeenCalled();
+      expect(writeAtomError).not.toHaveBeenCalled();
+    });
+
+    it('rejects a missing entity_id', async () => {
+      const req: RenderRequest = { ...BASE, domain: 'deploy_token', params: {} };
+      await expect(dispatcher.dispatch(req)).rejects.toBeInstanceOf(BadRequestException);
+      expect(mintDeployForCtx).not.toHaveBeenCalled();
+    });
+
+    it('writes the deploy_token negative-cache envelope when the device does not exist', async () => {
+      deviceFindUnique.mockResolvedValueOnce(null);
+
+      const req: RenderRequest = { ...BASE, domain: 'deploy_token', params: { entity_id: DEVICE_UUID } };
+      await expect(dispatcher.dispatch(req)).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(writeAtomError).toHaveBeenCalledOnce();
+      expect(writeAtomError).toHaveBeenCalledWith(
+        BASE.zone_id,
+        deployToken(DEVICE_UUID),
+        expect.stringContaining(`no Device with id=${DEVICE_UUID}`),
+        TTL_NEGATIVE_CACHE_SECONDS,
+        { request_id: BASE.request_id },
+      );
+      expect(mintDeployForCtx).not.toHaveBeenCalled();
+    });
+
+    it('writes the deploy_token negative-cache envelope under the polling zone on a zone mismatch', async () => {
+      resolveZoneContext.mockResolvedValueOnce(makeCtx('99999999-9999-9999-9999-999999999999'));
+
+      const req: RenderRequest = { ...BASE, domain: 'deploy_token', params: { entity_id: DEVICE_UUID } };
+      await dispatcher.dispatch(req);
+
+      expect(mintDeployForCtx).not.toHaveBeenCalled();
+      expect(writeAtomError).toHaveBeenCalledOnce();
+      expect(writeAtomError).toHaveBeenCalledWith(
+        BASE.zone_id,
+        deployToken(DEVICE_UUID),
+        expect.stringContaining('bridge polls zone'),
+        TTL_NEGATIVE_CACHE_SECONDS,
+        { request_id: BASE.request_id },
+      );
+      expect(writeDeployAtomForCtx).not.toHaveBeenCalled();
+    });
+
+    it('writes a negative-cache envelope on mint error instead of propagating', async () => {
+      mintDeployForCtx.mockRejectedValueOnce(new Error('token mint unreachable'));
+
+      const req: RenderRequest = { ...BASE, domain: 'deploy_token', params: { entity_id: DEVICE_UUID } };
+      await dispatcher.dispatch(req);
+
+      expect(writeAtomError).toHaveBeenCalledOnce();
+      expect(writeAtomError).toHaveBeenCalledWith(
+        BASE.zone_id,
+        deployToken(DEVICE_UUID),
         expect.stringContaining('token mint unreachable'),
         TTL_NEGATIVE_CACHE_SECONDS,
         { request_id: BASE.request_id },

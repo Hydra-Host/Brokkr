@@ -1,8 +1,8 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { Alert, AlertDescription } from '@repo/ui/components/alert';
 import { Button } from '@repo/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Separator } from '@repo/ui/components/separator';
-import { FormCheckbox } from '@repo/ui/form/form-checkbox';
 import { FormDatePicker } from '@repo/ui/form/form-datepicker';
 import { FormInput } from '@repo/ui/form/form-input';
 import { FormMoneyInput } from '@repo/ui/form/form-money-input';
@@ -12,8 +12,11 @@ import { FormTextarea } from '@repo/ui/form/form-textarea';
 import {
   type NoticePeriodUnit,
   BillingFrequency,
+  CONTRACT_TYPE_OPTIONS,
+  ContractType,
   MAX_INTERRUPTIBLE_NOTICE_PERIOD_MS,
   NOTICE_PERIOD_UNIT_OPTIONS,
+  SELECTABLE_CONTRACT_TYPES,
   calculateNoticePeriodMs,
   formatBillingFrequencyCopy,
   getBillingFrequencyHours,
@@ -40,7 +43,7 @@ function getDefaultExpiryDate(): string {
 const formSchema = z
   .object({
     inviteeEmail: z.string().email('Valid email is required'),
-    isInterruptible: z.boolean().default(false),
+    contractType: z.enum(SELECTABLE_CONTRACT_TYPES),
     billingFrequency: z.string().min(1, 'Billing frequency is required'),
     price: z.coerce.number({ required_error: 'Required', invalid_type_error: 'Must be a number' }),
     interruptibleNoticePeriodValue: z.coerce.number().optional(),
@@ -50,7 +53,7 @@ const formSchema = z
   })
   .refine(
     (data) => {
-      if (data.isInterruptible) {
+      if (data.contractType === ContractType.INTERRUPTIBLE) {
         if (!data.interruptibleNoticePeriodValue || data.interruptibleNoticePeriodValue <= 0) return false;
         const ms = calculateNoticePeriodMs(
           data.interruptibleNoticePeriodValue,
@@ -86,18 +89,16 @@ interface DcimInviteFormProps {
   onSubmit: (data: DcimInviteFormValues) => Promise<void>;
   onCancel: () => void;
   isPending: boolean;
-  isError: boolean;
 }
 
 export function DcimInviteForm({
   mode,
   invite,
   gpuCount,
-  isInterruptibleOnly,
+  isInterruptibleOnly = false,
   onSubmit,
   onCancel,
   isPending,
-  isError,
 }: DcimInviteFormProps) {
   const isEdit = mode === 'edit';
 
@@ -113,7 +114,7 @@ export function DcimInviteForm({
     defaultValues: invite
       ? {
           inviteeEmail: invite.inviteeEmail ?? '',
-          isInterruptible: invite.interruptibleNoticePeriod != null,
+          contractType: ContractType.RESERVED_ROLLING,
           billingFrequency: invite.billingFrequency,
           price: invite.price ?? 0,
           interruptibleNoticePeriodValue: noticePeriodDefaults.value,
@@ -123,7 +124,7 @@ export function DcimInviteForm({
         }
       : {
           inviteeEmail: '',
-          isInterruptible: isInterruptibleOnly ?? false,
+          contractType: ContractType.RESERVED_ROLLING,
           billingFrequency: BillingFrequency.WEEKLY,
           price: 0,
           interruptibleNoticePeriodValue: 1,
@@ -135,14 +136,9 @@ export function DcimInviteForm({
 
   const { control, setValue, getValues } = form;
 
-  const isInterruptible = useWatch({ control, name: 'isInterruptible' }) ?? false;
+  const contractType = useWatch({ control, name: 'contractType' });
   const billingFrequency = useWatch({ control, name: 'billingFrequency' });
-
-  useEffect(() => {
-    if (isInterruptibleOnly) {
-      setValue('isInterruptible', true);
-    }
-  }, [isInterruptibleOnly, setValue]);
+  const isInterruptible = contractType === ContractType.INTERRUPTIBLE;
 
   const prevFrequencyRef = useRef(billingFrequency);
 
@@ -168,6 +164,13 @@ export function DcimInviteForm({
 
   return (
     <form onSubmit={(e) => void form.handleSubmit(onSubmit)(e)} className="space-y-6">
+      {isInterruptibleOnly && (
+        <Alert variant="warning">
+          <AlertDescription>
+            This device is interruptible-only and cannot use Reserved Rolling invites until commerce billing is ready.
+          </AlertDescription>
+        </Alert>
+      )}
       <Card>
         <CardHeader>
           <CardTitle>Invitee</CardTitle>
@@ -196,16 +199,12 @@ export function DcimInviteForm({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <FormCheckbox
+            <FormSelect
               control={control}
-              name="isInterruptible"
-              label="Interruptible"
-              description={
-                isInterruptibleOnly
-                  ? 'This device is only available as interruptible.'
-                  : 'Interruptible rentals can be evicted after the notice period.'
-              }
-              disabled={isInterruptibleOnly}
+              name="contractType"
+              label="Contract Type"
+              options={CONTRACT_TYPE_OPTIONS}
+              placeholder="Select contract type"
             />
 
             <FormSelect
@@ -292,17 +291,13 @@ export function DcimInviteForm({
         </CardContent>
       </Card>
 
-      {isError && (
-        <div className="border-destructive/30 bg-destructive/5 text-destructive rounded border p-3 text-sm">
-          Failed to {isEdit ? 'update' : 'create'} reservation invite.
-        </div>
-      )}
-
       <div className="flex items-center justify-end gap-3">
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
         </Button>
-        <FormSubmitButton pending={isPending}>{isEdit ? 'Save Changes' : 'Create Invite'}</FormSubmitButton>
+        <FormSubmitButton pending={isPending} disabled={isInterruptibleOnly}>
+          {isEdit ? 'Save Changes' : 'Create Invite'}
+        </FormSubmitButton>
       </div>
     </form>
   );

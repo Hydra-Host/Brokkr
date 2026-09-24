@@ -5,21 +5,30 @@ import { cn } from './utils';
 
 const Tabs = BaseTabs.Root;
 
-const TabsList = React.forwardRef<HTMLDivElement, React.ComponentPropsWithoutRef<typeof BaseTabs.List>>(
-  ({ className, ...props }, ref) => (
-    <div className="flex items-start">
-      <span className="border-border mt-[12px] h-1.5 w-1.5 border-t border-l" />
-      <span className="bg-border mt-[12px] h-px w-5" />
-      <BaseTabs.List
-        ref={ref}
-        className={cn('inline-flex items-center gap-4', 'text-text-muted font-mono', className)}
-        {...props}
-      />
-      <span className="bg-border mt-[12px] h-px flex-grow" />
-      <span className="border-border mt-[12px] h-1.5 w-1.5 border-t border-r" />
-    </div>
-  ),
-);
+interface TabsListProps extends React.ComponentPropsWithoutRef<typeof BaseTabs.List> {
+  /** Rendered after the tab list, outside the composite tablist so it does not join keyboard roving. */
+  trailing?: React.ReactNode;
+}
+
+const TabsList = React.forwardRef<HTMLDivElement, TabsListProps>(({ className, trailing, ...props }, ref) => (
+  <div className="flex items-start">
+    <span className="border-border mt-[12px] h-1.5 w-1.5 border-t border-l" />
+    <span className="bg-border mt-[12px] h-px w-5" />
+    <BaseTabs.List
+      ref={ref}
+      className={cn('inline-flex items-center gap-4', 'text-text-muted font-mono', className)}
+      {...props}
+    />
+    {trailing ? (
+      <>
+        <span className="bg-border mt-[12px] h-px w-4" />
+        {trailing}
+      </>
+    ) : null}
+    <span className="bg-border mt-[12px] h-px flex-grow" />
+    <span className="border-border mt-[12px] h-1.5 w-1.5 border-t border-r" />
+  </div>
+));
 TabsList.displayName = 'TabsList';
 
 interface TabsTriggerProps extends Omit<React.ComponentPropsWithoutRef<typeof BaseTabs.Tab>, 'render'> {
@@ -59,6 +68,24 @@ const TabsTrigger = React.forwardRef<HTMLElement, TabsTriggerProps>(
 );
 TabsTrigger.displayName = 'TabsTrigger';
 
+interface TabsOverflowTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  selected?: boolean;
+}
+
+/** A plain button in the trigger's clothing for a menu that holds the tabs the list could not fit. */
+const TabsOverflowTrigger = React.forwardRef<HTMLButtonElement, TabsOverflowTriggerProps>(
+  ({ className, selected = false, ...props }, ref) => (
+    <button
+      ref={ref}
+      type="button"
+      className={cn(tabTriggerStyles, className)}
+      data-selected={selected ? '' : undefined}
+      {...props}
+    />
+  ),
+);
+TabsOverflowTrigger.displayName = 'TabsOverflowTrigger';
+
 const TabsContent = React.forwardRef<HTMLDivElement, React.ComponentPropsWithoutRef<typeof BaseTabs.Panel>>(
   ({ className, ...props }, ref) => (
     <BaseTabs.Panel
@@ -74,4 +101,4 @@ const TabsContent = React.forwardRef<HTMLDivElement, React.ComponentPropsWithout
 );
 TabsContent.displayName = 'TabsContent';
 
-export { Tabs, TabsContent, TabsList, TabsTrigger };
+export { Tabs, TabsContent, TabsList, TabsOverflowTrigger, TabsTrigger, tabTriggerStyles as tabsTriggerClassName };

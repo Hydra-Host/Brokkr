@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IpxeServiceError } from '../ipxe-errors';
-import { IpxeTemplateRenderer, RETRY_SLEEP_SECONDS, type ServerTokenAtomFetcher } from '../ipxe-renderer.service';
+import { IpxeTemplateRenderer, RETRY_SLEEP_SECONDS, type DeployTokenAtomFetcher } from '../ipxe-renderer.service';
 import type { IpxeConfig } from '../ipxe.config';
 
 const TEMPLATE_NAMES = [
@@ -41,7 +41,7 @@ function writeJsonEchoTemplates(dir: string): void {
     'shell.ipxe.njk': '{"os":{{ os | dump }},"status":{{ status | dump }}}',
     'custom.ipxe.njk':
       '{"ipxe_url":{{ ipxe_url | dump }},"device_id":{{ device_id | dump }},' +
-      '"brokkr_live_token":{{ brokkr_live_token | dump }},' +
+      '"deployment_os_token":{{ deployment_os_token | dump }},' +
       '"job_id":{{ job_id | dump }},' +
       '"phone_home_endpoint":{{ phone_home_endpoint | dump }}}',
   };
@@ -63,8 +63,8 @@ function makeConfig(assetsDir: string): IpxeConfig {
 describe('IpxeTemplateRenderer', () => {
   let assetsDir: string;
   let renderer: IpxeTemplateRenderer;
-  let tokenFetcher: ServerTokenAtomFetcher;
-  let tokenFetcherCalls: Array<Parameters<ServerTokenAtomFetcher>[0]>;
+  let tokenFetcher: DeployTokenAtomFetcher;
+  let tokenFetcherCalls: Array<Parameters<DeployTokenAtomFetcher>[0]>;
 
   beforeEach(() => {
     assetsDir = mkdtempSync(join(tmpdir(), 'ipxe-renderer-test-'));
@@ -73,9 +73,8 @@ describe('IpxeTemplateRenderer', () => {
     tokenFetcher = async (req) => {
       tokenFetcherCalls.push(req);
       return {
-        brokkr_live_token: 'test-live-token-from-hub',
+        deployment_os_token: 'test-deploy-token-from-hub',
         endpoint: 'https://hub/api/v1/bmc/phone-home',
-        exp: 1_730_000_000,
       };
     };
     renderer = new IpxeTemplateRenderer(makeConfig(assetsDir), tokenFetcher);
@@ -185,7 +184,7 @@ describe('IpxeTemplateRenderer', () => {
   });
 
   describe('render_custom', () => {
-    it('pulls bearer token and endpoint from server_token atom', async () => {
+    it('pulls bearer token and endpoint from deploy_token atom', async () => {
       const out = JSON.parse(
         await renderer.render_custom({
           ipxe_url: 'https://custom.test/script.ipxe',
@@ -195,12 +194,12 @@ describe('IpxeTemplateRenderer', () => {
       );
       expect(tokenFetcherCalls).toHaveLength(1);
       expect(tokenFetcherCalls[0]).toEqual({
-        domain: 'server_token',
+        domain: 'deploy_token',
         entityId: '12345678-1234-1234-1234-123456789abc',
-        atomKey: 'device:12345678-1234-1234-1234-123456789abc:server_token',
+        atomKey: 'device:12345678-1234-1234-1234-123456789abc:deploy_token',
         jobId: 'job-x',
       });
-      expect(out.brokkr_live_token).toBe('test-live-token-from-hub');
+      expect(out.deployment_os_token).toBe('test-deploy-token-from-hub');
       expect(out.phone_home_endpoint).toBe('https://hub/api/v1/bmc/phone-home');
     });
 
@@ -215,8 +214,8 @@ describe('IpxeTemplateRenderer', () => {
       expect(tokenFetcherCalls[0]?.jobId).toBe('ipxe-abcdef00-0000-0000-0000-000000000456');
     });
 
-    it('raises iPXEServiceError when server_token atom is missing', async () => {
-      const missingFetcher: ServerTokenAtomFetcher = async () => null;
+    it('raises iPXEServiceError when deploy_token atom is missing', async () => {
+      const missingFetcher: DeployTokenAtomFetcher = async () => null;
       const rendererMissing = new IpxeTemplateRenderer(makeConfig(assetsDir), missingFetcher);
       await expect(
         rendererMissing.render_custom({
@@ -227,7 +226,7 @@ describe('IpxeTemplateRenderer', () => {
       ).rejects.toMatchObject({
         name: 'iPXEServiceError',
         message: expect.stringContaining(
-          'server_token atom unavailable for device abcdef00-0000-0000-0000-000000000456',
+          'deploy_token atom unavailable for device abcdef00-0000-0000-0000-000000000456',
         ),
       });
       try {

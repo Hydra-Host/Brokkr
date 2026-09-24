@@ -8,6 +8,7 @@ import { Global, Module } from '@nestjs/common';
 
 import { HostPluginNetplanRenderer } from 'src/devices/netplan/host-plugin-netplan-renderer';
 import { NetplanModule } from 'src/devices/netplan/netplan.module';
+import { HeartbeatMonitorModule } from 'src/heartbeat-monitor/heartbeat-monitor.module';
 import { HostPluginDeviceOpsRequests } from './host-plugin-device-ops-requests';
 import { HostPluginLifecycleControl } from './host-plugin-lifecycle-control';
 import { HostPluginLifecycleRequests } from './host-plugin-lifecycle-requests';
@@ -15,7 +16,7 @@ import { LifecycleModule } from './lifecycle.module';
 
 @Global()
 @Module({
-  imports: [LifecycleModule, NetplanModule],
+  imports: [LifecycleModule, NetplanModule, HeartbeatMonitorModule],
   providers: [
     HostPluginLifecycleControl,
     HostPluginLifecycleRequests,

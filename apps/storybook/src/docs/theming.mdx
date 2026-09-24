@@ -4,140 +4,133 @@ import { Meta } from '@storybook/addon-docs/blocks';
 
 # Theming
 
-The design system ships nine themes defined in `@repo/ui/styles/brokkr.css`. Every theme is a
-`[data-theme='…']` block of CSS custom properties that overrides the base `@theme` tokens, and
-`ThemeProvider` decides which value lands on `<html data-theme="…">`.
+The design system themes along **three orthogonal axes**, written as attributes on `<html>` by
+`ThemeProvider` (`@repo/ui/theme-provider`):
 
-## The nine themes
+- `data-style` — **retro** (square, techy, JetBrains Mono) or **modern** (rounded, calm, Inter)
+- `data-color` — **violet**, **blue**, **green**, **pink**, or **gold**
+- `data-mode` — **dark** or **light** (always the resolved mode; "system" is a stored
+  preference, never a DOM value)
 
-Each theme's representative swatch color (from `THEME_OPTIONS` in `@repo/ui/theme-provider`):
+Every combination works: 2 styles × 5 colors × 2 modes = 20 themes.
 
-### Dark
-
-<table>
-  <thead>
-    <tr>
-      <th style={{ textAlign: 'left' }}>data-theme</th>
-      <th style={{ textAlign: 'left' }}>Label</th>
-      <th style={{ textAlign: 'left' }}>Swatch</th>
-    </tr>
-  </thead>
-  <tbody>
-    {[
-      ['commerce-dark', 'Commerce', '#857CFF'],
-      ['hydra-dark', 'Violet', '#ECEAFF'],
-      ['yellow', 'Gold', '#FFDC75'],
-      ['blue', 'Blue', '#6BC1FF'],
-      ['green', 'Green', '#53FF99'],
-      ['pink', 'Pink', '#FFAAF1'],
-    ].map(([value, label, hex]) => (
-      <tr key={value}>
-        <td>
-          <code>{value}</code>
-        </td>
-        <td>{label}</td>
-        <td>
-          <span
-            style={{
-              display: 'inline-block',
-              width: 12,
-              height: 12,
-              marginRight: 8,
-              backgroundColor: hex,
-              border: '1px solid rgba(128,128,128,0.4)',
-              verticalAlign: 'middle',
-            }}
-          />
-          <code>{hex}</code>
-        </td>
-      </tr>
-    ))}
-  </tbody>
-</table>
-
-### Light
-
-<table>
-  <thead>
-    <tr>
-      <th style={{ textAlign: 'left' }}>data-theme</th>
-      <th style={{ textAlign: 'left' }}>Label</th>
-      <th style={{ textAlign: 'left' }}>Swatch</th>
-    </tr>
-  </thead>
-  <tbody>
-    {[
-      ['commerce-light', 'Commerce', '#635BFF'],
-      ['hydra-light', 'Violet', '#5554FF'],
-      ['solarized-light', 'Solar', '#2AA198'],
-    ].map(([value, label, hex]) => (
-      <tr key={value}>
-        <td>
-          <code>{value}</code>
-        </td>
-        <td>{label}</td>
-        <td>
-          <span
-            style={{
-              display: 'inline-block',
-              width: 12,
-              height: 12,
-              marginRight: 8,
-              backgroundColor: hex,
-              border: '1px solid rgba(128,128,128,0.4)',
-              verticalAlign: 'middle',
-            }}
-          />
-          <code>{hex}</code>
-        </td>
-      </tr>
-    ))}
-  </tbody>
-</table>
-
-See the live [Themes gallery](?path=/story/foundations-themes--gallery) and the resolved
+See the live [Themes gallery](?path=/story/foundations-themes--gallery), the
+[style comparison](?path=/story/foundations-themes--comparison), and the resolved
 [token values](?path=/story/foundations-colors-tokens--default) for the active theme.
+
+## Colors
+
+Each color contributes three seeds (from `THEME_COLORS` in `@repo/ui/theme-provider` /
+`colors.css`):
+
+<table>
+  <thead>
+    <tr>
+      <th style={{ textAlign: 'left' }}>data-color</th>
+      <th style={{ textAlign: 'left' }}>Dark swatch</th>
+      <th style={{ textAlign: 'left' }}>Light swatch</th>
+    </tr>
+  </thead>
+  <tbody>
+    {[
+      ['violet', '#857cff', '#635bff'],
+      ['blue', '#6bc1ff', '#2563eb'],
+      ['green', '#53ff99', '#15803d'],
+      ['pink', '#ffaaf1', '#a21caf'],
+      ['gold', '#ffdc75', '#a16207'],
+    ].map(([value, dark, light]) => (
+      <tr key={value}>
+        <td>
+          <code>{value}</code>
+        </td>
+        {[dark, light].map((hex) => (
+          <td key={hex}>
+            <span
+              style={{
+                display: 'inline-block',
+                width: 12,
+                height: 12,
+                marginRight: 8,
+                backgroundColor: hex,
+                border: '1px solid rgba(128,128,128,0.4)',
+                verticalAlign: 'middle',
+              }}
+            />
+            <code>{hex}</code>
+          </td>
+        ))}
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+## How the CSS is organized
+
+`@repo/ui/styles/brokkr.css` is an aggregator over `packages/ui/src/styles/`:
+
+- `theme-base.css` — the Tailwind `@theme` block (declares every token and generates the
+  utilities) plus the shared re-binding rule for `var()`-composed aliases.
+- `modes.css` — `data-mode` only sets `color-scheme`. Every mode-varying token is written once
+  with `light-dark(lightValue, darkValue)` and resolves against the `color-scheme` of the
+  element that uses it.
+- `colors.css` — one `[data-color='…']` seed block per color (`--seed-accent-strong`, mid
+  `--seed-accent`, `--seed-accent-deep`) plus the shared mapping onto the accent family.
+- `style-retro.css` — square radii, JetBrains Mono, and neutrals tinted by the color seeds via
+  `color-mix()`, so every color carries through backgrounds and text.
+- `style-modern.css` — rounded radii, Inter, fixed neutral zinc/white neutrals (color reaches
+  only accents and their tints), and the modern structural rules (corner ticks hidden, closed
+  rounded form fields, calm tables).
+- `base.css` — resets, keyframes, and pattern helpers.
+
+### Adding a color
+
+One seed block in `colors.css` plus one `THEME_COLORS` entry in `theme-provider.tsx`. The
+`theme-axes.spec.ts` drift test asserts they stay in sync.
 
 ## ThemeProvider
 
-`ThemeProvider` (`@repo/ui/theme-provider`) owns the `data-theme` attribute on `<html>` and
-persists three localStorage keys:
+`ThemeProvider` owns the axis attributes on `<html>` and persists three localStorage keys:
+`brokkr-style`, `brokkr-color`, and `brokkr-mode` (`dark`, `light`, or `system`). Pre-axis keys
+(`brokkr-theme`, `brokkr-preferred-dark/light`) are migrated on first load and removed — the
+old `solarized-light` theme becomes retro / violet / light.
 
-- `brokkr-theme` — the current mode: a theme value or `system`.
-- `brokkr-preferred-dark` — which dark theme `system` mode resolves to.
-- `brokkr-preferred-light` — which light theme `system` mode resolves to.
+The pre-axis `data-theme` attribute is no longer a supported CSS API: no stylesheet responds to
+it, and both `ThemeProvider` and `theme-init.js` strip it from `<html>`. Code that still sets
+`data-theme` must switch to the three axis attributes (or to `ThemeProvider` / `ThemeScope`).
+`terminal-theme.css`, which is also exported standalone, keeps a literal fallback for
+`--color-accent-foreground` so it stays legible without the axis stylesheets.
 
-Calling `setTheme('green')` selects that theme directly and also records it as the preferred
-dark theme (likewise a light theme updates the preferred light). Calling `setSystemMode()`
-switches to `system`, which follows the OS `prefers-color-scheme` and picks the preferred
-dark or light theme accordingly — live, via a media-query listener.
+The context exposes `{ style, color, modePreference, resolvedMode }` and the setters
+`setStyle` / `setColor` / `setMode`. `system` mode follows the OS `prefers-color-scheme` live
+via a media-query listener.
 
-`ThemeSelector` (`@repo/ui/theme-selector`) is the ready-made dropdown over this context; in
-this Storybook the toolbar theme control drives the same provider.
+`ThemeSelector` (`@repo/ui/theme-selector`) is the ready-made dropdown over this context, and
+`ThemeSettingsPanel` (`@repo/ui/theme-settings-panel`) is the full settings page body; in this
+Storybook the toolbar controls drive the same provider.
 
-## What the commerce themes change
-
-`commerce-light` and `commerce-dark` restyle the terminal aesthetic into a payment-product
-look. Beyond colors they:
-
-- switch `--font-mono` from JetBrains Mono to **Inter**, so the whole UI renders in a
-  proportional face;
-- set real border radii (`--radius-sm` through `--radius-3xl`, which are all `0` in the
-  terminal themes);
-- hide the terminal corner-tick decorations on cards, inputs, tabs, and selects, replacing
-  them with plain rounded borders.
+Apps also ship `public/theme-init.js` (canonical copy in `packages/ui/theme-init.js`, byte
+equality asserted by `theme-init.spec.ts`) to apply the attributes before first paint; per-app
+defaults ride on the script tag as `data-default-style/color/mode`.
 
 ## Forcing a theme on a subtree
 
-Because every theme block uses a bare `[data-theme='…']` selector, a nested element with a
-`data-theme` attribute re-scopes all custom properties for its subtree — no provider needed.
+`ThemeScope` (`@repo/ui/theme-scope`) pins a subtree to a fixed theme — no provider needed.
 Apps use this for hosted pages that must ignore the visitor's saved theme:
 
 ```tsx
-<div data-theme="commerce-light" className="bg-bg-primary text-text-primary">
-  {/* everything in here renders in commerce-light */}
-</div>
+<ThemeScope style="modern" color="violet" mode="light" className="bg-bg-primary text-text-primary">
+  {/* everything in here renders modern / violet / light */}
+</ThemeScope>
 ```
 
+Two rules:
+
+- **Always set the complete triple.** Axis tokens are substituted at the element that declares
+  them, so a wrapper carrying only one attribute inherits values already baked against the
+  root's other axes. `ThemeScope` makes the triple mandatory.
+- **Nest modern scopes inside retro ones, never the other way around.** The modern structural
+  rules are ancestor-scoped descendant selectors, so a retro scope nested inside a modern one
+  still gets the flat/rounded treatment.
+
 The [Themes gallery](?path=/story/foundations-themes--gallery) story uses exactly this
-technique to render all nine themes side by side.
+technique to render every combination side by side.

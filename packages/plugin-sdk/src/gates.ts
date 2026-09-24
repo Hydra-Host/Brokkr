@@ -9,8 +9,13 @@ export type BrokkrGateHandler<G extends BrokkrGateName> = (payload: BrokkrGateMa
 
 export const PLUGIN_GATE_BUS = Symbol.for('@hydrahost/plugin-sdk/PLUGIN_GATE_BUS');
 
+export type LifecycleGateRejectionKind = 'client' | 'server';
+
 export class LifecycleGateRejection extends Error {
-  constructor(public readonly reason: string) {
+  constructor(
+    public readonly reason: string,
+    public readonly kind: LifecycleGateRejectionKind = 'client',
+  ) {
     super(reason);
     this.name = 'LifecycleGateRejection';
   }

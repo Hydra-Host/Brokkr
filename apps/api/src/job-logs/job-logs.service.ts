@@ -1,69 +1,49 @@
 import { HttpException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { LifecycleJobRecord } from '@repo/lifecycle';
-import { type Redis } from 'ioredis';
+import { type JobLogsResponse } from '@repo/api-client';
+import { type JobLogStream, JobLogStreamReader, LifecycleJobRecord } from '@repo/lifecycle';
 import { DeviceContextService } from 'src/brokkr-bridge/device-context.service';
+import { resolvePlanDeviceId } from 'src/brokkr-bridge/job-logs/plan-device-id';
 import { ContextService } from 'src/common/context/context.service';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { REDIS_CLIENT } from 'src/common/redis';
-import { REDIS_KEYS } from 'src/common/redis/redis-keys';
 import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
-import { z } from 'zod';
 
-export const jobLogStreamEntrySchema = z.object({
-  timestamp: z.string(),
-  log_level: z.string(),
-  message: z.string(),
-  app_name: z.string(),
-  app_class_name: z.string(),
-});
+export { jobLogStreamEntrySchema } from '@repo/lifecycle';
 
 @Injectable()
 export class JobLogsService {
+  private readonly reader: JobLogStreamReader;
+
   constructor(
-    @Inject(REDIS_CLIENT) private readonly redis: Redis,
-    private readonly prisma: PrismaClient,
-    private readonly deviceContext: DeviceContextService,
-    private readonly contextService: ContextService,
-    @Logger(JobLogsService.name) private readonly logger: LoggerService,
-  ) {}
+    @Inject(REDIS_CLIENT) redis: JobLogStream,
+    @Inject(PrismaClient) private readonly prisma: Pick<PrismaClient, 'device' | 'job'>,
+    @Inject(DeviceContextService)
+    private readonly deviceContext: Pick<DeviceContextService, 'resolveZoneContext'>,
+    @Inject(ContextService)
+    private readonly contextService: Pick<
+      ContextService,
+      'requireInstanceOperator' | 'requirePermission' | 'buildAuditPayload'
+    >,
+    @Logger(JobLogsService.name) private readonly logger: Pick<LoggerService, 'log' | 'warn'>,
+  ) {
+    this.reader = new JobLogStreamReader(redis, logger);
+  }
 
   private gate(): void {
     this.contextService.requireInstanceOperator();
     this.contextService.requirePermission('job-log', 'access');
   }
 
-  async getJobLogs(jobId: string, query: { cursor?: string; limit: number }) {
+  async getJobLogs(jobId: string, query: { cursor?: string; limit: number }): Promise<JobLogsResponse> {
     this.gate();
 
     const deviceId = await this.resolveJobDeviceId(jobId);
     const zoneId = await this.resolveZoneId(deviceId);
-    const key = REDIS_KEYS.jobLogs(zoneId, jobId);
-    const start = query.cursor ? `(${query.cursor}` : '-';
-    const raw = await this.redis.xrange(key, start, '+', 'COUNT', query.limit);
-
-    const entries = raw.flatMap(([id, fields]) => {
-      const parsed = jobLogStreamEntrySchema.safeParse(fieldArrayToRecord(fields));
-      if (!parsed.success) {
-        this.logger.warn(`Dropping malformed job log entry ${id} for job ${jobId}: ${parsed.error.message}`);
-        return [];
-      }
-      return [
-        {
-          id,
-          timestamp: parsed.data.timestamp,
-          logLevel: parsed.data.log_level,
-          message: parsed.data.message,
-          appName: parsed.data.app_name,
-          appClassName: parsed.data.app_class_name,
-        },
-      ];
-    });
-
-    const nextCursor = raw.length === query.limit ? raw[raw.length - 1][0] : null;
+    const page = await this.reader.readPage(zoneId, jobId, query.cursor, query.limit);
     const audit = this.contextService.buildAuditPayload();
     this.logger.log(`Job logs read: job=${jobId} actor=${audit.triggeredBy}`);
-    return { entries, nextCursor };
+    return page;
   }
 
   async listDeviceJobs(deviceId: string) {
@@ -116,18 +96,11 @@ export class JobLogsService {
   }
 
   private async resolveJobDeviceId(jobId: string): Promise<string> {
-    const lifecycleJob: LifecycleJobRecord | null = await LifecycleJobRecord.findByIdUnscoped(jobId);
-    if (lifecycleJob?.data.deviceId) {
-      return lifecycleJob.data.deviceId;
+    const deviceId = await resolvePlanDeviceId(this.prisma, jobId);
+    if (!deviceId) {
+      throw new NotFoundException('Job not found');
     }
-    const legacyJob = await this.prisma.job.findUnique({
-      where: { id: jobId },
-      select: { deviceId: true },
-    });
-    if (legacyJob?.deviceId) {
-      return legacyJob.deviceId;
-    }
-    throw new NotFoundException('Job not found');
+    return deviceId;
   }
 
   private async resolveZoneId(deviceId: string): Promise<string> {
@@ -141,12 +114,4 @@ export class JobLogsService {
       throw error;
     }
   }
-}
-
-function fieldArrayToRecord(fields: string[]): Record<string, string> {
-  const record: Record<string, string> = {};
-  for (let i = 0; i + 1 < fields.length; i += 2) {
-    record[fields[i]] = fields[i + 1];
-  }
-  return record;
 }

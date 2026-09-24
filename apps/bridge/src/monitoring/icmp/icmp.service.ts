@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { accessSync, constants } from 'node:fs';
 import { isIP } from 'node:net';
 import { getErrorMessage } from '../../common/error-utils';
 
@@ -79,11 +80,42 @@ const DANGEROUS_CHARS = new Set([';', '&', '|', '`', '$', '(', ')', '{', '}', '<
 
 const HOSTNAME_RE = /^[a-zA-Z0-9.-]+$/;
 
-const PACKET_RE = /(\d+) packets transmitted, (\d+) received(?:, \+(\d+) errors)?, ([\d.]+)% packet loss/m;
+const PACKET_RE = /(\d+) packets transmitted, (\d+) (?:packets )?received(?:, \+(\d+) errors)?, ([\d.]+)% packet loss/m;
 
-const RTT_RE = /rtt min\/avg\/max\/mdev = ([\d.]+)\/([\d.]+)\/([\d.]+)\/([\d.]+) ms/m;
+const RTT_RE = /(?:rtt|round-trip) min\/avg\/max\/(?:mdev|stddev) = ([\d.]+)\/([\d.]+)\/([\d.]+)\/([\d.]+) ms/m;
 
 const PER_PACKET_RTT_RE = /time=([\d.]+) ms/;
+
+const PING_BINARY_CANDIDATES = ['/usr/bin/ping', '/bin/ping', '/sbin/ping'];
+
+export function resolvePingBinary(): string {
+  for (const candidate of PING_BINARY_CANDIDATES) {
+    try {
+      accessSync(candidate, constants.F_OK | constants.X_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return 'ping';
+}
+
+let cachedPingBinary: string | null = null;
+
+// mirrors ipmitoolBin(); the fallbacks differ (bare name vs PATH walk), so the two resolvers stay separate
+export function pingBinary(): string {
+  cachedPingBinary ??= resolvePingBinary();
+  return cachedPingBinary;
+}
+
+export function resetPingBinary(): void {
+  cachedPingBinary = null;
+}
+
+// bsd ping reads -W in milliseconds; iputils and busybox read seconds
+function pingWaitArg(timeoutSeconds: number): string {
+  return String(process.platform === 'darwin' ? timeoutSeconds * 1000 : timeoutSeconds);
+}
 
 function toInt(value: unknown): number | null {
   if (typeof value === 'boolean') return value ? 1 : 0;
@@ -318,11 +350,11 @@ export class IcmpService implements IcmpServiceContract {
       'timeout',
       '--preserve-status',
       `${timeout * count + 1}s`,
-      '/usr/bin/ping',
+      pingBinary(),
       '-c',
       String(count),
       '-W',
-      String(timeout),
+      pingWaitArg(timeout),
       '-s',
       String(packetSize),
       '-q',
@@ -392,11 +424,11 @@ export class IcmpService implements IcmpServiceContract {
         'timeout',
         '--preserve-status',
         `${timeout + 1}s`,
-        '/bin/ping',
+        pingBinary(),
         '-c',
         '1',
         '-W',
-        String(timeout),
+        pingWaitArg(timeout),
         '-s',
         String(packetSize),
         ip,

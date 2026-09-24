@@ -408,7 +408,7 @@ Available fields: `userId`, `email`, `firstName`, `lastName`, `organizationId`, 
 **Operator plugin endpoints** use `PluginOperatorGuard` from `@hydrahost/plugin-sdk/nest`. It calls host-backed `ctx.requireOperator({ adminOrganizationId })`:
 
 - Instance operators always pass.
-- When `PLUGIN_OPERATOR_ADMIN_ORG` is provided with a non-empty string that matches the caller's `organizationId`, that org also passes (managed-edition admin panel). Empty string does not grant access.
+- When `PLUGIN_OPERATOR_ADMIN_ORG` is provided with a non-empty string that matches the caller's `organizationId`, that org also passes. Empty string does not grant access.
 - Omit the token for instance-operator only (this is `operator-hub`).
 - Missing request identity fails closed.
 
@@ -452,14 +452,15 @@ Plugins extend the host UI at **named extension slots**. Each slot type has its 
 
 Available slot names live in `EXTENSION_SLOTS`. Currently shipped:
 
-| Slot                    | Shape                                               | Host renders                                               | Use for                                                         |
-| ----------------------- | --------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------- |
-| `dashboard-widget`      | `{ component, label? }`                             | the plugin's component                                     | dashboard cards, custom widgets, freeform plugin UI             |
-| `sidebar-nav`           | `{ label, to, icon?, section?, external?, popup? }` | the host's typed `<Link>` (or `<a>` if `external`/`popup`) | nav entries that link to plugin routes or off-platform URLs     |
-| `address-autocomplete`  | `{ component }`                                     | the plugin's component above the address inputs            | geocoder search affordances that fill the host address forms    |
-| `inventory-page-extras` | `{ component }`                                     | the plugin's component after the listing grid              | lead-capture walls, banners, trackers on inventory pages        |
-| `inventory-item-cta`    | `{ component }`                                     | the plugin's component in each listing-card footer         | secondary calls-to-action pre-filled with the card's specs      |
-| `app-banner`            | `{ component }`                                     | the plugin's component above the page content              | account-wide notices (billing onboarding, expiring credentials) |
+| Slot                         | Shape                                               | Host renders                                               | Use for                                                         |
+| ---------------------------- | --------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------- |
+| `dashboard-widget`           | `{ component, label? }`                             | the plugin's component                                     | dashboard cards, custom widgets, freeform plugin UI             |
+| `sidebar-nav`                | `{ label, to, icon?, section?, external?, popup? }` | the host's typed `<Link>` (or `<a>` if `external`/`popup`) | nav entries that link to plugin routes or off-platform URLs     |
+| `address-autocomplete`       | `{ component }`                                     | the plugin's component above the address inputs            | geocoder search affordances that fill the host address forms    |
+| `inventory-page-extras`      | `{ component }`                                     | the plugin's component after the listing grid              | lead-capture walls, banners, trackers on inventory pages        |
+| `inventory-item-cta`         | `{ component }`                                     | the plugin's component in each listing-card footer         | secondary calls-to-action pre-filled with the card's specs      |
+| `inventory-device-provision` | `{ component }`                                     | primary CTA on `/_app/inventory/$deviceId` (managed only)  | HubSpot/Salesforce contract-pricing wall for unknown orgs       |
+| `app-banner`                 | `{ component }`                                     | the plugin's component above the page content              | account-wide notices (billing onboarding, expiring credentials) |
 
 ```tsx
 // frontend/index.ts

@@ -48,14 +48,14 @@ export function toLegacy(result: IPMIResult): LegacyIpmiResult {
 async function dispatchOp(
   device: IPMIDevice,
   operation: string,
-  uefi: boolean,
+  bootOptions: { uefi: boolean; persistent: boolean },
   deps: IpmiRetryDeps,
 ): Promise<IPMIResult> {
   if (POWER_OPS.includes(operation)) {
     return deps.power(device, operation);
   }
   if (BOOT_OPS.includes(operation)) {
-    return deps.bootDevice(device, operation, { uefi });
+    return deps.bootDevice(device, operation, bootOptions);
   }
   if (MC_RESET_OPS.includes(operation)) {
     return deps.mcReset(device, operation);
@@ -68,9 +68,9 @@ export async function performIpmiWithRetry(
   operation: string,
   jobId: string,
   maxRetries = 3,
-  options: { uefi?: boolean; deps?: Partial<IpmiRetryDeps> } = {},
+  options: { uefi?: boolean; persistent?: boolean; deps?: Partial<IpmiRetryDeps> } = {},
 ): Promise<LegacyIpmiResult> {
-  const uefi = options.uefi ?? true;
+  const bootOptions = { uefi: options.uefi ?? true, persistent: options.persistent ?? true };
   const deps: IpmiRetryDeps = { ...defaultDeps, ...options.deps };
 
   let lastLegacy: LegacyIpmiResult = { result: 'failure', response: '' };
@@ -96,7 +96,7 @@ export async function performIpmiWithRetry(
       }
     }
 
-    const result = await dispatchOp(device, operation, uefi, deps);
+    const result = await dispatchOp(device, operation, bootOptions, deps);
     const legacy = toLegacy(result);
     lastLegacy = legacy;
 

@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { LayerKind, RequestSource, StorageDriveType } from '@repo/database';
+import { BillingFrequency, LayerKind, RequestSource, StorageDriveType } from '@repo/database';
 import { ContextService } from 'src/common/context/context.service';
 import { DEPLOYMENTS_SERVICE } from 'src/deployments/deployments.tokens';
 import { ProvisionValidatorService } from 'src/provision/processors';
@@ -67,6 +67,15 @@ describe('ProvisionOperation', () => {
   const reservationProvisioning = {
     createForProvision: vi.fn().mockResolvedValue('res-1'),
     acceptInviteForReservation: vi.fn().mockResolvedValue(false),
+    resolveProvisionInviteFlags: vi.fn().mockResolvedValue({ fromInvite: false, manualBilling: false }),
+    isKnownAccount: vi.fn().mockResolvedValue(false),
+    billedLineForDeployment: vi.fn().mockResolvedValue({
+      billingFrequency: BillingFrequency.WEEKLY,
+      reservationPrice: 16_800,
+      deviceName: 'box-1',
+      deviceClass: 'H100',
+      supplierOrganizationId: 'supplier-org-1',
+    }),
   };
 
   let operation: ProvisionOperation;
@@ -94,7 +103,7 @@ describe('ProvisionOperation', () => {
   describe('assembleContext', () => {
     it('validates and resolves the OS id + pubkeys', async () => {
       repo.fetchProvisionableDevice.mockResolvedValue({
-        device: { server: {}, storageDrives: [] },
+        device: { supplierId: 'supplier-org-1', server: {}, storageDrives: [] },
         sshKeys: [{ id: 'key-1', key: 'ssh-ed25519 AAA' }],
         baseLayer: { id: 'layer-1', slug: 'ubuntu-22', kind: LayerKind.BASE },
       });
@@ -102,6 +111,7 @@ describe('ProvisionOperation', () => {
       await expect(operation.assembleContext(input)).resolves.toEqual({
         baseLayerId: 'layer-1',
         pubkeys: ['ssh-ed25519 AAA'],
+        supplierOrganizationId: 'supplier-org-1',
       });
     });
 
@@ -168,6 +178,7 @@ describe('ProvisionOperation', () => {
       await expect(operation.assembleContext({ ...input, diskLayouts: [raidLayout] })).resolves.toEqual({
         baseLayerId: 'layer-1',
         pubkeys: ['ssh-ed25519 AAA'],
+        supplierOrganizationId: null,
       });
     });
   });
@@ -182,7 +193,27 @@ describe('ProvisionOperation', () => {
 
       await expect(
         operation.assembleContextForReplay({ ...input, userId: 'someone-else', organizationId: 'other-org' }),
-      ).resolves.toEqual({ baseLayerId: 'layer-1', pubkeys: ['ssh-ed25519 AAA'] });
+      ).resolves.toEqual({
+        baseLayerId: 'layer-1',
+        pubkeys: ['ssh-ed25519 AAA'],
+        supplierOrganizationId: null,
+      });
+    });
+
+    it('propagates a non-null supplierId to the context', async () => {
+      repo.fetchProvisionableDevice.mockResolvedValue({
+        device: { supplierId: 'supplier-org-1', server: {}, storageDrives: [] },
+        sshKeys: [{ id: 'key-1', key: 'ssh-ed25519 AAA' }],
+        baseLayer: { id: 'layer-1', slug: 'ubuntu-22', kind: LayerKind.BASE },
+      });
+
+      await expect(
+        operation.assembleContextForReplay({ ...input, userId: 'someone-else', organizationId: 'other-org' }),
+      ).resolves.toEqual({
+        baseLayerId: 'layer-1',
+        pubkeys: ['ssh-ed25519 AAA'],
+        supplierOrganizationId: 'supplier-org-1',
+      });
     });
   });
 
@@ -223,6 +254,34 @@ describe('ProvisionOperation', () => {
   it('acceptInvite swallows errors so a successful provision is never undone', async () => {
     reservationProvisioning.acceptInviteForReservation.mockRejectedValueOnce(new Error('boom'));
     await expect(operation.acceptInvite('res-1')).resolves.toBeUndefined();
+  });
+
+  it('resolveProvisionInviteFlags delegates to the reservation provisioning service', async () => {
+    reservationProvisioning.resolveProvisionInviteFlags.mockResolvedValueOnce({
+      fromInvite: true,
+      manualBilling: true,
+    });
+    await expect(
+      operation.resolveProvisionInviteFlags({ deviceId: 'device-1', userId: 'user-1', organizationId: 'org-1' }),
+    ).resolves.toEqual({ fromInvite: true, manualBilling: true });
+    expect(reservationProvisioning.resolveProvisionInviteFlags).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      userId: 'user-1',
+      organizationId: 'org-1',
+    });
+  });
+
+  it('billedLineForDeployment delegates to the reservation provisioning service', async () => {
+    const line = {
+      billingFrequency: BillingFrequency.MONTHLY,
+      reservationPrice: 50_000,
+      deviceName: 'box-1',
+      deviceClass: 'H100',
+      supplierOrganizationId: 'supplier-org-1',
+    };
+    reservationProvisioning.billedLineForDeployment.mockResolvedValueOnce(line);
+    await expect(operation.billedLineForDeployment('dep-1')).resolves.toEqual(line);
+    expect(reservationProvisioning.billedLineForDeployment).toHaveBeenCalledWith('dep-1');
   });
 
   it('createDeployment links the deployment to its reservation and returns its id', async () => {

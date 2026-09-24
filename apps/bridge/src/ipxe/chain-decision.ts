@@ -1,10 +1,13 @@
+import { isIpxeCustomOs } from '@repo/utils';
+
 import type { DeviceRecord } from '../device-record/device-record.schema';
 import { isPlaceholder } from '../device-record/device-record.schema';
 import type { DiscoveryFlavor } from '../download/discovery.config';
+import { logInfo } from '../logger/logger.service';
 
 import { sanitizeChainJobId } from './chain.helpers';
 import { NIL_DEVICE_ID, RESCUE_OS_SLUG, type RendererCall, type RenderForRecordContext } from './chain.types';
-import { IpxeServerTokenUnavailableError, IpxeServiceError } from './ipxe-errors';
+import { IpxeDeployTokenUnavailableError, IpxeServiceError } from './ipxe-errors';
 import {
   archSlug,
   grubChainSupported,
@@ -48,7 +51,7 @@ export async function renderForRecord(ctx: RenderForRecordContext): Promise<stri
   const arch = archSlug(request.buildarch);
   if (arch === null) {
     const kwargs = { buildarch: request.buildarch, platform: request.platform };
-    return recordCall(events, () => renderer.render_unknown(kwargs), 'render_unknown', kwargs);
+    return recordCall(events, () => renderer.render_unknown(kwargs), 'render_unknown', kwargs, null, ctx.jobId);
   }
 
   if (record === 'KNOWN_RECORD_MISSING') {
@@ -58,7 +61,7 @@ export async function renderForRecord(ctx: RenderForRecordContext): Promise<stri
       return renderUnknownDiscovery(ctx, arch);
     }
     const kwargs = { retry_count: retries + 1 };
-    return recordCall(events, () => renderer.render_retry(kwargs), 'render_retry', kwargs);
+    return recordCall(events, () => renderer.render_retry(kwargs), 'render_retry', kwargs, null, ctx.jobId);
   }
 
   if (typeof record === 'string') {
@@ -70,7 +73,7 @@ export async function renderForRecord(ctx: RenderForRecordContext): Promise<stri
       return renderUnknownDiscovery(ctx, arch);
     }
     const kwargs = { retry_count: retries + 1 };
-    return recordCall(events, () => renderer.render_retry(kwargs), 'render_retry', kwargs);
+    return recordCall(events, () => renderer.render_retry(kwargs), 'render_retry', kwargs, null, ctx.jobId);
   }
 
   const customScript = await maybeRenderCustomIpxe(ctx);
@@ -98,7 +101,7 @@ function renderUnknownDiscovery(ctx: RenderForRecordContext, arch: string): Prom
     mac: perMacBuildable ? request.mac_address : undefined,
     is_placeholder_device: perMacBuildable,
   };
-  return recordCall(events, () => renderer.render_discovery(kwargs), 'render_discovery', kwargs);
+  return recordCall(events, () => renderer.render_discovery(kwargs), 'render_discovery', kwargs, null, jobId);
 }
 
 async function maybeRenderCustomIpxe(ctx: RenderForRecordContext): Promise<string | null> {
@@ -108,7 +111,7 @@ async function maybeRenderCustomIpxe(ctx: RenderForRecordContext): Promise<strin
 
   const status = (record.status ?? '').toLowerCase();
   const installedOs = record.installed_os ?? '';
-  if (status !== 'provisioning' || (installedOs !== 'ipxe-custom' && installedOs !== 'ipxe-custom-tee')) {
+  if (status !== 'provisioning' || !isIpxeCustomOs(installedOs)) {
     return null;
   }
 
@@ -133,13 +136,27 @@ async function maybeRenderCustomIpxe(ctx: RenderForRecordContext): Promise<strin
     job_id: effectiveJobId,
   };
   try {
-    return await recordCall(events, () => renderer.render_custom(kwargs), 'render_custom', kwargs);
+    return await recordCall(
+      events,
+      () => renderer.render_custom(kwargs),
+      'render_custom',
+      kwargs,
+      record.id,
+      effectiveJobId,
+    );
   } catch (error) {
-    if (error instanceof IpxeServerTokenUnavailableError) {
+    if (error instanceof IpxeDeployTokenUnavailableError) {
       const retries = request.retry_count ?? 0;
       if (retries < MAX_KNOWN_RECORD_MISSING_RETRIES) {
         const retryKwargs = { retry_count: retries + 1 };
-        return recordCall(events, () => renderer.render_retry(retryKwargs), 'render_retry', retryKwargs);
+        return recordCall(
+          events,
+          () => renderer.render_retry(retryKwargs),
+          'render_retry',
+          retryKwargs,
+          record.id,
+          effectiveJobId,
+        );
       }
     } else if (error instanceof IpxeServiceError) {
       return null;
@@ -184,7 +201,14 @@ async function generateScriptByStatus(
       mac: request.mac_address,
       is_placeholder_device: placeholder,
     };
-    return recordCall(events, () => renderer.render_discovery(kwargs), 'render_discovery', kwargs);
+    return recordCall(
+      events,
+      () => renderer.render_discovery(kwargs),
+      'render_discovery',
+      kwargs,
+      deviceId,
+      effectiveJobId,
+    );
   };
 
   if (rescueOs != null || placeholder) {
@@ -204,7 +228,7 @@ async function generateScriptByStatus(
     job_id: effectiveJobId,
     grub_supported: grubChainSupported(arch, request.platform),
   };
-  return recordCall(events, () => renderer.render_disk(kwargs), 'render_disk', kwargs);
+  return recordCall(events, () => renderer.render_disk(kwargs), 'render_disk', kwargs, deviceId, effectiveJobId);
 }
 
 async function triggerInventory(ctx: RenderForRecordContext, deviceId: string, jobId: string): Promise<void> {
@@ -231,7 +255,20 @@ async function recordCall<T>(
   fn: () => Promise<T>,
   method: RendererCall['method'],
   kwargs: Record<string, unknown>,
+  deviceId: string | null,
+  jobId: string | null,
 ): Promise<T> {
   if (events) events.push({ method, kwargs });
-  return fn();
+  // Logged after the render resolves so a method that throws and falls back is never reported as served.
+  const rendered = await fn();
+  try {
+    // Method + ids only: the custom script carries a deployment_os_token, so neither the script nor kwargs may be logged.
+    await logInfo(`iPXE render: ${method} for device ${deviceId ?? 'unknown'}`, {
+      jobId: jobId ?? undefined,
+      deviceId: deviceId ?? undefined,
+    });
+  } catch {
+    // This is the boot-serve path: a telemetry failure must not stop a machine from booting.
+  }
+  return rendered;
 }

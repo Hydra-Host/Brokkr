@@ -12,7 +12,6 @@ import {
 import { Button } from '@repo/ui/components/button';
 import { Card, CardContent } from '@repo/ui/components/card';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import { calculateNoticePeriodMs, type NoticePeriodUnit } from '@repo/utils';
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, getRouteApi, useNavigate, useRouter } from '@tanstack/react-router';
 import { AlertTriangle, ArrowLeft, Loader2, Trash2 } from 'lucide-react';
@@ -82,22 +81,15 @@ function ServerInvitePage() {
   const deleteMutation = tsr.deleteReservationInvite.useMutation();
 
   const handleSubmit = async (data: DcimInviteFormValues) => {
-    const noticePeriodMs =
-      data.isInterruptible && data.interruptibleNoticePeriodValue
-        ? calculateNoticePeriodMs(
-            data.interruptibleNoticePeriodValue,
-            (data.interruptibleNoticePeriodUnit as NoticePeriodUnit) || 'hours',
-          )
-        : null;
-
     if (isEdit && invite?.id) {
       const body: EditReservationInviteRequest = {
+        contractType: data.contractType,
         price: data.price,
         billingFrequency: data.billingFrequency as EditReservationInviteRequest['billingFrequency'],
         dateExpires: new Date(data.dateExpires),
         deviceIds: [device.id],
         notes: data.notes,
-        interruptibleNoticePeriod: noticePeriodMs,
+        interruptibleNoticePeriod: null,
       };
       await editMutation.mutateAsync({
         params: { inviteId: invite.id },
@@ -108,12 +100,13 @@ function ServerInvitePage() {
         inviterEmail: inviterEmail,
         inviteeEmail: data.inviteeEmail,
         organizationId: activeOrgId,
+        contractType: data.contractType,
         price: data.price,
         billingFrequency: data.billingFrequency as CreateReservationInviteRequest['billingFrequency'],
         dateExpires: new Date(data.dateExpires),
         deviceIds: [device.id],
         notes: data.notes,
-        interruptibleNoticePeriod: noticePeriodMs,
+        interruptibleNoticePeriod: null,
       };
       await createMutation.mutateAsync({
         params: { deviceId: device.id },
@@ -146,7 +139,6 @@ function ServerInvitePage() {
     });
 
   const isPending = createMutation.isPending || editMutation.isPending;
-  const isError = createMutation.isError || editMutation.isError;
 
   if (!isInventoryStatus) {
     return (
@@ -210,7 +202,6 @@ function ServerInvitePage() {
           onSubmit={handleSubmit}
           onCancel={handleCancel}
           isPending={isPending}
-          isError={isError}
         />
       </div>
 

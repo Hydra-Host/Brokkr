@@ -18,10 +18,15 @@ if [ -f stack.slot.nix ] || [ "$configured" != 0 ]; then
 else
   want=auto
 fi
-claimed=$(stack_registry_claim "$want" "$PWD" "$DEVENV_RUNTIME")
+stamp="$DEVENV_STATE/stack-slot-applied"
+# the one fact the registry cannot see: whether any bring-up here ever reached `devenv up -d`,
+# which is what writes the stamp. Without it a pinned slot cannot be honored — see the owner
+# fast-path in stack-registry.sh.
+unapplied=0
+[ -f "$stamp" ] || unapplied=1
+claimed=$(stack_registry_claim "$want" "$PWD" "$DEVENV_RUNTIME" "$unapplied")
 assert_slot "$claimed"
 
-stamp="$DEVENV_STATE/stack-slot-applied"
 if [ -f "$stamp" ] && [ "$(cat "$stamp")" != "$claimed" ]; then
   echo "slot drift ($(cat "$stamp") -> $claimed): migrate with stack-reslot (task stack:reslot)" >&2
   exit 1

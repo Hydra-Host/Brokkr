@@ -40,18 +40,20 @@ export function classifyEventType(status: NotificationStatus, stepName: string):
 export interface StepTransitionEvent {
   planId: string;
   stepName: string;
+  operation?: string | null;
   status: JobStatus;
   deviceId: unknown;
   error?: string | null;
   result?: unknown;
   attempt?: number;
-  metadata?: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
 }
 
 export interface ResultsQueueProducer {
   enqueueResult(args: {
     planId: string;
     stepName: string;
+    operation: string | null;
     status: string;
     deviceId: unknown;
     eventType: EventType;
@@ -88,8 +90,11 @@ export class NotificationsService {
       throw new NotificationDeliveryError(message);
     }
 
-    const meta = event.metadata ?? {};
-    const actionType = ('saga_name' in meta ? (meta.saga_name as unknown) : 'provision') as string;
+    const meta = event.metadata;
+    const sagaName = meta.saga_name;
+    if (typeof sagaName !== 'string' || sagaName.length === 0) {
+      throw new Error(`Missing saga_name in metadata for plan ${event.planId} step ${event.stepName}`);
+    }
     const eventType = classifyEventType(event.status, event.stepName);
     const attempt = event.attempt ?? 0;
 
@@ -99,7 +104,7 @@ export class NotificationsService {
         delivered = await this.producer.enqueueJobCompleted({
           planId: event.planId,
           deviceId: event.deviceId,
-          sagaName: ('saga_name' in meta ? (meta.saga_name as unknown) : 'unknown') as string,
+          sagaName,
           status: event.status,
           error: event.error ?? null,
           metadata: meta,
@@ -108,10 +113,11 @@ export class NotificationsService {
         delivered = await this.producer.enqueueResult({
           planId: event.planId,
           stepName: event.stepName,
+          operation: event.operation ?? null,
           status: event.status,
           deviceId: event.deviceId,
           eventType,
-          actionType,
+          actionType: sagaName,
           result: event.result ?? null,
           error: event.error ?? null,
           attempt,

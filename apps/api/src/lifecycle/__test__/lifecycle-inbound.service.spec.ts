@@ -10,10 +10,11 @@ import {
   ServerLifecycleStatus,
   ServerPowerStatus,
 } from '@repo/database';
-import { LIFECYCLE_WATCHDOG_QUEUE, LifecycleJobRecord } from '@repo/lifecycle';
+import { LIFECYCLE_WATCHDOG_QUEUE, LifecycleJobRecord, PHONE_HOME_OPERATION } from '@repo/lifecycle';
 import type { JobCompletedData, JobResultData } from 'src/brokkr-bridge/types/queue.types';
 import { DeploymentRecord } from 'src/deployments/deployment.record';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { ReservationRecord } from 'src/reservations/reservation.record';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -24,6 +25,7 @@ import { jobAt, makeMockClient } from './test-helpers';
 const stepResult = (over: Partial<JobResultData> = {}): JobResultData => ({
   plan_id: 'job-1',
   step_name: 'prepare_storage',
+  operation: 'Partition and format disks',
   status: 'running',
   device_id: '123',
   zone_prefix: 'z',
@@ -48,7 +50,7 @@ describe('LifecycleInboundService', () => {
   const eventBus = { emit: vi.fn(), on: vi.fn(), off: vi.fn() };
   const prismaTx = { tx: true };
   const prisma = {
-    device: { update: vi.fn().mockResolvedValue({}) },
+    device: { update: vi.fn().mockResolvedValue({}), findUnique: vi.fn().mockResolvedValue(null) },
     server: {
       findUnique: vi.fn(),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -68,6 +70,7 @@ describe('LifecycleInboundService', () => {
   };
 
   const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  const redisPubSub = { publish: vi.fn().mockResolvedValue(undefined) };
 
   let service: LifecycleInboundService;
   let appendEvent: ReturnType<typeof vi.spyOn>;
@@ -90,6 +93,7 @@ describe('LifecycleInboundService', () => {
         { provide: getQueueToken(LIFECYCLE_WATCHDOG_QUEUE), useValue: watchdogQueue },
         { provide: LifecycleService, useValue: lifecycleService },
         { provide: DeviceTokensService, useValue: deviceTokens },
+        { provide: RedisPubSubService, useValue: redisPubSub },
         { provide: 'LoggerServiceLifecycleInboundService', useValue: logger },
       ],
     }).compile();
@@ -106,10 +110,21 @@ describe('LifecycleInboundService', () => {
 
     await service.applyStepResult(stepResult());
 
-    expect(appendEvent).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-1', eventType: 'stage_changed' }));
+    expect(appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: 'job-1', eventType: 'stage_changed', operation: 'Partition and format disks' }),
+    );
     expect(job.data.phase).toBe(LifecycleJobPhase.RUNNING);
     expect(prisma.device.update).not.toHaveBeenCalled();
     expect(eventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it('records a null operation when the step result carries no label', async () => {
+    const job = jobAt(LifecycleJobPhase.DISPATCHED);
+    vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(job);
+
+    await service.applyStepResult(stepResult({ operation: undefined }));
+
+    expect(appendEvent).toHaveBeenCalledWith(expect.objectContaining({ operation: null }));
   });
 
   it('reads the bridge stamp as the seconds it sends, not as milliseconds', async () => {
@@ -205,6 +220,22 @@ describe('LifecycleInboundService', () => {
     );
   });
 
+  it('publishes one job event after a job.completed row', async () => {
+    const job = jobAt(LifecycleJobPhase.RUNNING);
+    vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(job);
+
+    await service.applyJobCompleted(jobCompleted());
+
+    expect(redisPubSub.publish).toHaveBeenCalledTimes(1);
+    expect(redisPubSub.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'job.event.recorded',
+        jobId: 'job-1',
+        phase: LifecycleJobPhase.AWAITING_PHONE_HOME,
+      }),
+    );
+  });
+
   it('provision job.completed from DISPATCHED normalizes via RUNNING and reaches AWAITING_PHONE_HOME', async () => {
     const job = jobAt(LifecycleJobPhase.DISPATCHED);
     vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(job);
@@ -230,6 +261,8 @@ describe('LifecycleInboundService', () => {
     await service.applyJobCompleted(jobCompleted());
 
     expect(job.data.phase).toBe(LifecycleJobPhase.COMPLETED);
+    expect(redisPubSub.publish).toHaveBeenCalledTimes(1);
+    expect(redisPubSub.publish).toHaveBeenCalledWith(expect.objectContaining({ phase: LifecycleJobPhase.COMPLETED }));
     expect(watchdogQueue.add).not.toHaveBeenCalled();
     expect(eventBus.emit).toHaveBeenCalledWith('provision.completed', expect.objectContaining({ jobId: 'job-1' }));
     expect(appendEvent).toHaveBeenCalledWith(
@@ -731,6 +764,9 @@ describe('LifecycleInboundService', () => {
     await service.applyPhoneHome('device-1');
 
     expect(job.data.phase).toBe(LifecycleJobPhase.COMPLETED);
+    expect(appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ stepName: 'phone_home', operation: PHONE_HOME_OPERATION }),
+    );
     expect(eventBus.emit).toHaveBeenCalledWith('provision.completed', expect.objectContaining({ jobId: 'job-1' }));
   });
 
@@ -772,6 +808,21 @@ describe('LifecycleInboundService', () => {
     expect(eventBus.emit).not.toHaveBeenCalledWith('provision.failed', expect.anything());
 
     expect(prisma.device.update).not.toHaveBeenCalled();
+    expect(redisPubSub.publish).toHaveBeenCalledTimes(1);
+    expect(redisPubSub.publish).toHaveBeenCalledWith(expect.objectContaining({ phase: LifecycleJobPhase.COMPLETED }));
+  });
+
+  it('checkPhoneHomeDeadline publishes no job event when the phone-home callback wins the completion race', async () => {
+    prisma.server.findUnique.mockResolvedValueOnce({ lifecycleStatus: ServerLifecycleStatus.PROVISIONED });
+    const job = jobAt(LifecycleJobPhase.AWAITING_PHONE_HOME);
+    vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(job);
+    vi.spyOn(LifecycleJobRecord, 'claimTransition').mockResolvedValue(false);
+
+    await service.checkPhoneHomeDeadline('job-1');
+
+    expect(redisPubSub.publish).not.toHaveBeenCalled();
+    expect(eventBus.emit).not.toHaveBeenCalled();
+    expect(job.data.phase).toBe(LifecycleJobPhase.AWAITING_PHONE_HOME);
   });
 
   it('tolerates a missing LifecycleJob (legacy/autonomous flow)', async () => {

@@ -93,3 +93,70 @@ describe('EmailService send gating', () => {
     expect(send).toHaveBeenCalledOnce();
   });
 });
+
+describe('EmailService in-app notification links', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('prefers WEB_BASE_URL over BASE_URL for the absolute href', async () => {
+    const { service } = await buildService(
+      {
+        IS_LOCAL: 'true',
+        EMAIL_LOCAL_DELIVERY: 'true',
+        BASE_URL: 'http://localhost:3000',
+        WEB_BASE_URL: 'http://localhost:5173',
+      },
+      true,
+    );
+    await service.send.inAppNotification({
+      email: 'a@example.com',
+      title: 'Approval needed',
+      body: 'A request awaits approval.',
+      href: '/plugins/operator-hub/provision-approvals',
+    });
+    expect(send).toHaveBeenCalledOnce();
+    const html = String(send.mock.calls[0]?.[0]?.html ?? '');
+    expect(html).toContain('http://localhost:5173/plugins/operator-hub/provision-approvals');
+    expect(html).not.toContain('http://localhost:3000/plugins/operator-hub/provision-approvals');
+  });
+
+  it('falls back to BASE_URL when WEB_BASE_URL is unset', async () => {
+    const { service } = await buildService(
+      {
+        IS_LOCAL: 'false',
+        BASE_URL: 'https://app.example.com',
+      },
+      true,
+    );
+    await service.send.inAppNotification({
+      email: 'a@example.com',
+      title: 'Approval needed',
+      body: 'A request awaits approval.',
+      href: '/plugins/operator-hub/provision-approvals',
+    });
+    expect(send).toHaveBeenCalledOnce();
+    const html = String(send.mock.calls[0]?.[0]?.html ?? '');
+    expect(html).toContain('https://app.example.com/plugins/operator-hub/provision-approvals');
+  });
+
+  it('strips a trailing slash on WEB_BASE_URL to avoid a double slash', async () => {
+    const { service } = await buildService(
+      {
+        IS_LOCAL: 'false',
+        BASE_URL: 'http://localhost:3000',
+        WEB_BASE_URL: 'http://localhost:5173/',
+      },
+      true,
+    );
+    await service.send.inAppNotification({
+      email: 'a@example.com',
+      title: 'Approval needed',
+      body: 'A request awaits approval.',
+      href: '/plugins/operator-hub/provision-approvals',
+    });
+    expect(send).toHaveBeenCalledOnce();
+    const html = String(send.mock.calls[0]?.[0]?.html ?? '');
+    expect(html).toContain('http://localhost:5173/plugins/operator-hub/provision-approvals');
+    expect(html).not.toContain('http://localhost:5173//plugins');
+  });
+});
+

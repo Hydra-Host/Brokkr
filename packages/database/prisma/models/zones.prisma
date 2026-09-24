@@ -13,6 +13,7 @@ enum ZoneNetworkType {
 enum ZoneEastWestNetworkType {
   ROCE
   ETHERNET
+  INFINIBAND
 }
 
 model Zone {

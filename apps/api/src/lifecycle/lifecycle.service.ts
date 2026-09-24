@@ -2,6 +2,9 @@ import {
   LifecycleGateDeferral,
   LifecycleGateRejection,
   PLUGIN_EVENT_BUS,
+  type AbortDeferredOptions,
+  type BrokkrEventMap,
+  type BrokkrGateMap,
   type PluginEventBus,
 } from '@hydrahost/plugin-sdk';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -10,6 +13,7 @@ import { ActiveRecordRegistry } from '@repo/active-record';
 import {
   AdminLifecycleRequestStatus,
   AdminLifecycleRequestType,
+  BillingFrequency,
   InterruptibleClaimStatus,
   JobType,
   LifecycleJobPhase,
@@ -30,11 +34,13 @@ import {
   type ScheduledJobData,
   type SystemJobType,
 } from '@repo/lifecycle';
+import { provisionContractTypeWriteRejection } from '@repo/utils';
 import { Queue } from 'bullmq';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { DeploymentRecord } from 'src/deployments/deployment.record';
 import { LoggerService } from 'src/logger/logger.service';
 import { GateUnavailableError, HostPluginGateBus } from 'src/plugin-host/host-plugin-gate-bus';
+import { type BilledProvisionLine } from 'src/reservations/reservation-provisioning.service';
 import { ReservationsService } from 'src/reservations/reservations.service';
 import { z } from 'zod';
 import { getErrorMessage } from '../common/error-utils';
@@ -89,6 +95,7 @@ export interface LifecycleJobAudit {
   triggeredByEmail?: string;
   retriedFromJobId?: string;
   retriedBy?: string;
+  retryReason?: string;
 }
 
 export interface InterruptibleProvisionInput {
@@ -136,7 +143,7 @@ interface RunParams {
   triggeredByEmail?: string;
   payload: Prisma.JsonObject;
   prepare?: (jobId: string) => Promise<PrepareResult>;
-  gate?: (jobId: string, prep: PrepareResult, override: boolean) => Promise<void>;
+  gate?: (jobId: string, override: boolean) => Promise<void>;
   gateOverride?: boolean;
   dispatch: (jobId: string, prep: PrepareResult) => Promise<void>;
 }
@@ -199,6 +206,7 @@ export class LifecycleService {
   }
 
   async requestProvision(input: ProvisionRequest): Promise<LifecycleJobRecord> {
+    this.rejectNonReservedRollingProvision(input);
     const ctx = await this.provisionOperation.assembleContext(input);
     return this.runProvision(input, ctx);
   }
@@ -206,16 +214,41 @@ export class LifecycleService {
   // Operator entry (backs PLUGIN_LIFECYCLE_REQUESTS): skips the request-context identity check — the caller is an
   // operator-gated plugin acting for a validated identity. Device/OS/SSH-key validation still runs in full.
   async requestProvisionAsOperator(input: ProvisionRequest, audit?: LifecycleJobAudit): Promise<LifecycleJobRecord> {
+    this.rejectNonReservedRollingProvision(input);
     const ctx = await this.provisionOperation.assembleContextForReplay(input);
     return this.runProvision(input, ctx, audit);
   }
 
-  private runProvision(
+  private rejectNonReservedRollingProvision(input: {
+    contractType?: string | null;
+    isInterruptible?: boolean | null;
+  }): void {
+    const rejection = provisionContractTypeWriteRejection({
+      contractType: input.contractType,
+      isInterruptible: input.isInterruptible,
+    });
+    if (rejection) {
+      throw new BadRequestException(rejection);
+    }
+  }
+
+  private async runProvision(
     input: ProvisionRequest,
     ctx: ProvisionContext,
     audit?: LifecycleJobAudit,
   ): Promise<LifecycleJobRecord> {
-    return this.run({
+    const internalProvision = input.internalProvision ?? false;
+    const { fromInvite, manualBilling } = await this.resolveProvisionInviteFlags({
+      deviceId: input.deviceId,
+      userId: input.userId,
+      organizationId: input.organizationId,
+      internalProvision,
+    });
+    const knownAccount = await this.resolveKnownAccount({
+      organizationId: input.organizationId,
+      internalProvision,
+    });
+    const job = await this.run({
       jobType: JobType.Provision,
       deviceId: input.deviceId,
       organizationId: input.organizationId,
@@ -225,6 +258,8 @@ export class LifecycleService {
       payload: {
         operatingSystemSlug: input.operatingSystemSlug,
         request: this.serializeRequest(input),
+        internalProvision,
+        manualBilling,
         ...this.auditPayload(audit),
       },
       prepare: async () => {
@@ -238,17 +273,20 @@ export class LifecycleService {
           throw error;
         }
       },
-      gate: (jobId, prep, override) =>
+      gate: (jobId, override) =>
         this.gateBus.runGate(
           'provision.authorize',
-          {
+          this.provisionAuthorizePayload({
             jobId,
             deviceId: input.deviceId,
-            deploymentId: prep.deploymentId ?? '',
             organizationId: input.organizationId,
             customerUserId: input.userId,
-            internalProvision: input.internalProvision ?? false,
-          },
+            internalProvision,
+            manualBilling,
+            fromInvite,
+            knownAccount,
+            supplierOrganizationId: ctx.supplierOrganizationId,
+          }),
           { override },
         ),
       dispatch: async (jobId, prep) => {
@@ -262,6 +300,17 @@ export class LifecycleService {
         }
       },
     });
+    if (job.data.phase === LifecycleJobPhase.DISPATCHED && job.data.deploymentId) {
+      await this.emitProvisionStarted({
+        jobId: job.data.id,
+        deviceId: input.deviceId,
+        deploymentId: job.data.deploymentId,
+        organizationId: input.organizationId,
+        internalProvision,
+        manualBilling,
+      });
+    }
+    return job;
   }
 
   async requestReprovision(input: ReprovisionRequest, audit?: LifecycleJobAudit): Promise<LifecycleJobRecord> {
@@ -305,7 +354,7 @@ export class LifecycleService {
       triggeredByEmail: input.triggeredByEmail,
       payload: {},
       gateOverride: input.gateOverride,
-      gate: (jobId, _prep, override) =>
+      gate: (jobId, override) =>
         this.runDeprovisionGate(
           jobId,
           input.deviceId,
@@ -479,6 +528,7 @@ export class LifecycleService {
   async requestInterruptibleProvision(
     input: InterruptibleProvisionInput,
   ): Promise<InterruptibleProvisionRequestResult> {
+    this.rejectNonReservedRollingProvision({ isInterruptible: true });
     const request = ProvisionRequestSchema.parse(input.request);
 
     const outgoing = await DeploymentRecord.findAggregateUnscoped({
@@ -512,6 +562,7 @@ export class LifecycleService {
   }
 
   async executeInterruptibleProvision(input: InterruptibleProvisionInput): Promise<InterruptibleProvisionResult> {
+    this.rejectNonReservedRollingProvision({ isInterruptible: true });
     const outgoing = await DeploymentRecord.findAggregateUnscoped({
       where: { endDate: null, server: { deviceId: input.deviceId } },
     });
@@ -604,6 +655,17 @@ export class LifecycleService {
 
     const payload = this.parseIncomingProvisionPayload(job.data.payload);
     const request = payload.request;
+    const internalProvision = request.internalProvision ?? false;
+    const { fromInvite, manualBilling } = await this.resolveProvisionInviteFlags({
+      deviceId: request.deviceId,
+      userId: request.userId,
+      organizationId: request.organizationId,
+      internalProvision,
+    });
+    const knownAccount = await this.resolveKnownAccount({
+      organizationId: request.organizationId,
+      internalProvision,
+    });
 
     if (
       !(await LifecycleJobRecord.claimTransition(
@@ -620,8 +682,39 @@ export class LifecycleService {
     let reservationId: string | undefined;
     let deploymentId: string;
     let ctx: ProvisionContext;
+    let deferredReason: string | undefined;
     try {
       ctx = await this.provisionOperation.assembleContextForReplay(request);
+    } catch (error) {
+      await this.failLinkedProvision(job, payload.interruptibleClaimId, error);
+      return;
+    }
+
+    try {
+      await this.gateBus.runGate(
+        'provision.authorize',
+        this.provisionAuthorizePayload({
+          jobId: linkedJobId,
+          deviceId: request.deviceId,
+          organizationId: request.organizationId,
+          customerUserId: request.userId,
+          internalProvision,
+          manualBilling,
+          fromInvite,
+          knownAccount,
+          supplierOrganizationId: ctx.supplierOrganizationId,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof LifecycleGateDeferral) {
+        deferredReason = error.reason;
+      } else {
+        await this.failLinkedProvision(job, payload.interruptibleClaimId, error);
+        return;
+      }
+    }
+
+    try {
       reservationId = await this.provisionOperation.createReservation(request);
       deploymentId = await this.provisionOperation.createDeployment(request, ctx.baseLayerId, reservationId);
       job.attachDeployment(deploymentId);
@@ -631,41 +724,24 @@ export class LifecycleService {
       return;
     }
 
-    try {
-      await this.gateBus.runGate('provision.authorize', {
-        jobId: linkedJobId,
-        deviceId: request.deviceId,
-        deploymentId,
-        organizationId: request.organizationId,
-        customerUserId: request.userId,
-        internalProvision: request.internalProvision ?? false,
-      });
-    } catch (error) {
-      if (error instanceof LifecycleGateDeferral) {
-        if (
-          await LifecycleJobRecord.claimTransition(
-            linkedJobId,
-            LifecycleJobPhase.AUTHORIZING,
-            LifecycleJobPhase.DEFERRED,
-          )
-        ) {
-          job.defer();
-          this.eventBus.emit('lifecycle.deferred', {
-            jobId: linkedJobId,
-            jobType: JobType.Provision,
-            deviceId: request.deviceId,
-            deploymentId,
-            organizationId: request.organizationId,
-            source: request.source,
-            performedBy: request.userId,
-            reason: error.reason,
-          });
-        } else {
-          this.logger.warn(`startLinkedProvision: job ${linkedJobId} left AUTHORIZING concurrently — skipping defer`);
-        }
-        return;
+    if (deferredReason !== undefined) {
+      if (
+        await LifecycleJobRecord.claimTransition(linkedJobId, LifecycleJobPhase.AUTHORIZING, LifecycleJobPhase.DEFERRED)
+      ) {
+        job.defer();
+        this.eventBus.emit('lifecycle.deferred', {
+          jobId: linkedJobId,
+          jobType: JobType.Provision,
+          deviceId: request.deviceId,
+          deploymentId,
+          organizationId: request.organizationId,
+          source: request.source,
+          performedBy: request.userId,
+          reason: deferredReason,
+        });
+      } else {
+        this.logger.warn(`startLinkedProvision: job ${linkedJobId} left AUTHORIZING concurrently — skipping defer`);
       }
-      await this.failLinkedProvision(job, payload.interruptibleClaimId, error, reservationId);
       return;
     }
 
@@ -695,11 +771,13 @@ export class LifecycleService {
 
     await this.completeInterruptibleClaim(payload.interruptibleClaimId);
 
-    this.eventBus.emit('provision.started', {
+    await this.emitProvisionStarted({
       jobId: linkedJobId,
       deviceId: request.deviceId,
       deploymentId,
       organizationId: request.organizationId,
+      internalProvision,
+      manualBilling,
     });
 
     this.eventBus.emit('lifecycle.dispatched', {
@@ -760,6 +838,16 @@ export class LifecycleService {
 
     const request = this.parseDeferredProvisionRequest(job.data.payload);
     const claimId = this.tryReadClaimId(job.data.payload);
+    const internalProvision = request.internalProvision ?? false;
+    const storedBilling = z.object({ manualBilling: z.boolean() }).safeParse(job.data.payload);
+    const manualBilling = storedBilling.success
+      ? storedBilling.data.manualBilling
+      : await this.resolveManualBilling({
+          deviceId: request.deviceId,
+          userId: request.userId,
+          organizationId: request.organizationId,
+          internalProvision,
+        });
     const ctx = await this.provisionOperation.assembleContextForResume(request);
 
     if (!(await LifecycleJobRecord.claimTransition(jobId, LifecycleJobPhase.DEFERRED, LifecycleJobPhase.AUTHORIZING))) {
@@ -793,10 +881,15 @@ export class LifecycleService {
       throw error;
     }
 
-    if (claimId) {
-      await this.completeInterruptibleClaim(claimId);
-      this.eventBus.emit('provision.started', { jobId, deviceId, deploymentId, organizationId });
-    }
+    if (claimId) await this.completeInterruptibleClaim(claimId);
+    await this.emitProvisionStarted({
+      jobId,
+      deviceId,
+      deploymentId,
+      organizationId,
+      internalProvision,
+      manualBilling,
+    });
 
     this.eventBus.emit('lifecycle.dispatched', {
       jobId,
@@ -810,7 +903,7 @@ export class LifecycleService {
     return true;
   }
 
-  async abortDeferred(jobId: string, reason: string): Promise<boolean> {
+  async abortDeferred(jobId: string, reason: string, options?: AbortDeferredOptions): Promise<boolean> {
     const job: LifecycleJobRecord | null = await LifecycleJobRecord.findByIdUnscoped(jobId);
     if (!job) {
       this.logger.warn(`abortDeferred: no LifecycleJob ${jobId}`);
@@ -821,6 +914,9 @@ export class LifecycleService {
       return false;
     }
 
+    // End the parked deployment before claiming ABORTED so a failed save stays retryable.
+    if (job.data.deploymentId) await this.endActiveDeploymentForAbort(job.data.deploymentId);
+
     if (
       !(await LifecycleJobRecord.claimTransition(jobId, LifecycleJobPhase.DEFERRED, LifecycleJobPhase.ABORTED, reason))
     ) {
@@ -828,7 +924,7 @@ export class LifecycleService {
       return false;
     }
     job.abort(reason);
-    this.emitRequestFailure(job);
+    this.emitRequestFailure(job, options?.cause);
     if (job.data.deploymentId) await this.endReservationForDeployment(job.data.deploymentId);
     const claimId = this.tryReadClaimId(job.data.payload);
     if (claimId) await this.releaseInterruptibleClaim(claimId);
@@ -842,6 +938,14 @@ export class LifecycleService {
     } catch (error) {
       this.logger.error(`Failed to compensate reservation ${reservationId}: ${getErrorMessage(error)}`);
     }
+  }
+
+  private async endActiveDeploymentForAbort(deploymentId: string): Promise<void> {
+    const deployment: DeploymentRecord | null = await DeploymentRecord.findOneUnscoped({ where: { id: deploymentId } });
+    if (!deployment || deployment.data.endDate) return;
+    // Operator rejection returns the device even when the customer locked the deployment.
+    deployment.endDeployment();
+    await deployment.save();
   }
 
   private async endReservationForDeployment(deploymentId: string): Promise<void> {
@@ -946,6 +1050,7 @@ export class LifecycleService {
     const extra: Record<string, string> = {};
     if (audit.retriedFromJobId) extra.retriedFromJobId = audit.retriedFromJobId;
     if (audit.retriedBy) extra.retriedBy = audit.retriedBy;
+    if (audit.retryReason) extra.retryReason = audit.retryReason;
     return extra;
   }
 
@@ -999,6 +1104,68 @@ export class LifecycleService {
       error instanceof BadRequestException ||
       error instanceof NotFoundException
     );
+  }
+
+  // Dispatch already succeeded; billed-line failure must not 500 the provision or skip the event.
+  private async emitProvisionStarted(
+    event: Omit<
+      BrokkrEventMap['provision.started'],
+      'billingFrequency' | 'reservationPrice' | 'deviceName' | 'deviceClass' | 'supplierOrganizationId'
+    >,
+  ): Promise<void> {
+    let line: BilledProvisionLine;
+    try {
+      line = await this.provisionOperation.billedLineForDeployment(event.deploymentId);
+    } catch (error) {
+      this.logger.error(
+        `billedLineForDeployment failed for ${event.deploymentId}: ${getErrorMessage(error)} — emitting provision.started with identity fallbacks`,
+      );
+      line = {
+        billingFrequency: BillingFrequency.WEEKLY,
+        reservationPrice: null,
+        deviceName: event.deviceId,
+        deviceClass: 'server',
+        supplierOrganizationId: null,
+      };
+    }
+    this.eventBus.emit('provision.started', {
+      ...event,
+      billingFrequency: line.billingFrequency,
+      reservationPrice: line.reservationPrice,
+      deviceName: line.deviceName || event.deviceId,
+      deviceClass: line.deviceClass,
+      supplierOrganizationId: line.supplierOrganizationId,
+    });
+  }
+
+  private async resolveProvisionInviteFlags(input: {
+    deviceId: string;
+    userId: string;
+    organizationId: string;
+    internalProvision: boolean;
+  }): Promise<{ fromInvite: boolean; manualBilling: boolean }> {
+    if (input.internalProvision) return { fromInvite: false, manualBilling: false };
+    return this.provisionOperation.resolveProvisionInviteFlags({
+      deviceId: input.deviceId,
+      userId: input.userId,
+      organizationId: input.organizationId,
+    });
+  }
+
+  private async resolveKnownAccount(input: { organizationId: string; internalProvision: boolean }): Promise<boolean> {
+    if (input.internalProvision) return false;
+    return this.provisionOperation.isKnownAccount(input.organizationId);
+  }
+
+  /** Resume path fallback when payload lacks stored manualBilling — one invite resolve. */
+  private async resolveManualBilling(input: {
+    deviceId: string;
+    userId: string;
+    organizationId: string;
+    internalProvision: boolean;
+  }): Promise<boolean> {
+    const flags = await this.resolveProvisionInviteFlags(input);
+    return flags.manualBilling;
   }
 
   private runDeprovisionGate(
@@ -1061,26 +1228,22 @@ export class LifecycleService {
     await job.save();
 
     let prep: PrepareResult = {};
-    if (params.prepare) {
-      try {
-        prep = await params.prepare(job.data.id);
-        if (prep.deploymentId) {
-          job.attachDeployment(prep.deploymentId);
-          await job.save();
-        }
-      } catch (error) {
-        job.abort(getErrorMessage(error));
-        await job.save();
-        this.emitRequestFailure(job);
-        throw error;
-      }
-    }
-
     let dispatchEntered = false;
     let result: { outcome: 'dispatched' } | { outcome: 'deferred'; reason: string };
+    const prepare = params.prepare;
+    const gate = params.gate;
     try {
       result = await this.proceed(job, {
-        gate: params.gate ? (jobId) => params.gate!(jobId, prep, params.gateOverride ?? false) : undefined,
+        gate: gate ? (jobId) => gate(jobId, params.gateOverride ?? false) : undefined,
+        prepare: prepare
+          ? async () => {
+              prep = await prepare(job.data.id);
+              if (prep.deploymentId) {
+                job.attachDeployment(prep.deploymentId);
+                await job.save();
+              }
+            }
+          : undefined,
         dispatch: (jobId) => {
           dispatchEntered = true;
           return params.dispatch(jobId, prep);
@@ -1144,7 +1307,7 @@ export class LifecycleService {
     return job;
   }
 
-  private emitRequestFailure(job: LifecycleJobRecord): void {
+  private emitRequestFailure(job: LifecycleJobRecord, cause?: string): void {
     const jobType = job.data.jobType;
     if (jobType !== JobType.Provision && jobType !== JobType.Reprovision) return;
     if (jobType === JobType.Provision && !job.data.deploymentId) return;
@@ -1155,39 +1318,61 @@ export class LifecycleService {
       deploymentId: job.data.deploymentId,
       organizationId: job.data.organizationId,
       error: job.data.error ?? 'lifecycle request failed before dispatch',
+      ...(cause !== undefined ? { cause } : {}),
     });
   }
 
   private async proceed(
     job: LifecycleJobRecord,
-    ops: { gate?: (jobId: string) => Promise<void>; dispatch: (jobId: string) => Promise<void> },
+    ops: {
+      gate?: (jobId: string) => Promise<void>;
+      prepare?: () => Promise<void>;
+      dispatch: (jobId: string) => Promise<void>;
+    },
   ): Promise<{ outcome: 'dispatched' } | { outcome: 'deferred'; reason: string }> {
     job.authorize();
     await job.save();
 
+    let deferredReason: string | undefined;
     if (ops.gate) {
       try {
         await ops.gate(job.data.id);
       } catch (error) {
         if (error instanceof LifecycleGateDeferral) {
           if (job.data.jobType === JobType.Provision) {
-            job.defer();
+            deferredReason = error.reason;
+          } else {
+            this.logger.warn(
+              `proceed: gate deferred a ${job.data.jobType} job (${job.data.id}) that cannot be resumed — rejecting`,
+            );
+            job.abort(error.reason);
             await job.save();
-            return { outcome: 'deferred', reason: error.reason };
+            throw new LifecycleGateRejection(
+              `${job.data.jobType} jobs cannot be deferred (resume unsupported): ${error.reason}`,
+            );
           }
-          this.logger.warn(
-            `proceed: gate deferred a ${job.data.jobType} job (${job.data.id}) that cannot be resumed — rejecting`,
-          );
-          job.abort(error.reason);
+        } else {
+          job.abort(getErrorMessage(error));
           await job.save();
-          throw new LifecycleGateRejection(
-            `${job.data.jobType} jobs cannot be deferred (resume unsupported): ${error.reason}`,
-          );
+          throw error;
         }
+      }
+    }
+
+    if (ops.prepare) {
+      try {
+        await ops.prepare();
+      } catch (error) {
         job.abort(getErrorMessage(error));
         await job.save();
         throw error;
       }
+    }
+
+    if (deferredReason !== undefined) {
+      job.defer();
+      await job.save();
+      return { outcome: 'deferred', reason: deferredReason };
     }
 
     job.dispatch();
@@ -1200,6 +1385,12 @@ export class LifecycleService {
       throw error;
     }
     return { outcome: 'dispatched' };
+  }
+
+  private provisionAuthorizePayload(
+    payload: Omit<BrokkrGateMap['provision.authorize'], 'deploymentId'>,
+  ): BrokkrGateMap['provision.authorize'] {
+    return { ...payload, deploymentId: '' };
   }
 
   private requireDeploymentId(deploymentId: string | null | undefined, context: string): string {

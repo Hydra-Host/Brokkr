@@ -331,6 +331,12 @@ tasks:
 
   check:format:
     desc: 'fail if any file is mis-formatted or fails a lint gate (treefmt --ci: prettier + nix + shell + toml). repo-wide format/lint authority.'
+    # treefmt's prettier formatter execs the repo-local binary, so a checkout that has never been
+    # installed fails from inside the formatter. Name the missing install here instead. No
+    # devenv_guard: the CI toolchain image runs this task with no devenv shell.
+    preconditions:
+      - sh: 'test -x node_modules/.bin/prettier'
+        msg: 'workspace dependencies are missing — run "brokkr-pnpm-install", then retry.'
     cmds:
       - treefmt --ci --no-cache
 

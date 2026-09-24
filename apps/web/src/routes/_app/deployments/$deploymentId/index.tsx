@@ -16,10 +16,13 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@repo/
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { cn } from '@repo/ui/utils';
 import { formatSize } from '@repo/utils';
+import { DeploymentProgressCard } from '~/components/deployment-progress-card';
+import { DeploymentSerialLogCard } from '~/components/deployment-serial-log-card';
 import { DeviceDiagnosticsCard } from '~/components/device-diagnostics-card';
 import { JobHistoryTable, useCanViewJobHistory } from '~/components/job-history-table';
 import { tsr } from '~/lib/api';
 import { COMPANY_NAME } from '~/lib/branding';
+import { HubDeploymentDiagnosticsProvider } from '~/lib/diagnostics-api';
 import { formatLegacyOsSlug } from '~/lib/format-os';
 import { LIFECYCLE_JOBS_KEY } from '~/lib/query-keys';
 
@@ -27,7 +30,7 @@ const parentRoute = getRouteApi('/_app/deployments/$deploymentId');
 
 export const Route = createFileRoute('/_app/deployments/$deploymentId/')({
   staticData: { breadcrumb: 'Overview' },
-  component: DeploymentOverview,
+  component: DeploymentOverviewPage,
 });
 
 const lifecycleColumns: ColumnDef<Deployment['lifecycleActions'][number]>[] = [
@@ -58,6 +61,15 @@ const lifecycleColumns: ColumnDef<Deployment['lifecycleActions'][number]>[] = [
     cell: ({ row }) => <span className="text-sm">{row.original.source}</span>,
   },
 ];
+
+function DeploymentOverviewPage() {
+  const deployment = parentRoute.useLoaderData();
+  return (
+    <HubDeploymentDiagnosticsProvider deploymentId={deployment.id}>
+      <DeploymentOverview />
+    </HubDeploymentDiagnosticsProvider>
+  );
+}
 
 function DeploymentOverview() {
   const deployment = parentRoute.useLoaderData();
@@ -285,13 +297,24 @@ function DeploymentOverview() {
         </Card>
       )}
 
+      <CustomerProvisioningProgress deployment={deployment} />
       <DeploymentJobHistory deployment={deployment} />
+      <DeploymentSerialLogCard deploymentId={deployment.id} />
 
       {deployment.deviceDiagnostics && deployment.deviceDiagnostics.length > 0 && (
         <DeviceDiagnosticsCard diagnostics={deployment.deviceDiagnostics} />
       )}
     </div>
   );
+}
+
+// the operator's Job History card below shows the same jobs in full, so the card is for viewers without it
+function CustomerProvisioningProgress({ deployment }: { deployment: Deployment }) {
+  const { canView, isPending } = useCanViewJobHistory();
+
+  if (isPending || canView) return null;
+
+  return <DeploymentProgressCard deploymentId={deployment.id} />;
 }
 
 function DeploymentJobHistory({ deployment }: { deployment: Deployment }) {

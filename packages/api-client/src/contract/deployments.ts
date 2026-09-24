@@ -15,6 +15,7 @@ import {
   UpdateDeploymentRequestSchema,
 } from '../schemas/deployments';
 import { ErrorResponseSchema } from '../schemas/index';
+import { LifecycleJobEventsResponseSchema, LifecycleJobSummarySchema } from '../schemas/jobs';
 import { LifecycleRequestResponseSchema } from '../schemas/lifecycle-requests';
 import { createPaginatedResponseSchema, PaginationQuerySchema } from '../schemas/pagination';
 import { type RouteMetadata } from './metadata';
@@ -191,6 +192,40 @@ export const deploymentsRoutes = c.router({
     summary: 'Get SOL logs for provision or reprovision job',
     description:
       'Retrieves serial-over-LAN (SOL) logs streamed by the bridge during provisioning. Returns the log entries inline along with a flag indicating whether streaming is complete.',
+    metadata: { visibility: 'public' } satisfies RouteMetadata,
+  },
+
+  listDeploymentJobs: {
+    method: 'GET',
+    path: '/deployments/:id/jobs',
+    pathParams: z.object({ id: z.string() }),
+    query: PaginationQuerySchema,
+    responses: {
+      ...authedRoleGatedErrorResponses,
+      200: createPaginatedResponseSchema(LifecycleJobSummarySchema),
+      404: ErrorResponseSchema,
+    },
+    summary: 'List lifecycle jobs for a deployment',
+    description:
+      'Lifecycle jobs recorded against this deployment, newest first, as the renting customer may see them: failure text and the requesting user are omitted.',
+    metadata: { visibility: 'public' } satisfies RouteMetadata,
+  },
+
+  getDeploymentJobEvents: {
+    method: 'GET',
+    path: '/deployments/:id/jobs/:jobId/events',
+    pathParams: z.object({
+      id: z.string(),
+      jobId: z.string().uuid().describe('Lifecycle job id; equals the plan_id the bridge reports on'),
+    }),
+    responses: {
+      ...authedRoleGatedErrorResponses,
+      200: LifecycleJobEventsResponseSchema,
+      404: ErrorResponseSchema,
+    },
+    summary: 'List the step events of one deployment lifecycle job',
+    description:
+      'Saga step events of one lifecycle job on this deployment, oldest first and capped, as the renting customer may see them: step results and bridge error text are omitted.',
     metadata: { visibility: 'public' } satisfies RouteMetadata,
   },
 

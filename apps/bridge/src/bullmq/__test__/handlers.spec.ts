@@ -95,6 +95,7 @@ interface ProcessorOverrides {
   notifications?: LifecycleNotifications;
   config?: Partial<BullmqProcessorConfig>;
   logger?: BullmqProcessorLogger;
+  zoneCrypto?: ZoneCryptoService;
 }
 
 function makeProcessor(
@@ -119,7 +120,17 @@ function makeProcessor(
     },
     overrides.planManager ?? { failPlan: async () => undefined },
     overrides.notifications ?? { notifyStepTransition: async () => undefined },
+    overrides.zoneCrypto,
   );
+}
+
+function reopenResealed(
+  fx: InboundFx,
+  job: ProcessableJob<unknown>,
+  options: Parameters<MoveToDelayedFn>[4],
+): ReturnType<InboundEnvelopeOpener['open']> {
+  const stored: unknown = JSON.parse(String(options.fieldsToUpdate?.data));
+  return fx.opener.open({ ...job, data: stored });
 }
 
 const EMPTY_SCHEMAS: SagaPayloadSchemaRegistry = {};
@@ -506,7 +517,9 @@ describe('BullmqProcessorService.process', () => {
     }
   });
 
-  it('fails a stale bridge-local envelope on the agent-wait redelay instead of rescheduling', async () => {
+  it('reseals a stale bridge-local envelope on the agent-wait redelay instead of failing the plan', async () => {
+    const fx = setupActivated();
+    const topTierMs = HANDOFF_REDELAY_ESCALATION[HANDOFF_REDELAY_ESCALATION.length - 1].delaySeconds * 1_000;
     const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
     const failPlan = vi.fn<LifecyclePlanFailure['failPlan']>(async () => {});
     const cache: LockWaitCache = {
@@ -525,6 +538,7 @@ describe('BullmqProcessorService.process', () => {
       {
         cache,
         planManager: { failPlan },
+        zoneCrypto: fx.zoneCrypto,
         opener: {
           open: async (job) => ({
             payload: job.data,
@@ -534,18 +548,110 @@ describe('BullmqProcessorService.process', () => {
         },
       },
     );
+    const data = { device_id: 99, plan_id: 'plan-aw-stale-local' };
     const job = makeJob({
       name: 'collection.run',
-      data: { device_id: 99, plan_id: 'plan-aw-stale-local' },
+      data,
       id: 'bull-aw-stale-local',
       queueName: COLLECTION_QUEUE,
       moveToDelayed,
     });
+    const before = Date.now();
 
-    await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(EnvelopeDeferralBudgetExceeded);
+    await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(CrossBridgeHandoff);
+    expect(failPlan).not.toHaveBeenCalled();
+    expect(moveToDelayed).toHaveBeenCalledTimes(1);
+    expect(moveToDelayed.mock.calls[0][2]).toBe(topTierMs);
+    const reopened = await reopenResealed(fx, job, moveToDelayed.mock.calls[0][4]);
+    expect(reopened).toMatchObject({ payload: data, isBridgeLocal: true });
+    expect(reopened.createdAtMs).toBeGreaterThanOrEqual(Math.floor(before / 1_000) * 1_000);
+  });
+
+  it('reseals a hub-sealed job as bridge-local before rescheduling a cross-bridge handoff', async () => {
+    const fx = setupActivated();
+    const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
+    const failPlan = vi.fn<LifecyclePlanFailure['failPlan']>(async () => {});
+    const failingHandler: JobHandler = async () => {
+      throw new AgentNotConnected('99');
+    };
+    const service = makeProcessor(
+      { 'collection.run': failingHandler },
+      {
+        planManager: { failPlan },
+        zoneCrypto: fx.zoneCrypto,
+        opener: {
+          open: async (job) => ({
+            payload: job.data,
+            createdAtMs: Date.now() - 91 * 60_000,
+            isBridgeLocal: false,
+          }),
+        },
+      },
+    );
+    const data = { device_id: 99, plan_id: 'plan-aw-hub-sealed' };
+    const job = makeJob({
+      name: 'collection.run',
+      data,
+      id: 'bull-aw-hub-sealed',
+      queueName: COLLECTION_QUEUE,
+      moveToDelayed,
+    });
+    const before = Date.now();
+
+    await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(CrossBridgeHandoff);
+    expect(failPlan).not.toHaveBeenCalled();
+    expect(moveToDelayed).toHaveBeenCalledTimes(1);
+    expect(moveToDelayed.mock.calls[0][2]).toBe(5_000);
+    const reopened = await reopenResealed(fx, job, moveToDelayed.mock.calls[0][4]);
+    expect(reopened).toMatchObject({ payload: data, isBridgeLocal: true });
+    expect(reopened.createdAtMs).toBeGreaterThanOrEqual(Math.floor(before / 1_000) * 1_000);
+  });
+
+  it('keeps the hard cap as the terminal ceiling after repeated handoffs', async () => {
+    const fx = setupActivated();
+    const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
+    const failPlan = vi.fn<LifecyclePlanFailure['failPlan']>(async () => {});
+    const cache: LockWaitCache = {
+      get: async (key) =>
+        key.startsWith('handoff-defer:')
+          ? JSON.stringify({ first_deferred_at: Date.now() / 1_000 - 700, attempts: 42 })
+          : null,
+      set: async () => undefined,
+      delete: async () => 0,
+    };
+    const failingHandler: JobHandler = async () => {
+      throw new AgentNotConnected('99');
+    };
+    const service = makeProcessor(
+      { 'collection.run': failingHandler },
+      {
+        cache,
+        planManager: { failPlan },
+        zoneCrypto: fx.zoneCrypto,
+        config: { agentWaitHardCapSeconds: 600 },
+        opener: {
+          open: async (job) => ({
+            payload: job.data,
+            createdAtMs: Date.now() - 91 * 60_000,
+            isBridgeLocal: false,
+          }),
+        },
+      },
+    );
+    const job = makeJob({
+      name: 'collection.run',
+      data: { device_id: 99, plan_id: 'plan-aw-capped' },
+      id: 'bull-aw-capped',
+      queueName: COLLECTION_QUEUE,
+      moveToDelayed,
+    });
+
+    await expect(service.process(job, 'tok')).rejects.toBeInstanceOf(AgentWaitExceeded);
     expect(moveToDelayed).not.toHaveBeenCalled();
-    expect(failPlan).toHaveBeenCalledTimes(1);
-    expect(String(failPlan.mock.calls[0][1])).toContain('Envelope freshness budget exhausted');
+    expect(failPlan).toHaveBeenCalledExactlyOnceWith(
+      'plan-aw-capped',
+      expect.stringMatching(/Agent wait exceeded hard cap \(600s\)/),
+    );
   });
 
   it('emits agent_wait then plan failure notifications after failing the plan on the hard cap', async () => {
@@ -748,7 +854,8 @@ describe('BullmqProcessorService.process', () => {
     expect(moveToDelayed.mock.calls[0][4]).toMatchObject({ skipAttempt: true });
   });
 
-  it('fails stale saga lock contention without redelivery', async () => {
+  it('reschedules stale saga lock contention with a resealed envelope', async () => {
+    const fx = setupActivated();
     const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
     const failPlan = vi.fn<LifecyclePlanFailure['failPlan']>(async () => undefined);
     const sagaHandler = makeSagaHandler({
@@ -771,16 +878,19 @@ describe('BullmqProcessorService.process', () => {
           open: async () => ({ payload, createdAtMs: Date.now() - 300_000, isBridgeLocal: false }),
         },
         planManager: { failPlan },
+        zoneCrypto: fx.zoneCrypto,
       },
     );
     const job = makeJob({ name: 'saga.run', data: {}, id: 'stale-lock-job', moveToDelayed });
 
-    await expect(service.process(job, 'worker-token')).rejects.toBeInstanceOf(EnvelopeDeferralBudgetExceeded);
-    expect(moveToDelayed).not.toHaveBeenCalled();
-    expect(failPlan).toHaveBeenCalledWith(
-      'plan-stale-lock',
-      'Envelope freshness budget exhausted before lock contention: device:device-stale-lock',
-    );
+    await expect(service.process(job, 'worker-token')).rejects.toBeInstanceOf(CrossBridgeHandoff);
+    expect(failPlan).not.toHaveBeenCalled();
+    expect(moveToDelayed).toHaveBeenCalledTimes(1);
+    expect(moveToDelayed.mock.calls[0][2]).toBe(5_000);
+    await expect(reopenResealed(fx, job, moveToDelayed.mock.calls[0][4])).resolves.toMatchObject({
+      payload,
+      isBridgeLocal: true,
+    });
   });
 
   it('moves LockLost to delayed for the default recovery delay and throws CrossBridgeHandoff', async () => {
@@ -888,7 +998,8 @@ describe('BullmqProcessorService.process', () => {
     expect(options.fieldsToUpdate).toBeUndefined();
   });
 
-  it('fails the plan when a lock-loss redelay exceeds the envelope freshness budget', async () => {
+  it('reseals the envelope when a lock-loss redelay outlives the original freshness budget', async () => {
+    const fx = setupActivated();
     const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
     const failPlan = vi.fn<LifecyclePlanFailure['failPlan']>(async () => undefined);
     const notifyStepTransition = vi.fn<LifecycleNotifications['notifyStepTransition']>(async () => undefined);
@@ -909,6 +1020,45 @@ describe('BullmqProcessorService.process', () => {
         },
         planManager: { failPlan },
         notifications: { notifyStepTransition },
+        zoneCrypto: fx.zoneCrypto,
+      },
+    );
+    const job = makeJob({ name: 'saga.run', data: {}, id: 'bull-stale', moveToDelayed });
+
+    await expect(service.process(job, 'lock-token')).rejects.toBeInstanceOf(CrossBridgeHandoff);
+    expect(failPlan).not.toHaveBeenCalled();
+    expect(notifyStepTransition).not.toHaveBeenCalled();
+    expect(moveToDelayed).toHaveBeenCalledTimes(1);
+    expect(moveToDelayed.mock.calls[0][2]).toBe(90_000);
+    await expect(reopenResealed(fx, job, moveToDelayed.mock.calls[0][4])).resolves.toMatchObject({
+      payload,
+      isBridgeLocal: true,
+    });
+  });
+
+  it('fails the plan on a stale envelope only when no zone key is loaded', async () => {
+    const fx = setupInactive();
+    const moveToDelayed = vi.fn<MoveToDelayedFn>(async () => {});
+    const failPlan = vi.fn<LifecyclePlanFailure['failPlan']>(async () => undefined);
+    const notifyStepTransition = vi.fn<LifecycleNotifications['notifyStepTransition']>(async () => undefined);
+    const payload = {
+      plan_id: 'plan-stale',
+      saga_name: 'provision',
+      payload: { device_id: 'device-1' },
+    };
+    const service = makeProcessor(
+      {
+        'saga.run': async () => {
+          throw new LockLost('device lock expired');
+        },
+      },
+      {
+        opener: {
+          open: async () => ({ payload, createdAtMs: Date.now() - 250_000, isBridgeLocal: false }),
+        },
+        planManager: { failPlan },
+        notifications: { notifyStepTransition },
+        zoneCrypto: fx.zoneCrypto,
       },
     );
     const job = makeJob({ name: 'saga.run', data: {}, id: 'bull-stale', moveToDelayed });
@@ -1004,6 +1154,40 @@ describe('BullmqProcessorService.process', () => {
 
     await service.process(job, 'token');
     expect(deleteState).toHaveBeenCalledWith('lockwait:bull-clean', 'plan-clean');
+  });
+
+  it.each([
+    ['collection.run', 'inventory_collection'],
+    ['diagnostics.run', 'diagnostics'],
+    ['testing.run', 'testing'],
+  ])('injects the %s saga_name %s into unlabeled job data', async (jobName, sagaName) => {
+    const seen: Record<string, unknown>[] = [];
+    const handler: JobHandler = async (job) => {
+      seen.push(job.data);
+      return {};
+    };
+    const service = makeProcessor({ [jobName]: handler });
+
+    await service.process(makeJob({ name: jobName, data: { device_id: 'dev-1' } }), 'token');
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].saga_name).toBe(sagaName);
+  });
+
+  it('never overwrites a saga_name already present in job data', async () => {
+    const seen: Record<string, unknown>[] = [];
+    const handler: JobHandler = async (job) => {
+      seen.push(job.data);
+      return {};
+    };
+    const service = makeProcessor({ 'collection.run': handler });
+
+    await service.process(
+      makeJob({ name: 'collection.run', data: { device_id: 'dev-1', saga_name: 'custom' } }),
+      'token',
+    );
+
+    expect(seen[0].saga_name).toBe('custom');
   });
 });
 

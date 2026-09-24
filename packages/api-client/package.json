@@ -30,16 +30,6 @@
         "default": "./dist/contract/index.js"
       }
     },
-    "./contract/ipam": {
-      "import": {
-        "types": "./dist/contract/ipam.d.ts",
-        "default": "./dist/contract/ipam.mjs"
-      },
-      "require": {
-        "types": "./dist/contract/ipam.d.ts",
-        "default": "./dist/contract/ipam.js"
-      }
-    },
     "./client": {
       "import": {
         "types": "./dist/client.d.ts",

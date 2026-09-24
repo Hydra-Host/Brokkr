@@ -11,6 +11,7 @@ import { SealedEnvelopeService } from 'src/crypto/sealed-envelope.service';
 import { DeviceSecretAuditService } from 'src/device-secret/device-secret-audit.service';
 import { DeviceTestRunsService } from 'src/device-test-runs/device-test-runs.service';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { LifecycleInboundService } from 'src/lifecycle/inbound/lifecycle-inbound.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { SanitizationReportService } from 'src/sanitization-reports/sanitization-report.service';
@@ -23,12 +24,7 @@ import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../../lifecycle/qualify-orchestration.service';
 import { RenderRequestDispatcher } from '../../render-request/render-request-dispatcher.service';
 import { BridgeResultsConsumer, type ProcessableJob } from '../bridge-results.consumer';
-
-class TestableConsumer extends BridgeResultsConsumer {
-  invoke(job: ProcessableJob): Promise<void> {
-    return this.processResult(job);
-  }
-}
+import { TestableConsumer } from './bridge-results-test-helpers';
 
 describe('BridgeResultsConsumer — secret.revealed audit', () => {
   let consumer: TestableConsumer;
@@ -76,6 +72,7 @@ describe('BridgeResultsConsumer — secret.revealed audit', () => {
         { provide: QualifyOrchestrationService, useValue: { isQualifyDevice: vi.fn(), handleQualifyFailure: vi.fn() } },
         { provide: RenderRequestDispatcher, useValue: { dispatch: vi.fn() } },
         { provide: DeviceTokensService, useValue: { revokeBrokkrLiveTokensForDevice: vi.fn() } },
+        { provide: RedisPubSubService, useValue: { publish: vi.fn().mockResolvedValue(undefined) } },
         {
           provide: LifecycleInboundService,
           useValue: { applyStepResult: vi.fn(), applyJobCompleted: vi.fn(), applyPhoneHome: vi.fn() },

@@ -1,4 +1,5 @@
 // Multiple live sessions per device are allowed (N bridge endpoints can DNS-resolve to the same bridge); a different agentVersion on register cancels priors — one agent process per device, so a version change implies a stale stream.
+// A same-version re-register (host reboot) is not evicted either — two live streams from one agent process would cancel each other — so dispatch prefers the newest stream instead.
 
 import { Injectable } from '@nestjs/common';
 
@@ -8,6 +9,7 @@ export type { CancelEvent } from './connection-registry.types';
 
 export interface PickHandleCandidate {
   cancelled: boolean;
+  connectedAt: number;
   lastEnqueueTimeoutAt: number | null;
 }
 
@@ -19,12 +21,13 @@ export function pickPreferredHandle<T extends PickHandleCandidate>(
   const hasRecentTimeout = (h: T): boolean =>
     h.lastEnqueueTimeoutAt !== null && now - h.lastEnqueueTimeoutAt < recentTimeoutWindowS;
 
-  for (const handle of handles) {
+  const newestFirst = [...handles].sort((a, b) => b.connectedAt - a.connectedAt);
+  for (const handle of newestFirst) {
     if (!handle.cancelled && !hasRecentTimeout(handle)) {
       return handle;
     }
   }
-  for (const handle of handles) {
+  for (const handle of newestFirst) {
     if (!handle.cancelled) {
       return handle;
     }
@@ -123,6 +126,7 @@ export interface RegisterOptions {
 
 export interface WaitForRegistrationOptions {
   expectVersion?: string | null;
+  minConnectedAt?: number | null;
 }
 
 @Injectable()
@@ -178,11 +182,26 @@ export class ConnectionRegistry {
     });
   }
 
+  // a saga that knows the host reset time evicts the streams that predate it — the host rebooted, so they are dead and must not absorb a dispatch fallback
+  async cancelSessionsBefore(deviceId: string, connectedAtSec: number): Promise<number> {
+    return this.lock.run(async () => {
+      let cancelled = 0;
+      for (const handle of this.sessions.get(deviceId) ?? []) {
+        if (!handle.cancelled.isSet() && handle.connectedAt < connectedAtSec) {
+          handle.cancelled.set();
+          cancelled += 1;
+        }
+      }
+      return cancelled;
+    });
+  }
+
   get(deviceId: string): SessionHandle | null {
     const live = this.sessions.get(deviceId);
     if (live === undefined || live.length === 0) return null;
     const adapters = live.map((h) => ({
       cancelled: h.cancelled.isSet(),
+      connectedAt: h.connectedAt,
       lastEnqueueTimeoutAt: h.lastEnqueueTimeoutAt,
       handle: h,
     }));
@@ -223,6 +242,7 @@ export class ConnectionRegistry {
     opts: WaitForRegistrationOptions = {},
   ): Promise<SessionHandle | null> {
     const expectVersion = opts.expectVersion ?? null;
+    const minConnectedAt = opts.minConnectedAt ?? null;
     const deadlineSec = monotonicSec() + timeoutSec;
     for (;;) {
       const lookup = await this.lock.run(async (): Promise<{ event: WaitEvent; match: SessionHandle | null }> => {
@@ -233,7 +253,10 @@ export class ConnectionRegistry {
         }
         const handles = this.sessions.get(deviceId) ?? [];
         const match = handles.find(
-          (h) => !h.cancelled.isSet() && (expectVersion === null || h.agentVersion === expectVersion),
+          (h) =>
+            !h.cancelled.isSet() &&
+            (expectVersion === null || h.agentVersion === expectVersion) &&
+            (minConnectedAt === null || h.connectedAt >= minConnectedAt),
         );
         if (match !== undefined) return { event: ev, match };
         ev.clear();

@@ -84,8 +84,16 @@ export function PrivateCategoryItemCard({
   category,
   userEmail,
 }: CategoryItemCardProps) {
+  // Interruptible-only devices and hosts with active interruptible deployments cannot take
+  // Reserved Rolling until commerce billing is ready; hide the Rent CTA.
   const provisionable = Boolean(
-    status === 'on demand' && inInventory && priceAmount && priceAmount !== 0 && (primaryIP4 || primaryIP6),
+    !interruptibleOnly &&
+      !isInterruptibleDeployment &&
+      status === 'on demand' &&
+      inInventory &&
+      priceAmount &&
+      priceAmount !== 0 &&
+      (primaryIP4 || primaryIP6),
   );
 
   return (

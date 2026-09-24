@@ -2,15 +2,15 @@ import { Injectable } from '@nestjs/common';
 
 import { isRecord } from '@repo/utils';
 
-import type { TeeVerificationResult } from '../../../redfish/vendor/base/tee';
+import type { TeeSetResult, TeeVerificationResult } from '../../../redfish/vendor/base/tee';
 import { jsonFlag } from '../../../saga-framework/dispatch-payload';
 import type { SagaContext } from '../../../saga-framework/saga.types';
 import { credsFromContext } from '../../steps/power-control-context';
 import { decideTeeAction } from '../decide-tee-action';
 
 interface RedfishOperationsLike {
-  enableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<boolean>;
-  disableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<boolean>;
+  enableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<TeeSetResult>;
+  disableTee(deviceId: string, bmcIp: string, username: string, password: string, jobId: string): Promise<TeeSetResult>;
   verifyTee(
     deviceId: string,
     bmcIp: string,
@@ -26,10 +26,10 @@ interface LoggerLike {
 }
 
 type VerifiableTeeConfigResult =
-  | { action: 'enabled'; success: boolean }
-  | { skipped: true; reason: string; success?: boolean };
+  | { action: 'enabled'; success: boolean; host_reset_at?: number }
+  | { skipped: true; reason: string; success?: boolean; host_reset_at?: number };
 
-type TeeConfigResult = VerifiableTeeConfigResult | { action: 'disabled' };
+type TeeConfigResult = VerifiableTeeConfigResult | { action: 'disabled'; host_reset_at?: number };
 
 @Injectable()
 export class TeeConfigStep {
@@ -51,20 +51,21 @@ export class TeeConfigStep {
 
     if (action === 'enable') {
       const { bmcIp, username, password } = credsFromContext(ctx);
-      const success = await this.redfish.enableTee(deviceId, bmcIp, username, password, ctx.jobId);
+      const { success, hostResetAt } = await this.redfish.enableTee(deviceId, bmcIp, username, password, ctx.jobId);
       if (!success && platformSlug !== 'ipxe-custom-tee') {
         throw new Error('enableTee failed: TEE was not enabled on the device');
       }
       const result: VerifiableTeeConfigResult = { action: 'enabled', success };
-      return this.verifyEnable(ctx, result);
+      return this.verifyEnable(ctx, withHostReset(result, hostResetAt));
     }
     if (action === 'disable') {
       const { bmcIp, username, password } = credsFromContext(ctx);
-      const success = await this.redfish.disableTee(deviceId, bmcIp, username, password, ctx.jobId);
+      const { success, hostResetAt } = await this.redfish.disableTee(deviceId, bmcIp, username, password, ctx.jobId);
       if (!success) {
         throw new Error('disableTee failed: TEE was not disabled on the device');
       }
-      return { action: 'disabled' };
+      const result: TeeConfigResult = { action: 'disabled' };
+      return withHostReset(result, hostResetAt);
     }
 
     await this.logger.info(`No TEE action needed (current=${String(teeEnabled)}, requested=${String(teeRequested)})`, {
@@ -80,15 +81,16 @@ export class TeeConfigStep {
     return result;
   }
 
-  private async verifyEnable(ctx: SagaContext, result: VerifiableTeeConfigResult): Promise<TeeConfigResult> {
+  private async verifyEnable(ctx: SagaContext, initial: VerifiableTeeConfigResult): Promise<TeeConfigResult> {
     const deviceId = String(ctx.deviceId);
     const { bmcIp, username, password } = credsFromContext(ctx);
+    let result = initial;
 
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const verification = await this.redfish.verifyTee(deviceId, bmcIp, username, password, ctx.jobId);
       if (verification.checked && verification.ok) {
         await this.logger.info(`TEE verification succeeded on attempt ${attempt}`, { jobId: ctx.jobId });
-        return 'action' in result ? { action: 'enabled', success: true } : { ...result, success: true };
+        return { ...result, success: true };
       }
       if (!verification.checked) {
         switch (verification.reason) {
@@ -118,12 +120,17 @@ export class TeeConfigStep {
         { jobId: ctx.jobId },
       );
       if (attempt < 3) {
-        await this.redfish.enableTee(deviceId, bmcIp, username, password, ctx.jobId);
+        const retry = await this.redfish.enableTee(deviceId, bmcIp, username, password, ctx.jobId);
+        result = withHostReset(result, retry.hostResetAt);
       }
     }
 
     throw new Error(`TEE verification failed after three attempts for device ${deviceId}`);
   }
+}
+
+function withHostReset<T extends { host_reset_at?: number }>(result: T, hostResetAt: number | null): T {
+  return hostResetAt === null ? result : { ...result, host_reset_at: hostResetAt };
 }
 
 function getWithDefault(obj: unknown, key: string, fallback: unknown): unknown {

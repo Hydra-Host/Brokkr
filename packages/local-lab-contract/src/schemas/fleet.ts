@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { BOOT_SEVERITIES, type BootCode } from '@repo/utils';
+import { BOOT_SEVERITIES } from '@repo/utils';
 import { CcBuildSchema } from './common';
 
 export const NodeKindSchema = z
@@ -420,8 +420,7 @@ export const BootReadinessFindingSchema = z.object({
 });
 export type BootReadinessFinding = z.infer<typeof BootReadinessFindingSchema>;
 
-/** Boot codes scoped to one hub prefix: the lab's uplink checks emit them and the web card routes them to that prefix. */
-export const PREFIX_FINDING_CODES: readonly BootCode[] = ['PXE-102', 'PXE-103', 'PXE-104', 'PXE-112', 'PXE-04'];
+export { PREFIX_FINDING_CODES } from '@repo/utils';
 
 export const BootReadinessReportSchema = z.object({
   findings: z

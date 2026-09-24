@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ServerLifecycleStatus } from '@repo/database';
+import { PHONE_HOME_OPERATION } from '@repo/lifecycle';
 import { sleep } from '@repo/utils';
 import type Redis from 'ioredis';
 import { Logger } from 'src/common/decorators/logger.decorator';
@@ -246,13 +247,13 @@ export class QualifyOrchestrationService {
   }
 
   async setPhoneHomeRunning(deviceId: string, planId: string): Promise<void> {
-    await this.updateStepOnPlan(deviceId, planId, 'phone_home', 'Wait for phone home', 'running');
+    await this.updateStepOnPlan(deviceId, planId, 'phone_home', PHONE_HOME_OPERATION, 'running');
   }
 
   private async completePhoneHomeStep(deviceId: string): Promise<void> {
     const planId = await this.getLastJobId(deviceId);
     if (!planId) return;
-    await this.updateStepOnPlan(deviceId, planId, 'phone_home', 'Wait for phone home', 'complete');
+    await this.updateStepOnPlan(deviceId, planId, 'phone_home', PHONE_HOME_OPERATION, 'complete');
   }
 
   // Lua script avoids read-modify-write races when multiple result events land concurrently.

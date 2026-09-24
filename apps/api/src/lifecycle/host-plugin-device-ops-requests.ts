@@ -4,10 +4,13 @@ import type {
   PluginDeviceOpsRequests,
   PluginForceDiscoveryRequest,
   PluginForceDiscoveryResult,
+  PluginRequestDeviceHealthCheckRequest,
+  PluginRequestDeviceHealthCheckResult,
   PluginRunBenchmarksRequest,
   PluginRunBenchmarksResult,
 } from '@hydrahost/plugin-sdk';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import { HealthCheckDispatcher } from 'src/heartbeat-monitor/health-check-dispatcher';
 
 import { OperatorDeviceOpsService } from './operator-device-ops.service';
 
@@ -15,7 +18,10 @@ import { OperatorDeviceOpsService } from './operator-device-ops.service';
 // trust boundary is documented on the `PLUGIN_DEVICE_OPS_REQUESTS` SDK token.
 @Injectable()
 export class HostPluginDeviceOpsRequests implements PluginDeviceOpsRequests {
-  constructor(private readonly deviceOps: OperatorDeviceOpsService) {}
+  constructor(
+    private readonly deviceOps: OperatorDeviceOpsService,
+    @Inject(HealthCheckDispatcher) private readonly healthChecks: Pick<HealthCheckDispatcher, 'dispatch'>,
+  ) {}
 
   async requestForceDiscovery(input: PluginForceDiscoveryRequest): Promise<PluginForceDiscoveryResult> {
     return this.deviceOps.forceDiscovery(input.deviceId);
@@ -40,5 +46,11 @@ export class HostPluginDeviceOpsRequests implements PluginDeviceOpsRequests {
 
   async requestDeactivateRescueMode(input: PluginDeactivateRescueModeRequest): Promise<void> {
     await this.deviceOps.deactivateRescueMode(input.deviceId);
+  }
+
+  async requestDeviceHealthCheck(
+    input: PluginRequestDeviceHealthCheckRequest,
+  ): Promise<PluginRequestDeviceHealthCheckResult> {
+    return this.healthChecks.dispatch(input.deviceId);
   }
 }

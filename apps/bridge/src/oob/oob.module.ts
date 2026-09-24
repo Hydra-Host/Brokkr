@@ -83,7 +83,7 @@ function toResultLike(result: { ok: boolean; stdout: string; stderr: string }): 
   return { ok: result.ok, stdout: result.stdout, stderr: result.stderr, error: result.stderr };
 }
 
-function buildPowerManagementDeps(redis: RedisService, logger: ContextLogger): PowerManagementDeps {
+export function buildPowerManagementDeps(redis: RedisService, logger: ContextLogger): PowerManagementDeps {
   const redisClient = redis.connection;
   return {
     deviceFactory: {
@@ -109,7 +109,10 @@ function buildPowerManagementDeps(redis: RedisService, logger: ContextLogger): P
     },
     retry: {
       performIpmiWithRetry: (device, operation, jobId, opts) =>
-        performIpmiWithRetry(unwrapDevice(device), operation, jobId, opts.maxRetries, { uefi: opts.uefi }),
+        performIpmiWithRetry(unwrapDevice(device), operation, jobId, opts.maxRetries, {
+          uefi: opts.uefi,
+          persistent: opts.persistent,
+        }),
     },
     logger: {
       info: (message, context) => logger.info(message, context),
@@ -172,8 +175,6 @@ const redfishCommandFactory = {
       teeHandlerFactory: (device, handlerJobId) => new RedfishTeeHandler(device, handlerJobId),
     }),
 };
-
-const simModeProbeOff = { isLocalSimulationEnabled: () => false };
 
 const ipmiDeviceFactory = {
   create: (args: { ip: string; username: string; password: string; port: number; jobId: string }) =>
@@ -245,27 +246,24 @@ const lanplusRepair = {
     },
     {
       provide: DeactivateSolStep,
-      useFactory: (factory: SolServiceFactory, logger: ContextLogger) =>
-        new DeactivateSolStep(factory, logger, simModeProbeOff),
-      inject: [SolServiceFactory, ContextLogger],
+      useFactory: (factory: SolServiceFactory) => new DeactivateSolStep(factory),
+      inject: [SolServiceFactory],
     },
     {
       provide: EnsureSolEnabledStep,
       useFactory: (factory: SolProvisioningServiceFactory, logger: ContextLogger) =>
-        new EnsureSolEnabledStep(factory, logger, simModeProbeOff),
+        new EnsureSolEnabledStep(factory, logger),
       inject: [SolProvisioningServiceFactory, ContextLogger],
     },
     {
       provide: SolActivationStep,
-      useFactory: (factory: SolServiceFactory, logger: ContextLogger) =>
-        new SolActivationStep(factory, logger, simModeProbeOff),
+      useFactory: (factory: SolServiceFactory, logger: ContextLogger) => new SolActivationStep(factory, logger),
       inject: [SolServiceFactory, ContextLogger],
     },
     {
       provide: SolMonitorStep,
-      useFactory: (factory: SolServiceFactory, logger: ContextLogger) =>
-        new SolMonitorStep(factory, logger, simModeProbeOff),
-      inject: [SolServiceFactory, ContextLogger],
+      useFactory: (factory: SolServiceFactory) => new SolMonitorStep(factory),
+      inject: [SolServiceFactory],
     },
     {
       provide: EnsureLanplusAccessStep,

@@ -10,11 +10,7 @@ export const OperatingSystemSlugSchema = z
 
 export type OperatingSystemSlug = z.infer<typeof OperatingSystemSlugSchema>;
 
-export const IPXE_CUSTOM_SLUGS = ['ipxe-custom', 'ipxe-custom-tee'] as const;
-
-export function isIpxeCustomOs(slug: string): boolean {
-  return IPXE_CUSTOM_SLUGS.some((s) => s === slug);
-}
+export { IPXE_CUSTOM_SLUGS, isIpxeCustomOs, type IpxeCustomSlug } from '@repo/utils';
 
 export const BooleanQueryParamSchema = z
   .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])

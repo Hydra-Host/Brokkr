@@ -241,8 +241,7 @@ describe('firePhoneHomeOverGrpc', () => {
         bootIdPath,
         retryDelaysMs: [10_000, 10_000, 10_000],
       });
-      await new Promise((r) => setTimeout(r, 20));
-      expect(failing.phoneHome).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(failing.phoneHome).toHaveBeenCalledTimes(1));
 
       cancelPhoneHomeRetry();
       await p;

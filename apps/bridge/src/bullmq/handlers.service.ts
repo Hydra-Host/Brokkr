@@ -158,6 +158,12 @@ const DEFAULT_PROCESSOR_CONFIG: BullmqProcessorConfig = {
   agentWaitHardCapSeconds: 0,
 };
 
+const JOB_SAGA_NAMES: Readonly<Record<string, string>> = {
+  [JOB_NAME.COLLECTION_RUN]: 'inventory_collection',
+  [JOB_NAME.DIAGNOSTICS_RUN]: 'diagnostics',
+  [JOB_NAME.TESTING_RUN]: 'testing',
+};
+
 @Injectable()
 export class BullmqProcessorService {
   private readonly handlers: ReadonlyMap<string, JobHandler>;
@@ -196,6 +202,10 @@ export class BullmqProcessorService {
     const planIdForLog = String(payload['plan_id'] ?? '');
     await this.logProcessingJob(mutableJob.name, mutableJob.id, planIdForLog);
     const dispatchJob = mutableJob as ProcessableJob<Record<string, unknown>>;
+    const mappedSagaName = JOB_SAGA_NAMES[dispatchJob.name];
+    if (mappedSagaName !== undefined && !('saga_name' in dispatchJob.data)) {
+      dispatchJob.data.saga_name = mappedSagaName;
+    }
     const lockWaitKey = lockWaitRedisKey(dispatchJob.id ?? planIdForLog);
     const rawLockWait = await this.lockWaitCache.get(lockWaitKey, planIdForLog);
     const stashedLockWait = parseLockWaitState(rawLockWait);
@@ -478,7 +488,10 @@ export class BullmqProcessorService {
     lockWait?: LockWaitState,
   ): Promise<void> {
     const timestamp = Date.now();
-    if (timestamp + delayMs >= createdAtMs + FRESHNESS_WINDOW_MS) {
+    const zone = this.zoneCrypto?.get() ?? null;
+    // a reseal re-mints __bridge_local_ts, so the reopen measures freshness from now, not from the original seal
+    const windowStartMs = zone ? timestamp : createdAtMs;
+    if (timestamp + delayMs >= windowStartMs + FRESHNESS_WINDOW_MS) {
       const planId = String(job.data.plan_id ?? '');
       const terminalError = `Envelope freshness budget exhausted before ${reason}`;
       await this.logger.error(terminalError, { jobId: planId });
@@ -490,7 +503,6 @@ export class BullmqProcessorService {
       throw new EnvelopeDeferralBudgetExceeded(terminalError);
     }
 
-    const zone = isBridgeLocal ? this.zoneCrypto?.get() : null;
     const fieldsToUpdate = zone ? this.resealBridgeLocalJob(job, zone.zonePriv) : isBridgeLocal ? {} : undefined;
 
     await job.scripts.moveToDelayed(job.id, timestamp, delayMs, jobToken, {

@@ -52,8 +52,12 @@ type StorageLayouts = {
   };
 };
 
+export type ReservationWithInvite = Reservation & {
+  reservationInvite?: ReservationInvite | null;
+};
+
 export type DeploymentWithReservation = Deployment & {
-  reservation?: Reservation;
+  reservation?: ReservationWithInvite;
   deployer?: { email?: string; id?: string };
   customer?: Organization;
 };
@@ -119,7 +123,7 @@ export class ServerSpecHelper extends DeviceSpecHelper {
   static isHealthy(device: ServerSpecsInput): boolean | null {
     if (!device.deviceTestRuns) return null;
     const latest = device.deviceTestRuns[0];
-    if (!latest) return true;
+    if (!latest) return null;
     if (latest.status !== DeviceTestStatus.Completed || !latest.testPassed) return false;
     return true;
   }

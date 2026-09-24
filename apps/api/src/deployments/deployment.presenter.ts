@@ -30,6 +30,7 @@ export class DeploymentPresenter {
 
     return {
       id: aggregate.id,
+      deviceId: device.id,
       location: ServerSpecHelper.region(device),
       status: {
         value: status,

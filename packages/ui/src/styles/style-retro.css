@@ -1,0 +1,79 @@
+/* Retro style: square corners, JetBrains Mono, terminal chrome. Neutrals are
+   tinted by the color seeds so every color carries through backgrounds and
+   text, not just accents. The :root arm makes retro the fallback when no
+   data-style is set; the attribute arm re-scopes nested ThemeScope wrappers. */
+:root,
+[data-style='retro'] {
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --radius-none: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+
+  --color-bg-primary: light-dark(
+    color-mix(in oklab, var(--seed-accent-deep) 2%, #fefefe),
+    color-mix(in oklab, var(--seed-accent) 5%, #08080a)
+  );
+  --color-bg-secondary: light-dark(
+    color-mix(in oklab, var(--seed-accent-deep) 5%, #f7f7fb),
+    color-mix(in oklab, var(--seed-accent) 7%, #100f13)
+  );
+  --color-bg-sidebar: light-dark(
+    color-mix(in oklab, var(--seed-accent-deep) 4%, #f8f8fb),
+    color-mix(in oklab, var(--seed-accent) 8%, #131217)
+  );
+  --color-bg-sidebar-alt: light-dark(
+    color-mix(in oklab, var(--seed-accent-deep) 8%, #f2f2f7),
+    color-mix(in oklab, var(--seed-accent) 7%, #100f13)
+  );
+
+  --color-text-primary: light-dark(
+    color-mix(in oklab, var(--seed-accent-deep) 4%, #101014),
+    color-mix(in oklab, var(--seed-accent-strong) 30%, #f2f2f4)
+  );
+  --color-text-muted: light-dark(
+    color-mix(in oklab, var(--seed-accent-deep) 15%, #46464e),
+    color-mix(in oklab, var(--seed-accent-strong) 25%, #969aa8)
+  );
+  --color-text-dim: light-dark(
+    color-mix(in oklab, var(--seed-accent-deep) 18%, #64646e),
+    color-mix(in oklab, var(--seed-accent-strong) 15%, #66666e)
+  );
+  --color-text-label: light-dark(
+    color-mix(in oklab, var(--seed-accent-deep) 15%, #84848e),
+    color-mix(in oklab, var(--seed-accent-strong) 18%, #52525a)
+  );
+
+  --color-border: var(--color-text-muted);
+  --color-border-dim: light-dark(
+    color-mix(in oklab, var(--seed-accent-deep) 10%, #dedee6),
+    color-mix(in oklab, var(--seed-accent) 12%, #24242c)
+  );
+
+  --color-active-bg: light-dark(
+    color-mix(in oklab, var(--seed-accent-deep) 14%, #e4e4ea),
+    color-mix(in oklab, var(--seed-accent) 14%, #17171d)
+  );
+  --color-hover-bg: light-dark(
+    color-mix(in oklab, var(--seed-accent-deep) 8%, #eeeef2),
+    color-mix(in oklab, var(--seed-accent) 9%, #15151a)
+  );
+  --color-sidebar-section-bg: light-dark(
+    color-mix(in oklab, var(--seed-accent-deep) 10%, #e8e8ee),
+    color-mix(in oklab, var(--seed-accent) 17%, #18181f)
+  );
+
+  --color-status-online: light-dark(#15803d, #6fec4f);
+  --color-status-offline: light-dark(#dc2626, #ff383b);
+  --color-status-warning: light-dark(#a16207, #fbd424);
+  --color-status-price: light-dark(#c2410c, #ff8400);
+  --color-status-info: light-dark(#2563eb, #60a5fa);
+  --color-status-purple: light-dark(#7c3aed, #c084fc);
+
+  --color-input-border: light-dark(var(--color-text-label), var(--color-text-muted));
+  --color-input-background: light-dark(#ffffff, var(--color-bg-primary));
+}

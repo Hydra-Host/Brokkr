@@ -1,23 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
-  Check,
-  ChevronDown,
-  Circle,
-  CircleCheck,
-  CircleX,
-  Loader2,
-  RefreshCw,
-  X,
-} from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, Loader2, RefreshCw, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import type { CommissioningProgressItem, SagaStep, ScannedDevice } from '@repo/api-client';
 
+import { StepIcon } from '@repo/domain-ui/components/step-icon';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
@@ -969,19 +958,6 @@ export function getPhaseStatus(items: Array<{ status: string }>): PhaseStatus {
   if (items.some((s) => s.status === 'running')) return 'running';
   if (items.length > 0 && items.every((s) => s.status === 'complete')) return 'complete';
   return 'pending';
-}
-
-function StepIcon({ status, size = 16, className }: { status: string; size?: number; className?: string }) {
-  switch (status) {
-    case 'complete':
-      return <CircleCheck size={size} className={cn('text-green-500', className)} />;
-    case 'running':
-      return <Loader2 size={size} className={cn('animate-spin text-blue-500', className)} />;
-    case 'failed':
-      return <CircleX size={size} className={cn('text-destructive', className)} />;
-    default:
-      return <Circle size={size} className={cn('text-muted-foreground/40', className)} />;
-  }
 }
 
 export function phaseFraction(items: Array<{ status: string }>): number {

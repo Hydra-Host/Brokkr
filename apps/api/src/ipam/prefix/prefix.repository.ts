@@ -1,10 +1,4 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  InternalServerErrorException,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   AllocateNextPrefixRequest,
   DetectPrefixOverlapRequest,
@@ -14,7 +8,6 @@ import {
   IpamPrefix,
   type IpxeBuildTarget,
   PrefixDhcpConfig,
-  PrefixDhcpConfigSchema,
   PrefixDnsOverride,
   PrefixListQuery,
   PrefixUtilization,
@@ -23,6 +16,17 @@ import {
   ValidatePrefixGatewayResult,
 } from '@repo/api-client';
 import { Prisma } from '@repo/database';
+import {
+  type BootIdentity,
+  type BootPrefixSelection,
+  DHCP_CONFIG_COLUMNS,
+  type DhcpConfigRow,
+  findBootPrefixForDevice,
+  readDhcpConfig,
+  readProxyAllowlist,
+  resolveBootIdentity,
+  toDhcpConfig,
+} from '@repo/device-domain';
 import { intToIpv4 } from '@repo/utils';
 import { ContextService } from 'src/common/context/context.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
@@ -32,9 +36,6 @@ import { zoneAclLockKey } from '../../zones/zone-redis-acl.util';
 import { BaseIpamRepository, type IpamQueryExecutor } from '../shared/base-ipam.repository';
 import { IpAddressRow, PrefixOverlapRow, PrefixRow, PrefixUtilizationRow } from '../shared/ipam.types';
 import { PrefixEntity } from './prefix.entity';
-
-/** The DHCP-config columns on Prefix — single source so adding a column is a one-place edit. */
-const DHCP_CONFIG_COLUMNS = Prisma.sql`p."dhcpMode", p."dhcpLeaseTtlSeconds", p."ipxeBuildTarget", p."dhcpOptions", p."dhcpProxyAllowedMacs", p."dhcpProxyPeerAuthoritative", host(p."dhcpRelayAgentIp") AS "dhcpRelayAgentIp"`;
 
 // Must match the default the bridge-presence reconciler's ensureGateways writes: it is the only
 // ownership signal — a Gateway row at this priority is auto-managed, any other value is operator-set.
@@ -46,40 +47,6 @@ export interface GatewaySyncResult {
 }
 
 export type DhcpAutoEnableOutcome = 'enabled' | 'already-configured' | 'ineligible' | 'not-found';
-
-/** The devices a machine's PXE MAC and BMC address each resolve to; null where no device claims one. */
-export interface BootIdentity {
-  pxeDeviceId: string | null;
-  bmcDeviceId: string | null;
-}
-
-interface DhcpConfigRow {
-  dhcpMode: DhcpMode | null;
-  dhcpLeaseTtlSeconds: number | null;
-  ipxeBuildTarget: IpxeBuildTarget;
-  dhcpOptions: unknown;
-  dhcpProxyAllowedMacs: string[];
-  dhcpProxyPeerAuthoritative: boolean;
-  dhcpRelayAgentIp: string | null;
-}
-
-function toDhcpConfig(row: DhcpConfigRow): PrefixDhcpConfig {
-  const rawOptions = Array.isArray(row.dhcpOptions) ? row.dhcpOptions : [];
-  // Fail-closes an out-of-band (direct-SQL) oversized dhcpOptions row that writes already cap.
-  const parsed = PrefixDhcpConfigSchema.shape.dhcpOptions.safeParse(rawOptions);
-  if (!parsed.success) {
-    throw new InternalServerErrorException(`Malformed dhcpOptions stored for prefix: ${parsed.error.message}`);
-  }
-  return {
-    dhcpMode: row.dhcpMode,
-    dhcpLeaseTtlSeconds: row.dhcpLeaseTtlSeconds,
-    ipxeBuildTarget: row.ipxeBuildTarget,
-    dhcpOptions: parsed.data,
-    dhcpProxyAllowedMacs: row.dhcpProxyAllowedMacs ?? [],
-    dhcpProxyPeerAuthoritative: row.dhcpProxyPeerAuthoritative,
-    dhcpRelayAgentIp: row.dhcpRelayAgentIp,
-  };
-}
 
 // Never throws: the audit must not fail an update that already committed, so malformed stored dhcpOptions is captured raw.
 function toDhcpConfigForAudit(row: DhcpConfigRow): Record<string, unknown> {
@@ -446,24 +413,16 @@ export class PrefixRepository extends BaseIpamRepository {
     `;
   }
 
-  private async fetchDhcpConfigRow(prefixId: string): Promise<DhcpConfigRow | null> {
-    const rows = await this.queryRaw<DhcpConfigRow[]>`
-      SELECT ${DHCP_CONFIG_COLUMNS}
-      FROM "Prefix" p
-      WHERE p.id = ${prefixId}
-        AND p."organizationId" = ${this.contextService.organizationId}
-        AND p."deletedAt" IS NULL
-      LIMIT 1
-    `;
-    return rows[0] ?? null;
-  }
-
   async getDhcpConfig(prefixId: string): Promise<PrefixDhcpConfig> {
-    const row = await this.fetchDhcpConfigRow(prefixId);
-    if (!row) {
+    const config = await readDhcpConfig(this.prisma, { prefixId, organizationId: this.contextService.organizationId });
+    if (!config) {
       throw new NotFoundException('Prefix not found');
     }
-    return toDhcpConfig(row);
+    return config;
+  }
+
+  async getProxyAllowlist(prefixId: string): Promise<string[]> {
+    return readProxyAllowlist(this.prisma, { prefixId, organizationId: this.contextService.organizationId });
   }
 
   async getAssociatedPrefixId(prefixId: string): Promise<string | null> {
@@ -481,38 +440,16 @@ export class PrefixRepository extends BaseIpamRepository {
     return rows[0].associatedPrefixId;
   }
 
-  // Deliberately hub-wide, not prefix-scoped: a machine's BMC normally sits on a different prefix
-  // from the one it PXE-boots on, so scoping either half would report every wiring as split.
   async resolveBootIdentity(mac: string, bmcAddress: string): Promise<BootIdentity> {
-    const rows = await this.queryRaw<BootIdentity[]>`
-      SELECT
-        (
-          SELECT i."deviceId"
-          FROM "Interface" i
-          JOIN "Device" d ON d.id = i."deviceId"
-          WHERE lower(i."macAddress") = ${mac}
-            AND i."deletedAt" IS NULL
-            AND d."deletedAt" IS NULL
-            AND d."supplierId" = ${this.contextService.organizationId}
-          ORDER BY d."createdAt" DESC
-          LIMIT 1
-        ) AS "pxeDeviceId",
-        (
-          SELECT i."deviceId"
-          FROM "IpAddress" ip
-          JOIN "Interface" i ON i.id = ip."interfaceId"
-          JOIN "Device" d ON d.id = i."deviceId"
-          WHERE ip.address = ${bmcAddress}::inet
-            AND ip."deletedAt" IS NULL
-            AND ip."organizationId" = ${this.contextService.organizationId}
-            AND i."deletedAt" IS NULL
-            AND d."deletedAt" IS NULL
-            AND d."supplierId" = ${this.contextService.organizationId}
-          ORDER BY d."createdAt" DESC
-          LIMIT 1
-        ) AS "bmcDeviceId"
-    `;
-    return rows[0] ?? { pxeDeviceId: null, bmcDeviceId: null };
+    return resolveBootIdentity(this.prisma, { mac, bmcAddress, organizationId: this.contextService.organizationId });
+  }
+
+  async findBootPrefixForDevice(deviceId: string, zoneId: string): Promise<BootPrefixSelection | null> {
+    return findBootPrefixForDevice(this.prisma, {
+      deviceId,
+      zoneId,
+      organizationId: this.contextService.organizationId,
+    });
   }
 
   async updateDhcpConfig(

@@ -1,3 +1,4 @@
+import type { LogContext } from '../../logger/logger.service.js';
 import type { IPMIDevice } from '../ipmi/device.js';
 import type { IPMIResult } from '../ipmi/result.js';
 
@@ -19,8 +20,8 @@ export type SolDeactivateFn = (device: IPMIDevice) => Promise<IPMIResult>;
 export type SolPingFn = (ipAddress: string, port: number, jobId: string) => Promise<Record<string, unknown>>;
 
 export interface SolLogger {
-  info(message: string, context?: Record<string, unknown>): void | Promise<void>;
-  warning(message: string, context?: Record<string, unknown>): void | Promise<void>;
-  error(message: string, context?: Record<string, unknown>): void | Promise<void>;
-  debug(message: string, context?: Record<string, unknown>): void | Promise<void>;
+  info(message: string, context?: LogContext): void | Promise<void>;
+  warning(message: string, context?: LogContext): void | Promise<void>;
+  error(message: string, context?: LogContext): void | Promise<void>;
+  debug(message: string, context?: LogContext): void | Promise<void>;
 }

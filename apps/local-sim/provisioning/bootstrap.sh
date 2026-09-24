@@ -83,8 +83,13 @@ ensure_nix_trusted_user() {
 }
 
 # Advisory floor, never a gate: this repo does not own the CLI. MUST equal devenv.latestVersion
-# in devenv.nix — devenv/tests/bootstrap-skip-messages.bats asserts they agree.
+# in devenv.nix — devenv/tests/bootstrap-skip-messages.bats asserts they agree. Also the exact
+# version install_nix_and_direnv pins, so a fresh host does not inherit whatever the unlocked
+# nixpkgs registry happens to hold that day.
 DEVENV_MIN_VERSION="2.2.2"
+
+# The flake ref the install pins, named once so the installer and the skew note cannot drift.
+DEVENV_PIN_REF="github:cachix/devenv/v$DEVENV_MIN_VERSION"
 
 # _version_lt A B — true when A sorts strictly below B, over the first three numeric fields.
 # awk rather than `sort -V`, which is a GNU extension a stock macOS host does not have.
@@ -125,6 +130,13 @@ _check_devenv_version() {
     echo "     home-manager switch            # or rebuild your home-manager / nix-darwin flake"
     return 0
   fi
+  if [ "$have" != "$DEVENV_MIN_VERSION" ]; then
+    echo "ℹ devenv $have is ahead of the $DEVENV_MIN_VERSION this repo pins (devenv.latestVersion in devenv.nix)."
+    echo "   the shell still loads, and the repo guards the known task-graph skew. to match the pin:"
+    echo "     nix profile remove devenv && nix profile install --accept-flake-config $DEVENV_PIN_REF"
+    echo "     home-manager switch            # or rebuild your home-manager / nix-darwin flake"
+    return 0
+  fi
   echo "✓ devenv $have satisfies the >=$DEVENV_MIN_VERSION floor"
 }
 
@@ -152,14 +164,19 @@ install_nix_and_direnv() {
   # devenv itself — the repo's .envrc calls it (eval "$(devenv direnvrc)" / use devenv), so a
   # fresh shell can't load the environment without it. Nix can't bootstrap it implicitly; install
   # it the same way as direnv. Idempotent (skips when already on PATH).
+  #
+  # Pinned, unlike direnv above: `nixpkgs#devenv` resolves through the unlocked registry, so the
+  # version a fresh host gets is whatever nixpkgs holds that day — that is how a CLI whose task
+  # scheduler runs `prek run -a` on every shell entry arrived. --accept-flake-config takes
+  # devenv's own cachix substituters, so this stays a binary fetch rather than a source build.
   if command -v devenv >/dev/null 2>&1; then
     echo "✓ devenv already installed"
   else
-    echo "==> installing devenv (via nix profile)"
-    nix profile install nixpkgs#devenv
+    echo "==> installing devenv $DEVENV_MIN_VERSION (via nix profile)"
+    nix profile install --accept-flake-config "$DEVENV_PIN_REF"
   fi
-  # outside the branches: the skip path is where an old CLI survives, and the install path
-  # resolves `nixpkgs` through the unlocked registry, which can trail the floor too.
+  # outside the branches: the skip path is where a CLI this bootstrap never chose survives, on
+  # either side of the pin.
   _check_devenv_version
 }
 

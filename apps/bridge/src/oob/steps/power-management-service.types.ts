@@ -5,7 +5,11 @@ export interface PowerManagementServiceLike {
   validateCredentials(creds: BmcCredentials): Promise<Record<string, unknown>>;
   powerOff(creds: BmcCredentials): Promise<Record<string, unknown>>;
   verifyPowerOff(creds: BmcCredentials): Promise<Record<string, unknown>>;
-  setBootDevice(creds: BmcCredentials, bootDevice?: unknown): Promise<Record<string, unknown>>;
+  setBootDevice(
+    creds: BmcCredentials,
+    bootDevice?: unknown,
+    opts?: { persistent?: boolean },
+  ): Promise<Record<string, unknown>>;
   verifyBootDevice(creds: BmcCredentials, bootDevice?: unknown): Promise<Record<string, unknown>>;
   powerOn(creds: BmcCredentials): Promise<Record<string, unknown>>;
   verifyPowerOn(

@@ -12,6 +12,7 @@ import { DesignationOperatorPolicy } from 'src/common/authz/operator-policy';
 import { ActiveRecordContextProvider } from 'src/common/context/active-record-context.provider';
 import { ContextService } from 'src/common/context/context.service';
 import { DeviceSecretService } from 'src/device-secret/device-secret.service';
+import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
 import { BaremetalController } from 'src/devices/baremetal.controller';
 import { BaremetalService } from 'src/devices/baremetal.service';
 import { InventoryService } from 'src/inventory/inventory.service';
@@ -71,6 +72,7 @@ describe('device read capture', () => {
         { provide: CloudInitTemplatesService, useValue: {} },
         { provide: EventEmitter2, useValue: { emit: vi.fn() } },
         { provide: DeviceSecretService, useValue: {} },
+        { provide: DeviceTokensService, useValue: {} },
         { provide: DhcpConfigPublisherService, useValue: {} },
         { provide: 'LoggerServiceBaremetalService', useValue: logger },
       ],

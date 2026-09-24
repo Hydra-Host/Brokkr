@@ -152,3 +152,20 @@ task_log() { # <task> <body>
   run task_env bash -c '. "$1/devenv/lib/with-task-log.sh"; begin_task_log "$2"; shift 2; eval "$@"' \
     _ "$ROOT" "$@"
 }
+
+# Print `<task>|<before,...>|<after,...>` for every task in the built graph, one line each. Those
+# edges are what decides which tasks devenv schedules under a given root, which is the whole
+# subject of the shell-entry spec. It goes through task.config rather than reading the attribute
+# directly because `devenv eval` splits an attribute path on `.` while every task name carries
+# colons, so `tasks."devenv:enterTest".after` is unaddressable. `build`, not `eval`: eval returns
+# the store path without realizing it, so a garbage collection between runs leaves it missing.
+devenv_task_edges() {
+  local path
+  path=$(devenv build task.config |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["task.config"])') || return 1
+  python3 -c '
+import json, sys
+for t in json.load(open(sys.argv[1])):
+    print("|".join([t["name"], ",".join(t.get("before") or []), ",".join(t.get("after") or [])]))
+' "$path"
+}

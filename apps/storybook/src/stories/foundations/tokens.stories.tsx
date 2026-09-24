@@ -22,14 +22,19 @@ const COLOR_TOKENS = [
 
 const RADIUS_TOKENS = ['--radius-sm', '--radius-md', '--radius-lg', '--radius-xl'];
 
-// Re-render when the toolbar (ThemeProvider) swaps data-theme on <html>.
+// Re-render when the toolbar (ThemeProvider) swaps the axis attributes on <html>.
+function readAxes() {
+  const { style, color, mode } = document.documentElement.dataset;
+  return [style, color, mode].filter(Boolean).join(' / ');
+}
+
 function useActiveTheme() {
-  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme ?? '');
+  const [theme, setTheme] = useState(readAxes);
   useEffect(() => {
-    const observer = new MutationObserver(() => setTheme(document.documentElement.dataset.theme ?? ''));
+    const observer = new MutationObserver(() => setTheme(readAxes()));
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['data-theme'],
+      attributeFilter: ['data-style', 'data-color', 'data-mode'],
     });
     return () => observer.disconnect();
   }, []);
@@ -77,7 +82,7 @@ function TokensDemo() {
 
       <section className="flex flex-col gap-3">
         <h3 className="text-text-muted text-xs tracking-wide uppercase">
-          Radius · 0 in terminal themes, rounded in commerce themes
+          Radius · 0 in the retro style, rounded in the modern style
         </h3>
         <div className="flex gap-4">
           {RADIUS_TOKENS.map((token) => (
@@ -107,7 +112,8 @@ const meta = {
         component:
           'The main `--color-*`, `--font-mono`, and `--radius-*` custom properties resolved from ' +
           '`getComputedStyle(document.documentElement)` for the theme currently applied by the toolbar. ' +
-          'A MutationObserver on the `data-theme` attribute re-renders the grid when the theme changes.',
+          'A MutationObserver on the `data-style`/`data-color`/`data-mode` attributes re-renders the ' +
+          'grid when the theme changes.',
       },
     },
   },

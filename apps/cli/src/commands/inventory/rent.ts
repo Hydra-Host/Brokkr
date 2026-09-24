@@ -1,6 +1,7 @@
 import * as p from '@clack/prompts';
+import { ContractType, SELECTABLE_CONTRACT_TYPES, newContractTypeRejectionMessage } from '@repo/utils';
 import chalk from 'chalk';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { getAuthenticatedClient } from '../../core/client.js';
 import { listDeploymentProjects } from '../../core/deployments/deployments.js';
 import { listOrganizationSshKeys } from '../../core/deployments/mutations.js';
@@ -13,10 +14,40 @@ import {
   parseCsvFlag,
   parseCustomizationsFlag,
   validateSsrfSafeHttpsUrl,
+  warn,
 } from '../../ui/format.js';
 import { prompt } from '../../ui/prompt.js';
 import { renderJson, withSpinner } from '../../ui/table.js';
 import { resolveInventoryItemId } from './select-inventory-item.js';
+
+/** Resolve --contract-type / deprecated --interruptible for inventory:rent. Exported for tests. */
+export function resolveInventoryRentContractType(flags: { contractType?: string; interruptible?: boolean }): {
+  contractType?: string;
+  warning?: string;
+  rejection?: string;
+} {
+  let contractType = flags.contractType;
+  let warning: string | undefined;
+
+  if (flags.interruptible) {
+    warning =
+      '--interruptible is deprecated and maps to RESERVED_ROLLING until commerce billing is ready. Use --contract-type=RESERVED_ROLLING.';
+    contractType = contractType ?? ContractType.RESERVED_ROLLING;
+  }
+
+  if (contractType) {
+    const rejection = newContractTypeRejectionMessage(contractType);
+    if (rejection) return { contractType, warning, rejection };
+  } else if (SELECTABLE_CONTRACT_TYPES.length === 1) {
+    contractType = SELECTABLE_CONTRACT_TYPES[0];
+  }
+
+  return { contractType, warning };
+}
+
+export function inventoryRentConfirmationLabel(contractType: string): string {
+  return contractType === ContractType.RESERVED_ROLLING ? 'Reserved Rolling' : contractType;
+}
 
 export function registerInventoryRentCommand(program: Command): void {
   program
@@ -26,7 +57,13 @@ export function registerInventoryRentCommand(program: Command): void {
     .option('--name <name>', 'Deployment name')
     .option('--os <slug>', 'Operating system slug (e.g. ubuntu-plucky-vanilla)')
     .option('--ssh-keys <ids>', 'Comma-separated SSH key IDs')
-    .option('--interruptible', 'Rent as an interruptible instance (lower price, may be interrupted with notice)')
+    .option('--contract-type <type>', 'Contract type (only RESERVED_ROLLING until commerce billing is ready)')
+    .addOption(
+      new Option(
+        '--interruptible',
+        'Deprecated: Interruptible rentals are unavailable until commerce billing is ready. Use --contract-type=RESERVED_ROLLING.',
+      ).hideHelp(),
+    )
     .option('--project-id <id>', 'Project ID to assign the deployment to')
     .option('--disk-layout <json>', 'Disk layout configuration as JSON array (uses device default if omitted)')
     .option('--cloud-init <config>', 'Cloud-init configuration (YAML string)')
@@ -45,14 +82,13 @@ for any values not provided. Disk layout defaults to the device's recommended
 layout unless overridden with --disk-layout.
 
 Billing:
-  Default (no flag)   On demand — billed hourly, cancel any time
-  --interruptible     Lower price, may be interrupted with notice
+  Only Reserved Rolling is accepted until commerce billing can price other terms.
 
 Examples:
   brokkr inventory:rent                                              Interactive mode (pick server + configure)
   brokkr inventory:rent <id>                                        Interactive mode for a specific server
-  brokkr inventory:rent <id> --name "my-server" --os ubuntu-plucky-vanilla --ssh-keys "uuid1,uuid2" --force
-  brokkr inventory:rent <id> --name "srv" --os ubuntu-plucky-vanilla --ssh-keys "uuid" --interruptible --project-id "proj-uuid" --force --json`,
+  brokkr inventory:rent <id> --name "my-server" --os ubuntu-plucky-vanilla --ssh-keys "uuid1,uuid2" --contract-type RESERVED_ROLLING --force
+  brokkr inventory:rent <id> --name "srv" --os ubuntu-plucky-vanilla --ssh-keys "uuid" --contract-type RESERVED_ROLLING --project-id "proj-uuid" --force --json`,
     )
     .action(
       async (
@@ -61,6 +97,7 @@ Examples:
           name?: string;
           os?: string;
           sshKeys?: string;
+          contractType?: string;
           interruptible?: boolean;
           projectId?: string;
           diskLayout?: string;
@@ -83,16 +120,14 @@ Examples:
         }
         let sshKeyIds = parseCsvFlag(flags.sshKeys, '--ssh-keys must contain at least one SSH key ID');
 
-        let isInterruptible: boolean | undefined;
-        if (item.isInterruptibleOnly) {
-          isInterruptible = true;
-        } else if (flags.interruptible !== undefined) {
-          isInterruptible = flags.interruptible;
-        }
+        const resolved = resolveInventoryRentContractType(flags);
+        if (resolved.warning) warn(resolved.warning);
+        if (resolved.rejection) fail(resolved.rejection);
+        let contractType = resolved.contractType;
 
         let projectId: string | undefined = flags.projectId;
 
-        const needsPrompts = !deploymentName || !operatingSystem || !sshKeyIds || isInterruptible === undefined;
+        const needsPrompts = !deploymentName || !operatingSystem || !sshKeyIds || !contractType;
 
         if (needsPrompts) {
           p.intro(chalk.bold('Rent Server'));
@@ -142,13 +177,16 @@ Examples:
           );
         }
 
-        if (isInterruptible === undefined) {
-          isInterruptible = prompt(
+        if (!contractType) {
+          contractType = prompt(
             await p.select({
-              message: 'Billing type',
+              message: 'Contract type',
               options: [
-                { value: false, label: 'On Demand', hint: 'Billed hourly, cancel any time' },
-                { value: true, label: 'Interruptible', hint: 'Lower price, may be interrupted' },
+                // Only Reserved Rolling until commerce billing can price the other terms.
+                // { value: 'ON_DEMAND', label: 'On Demand', hint: 'Billed hourly, cancel any time' },
+                { value: 'RESERVED_ROLLING', label: 'Reserved Rolling', hint: 'Reserved with rolling renewal' },
+                // { value: 'INTERRUPTIBLE', label: 'Interruptible', hint: 'Lower price, may be interrupted' },
+                // { value: 'RESERVED', label: 'Reserved', hint: 'Fixed-term reservation' },
               ],
             }),
           );
@@ -200,15 +238,12 @@ Examples:
         }
 
         if (!flags.force) {
-          const priceCents = isInterruptible
-            ? item.pricing.interruptiblePerHourCents
-            : item.pricing.onDemandPerHourCents;
+          const priceCents = item.pricing.onDemandPerHourCents;
           const priceLabel = priceCents != null ? `${centsToDollars(priceCents)}/hr` : '—';
-          const billingLabel = isInterruptible ? 'Interruptible' : 'On Demand';
 
           if (needsPrompts) {
             p.log.warn(
-              `This will rent ${chalk.bold(item.name)} at ${chalk.bold(priceLabel)} (${billingLabel}).\n` +
+              `This will rent ${chalk.bold(item.name)} at ${chalk.bold(priceLabel)} (${inventoryRentConfirmationLabel(contractType || ContractType.RESERVED_ROLLING)}).\n` +
                 `OS: ${chalk.bold(operatingSystem)} · SSH keys: ${sshKeyIds.length}`,
             );
           }
@@ -222,7 +257,6 @@ Examples:
 
         const result = await withSpinner('Renting server...', () =>
           rentInventoryDevice(client, id, {
-            isInterruptible: isInterruptible!,
             deploymentName: deploymentName!,
             operatingSystem: operatingSystem!,
             sshKeyIds: sshKeyIds!,

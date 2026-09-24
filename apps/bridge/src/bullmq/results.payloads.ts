@@ -7,6 +7,7 @@ export interface ErrorWrapper {
 export interface ResultPayload {
   plan_id: string;
   step_name: string;
+  operation: string | null;
   status: string;
   device_id: string;
   zone_prefix: string;
@@ -58,11 +59,12 @@ export interface RenderRequestPayload {
 export interface BuildResultPayloadArgs {
   plan_id: string;
   step_name: string;
+  operation?: string | null;
   status: string;
   device_id: unknown;
   zone_prefix: string;
   event_type?: string;
-  action_type?: string;
+  action_type: string;
   result?: Record<string, unknown> | null;
   error?: string | null;
   attempt?: number;
@@ -74,11 +76,12 @@ export function buildResultPayload(args: BuildResultPayloadArgs): ResultPayload 
   return {
     plan_id: args.plan_id,
     step_name: args.step_name,
+    operation: args.operation ?? null,
     status: args.status,
     device_id: String(args.device_id),
     zone_prefix: args.zone_prefix,
     event_type: args.event_type ?? 'stage_changed',
-    action_type: args.action_type ?? 'provision',
+    action_type: args.action_type,
     result: args.result ?? null,
     error: args.error ? { message: args.error } : null,
     attempt: args.attempt ?? 0,

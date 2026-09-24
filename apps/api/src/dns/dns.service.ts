@@ -16,6 +16,29 @@ import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { z } from 'zod';
 
+const DNS_DOMAIN_SELECT = {
+  id: true,
+  name: true,
+  type: true,
+  zoneId: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.DnsDomainSelect;
+
+const DNS_RECORD_SELECT = {
+  id: true,
+  name: true,
+  type: true,
+  value: true,
+  source: true,
+  ttlOverride: true,
+  domainId: true,
+  deviceId: true,
+  ipAddressId: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.DnsRecordSelect;
+
 @Injectable()
 export class DnsService {
   constructor(
@@ -31,6 +54,7 @@ export class DnsService {
     return this.prisma.dnsDomain.findMany({
       where: { zoneId, deletedAt: null },
       orderBy: { name: 'asc' },
+      select: DNS_DOMAIN_SELECT,
     });
   }
 
@@ -39,11 +63,13 @@ export class DnsService {
     await this.requireZone(zoneId);
     const domain = await this.prisma.dnsDomain.findUnique({
       where: { id: domainId },
+      select: { ...DNS_DOMAIN_SELECT, deletedAt: true },
     });
     if (!domain || domain.deletedAt || domain.zoneId !== zoneId) {
       throw new NotFoundException('DNS domain not found');
     }
-    return domain;
+    const { deletedAt: _deletedAt, ...response } = domain;
+    return response;
   }
 
   async createDomain(zoneId: string, dto: CreateDnsDomain) {
@@ -58,6 +84,7 @@ export class DnsService {
           type: dto.type,
           zoneId,
         },
+        select: DNS_DOMAIN_SELECT,
       });
       await this.publisher.republishForZone(zoneId);
       return domain;
@@ -74,6 +101,7 @@ export class DnsService {
       const updated = await this.prisma.dnsDomain.update({
         where: { id: domain.id },
         data: { name: dto.name.replace(/\.$/, '') },
+        select: DNS_DOMAIN_SELECT,
       });
       await this.publisher.republishForZone(zoneId);
       return updated;
@@ -114,7 +142,7 @@ export class DnsService {
         deletedAt: null,
         ...(query.source ? { source: query.source } : {}),
       },
-      include: { device: { select: { role: true } } },
+      select: { ...DNS_RECORD_SELECT, device: { select: { role: true } } },
       orderBy: [{ name: 'asc' }, { type: 'asc' }],
     });
     return records.map(({ device, ...record }) => ({ ...record, deviceRole: device?.role ?? null }));
@@ -153,6 +181,7 @@ export class DnsService {
               deviceId: null,
               ipAddressId: null,
             },
+            select: DNS_RECORD_SELECT,
           })
         : await this.prisma.dnsRecord.create({
             data: {
@@ -163,6 +192,7 @@ export class DnsService {
               ttlOverride: dto.ttlOverride ?? null,
               source: 'MANUAL',
             },
+            select: DNS_RECORD_SELECT,
           });
 
       await this.publisher.republishForZone(zoneId);
@@ -192,6 +222,7 @@ export class DnsService {
           ...(dto.value !== undefined ? { value: dto.value } : {}),
           ...(dto.ttlOverride !== undefined ? { ttlOverride: dto.ttlOverride } : {}),
         },
+        select: DNS_RECORD_SELECT,
       });
       await this.publisher.republishForZone(zoneId);
       return { ...updated, deviceRole: null };

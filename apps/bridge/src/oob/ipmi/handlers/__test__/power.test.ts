@@ -250,6 +250,31 @@ describe('bootDevice', () => {
     expect(command.slice(-4)).toEqual(['chassis', 'bootdev', 'disk', 'options=persistent']);
   });
 
+  it('appends options=efiboot for a one-time UEFI override', async () => {
+    let command: string[] = [];
+    mockedRun.mockImplementation(async (cmd) => {
+      command = [...cmd];
+      return okResult();
+    });
+
+    await bootDevice(device(), 'pxe', { uefi: true, persistent: false });
+
+    expect(command.slice(-4)).toEqual(['chassis', 'bootdev', 'pxe', 'options=efiboot']);
+  });
+
+  it('omits the options argument rather than emitting a bare options= when no flag applies', async () => {
+    let command: string[] = [];
+    mockedRun.mockImplementation(async (cmd) => {
+      command = [...cmd];
+      return okResult();
+    });
+
+    await bootDevice(device(), 'pxe', { uefi: false, persistent: false });
+
+    expect(command.slice(-3)).toEqual(['chassis', 'bootdev', 'pxe']);
+    expect(command.some((arg) => arg.startsWith('options='))).toBe(false);
+  });
+
   it.each(['disk', 'bios', 'pxe', 'cdrom'])('accepts target %p', async (target) => {
     mockedRun.mockResolvedValue(okResult());
     const result = await bootDevice(device(), target);

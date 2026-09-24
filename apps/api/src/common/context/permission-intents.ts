@@ -1,5 +1,6 @@
-import { MAIN_APP_PERMISSIONS, isMutatingPermission, permissionKey } from '@repo/auth/rbac';
+import { isMutatingPermission, permissionKey } from '@repo/auth/rbac';
 import type { EventOutcome } from '@repo/database';
+import { MAIN_APP_PERMISSIONS } from 'src/permissions/permissions.constants';
 import type { PermissionIntent } from './context.service';
 
 /** The intent bookkeeping every capture path shares; ContextService satisfies it structurally. */

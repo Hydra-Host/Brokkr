@@ -59,6 +59,7 @@ LOG_DIR=''
 LOG_KEEP=''
 NO_LOG=''
 LOG_FOOTER_DONE=''
+STEP_LOG_MARK=0
 C_RESET='' C_BOLD='' C_DIM='' C_BLUE='' C_GREEN='' C_YELLOW='' C_RED=''
 
 # setup_colors — colour only a real terminal. Piped output (CI logs, `| tee`) and NO_COLOR must
@@ -409,6 +410,85 @@ log_raw() {
   printf '%s\n' "$*" >>"$LOG_FILE" 2>/dev/null || true
 }
 
+# mark_step_log — where the current step's output starts in the log, so a failure quotes only its
+# own slice. The slice is the point: the same signature can appear in an EARLIER phase that
+# recovered, and quoting that would name a fault the caller already got past.
+mark_step_log() {
+  STEP_LOG_MARK=0
+  [ -n "$LOG_FILE" ] || return 0
+  _msl_n="$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)"
+  # BSD wc pads its count, and arithmetic strips the padding
+  STEP_LOG_MARK=$((_msl_n + 0))
+}
+
+# explain_step_failure — name the fault, or failing that quote the step's real errors. Only two
+# steps reach the log at all (devenv_stream and tee_stack_log); devenv_run writes straight to the
+# terminal, so a slice for those steps is legitimately empty and this returns quietly. Always
+# returns 0 — every caller is already on its way to die/exit, and this must not change that path.
+explain_step_failure() {
+  [ -n "$LOG_FILE" ] && [ -r "$LOG_FILE" ] || return 0
+  _esf_slice="${PHASE_DIR:-${TMPDIR:-/tmp}}/step-slice"
+  tail -n "+$((STEP_LOG_MARK + 1))" "$LOG_FILE" >"$_esf_slice" 2>/dev/null || return 0
+  [ -s "$_esf_slice" ] || return 0
+
+  # devenv's strict_ports allocator refused a port during evaluation, so nothing started. Its own
+  # --strict-ports=false advice is wrong here: the slot map is this repo's port contract.
+  _esf_hit="$(grep -E 'Port [0-9]+ is already in use' "$_esf_slice" 2>/dev/null | head -n 1)"
+  if [ -n "$_esf_hit" ]; then
+    _esf_port="$(printf '%s\n' "$_esf_hit" | sed -n 's/.*Port \([0-9][0-9]*\) is already in use.*/\1/p')"
+    _esf_pid="$(printf '%s\n' "$_esf_hit" | sed -n 's/.*(PID \([0-9][0-9]*\)).*/\1/p')"
+    warn "port $_esf_port is already in use${_esf_pid:+ (PID $_esf_pid)} — another program on this machine owns it"
+    info "  The stack reserves that port while it evaluates, so nothing started."
+    info "  Identify it:  lsof -nP -iTCP:$_esf_port -sTCP:LISTEN     (with sudo, if that shows nothing)"
+    info "  For the exact remedy, including which knob owns this port:"
+    info "    cd $TARGET_DIR && devenv --no-tui shell -- task doctor"
+    info "  Or stop that program and re-run. Do not pass --strict-ports=false: an auto-allocated"
+    info "  datastore port desynchronizes the hub and spoke URLs from devenv/modules/ports.nix."
+    return 0
+  fi
+
+  # our own preflight already explained it in full — reprint that block rather than paraphrase it
+  if grep -q '^✗ ' "$_esf_slice" 2>/dev/null; then
+    warn "the preflight refused the bring-up:"
+    awk '/^✗ /{p=1} p' "$_esf_slice" 2>/dev/null | head -n 24 | while IFS= read -r _esf_line; do
+      info "  $_esf_line"
+    done
+    return 0
+  fi
+
+  if grep -q "buildx' is not a docker command" "$_esf_slice" 2>/dev/null; then
+    warn "the docker CLI has no buildx plugin — the fleet's iPXE build needs it."
+    info "  Install it, then re-run:"
+    info "    sudo apt-get install -y docker-buildx    # Debian/Ubuntu"
+    info "    sudo dnf install -y moby-buildx          # Fedora/RHEL"
+    info "    sudo pacman -S --needed docker-buildx    # Arch"
+    return 0
+  fi
+
+  if grep -qE '/build\.sh: Is a directory|exit status 126' "$_esf_slice" 2>/dev/null; then
+    warn "the fleet build cannot see this checkout from inside its container."
+    info "  The build bind-mounts files out of $TARGET_DIR. Docker Desktop, Lima and Colima"
+    info "  share your home directory by default but not /tmp, and an unshared path is"
+    info "  mounted as an empty directory instead."
+    info "  Move the checkout under your home directory, or share its path with the runtime."
+    return 0
+  fi
+
+  if grep -q 'No space left on device' "$_esf_slice" 2>/dev/null; then
+    warn "the disk filled up — the Nix store needs room to build the toolchain."
+    info "  Free some space, then re-run. To reclaim the store's own garbage:  nix store gc"
+    return 0
+  fi
+
+  # nothing recognized: the real error lines beat "see the log", which is all this said before
+  _esf_tail="$(grep -E '^error:|^error \(|^task: |Failed to run task|^✗ |Permission denied' \
+    "$_esf_slice" 2>/dev/null | tail -n 4)"
+  [ -n "$_esf_tail" ] || return 0
+  warn "the last errors this step logged:"
+  printf '%s\n' "$_esf_tail" | while IFS= read -r _esf_line; do info "  $_esf_line"; done
+  return 0
+}
+
 # link_latest_log — rm then ln, never `ln -sfn`: -n is understood by BSD and GNU ln alike but
 # is not POSIX, and the two-step needs no such assumption.
 link_latest_log() {
@@ -544,6 +624,7 @@ init_phase_state() {
 begin_step() {
   log "$1"
   STEP_START="$(date +%s)"
+  mark_step_log
   stop_ticker
   _bs_owner=$$
   _bs_start="$STEP_START"
@@ -584,6 +665,7 @@ end_step() {
 begin_step_quiet() {
   log "$1"
   STEP_START="$(date +%s)"
+  mark_step_log
   stop_ticker
 }
 
@@ -1099,8 +1181,12 @@ warm_devenv() {
   _wd_rc=$?
   set -e
   stop_ticker
-  [ "$_wd_rc" = 0 ] ||
+  if [ "$_wd_rc" != 0 ]; then
+    # the terminal saw only devenv's phase markers (filter_devenv_line drops the rest), so without
+    # this the build's actual error is in the log and nowhere else
+    explain_step_failure
     die "the devenv toolchain failed to build — see devenv/README.md (Troubleshooting), then re-run."
+  fi
   end_step "devenv toolchain ready"
 }
 
@@ -1434,6 +1520,7 @@ main() {
   stop_ticker
   if [ "$_up_rc" != 0 ]; then
     warn "the stack did not come up cleanly."
+    explain_step_failure
     # only when priming failed. Probing sudo here would fire on every failure instead: the sudoers
     # install ends in `sudo -k`, so no credential is EVER cached past that point, by design
     [ -z "$SUDO_UNPRIMED" ] ||

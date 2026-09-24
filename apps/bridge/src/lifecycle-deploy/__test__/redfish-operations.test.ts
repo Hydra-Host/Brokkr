@@ -58,26 +58,46 @@ describe('redfish-operations — wired service still works end-to-end (no regres
     };
   }
 
-  it('disableTee returns true and invokes setTee(_, false)', async () => {
+  it('disableTee reports success and invokes setTee(_, false)', async () => {
     const service = makeWiredService();
     const result = await disableTee(...ARGS, { createRedfishService: async () => service });
-    expect(result).toBe(true);
+    expect(result).toEqual({ success: true, hostResetAt: null });
     expect(service.setTee).toHaveBeenCalledTimes(1);
     expect(service.setTee).toHaveBeenCalledWith(expect.anything(), false);
   });
 
-  it('enableTee returns true and invokes setTee(_, true)', async () => {
+  it('enableTee reports success and invokes setTee(_, true)', async () => {
     const service = makeWiredService();
     const result = await enableTee(...ARGS, { createRedfishService: async () => service });
-    expect(result).toBe(true);
+    expect(result).toEqual({ success: true, hostResetAt: null });
     expect(service.setTee).toHaveBeenCalledWith(expect.anything(), true);
   });
 
-  it('enableTee returns false when setTee reports failure', async () => {
+  it('enableTee reports failure when setTee reports failure', async () => {
     const service = makeWiredService();
     vi.mocked(service.setTee).mockResolvedValue(false);
     const result = await enableTee(...ARGS, { createRedfishService: async () => service });
-    expect(result).toBe(false);
+    expect(result).toEqual({ success: false, hostResetAt: null });
+  });
+
+  it('enableTee reports the host reset time the fence recorded on the device', async () => {
+    const service = makeWiredService();
+    vi.mocked(service.setTee).mockImplementation(async (device) => {
+      device.lastHostResetAt = 1_726_000_000;
+      return true;
+    });
+    const result = await enableTee(...ARGS, { createRedfishService: async () => service });
+    expect(result).toEqual({ success: true, hostResetAt: 1_726_000_000 });
+  });
+
+  it('disableTee keeps the host reset time when setTee throws after the fence', async () => {
+    const service = makeWiredService();
+    vi.mocked(service.setTee).mockImplementation(async (device) => {
+      device.lastHostResetAt = 1_726_000_000;
+      throw new Error('bios never settled');
+    });
+    const result = await disableTee(...ARGS, { createRedfishService: async () => service });
+    expect(result).toEqual({ success: false, hostResetAt: 1_726_000_000 });
   });
 
   it('disableOsBootOptions returns true and invokes reliableBoot', async () => {
@@ -94,14 +114,14 @@ describe('redfish-operations — wired service still works end-to-end (no regres
     expect(service.verifyTee).toHaveBeenCalledTimes(1);
   });
 
-  it('disableTee returns false when the wired service throws (existing catch path is preserved)', async () => {
+  it('disableTee reports failure when the wired service throws (existing catch path is preserved)', async () => {
     const service: RedfishTeeCapableService = {
       setTee: vi.fn().mockRejectedValue(new Error('BMC unreachable')),
       verifyTee: vi.fn(),
       reliableBoot: vi.fn(),
     };
     const result = await disableTee(...ARGS, { createRedfishService: async () => service });
-    expect(result).toBe(false);
+    expect(result).toEqual({ success: false, hostResetAt: null });
   });
 
   it('verifyTee reports an unreachable bmc instead of a verified negative when the Redfish service throws', async () => {

@@ -136,6 +136,26 @@ describe('pollResetRebootUntilBiosSettled', () => {
     expect(h.device.rebootNeeded).toBe(true);
     expect(h.device.biosParams).toEqual(LIVE);
     expect(h.device.biosPendingParams).toEqual(SD_PATCHED);
+    expect(h.device.lastHostResetAt).not.toBeNull();
+  });
+
+  it('records the host reset time once the reset is accepted', async () => {
+    const h = build();
+    vi.spyOn(Date, 'now').mockReturnValue(1_726_000_000_000);
+    h.queue(attributes(LIVE_APPLIED), attributes(LIVE_APPLIED));
+
+    await pollResetRebootUntilBiosSettled(h.handler);
+
+    expect(h.device.lastHostResetAt).toBe(1_726_000_000);
+  });
+
+  it('leaves the host reset time unset when the reset request fails', async () => {
+    const h = build();
+    vi.mocked(h.handler.fetch).mockRejectedValueOnce(new Error('bmc down'));
+
+    await expect(pollResetRebootUntilBiosSettled(h.handler)).rejects.toThrow('bmc down');
+
+    expect(h.device.lastHostResetAt).toBeNull();
   });
 
   it('names the unreadable BMC when no poll returned live attributes', async () => {

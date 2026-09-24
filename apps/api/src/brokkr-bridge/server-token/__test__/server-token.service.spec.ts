@@ -4,7 +4,13 @@ import { ConfigAtomWriter } from 'src/common/redis';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { DeviceContextService } from '../../device-context.service';
-import { ServerTokenSchema, ServerTokenService, TTL_SERVER_TOKEN_SECONDS } from '../server-token.service';
+import {
+  DeployTokenSchema,
+  ServerTokenSchema,
+  ServerTokenService,
+  TTL_DEPLOY_TOKEN_SECONDS,
+  TTL_SERVER_TOKEN_SECONDS,
+} from '../server-token.service';
 
 const DEVICE_UUID = '550e8400-e29b-41d4-a716-446655440042';
 const ZONE_ID = '1-1-1';
@@ -14,6 +20,11 @@ const LIVE_MATERIAL = {
   brokkr_live_token: 'test-live-token',
   endpoint: 'https://brokkr.example/api/v1/bmc/phone-home',
   exp: 1_900_000_000,
+};
+
+const DEPLOY_MATERIAL = {
+  deployment_os_token: 'test-deploy-token',
+  endpoint: 'https://brokkr.example/api/v1/bmc/phone-home',
 };
 
 function makeCtx() {
@@ -27,7 +38,9 @@ describe('ServerTokenService', () => {
   let service: ServerTokenService;
   let mockResolveZoneContext: Mock;
   let mockIssueBrokkrLiveToken: Mock;
+  let mockIssueDeploymentOsToken: Mock;
   let mockWriteAtomJson: Mock;
+  let mockLogger: { log: Mock; warn: Mock; error: Mock; debug: Mock; verbose: Mock; setContext: Mock };
 
   beforeEach(async () => {
     mockResolveZoneContext = vi.fn().mockResolvedValue(makeCtx());
@@ -38,7 +51,22 @@ describe('ServerTokenService', () => {
       material: LIVE_MATERIAL,
       reused: false,
     });
-    mockWriteAtomJson = vi.fn().mockResolvedValue(undefined);
+    mockIssueDeploymentOsToken = vi.fn().mockResolvedValue({
+      tokenId: 'deploy-token-id',
+      displayId: 'dtok_deploy',
+      plaintext: 'test-deploy-token',
+      material: DEPLOY_MATERIAL,
+      reused: false,
+    });
+    mockWriteAtomJson = vi.fn().mockResolvedValue({ written: true });
+    mockLogger = {
+      log: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      verbose: vi.fn(),
+      setContext: vi.fn().mockReturnThis(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -49,7 +77,10 @@ describe('ServerTokenService', () => {
         },
         {
           provide: DeviceTokensService,
-          useValue: { issueBrokkrLiveToken: mockIssueBrokkrLiveToken },
+          useValue: {
+            issueBrokkrLiveToken: mockIssueBrokkrLiveToken,
+            issueDeploymentOsToken: mockIssueDeploymentOsToken,
+          },
         },
         {
           provide: ConfigAtomWriter,
@@ -57,14 +88,7 @@ describe('ServerTokenService', () => {
         },
         {
           provide: `LoggerService${ServerTokenService.name}`,
-          useValue: {
-            log: vi.fn(),
-            warn: vi.fn(),
-            error: vi.fn(),
-            debug: vi.fn(),
-            verbose: vi.fn(),
-            setContext: vi.fn().mockReturnThis(),
-          },
+          useValue: mockLogger,
         },
       ],
     }).compile();
@@ -156,6 +180,89 @@ describe('ServerTokenService', () => {
         ServerTokenSchema,
         TTL_SERVER_TOKEN_SECONDS,
         { request_id: REQUEST_ID },
+      );
+    });
+  });
+
+  describe('mintDeployForCtx / writeDeployAtomForCtx', () => {
+    it('mintDeployForCtx mints a DEPLOYMENT_OS token from the supplied ctx without a device lookup', async () => {
+      const result = await service.mintDeployForCtx(makeCtx());
+
+      expect(mockResolveZoneContext).not.toHaveBeenCalled();
+      expect(mockIssueDeploymentOsToken).toHaveBeenCalledWith({
+        deviceId: DEVICE_UUID,
+        issuedBy: 'system',
+      });
+      expect(result).toEqual(DEPLOY_MATERIAL);
+    });
+
+    it('mintDeployForCtx throws when issuance returns no material', async () => {
+      mockIssueDeploymentOsToken.mockResolvedValueOnce({
+        tokenId: 'deploy-token-id',
+        displayId: 'dtok_deploy',
+        plaintext: null,
+        material: null,
+        reused: true,
+      });
+
+      await expect(service.mintDeployForCtx(makeCtx())).rejects.toBeInstanceOf(InternalServerErrorException);
+    });
+
+    it('writeDeployAtomForCtx writes the pre-minted atom at device:{uuid}:deploy_token with TTL=86400', async () => {
+      await service.writeDeployAtomForCtx(makeCtx(), DEPLOY_MATERIAL, { requestId: REQUEST_ID });
+
+      expect(mockResolveZoneContext).not.toHaveBeenCalled();
+      expect(mockWriteAtomJson).toHaveBeenCalledWith(
+        ZONE_ID,
+        `device:${DEVICE_UUID}:deploy_token`,
+        DEPLOY_MATERIAL,
+        DeployTokenSchema,
+        TTL_DEPLOY_TOKEN_SECONDS,
+        { request_id: REQUEST_ID },
+      );
+    });
+
+    it('writeDeployAtomForCtx defaults request_id to null when no opts are passed', async () => {
+      await service.writeDeployAtomForCtx(makeCtx(), DEPLOY_MATERIAL);
+
+      expect(mockWriteAtomJson).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        { request_id: null },
+      );
+    });
+
+    it('writeDeployAtomForCtx logs the write at info when the envelope is applied', async () => {
+      await service.writeDeployAtomForCtx(makeCtx(), DEPLOY_MATERIAL);
+
+      expect(mockLogger.log).toHaveBeenCalledWith(expect.stringContaining('Wrote deploy-token atom'));
+      expect(mockLogger.debug).not.toHaveBeenCalled();
+    });
+
+    it('writeDeployAtomForCtx logs a stale skip at debug instead of claiming a write', async () => {
+      mockWriteAtomJson.mockResolvedValueOnce({ written: false, reason: 'stale' });
+
+      await service.writeDeployAtomForCtx(makeCtx(), DEPLOY_MATERIAL);
+
+      expect(mockLogger.log).not.toHaveBeenCalledWith(expect.stringContaining('Wrote'));
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Skipped stale deploy-token atom write'));
+    });
+
+    it('writeDeployAtomBestEffort swallows a writer failure with a warn log', async () => {
+      mockWriteAtomJson.mockRejectedValueOnce(new Error('redis down'));
+
+      await expect(
+        service.writeDeployAtomBestEffort(makeCtx(), DEPLOY_MATERIAL, {
+          requestId: REQUEST_ID,
+          opLabel: 'provisioning',
+        }),
+      ).resolves.toBeUndefined();
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to write deploy-token atom for provisioning'),
+        REQUEST_ID,
       );
     });
   });

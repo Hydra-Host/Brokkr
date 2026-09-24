@@ -6,16 +6,22 @@ import {
   DeviceSecretActorType,
   DeviceSecretKind,
   DeviceSecretPurpose,
+  DeviceTokenRevocationReason,
   IpxeBuildTarget,
+  type Job,
+  JobStatus,
+  JobType,
   RequestSource,
   TeeCapability,
 } from '@repo/database';
+import { ContractType } from '@repo/utils';
 import { DhcpConfigPublisherService } from 'src/brokkr-bridge/dhcp/dhcp-config-publisher.service';
-import { BridgeInventoryCollectionService } from 'src/brokkr-bridge/lifecycle/inventory-collection.service';
 import { BridgeCommissioningService } from 'src/brokkr-bridge/lifecycle/commissioning.service';
+import { BridgeInventoryCollectionService } from 'src/brokkr-bridge/lifecycle/inventory-collection.service';
 import { CloudInitTemplatesService } from 'src/cloud-init-templates/cloud-init-templates.service';
 import { ContextService } from 'src/common/context/context.service';
 import { DeviceSecretService, SecretStorageUnavailableError } from 'src/device-secret/device-secret.service';
+import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
 import { InventoryService } from 'src/inventory/inventory.service';
 import { LifecycleService } from 'src/lifecycle/lifecycle.service';
 import { OrganizationsService } from 'src/organizations/organizations.service';
@@ -114,6 +120,9 @@ describe('BaremetalService', () => {
 
   const mockDhcpRepublishForDevice = vi.fn();
 
+  const mockRevokeBrokkrLiveTokens = vi.fn().mockResolvedValue(undefined);
+  const mockRevokeDeploymentTokens = vi.fn().mockResolvedValue(undefined);
+
   const mockContextService = {
     organizationId: ORG_ID,
     userId: USER_ID,
@@ -148,6 +157,13 @@ describe('BaremetalService', () => {
           useValue: { write: mockDeviceSecretWrite, invalidateAll: mockDeviceSecretInvalidateAll },
         },
         { provide: DhcpConfigPublisherService, useValue: { republishForDevice: mockDhcpRepublishForDevice } },
+        {
+          provide: DeviceTokensService,
+          useValue: {
+            revokeBrokkrLiveTokensForDevice: mockRevokeBrokkrLiveTokens,
+            revokeDeploymentTokensForDevice: mockRevokeDeploymentTokens,
+          },
+        },
         { provide: 'LoggerServiceBaremetalService', useValue: mockLogger },
       ],
     }).compile();
@@ -495,6 +511,18 @@ describe('BaremetalService', () => {
     });
   });
 
+  const decommissionJobFixture: Job = {
+    id: 'job-1',
+    job: {},
+    jobType: JobType.Decommission,
+    deviceId: 'device-uuid-1',
+    status: JobStatus.Completed,
+    lastCompletedStep: null,
+    error: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
   describe('updateServerToDecommissioned', () => {
     it('should call requireAction("decommission") as a fail-fast permission gate', async () => {
       const requireActionSpy = vi.spyOn(BaremetalRecord, 'requireAction').mockImplementation(() => {
@@ -532,7 +560,7 @@ describe('BaremetalService', () => {
         save: vi.fn().mockResolvedValue(undefined),
       };
       vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
-      vi.spyOn(BaremetalRecord, 'createJob').mockResolvedValue({} as any);
+      vi.spyOn(BaremetalRecord, 'createJob').mockResolvedValue(decommissionJobFixture);
       mockTx.interface.findMany.mockResolvedValue([{ id: 'iface-1' }, { id: 'iface-2' }]);
       mockTx.ipAddress.updateMany.mockResolvedValue({ count: 2 });
       mockTx.interface.updateMany.mockResolvedValue({ count: 2 });
@@ -560,6 +588,88 @@ describe('BaremetalService', () => {
       expect(result).toEqual({ success: true });
     });
 
+    it('revokes BROKKR_LIVE and DEPLOYMENT_OS tokens after the decommission commits', async () => {
+      mockContextService.requirePermission.mockImplementation(() => undefined);
+      const record = {
+        data: { id: 'device-uuid-1', server: { deployments: [] } },
+        decommission: vi.fn(),
+        save: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
+      vi.spyOn(BaremetalRecord, 'createJob').mockResolvedValue(decommissionJobFixture);
+      mockTx.interface.findMany.mockResolvedValue([]);
+      mockTx.interface.updateMany.mockResolvedValue({ count: 0 });
+
+      await service.updateServerToDecommissioned('device-uuid-1');
+
+      expect(mockRevokeBrokkrLiveTokens).toHaveBeenCalledWith(
+        'device-uuid-1',
+        DeviceTokenRevocationReason.MANUAL,
+        expect.stringContaining('device-uuid-1'),
+      );
+      expect(mockRevokeDeploymentTokens).toHaveBeenCalledWith(
+        'device-uuid-1',
+        DeviceTokenRevocationReason.MANUAL,
+        expect.stringContaining('device-uuid-1'),
+      );
+    });
+
+    it('still revokes DEPLOYMENT_OS tokens and succeeds when the BROKKR_LIVE revoke throws', async () => {
+      mockContextService.requirePermission.mockImplementation(() => undefined);
+      const record = {
+        data: { id: 'device-uuid-1', server: { deployments: [] } },
+        decommission: vi.fn(),
+        save: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
+      vi.spyOn(BaremetalRecord, 'createJob').mockResolvedValue(decommissionJobFixture);
+      mockTx.interface.findMany.mockResolvedValue([]);
+      mockTx.interface.updateMany.mockResolvedValue({ count: 0 });
+      mockRevokeBrokkrLiveTokens.mockRejectedValueOnce(new Error('brokkr-live revoke failed'));
+
+      const result = await service.updateServerToDecommissioned('device-uuid-1');
+
+      expect(mockRevokeBrokkrLiveTokens).toHaveBeenCalledOnce();
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('BROKKR_LIVE'),
+        expect.any(String),
+      );
+      expect(mockRevokeDeploymentTokens).toHaveBeenCalledWith(
+        'device-uuid-1',
+        DeviceTokenRevocationReason.MANUAL,
+        expect.stringContaining('device-uuid-1'),
+      );
+      expect(result).toEqual({ success: true });
+    });
+
+    it('still succeeds when the DEPLOYMENT_OS revoke throws after BROKKR_LIVE has already run', async () => {
+      mockContextService.requirePermission.mockImplementation(() => undefined);
+      const record = {
+        data: { id: 'device-uuid-1', server: { deployments: [] } },
+        decommission: vi.fn(),
+        save: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
+      vi.spyOn(BaremetalRecord, 'createJob').mockResolvedValue(decommissionJobFixture);
+      mockTx.interface.findMany.mockResolvedValue([]);
+      mockTx.interface.updateMany.mockResolvedValue({ count: 0 });
+      mockRevokeDeploymentTokens.mockRejectedValueOnce(new Error('deployment-os revoke failed'));
+
+      const result = await service.updateServerToDecommissioned('device-uuid-1');
+
+      expect(mockRevokeBrokkrLiveTokens).toHaveBeenCalledWith(
+        'device-uuid-1',
+        DeviceTokenRevocationReason.MANUAL,
+        expect.stringContaining('device-uuid-1'),
+      );
+      expect(mockRevokeDeploymentTokens).toHaveBeenCalledOnce();
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('DEPLOYMENT_OS'),
+        expect.any(String),
+      );
+      expect(result).toEqual({ success: true });
+    });
+
     it('skips the IP soft-delete when the device has no live interfaces', async () => {
       mockContextService.requirePermission.mockImplementation(() => undefined);
       const record = {
@@ -568,7 +678,7 @@ describe('BaremetalService', () => {
         save: vi.fn().mockResolvedValue(undefined),
       };
       vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
-      vi.spyOn(BaremetalRecord, 'createJob').mockResolvedValue({} as any);
+      vi.spyOn(BaremetalRecord, 'createJob').mockResolvedValue(decommissionJobFixture);
       mockTx.interface.findMany.mockResolvedValue([]);
       mockTx.interface.updateMany.mockResolvedValue({ count: 0 });
 
@@ -642,6 +752,7 @@ describe('BaremetalService', () => {
         operatingSystem: 'ubuntu-24-04' as any,
         sshKeyIds: ['k1'],
         diskLayouts: undefined,
+        contractType: ContractType.RESERVED_ROLLING,
       } as any);
 
       expect(mockLifecycleService.requestProvision).toHaveBeenCalledWith(
@@ -673,6 +784,7 @@ describe('BaremetalService', () => {
         operatingSystem: 'ubuntu-24-04' as any,
         sshKeyIds: ['k1'],
         diskLayouts,
+        contractType: ContractType.RESERVED_ROLLING,
       } as any);
 
       expect(mockProvisionValidator.validateDiskLayouts).toHaveBeenCalledWith(diskLayouts, 'provision');
@@ -698,6 +810,7 @@ describe('BaremetalService', () => {
         operatingSystem: 'ubuntu-noble-vanilla' as any,
         sshKeyIds: ['k1'],
         customizations: { gpuDriver: 'nvidia-driver-580', miscSoftware: ['docker'] },
+        contractType: ContractType.RESERVED_ROLLING,
       } as any);
 
       expect(mockProvisionValidator.validateCustomizations).toHaveBeenCalledWith(
@@ -731,6 +844,7 @@ describe('BaremetalService', () => {
         operatingSystem: 'ipxe-custom' as any,
         sshKeyIds: ['k1'],
         tee: true,
+        contractType: ContractType.RESERVED_ROLLING,
       } as any);
 
       expect(mockLifecycleService.requestProvision).toHaveBeenCalledWith(expect.objectContaining({ tee: true }));
@@ -754,6 +868,7 @@ describe('BaremetalService', () => {
         operatingSystem: 'ubuntu-24-04' as any,
         sshKeyIds: ['k1'],
         tee: true,
+        contractType: ContractType.RESERVED_ROLLING,
       } as any);
 
       expect(mockLifecycleService.requestProvision).toHaveBeenCalledWith(expect.objectContaining({ tee: true }));
@@ -774,9 +889,68 @@ describe('BaremetalService', () => {
           operatingSystem: 'ipxe-custom' as any,
           sshKeyIds: ['k1'],
           tee: true,
+          contractType: ContractType.RESERVED_ROLLING,
         } as any),
       ).rejects.toThrow('TEE is not supported on this device');
 
+      expect(mockLifecycleService.requestProvision).not.toHaveBeenCalled();
+    });
+
+    it('defaults omitted contractType to Reserved Rolling and provisions', async () => {
+      const record = { data: { id: 'device-uuid-1' } };
+      vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
+      mockCloudInitProcessor.process.mockReturnValue('cloud-init-content');
+      mockLifecycleService.requestProvision.mockResolvedValue({ data: { id: 'job-1' } });
+
+      await service.provisionServer('device-uuid-1', {
+        deploymentName: 'test',
+        operatingSystem: 'ubuntu-24-04' as any,
+        sshKeyIds: ['k1'],
+      } as any);
+
+      expect(mockLifecycleService.requestProvision).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-uuid-1', isInterruptible: false }),
+      );
+    });
+
+    it('rejects On Demand with the Reserved Rolling message', async () => {
+      const record = { data: { id: 'device-uuid-1' } };
+      vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
+      mockCloudInitProcessor.process.mockReturnValue('cloud-init-content');
+
+      await expect(
+        service.provisionServer('device-uuid-1', {
+          deploymentName: 'test',
+          operatingSystem: 'ubuntu-24-04' as any,
+          sshKeyIds: ['k1'],
+          contractType: ContractType.ON_DEMAND,
+        } as any),
+      ).rejects.toMatchObject({
+        response: {
+          message: "This device isn't available for On Demand contract type, please use Reserved Rolling",
+        },
+      });
+      expect(mockLifecycleService.requestProvision).not.toHaveBeenCalled();
+    });
+
+    it('rejects Interruptible with the Reserved Rolling message', async () => {
+      const record = { data: { id: 'device-uuid-1' } };
+      vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
+      mockCloudInitProcessor.process.mockReturnValue('cloud-init-content');
+
+      await expect(
+        service.provisionServer('device-uuid-1', {
+          deploymentName: 'test',
+          operatingSystem: 'ubuntu-24-04' as any,
+          sshKeyIds: ['k1'],
+          contractType: ContractType.INTERRUPTIBLE,
+          isInterruptible: true,
+        } as any),
+      ).rejects.toMatchObject({
+        response: {
+          message: "This device isn't available for Interruptible contract type, please use Reserved Rolling",
+        },
+      });
       expect(mockLifecycleService.requestProvision).not.toHaveBeenCalled();
     });
 
@@ -790,6 +964,7 @@ describe('BaremetalService', () => {
           deploymentName: 'test',
           operatingSystem: 'ubuntu-24-04' as any,
           sshKeyIds: ['k1'],
+          contractType: ContractType.RESERVED_ROLLING,
         } as any),
       ).rejects.toThrow(BadRequestException);
 

@@ -2,6 +2,7 @@ import type {
   AddressAutocompleteContribution,
   AppBannerSlotContribution,
   DashboardWidgetContribution,
+  InventoryDeviceProvisionContribution,
   InventoryItemCtaContribution,
   InventoryItemCtaDevice,
   InventoryPageExtrasContribution,
@@ -46,6 +47,17 @@ type Props =
       sessionPending?: boolean;
     }
   | { name: 'inventory-item-cta'; category?: string; userEmail?: string; device: InventoryItemCtaDevice }
+  | {
+      name: 'inventory-device-provision';
+      knownAccount: boolean;
+      hasActiveInvite: boolean;
+      category?: string;
+      userEmail?: string;
+      device: InventoryItemCtaDevice;
+      deviceName: string;
+      pending: boolean;
+      disabled: boolean;
+    }
   | { name: 'app-banner'; pathname: string; organizationId: string };
 
 export function PluginSlot(props: Props) {
@@ -111,6 +123,33 @@ export function PluginSlot(props: Props) {
           return (
             <PluginErrorBoundary key={`${pluginId}:${index}`} pluginId={pluginId}>
               <Component pluginId={pluginId} category={category} userEmail={userEmail} device={device} />
+            </PluginErrorBoundary>
+          );
+        })}
+      </>
+    );
+  }
+
+  if (props.name === 'inventory-device-provision') {
+    const { knownAccount, hasActiveInvite, category, userEmail, device, deviceName, pending, disabled } = props;
+    return (
+      <>
+        {entries.map(({ pluginId, contribution }, index) => {
+          const c = contribution as InventoryDeviceProvisionContribution;
+          const Component = c.component;
+          return (
+            <PluginErrorBoundary key={`${pluginId}:${index}`} pluginId={pluginId}>
+              <Component
+                pluginId={pluginId}
+                knownAccount={knownAccount}
+                hasActiveInvite={hasActiveInvite}
+                category={category}
+                userEmail={userEmail}
+                device={device}
+                deviceName={deviceName}
+                pending={pending}
+                disabled={disabled}
+              />
             </PluginErrorBoundary>
           );
         })}

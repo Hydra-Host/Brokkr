@@ -1,3 +1,4 @@
+import { pickBmcMac, pickDataMac } from '@repo/utils';
 import type { IpxeIdentifierBundle } from '../types/render-request.types';
 
 interface IdentifierSource {
@@ -5,7 +6,11 @@ interface IdentifierSource {
   systemUuid?: string | null;
   chassisSerial?: string | null;
   baseboardSerial?: string | null;
-  interfaces?: ReadonlyArray<{ macAddress?: string | null; mgmtOnly?: boolean | null }> | null;
+  interfaces?: ReadonlyArray<{
+    macAddress?: string | null;
+    mgmtOnly?: boolean | null;
+    ipAddresses?: ReadonlyArray<unknown> | null;
+  }> | null;
 }
 
 export type IdentifierBundle = IpxeIdentifierBundle & {
@@ -17,8 +22,8 @@ export function identifierBundleFor(device: IdentifierSource): IdentifierBundle 
   const bundle: IdentifierBundle = {};
 
   const interfaces = device.interfaces ?? [];
-  const dataMac = interfaces.find((i) => !i.mgmtOnly && i.macAddress)?.macAddress;
-  const bmcMac = interfaces.find((i) => i.mgmtOnly && i.macAddress)?.macAddress;
+  const dataMac = pickDataMac(interfaces)?.macAddress;
+  const bmcMac = pickBmcMac(interfaces)?.macAddress;
   if (dataMac) bundle.mac = dataMac;
   if (bmcMac) bundle.ipmi_mac = bmcMac;
   if (device.systemUuid) bundle.system_uuid = device.systemUuid;

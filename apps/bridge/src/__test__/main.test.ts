@@ -4,8 +4,11 @@ import { withEnv } from './env-guard.js';
 
 withEnv('BROKKR_ZONE_ID', '11111111-2222-3333-4444-555555555555');
 
+import { getBridgeVersion } from '../bridge-status/bridge.config.js';
 import { buildDeviceCredentialResolverFactory } from '../composition/device-cred-resolver-factory.js';
 import { buildStartupArgs } from '../composition/startup-args.js';
+import { NIL_JOB_ID } from '../constants.js';
+import { logInfo } from '../logger/logger.service.js';
 import {
   OrchestratorGateUnsetError,
   isOrchestratorEnabled,
@@ -411,5 +414,30 @@ describe('startProductionServer', () => {
     expect(stopAll).toHaveBeenCalledTimes(1);
     expect(close).toHaveBeenCalledTimes(1);
     expect(callOrder).toEqual(['orchestrator.stopAll', 'app.close']);
+  });
+
+  it('logs the bridge version once at startup', async () => {
+    let resolveTrigger: (() => void) | null = null;
+    const shutdownTrigger = new Promise<void>((res) => {
+      resolveTrigger = res;
+    });
+    const fakeApp = {
+      listen: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+    };
+    const createApp = vi.fn(async () => fakeApp as never);
+
+    const serverPromise = startProductionServer(shutdownTrigger, {
+      env: { PORT: '7474', BRIDGE_ORCHESTRATOR_ENABLED: 'false' },
+      createApp,
+    });
+    await new Promise((r) => setImmediate(r));
+    resolveTrigger?.();
+    await serverPromise;
+
+    const versionLines = vi.mocked(logInfo).mock.calls.filter(([message]) => message.startsWith('bridge version '));
+    expect(versionLines).toEqual([
+      [`bridge version ${getBridgeVersion()}`, { jobId: NIL_JOB_ID, appClassName: 'main' }],
+    ]);
   });
 });

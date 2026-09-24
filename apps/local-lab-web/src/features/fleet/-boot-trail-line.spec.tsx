@@ -33,6 +33,13 @@ describe('bootTrailLine', () => {
     expect(bootTrailLine(trail())).toBe('no PXE request seen yet');
   });
 
+  it('says the chain was reached with no request when iPXE came without a bridge decision', () => {
+    expect(bootTrailLine(trail({ chainReached: true, chainAtMs: CHAIN_AT }))).toBe(
+      `iPXE chain reached at ${clock(CHAIN_AT)}, no PXE request recorded`,
+    );
+    expect(bootTrailLine(trail({ chainReached: true }))).toBe('iPXE chain reached, no PXE request recorded');
+  });
+
   it('shows the PXE decision time and an unreached chain', () => {
     expect(bootTrailLine(trail({ pxe: { outcome: 'offered', atMs: PXE_AT } }))).toBe(
       `PXE offered at ${clock(PXE_AT)}; iPXE chain not reached yet`,

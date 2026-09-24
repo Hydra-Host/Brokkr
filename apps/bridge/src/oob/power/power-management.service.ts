@@ -55,7 +55,7 @@ export interface IpmiRetryLike {
     device: IpmiDeviceLike,
     operation: string,
     jobId: string,
-    opts: { maxRetries: number; uefi?: boolean },
+    opts: { maxRetries: number; uefi?: boolean; persistent?: boolean },
   ): Promise<Record<string, unknown>>;
 }
 
@@ -231,17 +231,25 @@ export class PowerManagementService {
     throw new PowerManagementError(`Server did not power off after ${elapsed}s (soft + hard)`);
   }
 
-  async setBootDevice(creds: BmcCredentials, bootDevice: unknown = 'pxe'): Promise<Record<string, unknown>> {
+  async setBootDevice(
+    creds: BmcCredentials,
+    bootDevice: unknown = 'pxe',
+    opts: { persistent?: boolean } = {},
+  ): Promise<Record<string, unknown>> {
     const device = await this.resolveDevice(creds);
     const op = String(bootDevice);
+    const persistent = opts.persistent ?? true;
 
-    await this.deps.logger.info(`Setting boot device to '${op}'`, { jobId: this.jobId });
+    await this.deps.logger.info(`Setting ${persistent ? 'persistent' : 'one-time'} boot device to '${op}'`, {
+      jobId: this.jobId,
+    });
     const result = await this.deps.retry.performIpmiWithRetry(device, op, this.jobId, {
       maxRetries: 3,
       uefi: true,
+      persistent,
     });
 
-    return { device: bootDevice, uefi: true, result: result['result'] };
+    return { device: bootDevice, uefi: true, persistent, result: result['result'] };
   }
 
   async verifyBootDevice(creds: BmcCredentials, bootDevice: unknown = 'pxe'): Promise<Record<string, unknown>> {

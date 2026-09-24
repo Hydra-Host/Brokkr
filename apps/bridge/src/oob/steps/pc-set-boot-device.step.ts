@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { isRecord } from '@repo/utils';
 
 import type { SagaContext } from '../../saga-framework/saga.types';
 
@@ -14,6 +15,10 @@ export class PcSetBootDeviceStep {
     if (skip !== null) return skip;
     const bootDevice = ctx.payload['boot_device'] ?? 'pxe';
     const service = await this.factory.create(ctx.jobId);
-    return service.setBootDevice(credsFromContext(ctx), bootDevice);
+    // After the custom-iPXE handoff a persistent PXE override re-serves the customer installer on
+    // every reboot; one-time hands boot control back to the firmware's own UEFI boot order.
+    const armResult = ctx.stepResults['arm_custom_ipxe_boot'];
+    const customIpxeHandoff = isRecord(armResult) && armResult['armed'] === true;
+    return service.setBootDevice(credsFromContext(ctx), bootDevice, { persistent: !customIpxeHandoff });
   }
 }

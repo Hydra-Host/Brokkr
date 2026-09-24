@@ -1,5 +1,5 @@
 import type {} from '@hydrahost/plugin-sdk';
-import type { JobType, RequestSource } from '@repo/database';
+import type { BillingFrequency, JobType, RequestSource } from '@repo/database';
 
 declare module '@hydrahost/plugin-sdk' {
   interface BrokkrEventMap {
@@ -27,7 +27,7 @@ declare module '@hydrahost/plugin-sdk' {
     };
 
     'provision.completed': LifecycleOutcome;
-    'provision.failed': LifecycleOutcome & { error: string };
+    'provision.failed': LifecycleOutcome & { error: string; cause?: string };
     'reprovision.completed': LifecycleOutcome;
     'deprovision.completed': LifecycleOutcome;
     'deprovision.failed': LifecycleOutcome & { error: string };
@@ -55,6 +55,13 @@ declare module '@hydrahost/plugin-sdk' {
       deviceId: string;
       deploymentId: string;
       organizationId: string | null;
+      internalProvision: boolean;
+      manualBilling: boolean;
+      billingFrequency: BillingFrequency;
+      reservationPrice: number | null;
+      deviceName: string;
+      deviceClass: string;
+      supplierOrganizationId: string | null;
     };
 
     'lifecycle.deferred': {

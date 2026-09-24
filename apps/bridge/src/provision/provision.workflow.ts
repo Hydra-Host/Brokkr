@@ -1,6 +1,7 @@
 import type { SagaContext, SagaDef, SagaStepExecutor } from '../saga-framework/saga.types';
 
 export interface ProvisionSagaStepServices {
+  disarmCustomIpxeBoot: SagaStepExecutor;
   brokkrLiveCheck: SagaStepExecutor;
   pcPowerOff: SagaStepExecutor;
   pcVerifyPowerOff: SagaStepExecutor;
@@ -26,6 +27,11 @@ export function buildProvisionSaga(steps: ProvisionSagaStepServices): SagaDef {
   return {
     name: 'provision',
     steps: [
+      {
+        name: 'disarm_custom_ipxe_boot',
+        operation: 'Disarm custom iPXE boot',
+        execute: (ctx: SagaContext) => steps.disarmCustomIpxeBoot.execute(ctx),
+      },
       {
         name: 'brokkr_live_check',
         operation: 'Check Brokkr Live readiness',

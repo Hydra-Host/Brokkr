@@ -1,6 +1,7 @@
 import { BillingFrequency } from '@repo/database/enums';
 import { z } from 'zod';
 import { IpxeBootUrlSchema } from './common';
+import { SelectableContractTypeSchema } from './contract-type';
 import { availableLayersFields } from './customizations';
 import { GpuTypeSchema } from './gpu';
 import { zodEnumFromPrisma } from './prisma-enum';
@@ -229,10 +230,15 @@ export const ProvisionRequestSchema = z.object({
   ...provisionCommonFields,
   ...customizationsField,
   ...teeField,
+  contractType: SelectableContractTypeSchema.optional().describe(
+    'Contract type for the new deployment. Until commerce billing can price other terms, only RESERVED_ROLLING is accepted.',
+  ),
   isInterruptible: z
     .boolean()
     .optional()
-    .describe('Whether the deployment is interruptible (re-rentable via eviction)'),
+    .describe(
+      'Legacy interruptible flag. When contractType is omitted, true maps to INTERRUPTIBLE (rejected until commerce billing); false/omitted defaults to RESERVED_ROLLING.',
+    ),
   projectId: z.string().optional().describe('Project to assign the deployment to'),
   ipxeUrl: IpxeBootUrlSchema.optional().nullable(),
 });

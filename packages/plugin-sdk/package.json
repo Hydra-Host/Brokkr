@@ -9,6 +9,9 @@
     "*": {
       "nest": [
         "src/nest.ts"
+      ],
+      "testing": [
+        "src/testing.ts"
       ]
     }
   },
@@ -22,6 +25,11 @@
       "types": "./src/nest.ts",
       "require": "./dist/nest.js",
       "import": "./dist/nest.js"
+    },
+    "./testing": {
+      "types": "./src/testing.ts",
+      "require": "./dist/testing.js",
+      "import": "./dist/testing.js"
     }
   },
   "files": [

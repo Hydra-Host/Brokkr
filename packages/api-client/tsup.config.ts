@@ -4,7 +4,6 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'contract/index': 'src/contract/index.ts',
-    'contract/ipam': 'src/contract/ipam.ts',
     client: 'src/client.ts',
     'schemas/index': 'src/schemas/index.ts',
     core: 'src/core.ts',

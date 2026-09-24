@@ -10,11 +10,13 @@ describe('HostPluginDeviceOpsRequests', () => {
     deactivateRescueMode: vi.fn(),
   };
 
+  const healthChecks = { dispatch: vi.fn() };
+
   let adapter: HostPluginDeviceOpsRequests;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    adapter = new HostPluginDeviceOpsRequests(deviceOps as unknown as OperatorDeviceOpsService);
+    adapter = new HostPluginDeviceOpsRequests(deviceOps as unknown as OperatorDeviceOpsService, healthChecks);
   });
 
   it('proxies force discovery', async () => {
@@ -60,5 +62,14 @@ describe('HostPluginDeviceOpsRequests', () => {
   it('proxies rescue mode deactivation', async () => {
     await adapter.requestDeactivateRescueMode({ deviceId: 'device-1' });
     expect(deviceOps.deactivateRescueMode).toHaveBeenCalledWith('device-1');
+  });
+
+  it('dispatches a device health check and returns the saga job id', async () => {
+    healthChecks.dispatch.mockResolvedValue({ jobId: 'health-request-1' });
+
+    const result = await adapter.requestDeviceHealthCheck({ deviceId: 'device-1' });
+
+    expect(healthChecks.dispatch).toHaveBeenCalledWith('device-1');
+    expect(result).toEqual({ jobId: 'health-request-1' });
   });
 });

@@ -1,4 +1,5 @@
 import { OperatingSystemSlugSchema, type BaseLayer, type CustomizationLayer } from '@repo/api-client';
+import { ContractType } from '@repo/utils';
 import type { PaginationMeta } from '../../ui/table.js';
 import type { CliApiClient } from '../client.js';
 import { toDiskFormat, type DiskFormat } from '../deployments/schemas.js';
@@ -165,7 +166,6 @@ export async function getInventoryItem(client: CliApiClient, id: string): Promis
 }
 
 export interface RentInventoryDeviceInput {
-  isInterruptible: boolean;
   deploymentName: string;
   operatingSystem: string;
   sshKeyIds: string[];
@@ -184,7 +184,8 @@ export async function rentInventoryDevice(
   const result = await client.provisionDevice({
     params: { id },
     body: {
-      isInterruptible: input.isInterruptible,
+      contractType: ContractType.RESERVED_ROLLING,
+      isInterruptible: false,
       deploymentName: input.deploymentName,
       operatingSystem: OperatingSystemSlugSchema.parse(input.operatingSystem),
       sshKeyIds: input.sshKeyIds,

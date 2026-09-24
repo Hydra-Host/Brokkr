@@ -63,8 +63,11 @@ export {
   IPXE_CUSTOM_SLUGS,
   OperatingSystemSlugSchema,
   isIpxeCustomOs,
+  type IpxeCustomSlug,
   type OperatingSystemSlug,
 } from './common';
+
+export { ContractTypeSchema, SelectableContractTypeSchema, type SelectableContractTypeInput } from './contract-type';
 
 export {
   ApiKeyIdParamsSchema,
@@ -84,6 +87,7 @@ export {
   PaginationMetaSchema,
   PaginationQuerySchema,
   createPaginatedResponseSchema,
+  type PaginatedResponse,
   type PaginationMeta,
   type PaginationQuery,
 } from './pagination';
@@ -195,6 +199,23 @@ export {
 } from './sshkeys';
 
 export {
+  ListNotificationsQuerySchema,
+  MarkAllNotificationsReadQuerySchema,
+  MarkAllNotificationsReadResponseSchema,
+  NotificationIdParamsSchema,
+  NotificationSchema,
+  NotificationUnreadCountQuerySchema,
+  NotificationUnreadCountSchema,
+  type ListNotificationsQuery,
+  type MarkAllNotificationsReadQuery,
+  type MarkAllNotificationsReadResponse,
+  type Notification,
+  type NotificationIdParams,
+  type NotificationUnreadCount,
+  type NotificationUnreadCountQuery,
+} from './notifications';
+
+export {
   DeploymentActionResponseSchema,
   DeploymentSchema,
   ExportLogsJobTypeSchema,
@@ -244,11 +265,17 @@ export {
   JobLogEntrySchema,
   JobLogsQuerySchema,
   JobLogsResponseSchema,
+  JobSolLogEntrySchema,
+  JobSolLogsQuerySchema,
+  JobSolLogsResponseSchema,
   type DeviceJob,
   type DeviceJobsResponse,
   type JobLogEntry,
   type JobLogsQuery,
   type JobLogsResponse,
+  type JobSolLogEntry,
+  type JobSolLogsQuery,
+  type JobSolLogsResponse,
 } from './job-logs';
 
 export {
@@ -431,6 +458,61 @@ export {
   type DiscoveryRunsListResponse,
   type DiscoveryRunsQuery,
 } from './discovery-runs';
+
+export {
+  BootReadinessFindingSchema,
+  DeviceBootReadinessSchema,
+  type BootReadinessFinding,
+  type DeviceBootReadiness,
+} from './boot-readiness';
+export {
+  BootExpectedSchema,
+  BootTrailSchema,
+  ChainHitValueSchema,
+  DeviceBootTrailSchema,
+  PxeDecisionHashSchema,
+  PxeOutcomeSchema,
+  type BootExpected,
+  type BootTrail,
+  type DeviceBootTrail,
+  type PxeOutcome,
+} from './boot-trail';
+export {
+  DEVICE_HEALTH_RECORDED,
+  DEVICE_METADATA_UPDATED,
+  DeviceEventFrameSchema,
+  DeviceHealthRecordedFrameSchema,
+  DeviceMetadataUpdatedFrameSchema,
+  JOB_EVENT_RECORDED,
+  JobEventRecordedFrameSchema,
+  type DeviceEventFrame,
+} from './device-events';
+export { DeviceTokenSummarySchema, type DeviceTokenSummary } from './device-tokens';
+export {
+  CUSTOMER_HEALTH_KEYS,
+  DeviceHealthCheckSchema,
+  DeviceHealthChecksListResponseSchema,
+  DeviceHealthSnapshotSchema,
+  DeviceHealthSummarySchema,
+  DeviceReachabilitySchema,
+  HEALTH_CHECK_RETENTION_DAYS,
+  HealthChecksSchema,
+  RequestDeviceHealthCheckResponseSchema,
+  type DeviceHealthCheck,
+  type DeviceHealthChecksListResponse,
+  type DeviceHealthSnapshot,
+  type DeviceHealthSummary,
+  type DeviceReachability,
+  type HealthChecks,
+  type RequestDeviceHealthCheckResponse,
+} from './health-checks';
+export {
+  LIFECYCLE_JOB_EVENT_CAP,
+  LifecycleJobEventSchema,
+  LifecycleJobEventsResponseSchema,
+  type LifecycleJobEvent,
+  type LifecycleJobEventsResponse,
+} from './jobs';
 
 export { FilterFieldType, FilterOperator, OPERATORS_BY_TYPE, OPERATOR_LABELS } from './filters';
 

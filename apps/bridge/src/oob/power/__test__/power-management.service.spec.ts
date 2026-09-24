@@ -245,16 +245,27 @@ describe('PowerManagementService power off/on', () => {
 });
 
 describe('PowerManagementService boot device', () => {
-  it('setBootDevice dispatches with uefi enabled', async () => {
+  it('setBootDevice dispatches with uefi enabled and a persistent override by default', async () => {
     const performIpmiWithRetry = mockRetry(async () => ({ result: 'success' }));
     const { deps } = makeDeps({ retry: { performIpmiWithRetry } });
     const service = new PowerManagementService('job-1', deps);
 
     const out = await service.setBootDevice(CREDS, 'pxe');
 
-    expect(out).toEqual({ device: 'pxe', uefi: true, result: 'success' });
+    expect(out).toEqual({ device: 'pxe', uefi: true, persistent: true, result: 'success' });
     expect(performIpmiWithRetry.mock.calls[0]?.[1]).toBe('pxe');
-    expect(performIpmiWithRetry.mock.calls[0]?.[3]).toEqual({ maxRetries: 3, uefi: true });
+    expect(performIpmiWithRetry.mock.calls[0]?.[3]).toEqual({ maxRetries: 3, uefi: true, persistent: true });
+  });
+
+  it('setBootDevice dispatches a one-time override only when asked', async () => {
+    const performIpmiWithRetry = mockRetry(async () => ({ result: 'success' }));
+    const { deps } = makeDeps({ retry: { performIpmiWithRetry } });
+    const service = new PowerManagementService('job-1', deps);
+
+    const out = await service.setBootDevice(CREDS, 'pxe', { persistent: false });
+
+    expect(out).toEqual({ device: 'pxe', uefi: true, persistent: false, result: 'success' });
+    expect(performIpmiWithRetry.mock.calls[0]?.[3]).toEqual({ maxRetries: 3, uefi: true, persistent: false });
   });
 
   it('verifyBootDevice verifies the selector', async () => {

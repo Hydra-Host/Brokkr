@@ -42,7 +42,6 @@ const validMetadata = {
   cpuCoreCount: 16,
   cpuPhysicalCount: 2,
   ipamConfig: null,
-  virtualNetworkConfig: {},
   macAddress: '00:11:22:33:44:55',
   memory: 128,
   ssdSize: 500,
@@ -143,19 +142,12 @@ describe('reservation-deployments schemas', () => {
     expect(StorageLayoutSchema.safeParse(layout).success).toBe(false);
   });
 
-  it('accepts null and empty-object ipam/virtual-network config', () => {
-    expect(
-      DeviceMetadataSchema.safeParse({ ...validMetadata, ipamConfig: null, virtualNetworkConfig: {} }).success,
-    ).toBe(true);
+  it('accepts a null ipamConfig', () => {
+    expect(DeviceMetadataSchema.safeParse({ ...validMetadata, ipamConfig: null }).success).toBe(true);
   });
 
   it('rejects a non-object ipamConfig', () => {
     expect(DeviceMetadataSchema.safeParse({ ...validMetadata, ipamConfig: 'oops' }).success).toBe(false);
-  });
-
-  it('rejects a missing virtualNetworkConfig', () => {
-    const { virtualNetworkConfig: _omitted, ...rest } = validMetadata;
-    expect(DeviceMetadataSchema.safeParse(rest).success).toBe(false);
   });
 
   it('accepts a fully valid reservation deployment', () => {

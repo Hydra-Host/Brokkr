@@ -48,3 +48,8 @@ export function createPaginatedResponseSchema<T extends z.ZodType>(itemSchema: T
     meta: PaginationMetaSchema.describe('Pagination metadata'),
   });
 }
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  meta: PaginationMeta;
+}

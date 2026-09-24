@@ -1,6 +1,7 @@
 import { BillingFrequency, DeviceStatus } from '@repo/database/enums';
 import { z } from 'zod';
 import { BooleanQueryParamSchema, IpxeBootUrlSchema } from './common';
+import { SelectableContractTypeSchema } from './contract-type';
 import { availableLayersFields } from './customizations';
 import { InterfaceSchema } from './interface';
 import { IpxeBuildTargetSchema } from './ipam';
@@ -197,7 +198,14 @@ const reservationDataSchema = z.object({
 });
 
 const activeDeploymentSchema = z.object({
-  deployerEmail: z.string().nullable().optional().describe('Email of the user who deployed the device'),
+  id: z.string().describe('Deployment id, for the deployment page and its diagnostics'),
+  deployerEmail: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      'Email of the user who deployed the device; null unless the supplier sent the reservation invite for this deployment',
+    ),
   reservation: reservationDataSchema.nullable().optional().describe('Active reservation details, if any'),
 });
 
@@ -227,6 +235,7 @@ export const ServerSchema = z.object({
   name: z.string().describe('Device name'),
   role: z.string().describe('Device role (e.g. "gpu_server", "bridge")'),
   zoneName: z.string().describe('Zone name the device belongs to'),
+  zoneId: z.string().uuid().nullable().describe('Zone the device is assigned to; null when unassigned'),
   status: statusSchema.describe('Current device lifecycle status'),
   powerStatus: statusSchema.describe('Current power state of the device'),
   customer: customerSchema.describe('Customer/tenant deployment information'),
@@ -255,7 +264,9 @@ export const ServerSchema = z.object({
   isHealthy: z
     .boolean()
     .nullable()
-    .describe('Device health status based on latest GPU burn-in test and bridge health check'),
+    .describe(
+      'Result of the latest GPU burn-in test: true when it passed, false when it failed or did not complete, null when no test has run. Bridge health lives on the health routes.',
+    ),
   deletedAt: z
     .string()
     .nullable()
@@ -376,10 +387,15 @@ export const ProvisionServerRequestSchema = z.object({
   ...provisionCommonFields,
   ...customizationsField,
   ...teeField,
+  contractType: SelectableContractTypeSchema.optional().describe(
+    'Contract type for the deployment. Until commerce billing can price other terms, only RESERVED_ROLLING is accepted.',
+  ),
   isInterruptible: z
     .boolean()
     .optional()
-    .describe('Whether the deployment is interruptible (re-rentable via eviction)'),
+    .describe(
+      'Legacy interruptible flag. When contractType is omitted, true maps to INTERRUPTIBLE (rejected until commerce billing); false/omitted defaults to RESERVED_ROLLING.',
+    ),
   projectId: z.string().optional().describe('Project to assign the deployment to'),
   ipxeUrl: IpxeBootUrlSchema.optional().nullable(),
 });
@@ -392,6 +408,9 @@ export const CreateReservationInviteRequestSchema = z.object({
   inviterEmail: z.string().email().describe('Email of the admin or supplier creating the invite'),
   inviteeEmail: z.string().email().describe('Email of the buyer being invited'),
   organizationId: z.string().describe('Organization ID of the supplier'),
+  contractType: SelectableContractTypeSchema.optional().describe(
+    'Contract type being offered. Until commerce billing can price other terms, only RESERVED_ROLLING is accepted.',
+  ),
   price: z.number().nonnegative().describe('Total price per billing period'),
   billingFrequency: BillingFrequencySchema.describe('How often the buyer will be billed'),
   dateExpires: z.coerce.date().describe('When the invite expires'),
@@ -409,6 +428,9 @@ export const CreateReservationInviteRequestSchema = z.object({
 export type CreateReservationInviteRequest = z.infer<typeof CreateReservationInviteRequestSchema>;
 
 export const EditReservationInviteRequestSchema = z.object({
+  contractType: SelectableContractTypeSchema.optional().describe(
+    'Updated contract type. Until commerce billing can price other terms, only RESERVED_ROLLING is accepted.',
+  ),
   price: z.number().nonnegative().describe('Updated price per billing period'),
   billingFrequency: BillingFrequencySchema.describe('Updated billing frequency'),
   dateExpires: z.coerce.date().describe('Updated expiration date'),

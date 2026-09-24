@@ -9,7 +9,10 @@ import { DEPLOYMENTS_SERVICE } from 'src/deployments/deployments.tokens';
 import type { DeploymentsService } from 'src/deployments/services/deployments.service';
 import { LoggerService } from 'src/logger/logger.service';
 import { ProvisionValidatorService } from 'src/provision/processors';
-import { ReservationProvisioningService } from 'src/reservations/reservation-provisioning.service';
+import {
+  ReservationProvisioningService,
+  type BilledProvisionLine,
+} from 'src/reservations/reservation-provisioning.service';
 import { z } from 'zod';
 import { LifecycleRepository } from '../lifecycle.repository';
 import { ProvisionDispatcher } from './provision-dispatch';
@@ -39,6 +42,7 @@ export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
 export interface ProvisionContext {
   baseLayerId: string;
   pubkeys: string[];
+  supplierOrganizationId: string | null;
 }
 
 @Injectable()
@@ -61,6 +65,22 @@ export class ProvisionOperation {
       internalProvision: input.internalProvision,
       isInterruptible: input.isInterruptible,
     });
+  }
+
+  resolveProvisionInviteFlags(input: {
+    deviceId: string;
+    userId: string;
+    organizationId: string;
+  }): Promise<{ fromInvite: boolean; manualBilling: boolean }> {
+    return this.reservationProvisioning.resolveProvisionInviteFlags(input);
+  }
+
+  isKnownAccount(organizationId: string): Promise<boolean> {
+    return this.reservationProvisioning.isKnownAccount(organizationId);
+  }
+
+  billedLineForDeployment(deploymentId: string): Promise<BilledProvisionLine> {
+    return this.reservationProvisioning.billedLineForDeployment(deploymentId);
   }
 
   async acceptInvite(reservationId: string): Promise<void> {
@@ -119,7 +139,11 @@ export class ProvisionOperation {
     this.provisionValidator.validateDiskGroupHomogeneity(input.diskLayouts, device.storageDrives);
     this.provisionValidator.validateDiskGroupSizeLimits(input.diskLayouts, device.storageDrives);
 
-    return { baseLayerId: baseLayer.id, pubkeys: sshKeys.map((key) => key.key) };
+    return {
+      baseLayerId: baseLayer.id,
+      pubkeys: sshKeys.map((key) => key.key),
+      supplierOrganizationId: device.supplierId ?? null,
+    };
   }
 
   async createDeployment(input: ProvisionRequest, baseLayerId: string, reservationId: string): Promise<string> {

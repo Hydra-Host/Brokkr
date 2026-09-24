@@ -1,32 +1,30 @@
-import { createFileRoute, Outlet } from '@tanstack/react-router';
-import {
-  AlertTriangle,
-  Eye,
-  FileCode2,
-  FlaskConical,
-  History,
-  KeyRound,
-  Mail,
-  MapPin,
-  Network,
-  Power,
-  ScanSearch,
-  ScrollText,
-  Settings,
-} from 'lucide-react';
+import { createFileRoute, Outlet, useLocation } from '@tanstack/react-router';
+import { MapPin, Power, ScanSearch } from 'lucide-react';
+import { useState } from 'react';
 
 import type { Server } from '@repo/api-client';
 import { DeviceStatusBadge } from '@repo/domain-ui/components/device-status-badge';
+import {
+  BootHeaderLine,
+  HeaderLines,
+  HealthHeaderLine,
+  PhoneHomeHeaderLine,
+} from '@repo/domain-ui/components/diagnostic-header-lines';
+import { ResponsiveNavTabs } from '@repo/domain-ui/components/responsive-nav-tabs';
+import { activeTab, tabHref, visibleTabs } from '@repo/domain-ui/hooks/server-tabs';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
-import { ButtonLink } from '@repo/ui/components/button-link';
-import { Card, CardHeader, CardTitle } from '@repo/ui/components/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { Skeleton } from '@repo/ui/components/skeleton';
 import { TypewriterText } from '@repo/ui/components/typewriter-text';
 import { useCanViewJobHistory } from '~/components/job-history-table';
+import { RecentJobChip, type RecentJob } from '~/components/recent-job-chip';
 import { useDcimDeviceEvents } from '~/hooks/use-device-events';
 import { usePermissions } from '~/hooks/use-permissions';
 import { tsr } from '~/lib/api';
+import { HubDiagnosticsProvider } from '~/lib/diagnostics-api';
+import { toDiagnosticDevice } from './-header-lines';
+import { GATE_PASSES, SERVER_TABS } from './-server-tabs';
 
 const serverQueryKey = (deviceId: string) => ['server', deviceId] as const;
 
@@ -78,21 +76,33 @@ function ServerLayout() {
   useDcimDeviceEvents(device.id);
 
   return (
-    <div className="space-y-6">
-      <ServerHeader device={device} />
-      <Outlet />
-    </div>
+    <HubDiagnosticsProvider>
+      <div className="space-y-6">
+        <ServerHeader device={device} />
+        <Outlet />
+      </div>
+    </HubDiagnosticsProvider>
   );
 }
 
 function ServerHeader({ device }: { device: Server }) {
   const { can } = usePermissions();
-  const displayName = device.dcim?.nickname || device.name;
+  const { canView: canViewJobs } = useCanViewJobHistory();
+  const diagnosticDevice = toDiagnosticDevice(device);
+  const displayName = diagnosticDevice.displayName;
   const deviceId = device.id;
+  const [recentJob, setRecentJob] = useState<RecentJob | null>(null);
   const { mutate: collectInventory, isPending: isCollecting } = tsr.collectServerInventory.useMutation({
     meta: { successMessage: 'Discovery collection started' },
+    onSuccess: (response) => {
+      if (response.status === 200)
+        setRecentJob({ jobId: response.body.jobId, label: 'collection', startedAt: Date.now() });
+    },
   });
-  const { canView: canViewJobs } = useCanViewJobHistory();
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const basePath = `/dcim/servers/${deviceId}`;
+  const tabs = visibleTabs(SERVER_TABS, { canAccessJobLogs: can('job-log', 'access'), canViewJobs }, GATE_PASSES);
+  const active = activeTab(pathname, basePath, tabs) ?? tabs[0];
 
   return (
     <Card>
@@ -106,66 +116,23 @@ function ServerHeader({ device }: { device: Server }) {
             {device.powerStatus?.label && <DeviceStatusBadge status={device.powerStatus.label} icon={Power} />}
             <Badge variant="secondary" className="h-6 px-2">
               <MapPin className="mr-1.5 h-3 w-3" />
-              {device.zoneName || 'Unknown data center'}
+              {device.zoneName || 'Unknown zone'}
             </Badge>
           </div>
           {device.dcim?.nickname && <p className="text-muted-foreground text-sm">{device.name}</p>}
-          <p className="text-muted-foreground text-sm">ID: {device.id}</p>
+          <HeaderLines
+            device={diagnosticDevice}
+            extra={
+              <>
+                <BootHeaderLine device={diagnosticDevice} />
+                <HealthHeaderLine device={diagnosticDevice} />
+                <PhoneHomeHeaderLine device={diagnosticDevice} />
+              </>
+            }
+          />
         </div>
 
-        <div className="grid grid-cols-4 gap-2">
-          <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId" params={{ deviceId }}>
-            <Eye className="mr-2 h-4 w-4" />
-            Overview
-          </ButtonLink>
-          <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/interfaces" params={{ deviceId }}>
-            <Network className="mr-2 h-4 w-4" />
-            Interfaces
-          </ButtonLink>
-          <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/netplan" params={{ deviceId }}>
-            <FileCode2 className="mr-2 h-4 w-4" />
-            Netplan
-          </ButtonLink>
-          <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/settings" params={{ deviceId }}>
-            <Settings className="mr-2 h-4 w-4" />
-            Settings
-          </ButtonLink>
-          <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/bmc-secrets" params={{ deviceId }}>
-            <KeyRound className="mr-2 h-4 w-4" />
-            BMC Secrets
-          </ButtonLink>
-          <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/provision" params={{ deviceId }}>
-            <Power className="mr-2 h-4 w-4" />
-            Provision
-          </ButtonLink>
-          <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/invite" params={{ deviceId }}>
-            <Mail className="mr-2 h-4 w-4" />
-            Invite
-          </ButtonLink>
-          <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/test-runs" params={{ deviceId }}>
-            <FlaskConical className="mr-2 h-4 w-4" />
-            Test Runs
-          </ButtonLink>
-          <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/discovery-runs" params={{ deviceId }}>
-            <ScanSearch className="mr-2 h-4 w-4" />
-            Discovery Runs
-          </ButtonLink>
-          {can('job-log', 'access') && (
-            <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/job-logs" params={{ deviceId }}>
-              <ScrollText className="mr-2 h-4 w-4" />
-              Job Logs
-            </ButtonLink>
-          )}
-          {canViewJobs && (
-            <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/jobs" params={{ deviceId }}>
-              <History className="mr-2 h-4 w-4" />
-              Jobs
-            </ButtonLink>
-          )}
-          <ButtonLink variant="outline" size="sm" to="/dcim/servers/$deviceId/decommission" params={{ deviceId }}>
-            <AlertTriangle className="mr-2 h-4 w-4" />
-            Decommission
-          </ButtonLink>
+        <div className="flex flex-col items-end gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -175,8 +142,15 @@ function ServerHeader({ device }: { device: Server }) {
             <ScanSearch className="mr-2 h-4 w-4" />
             {isCollecting ? 'Collecting…' : 'Collect'}
           </Button>
+          {recentJob && <RecentJobChip deviceId={deviceId} job={recentJob} />}
         </div>
       </CardHeader>
+      <CardContent>
+        <ResponsiveNavTabs
+          tabs={tabs.map((tab) => ({ name: tab.name, href: tabHref(basePath, tab) }))}
+          activeValue={active ? tabHref(basePath, active) : ''}
+        />
+      </CardContent>
     </Card>
   );
 }

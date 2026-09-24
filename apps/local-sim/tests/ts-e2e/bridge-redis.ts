@@ -7,8 +7,16 @@
  */
 
 import Redis from 'ioredis';
+import { z } from 'zod';
 
 import type { HubDB } from './hub-db';
+
+const SolLogEntrySchema = z.object({
+  timestamp: z.string(),
+  message: z.string(),
+});
+
+export type SolLogEntry = z.infer<typeof SolLogEntrySchema>;
 
 export interface WriteDiscoveryPendingOpts {
   ipmiMac: string;
@@ -121,6 +129,17 @@ export class BridgeRedis {
     const raw = await this.client.get(key);
     if (!raw) return null;
     return JSON.parse(raw) as Record<string, unknown>;
+  }
+
+  /**
+   * Read the SOL console capture at {zone}:sol:logs:{planId}, one entry per
+   * console line between the BEGIN/END LOG COLLECTION markers. Empty until the
+   * bridge's first flush.
+   */
+  async getSolLog(deviceId: string, planId: string): Promise<SolLogEntry[]> {
+    const zone = await this.zoneFor(deviceId);
+    const raw = await this.client.lrange(`${zone}:sol:logs:${planId}`, 0, -1);
+    return raw.map((entry) => SolLogEntrySchema.parse(JSON.parse(entry)));
   }
 
   /**

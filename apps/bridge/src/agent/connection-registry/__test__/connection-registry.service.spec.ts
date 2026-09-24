@@ -38,15 +38,106 @@ describe('ConnectionRegistry', () => {
     const reg = new ConnectionRegistry();
     const first = await reg.register('dev-1');
     const second = await reg.register('dev-1');
+    first.connectedAt = 100;
+    second.connectedAt = 200;
 
     expect(first.cancelled.isSet()).toBe(false);
     expect(second.cancelled.isSet()).toBe(false);
     expect(reg.sessionCount('dev-1')).toBe(2);
 
-    expect(reg.get('dev-1')).toBe(first);
-
-    await reg.unregister('dev-1', first);
     expect(reg.get('dev-1')).toBe(second);
+
+    await reg.unregister('dev-1', second);
+    expect(reg.get('dev-1')).toBe(first);
+  });
+
+  it('prefers the newest non-cancelled handle', async () => {
+    const reg = new ConnectionRegistry();
+    const oldest = await reg.register('dev-1');
+    const newest = await reg.register('dev-1');
+    const middle = await reg.register('dev-1');
+    oldest.connectedAt = 100;
+    newest.connectedAt = 300;
+    middle.connectedAt = 200;
+
+    expect(reg.get('dev-1')).toBe(newest);
+
+    newest.cancelled.set();
+    expect(reg.get('dev-1')).toBe(middle);
+  });
+
+  it('still demotes a newest handle with a recent enqueue timeout', async () => {
+    const reg = new ConnectionRegistry();
+    const older = await reg.register('dev-1');
+    const newest = await reg.register('dev-1');
+    older.connectedAt = 100;
+    newest.connectedAt = 200;
+    newest.lastEnqueueTimeoutAt = monotonicSec();
+
+    expect(reg.get('dev-1')).toBe(older);
+  });
+
+  it('dispatch after re-registration uses the fresh stream', async () => {
+    const reg = new ConnectionRegistry();
+    const stale = await reg.register('dev-1', { agentVersion: '8ac43e18' });
+    stale.connectedAt = 1_000;
+    const fresh = await reg.register('dev-1', { agentVersion: '8ac43e18' });
+    fresh.connectedAt = 2_000;
+
+    expect(stale.cancelled.isSet()).toBe(false);
+    expect(reg.isConnected('dev-1')).toBe(true);
+    expect(reg.get('dev-1')).toBe(fresh);
+  });
+
+  it('cancels sessions connected before the host reset and keeps the newer ones', async () => {
+    const reg = new ConnectionRegistry();
+    const stale = await reg.register('dev-1', { agentVersion: '8ac43e18' });
+    const staler = await reg.register('dev-1', { agentVersion: '8ac43e18' });
+    const fresh = await reg.register('dev-1', { agentVersion: '8ac43e18' });
+    stale.connectedAt = 1_000;
+    staler.connectedAt = 1_100;
+    fresh.connectedAt = 2_000;
+
+    expect(await reg.cancelSessionsBefore('dev-1', 1_500)).toBe(2);
+
+    expect(stale.cancelled.isSet()).toBe(true);
+    expect(staler.cancelled.isSet()).toBe(true);
+    expect(fresh.cancelled.isSet()).toBe(false);
+    expect(reg.sessionCount('dev-1')).toBe(3);
+    expect(reg.get('dev-1')).toBe(fresh);
+
+    expect(await reg.cancelSessionsBefore('dev-1', 1_500)).toBe(0);
+  });
+
+  it('does not cancel anything when no session is older than the reset', async () => {
+    const reg = new ConnectionRegistry();
+    const atReset = await reg.register('dev-1');
+    const after = await reg.register('dev-1');
+    atReset.connectedAt = 1_500;
+    after.connectedAt = 2_500;
+
+    expect(await reg.cancelSessionsBefore('dev-1', 1_500)).toBe(0);
+    expect(await reg.cancelSessionsBefore('dev-unknown', 1_500)).toBe(0);
+
+    expect(atReset.cancelled.isSet()).toBe(false);
+    expect(after.cancelled.isSet()).toBe(false);
+    expect(reg.get('dev-1')).toBe(after);
+  });
+
+  it('dispatch after a timeout on the fresh session no longer falls back to a pre-reset handle', async () => {
+    const reg = new ConnectionRegistry();
+    const stale = await reg.register('dev-1', { agentVersion: '8ac43e18' });
+    const fresh = await reg.register('dev-1', { agentVersion: '8ac43e18' });
+    stale.connectedAt = 1_000;
+    fresh.connectedAt = 2_000;
+    fresh.lastEnqueueTimeoutAt = monotonicSec();
+    expect(reg.get('dev-1')).toBe(stale);
+
+    await reg.cancelSessionsBefore('dev-1', 1_500);
+
+    expect(reg.get('dev-1')).toBe(fresh);
+    await reg.unregister('dev-1', fresh);
+    expect(reg.get('dev-1')).toBeNull();
   });
 
   it('get skips cancelled handles', async () => {
@@ -79,22 +170,26 @@ describe('ConnectionRegistry', () => {
     expect(reg.get('dev-1')).toBe(healthy);
   });
 
-  it('falls back when every handle recently timed out (returns oldest)', async () => {
+  it('falls back when every handle recently timed out (returns newest)', async () => {
     const reg = new ConnectionRegistry();
     const first = await reg.register('dev-1');
     const second = await reg.register('dev-1');
+    first.connectedAt = 100;
+    second.connectedAt = 200;
     const now = monotonicSec();
     first.lastEnqueueTimeoutAt = now;
     second.lastEnqueueTimeoutAt = now;
-    expect(reg.get('dev-1')).toBe(first);
+    expect(reg.get('dev-1')).toBe(second);
   });
 
-  it('restores FIFO preference once timeout ages out of the window', async () => {
+  it('restores newest preference once its timeout ages out of the window', async () => {
     const reg = new ConnectionRegistry();
     const older = await reg.register('dev-1');
-    await reg.register('dev-1');
-    older.lastEnqueueTimeoutAt = monotonicSec() - 120.0;
-    expect(reg.get('dev-1')).toBe(older);
+    const newer = await reg.register('dev-1');
+    older.connectedAt = 100;
+    newer.connectedAt = 200;
+    newer.lastEnqueueTimeoutAt = monotonicSec() - 120.0;
+    expect(reg.get('dev-1')).toBe(newer);
   });
 
   it('wait_for_registration skips cancelled handle', async () => {
@@ -149,6 +244,28 @@ describe('ConnectionRegistry', () => {
     const got = await waiter;
     expect(got).toBe(fresh);
     expect(got).not.toBe(old);
+  });
+
+  it('wait_for_registration skips a handle older than minConnectedAt', async () => {
+    const reg = new ConnectionRegistry();
+    const stale = await reg.register('dev-r', { agentVersion: '1.0.0' });
+    stale.connectedAt = 1_000;
+
+    const waiter = reg.waitForRegistration('dev-r', 2.0, { minConnectedAt: 1_500 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const fresh = await reg.register('dev-r', { agentVersion: '1.0.0' });
+    const got = await waiter;
+    expect(got).toBe(fresh);
+    expect(got).not.toBe(stale);
+  });
+
+  it('wait_for_registration returns an existing handle connected at or after minConnectedAt', async () => {
+    const reg = new ConnectionRegistry();
+    const h = await reg.register('dev-r2');
+    h.connectedAt = 2_000;
+
+    expect(await reg.waitForRegistration('dev-r2', 0.1, { minConnectedAt: 2_000 })).toBe(h);
   });
 
   it('register with different agent_version cancels prior handles', async () => {

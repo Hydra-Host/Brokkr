@@ -16,6 +16,7 @@ import {
   emptyCustomizationCatalog,
   resolveZoneBuildId,
 } from '@repo/layers';
+import { LifecycleJobRecord } from '@repo/lifecycle';
 import { normalizeArchForArtifact, TRANSITIONAL_POWER_STATUSES } from '@repo/utils';
 import { DeviceContextService } from 'src/brokkr-bridge/device-context.service';
 import { SolLogService } from 'src/brokkr-bridge/sol-logs/sol-log.service';
@@ -146,7 +147,8 @@ export class DeploymentsService {
     this.provisionValidator.validateDiskLayouts(data.diskLayouts, 'reprovision');
     this.provisionValidator.validateIpxeRequirements(data.operatingSystem, data.ipxeUrl);
 
-    const deviceRecord = await BaremetalRecord.findByDeviceId(aggregate.server.device.id, { includeDeleted: true });
+    // the deployment lookup above is the authorization boundary; the device belongs to the supplier, not the reader
+    const deviceRecord = await BaremetalRecord.findByIdUnscoped(aggregate.server.device.id, { includeDeleted: true });
     if (!deviceRecord) {
       throw new NotFoundException('Device not found for deployment');
     }
@@ -272,25 +274,18 @@ export class DeploymentsService {
       throw new NotFoundException('Deployment not found');
     }
 
-    if (!aggregate.customIpxeScript) {
-      throw new BadRequestException('Deployment is not using a custom iPXE script for provisioning');
-    }
-
-    const jobs = await this.prisma.job.findMany({
-      where: { deviceId: aggregate.server.device.id, jobType },
+    // the deployment lookup is the authorization boundary; the job's tenant is whoever requested it, not the reader
+    const latestJob: LifecycleJobRecord | null = await LifecycleJobRecord.findOneUnscoped({
+      where: { deploymentId: aggregate.id, jobType },
+      orderBy: { createdAt: 'desc' },
     });
-
-    const latestJob =
-      jobs.length > 0
-        ? jobs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
-        : null;
 
     if (!latestJob) {
       throw new NotFoundException('No jobs found for deployment');
     }
 
     const { zoneId } = await this.deviceContextService.resolveZoneContext(aggregate.server.device.id);
-    const { entries, complete } = await this.solLogService.getLogsForPlan(zoneId, latestJob.id);
+    const { entries, complete } = await this.solLogService.getLogsForPlan(zoneId, latestJob.data.id);
 
     return {
       success: true,

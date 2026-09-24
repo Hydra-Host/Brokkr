@@ -30,9 +30,22 @@ json_get() { python3 -c 'import json,sys; print(json.loads(sys.stdin.read())[sys
 
 _entry_json() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"; }
 
+_stack_entry_pid_nl() { # <entry-file> → pcDaemonPid, or 0 when absent
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pcDaemonPid") or 0)' "$1"
+}
+
+# Does the entry's supervisor still answer on its socket? A missing socket is a No, so the caller
+# that treats a dead pid as reapable does not need its own else-branch.
+_stack_entry_socket_answers_nl() { # <entry-file>
+  local sock
+  sock=$(_entry_json "$1" pcSock 2>/dev/null) || return 1
+  [ -S "$sock" ] || return 1
+  timeout 5 process-compose -U -u "$sock" process list -o json >/dev/null 2>&1
+}
+
 # pid 0 = pre-supervisor window (claim happened, refresh-pid hasn't) — never reap on that alone.
 _stack_registry_gc_nl() {
-  local f checkout pid sock
+  local f checkout pid
   for f in "$(registry_dir)"/stack-*.json; do
     [ -e "$f" ] || continue
     checkout=$(_entry_json "$f" checkout 2>/dev/null) || continue
@@ -40,15 +53,10 @@ _stack_registry_gc_nl() {
       rm -f "$f"
       continue
     fi
-    pid=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pcDaemonPid") or 0)' "$f")
+    pid=$(_stack_entry_pid_nl "$f")
     case "$pid" in '' | *[!0-9]*) continue ;; esac
     if [ "$pid" != 0 ] && ! kill -0 "$pid" 2>/dev/null; then
-      sock=$(_entry_json "$f" pcSock)
-      if [ -S "$sock" ]; then
-        timeout 5 process-compose -U -u "$sock" process list -o json >/dev/null 2>&1 || rm -f "$f"
-      else
-        rm -f "$f"
-      fi
+      _stack_entry_socket_answers_nl "$f" || rm -f "$f"
     fi
   done
 }
@@ -100,10 +108,23 @@ print(json.dumps({"pcDaemonPid": int(sys.argv[1]), "lastUpAt": int(time.time()),
                   "ports": json.loads(sys.argv[2])}))' "$pid" "$ports")"
 }
 
+# an entry nothing was ever brought up on: gc keeps it forever (pid 0 is the pre-supervisor window)
+# and stack-reslot refuses to migrate it for want of the applied stamp, so a caller that knows the
+# claim was never applied can re-point it instead.
+_stack_registry_entry_unused_nl() { # <entry-file>
+  local f=$1 pid
+  pid=$(_stack_entry_pid_nl "$f")
+  # an unreadable pid is not a license to release: refuse what we cannot judge
+  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$pid" = 0 ] && return 0
+  kill -0 "$pid" 2>/dev/null && return 1
+  ! _stack_entry_socket_answers_nl "$f"
+}
+
 # owner fast-path: a re-claim naming this checkout refreshes its own entry and returns its
 # OWN slot — it never conflicts with itself and never picks a new one.
 _stack_registry_claim_nl() {
-  local want=$1 checkout=$2 runtime=$3 slot f owner staged
+  local want=$1 checkout=$2 runtime=$3 unapplied=${4:-0} slot f owner staged
   _stack_registry_gc_nl
   for f in "$(registry_dir)"/stack-*.json; do
     [ -e "$f" ] || continue
@@ -112,6 +133,14 @@ _stack_registry_claim_nl() {
       slot=$(_entry_json "$f" slot)
       assert_slot "$slot" || return $?
       if [ "$want" != auto ] && [ "$want" != "$slot" ]; then
+        # the drift refusal is right for a stack that came up; for one that never did, it is a
+        # dead end — stack-reslot needs the stamp this claim never wrote, so a pinned slot was
+        # unreachable and the only escape was deleting the entry by hand.
+        if [ "$unapplied" = 1 ] && _stack_registry_entry_unused_nl "$f"; then
+          echo "releasing the unused slot-$slot claim (this checkout never came up) → slot $want" >&2
+          _stack_registry_release_nl "$slot"
+          break
+        fi
         echo "this checkout owns slot $slot but requests $want — run task stack:reslot" >&2
         return 3
       fi

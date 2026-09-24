@@ -108,12 +108,12 @@ let
     postgres = port slotPorts.postgres {
       label = "Postgres";
       group = "Datastores";
-      description = "Postgres listener. A change needs only a restart — the datadir persists.";
+      description = "Postgres listener. A change needs only a restart — the datadir persists. Repointing it is also the remedy when another program already holds the port: devenv reserves this one while it evaluates, so the bring-up refuses (see Troubleshooting).";
     };
     redis = port slotPorts.redis {
       label = "Redis";
       group = "Datastores";
-      description = "Redis listener — the hub's BullMQ queues, config atoms and pub/sub, and every bridge, dial it.";
+      description = "Redis listener — the hub's BullMQ queues, config atoms and pub/sub, and every bridge, dial it. Like ports.postgres, repointing it is the remedy for a foreign listener on the port.";
     };
     thanosHttp = port slotPorts.thanosHttp {
       label = "Thanos HTTP";

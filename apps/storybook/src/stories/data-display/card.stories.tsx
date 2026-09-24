@@ -20,8 +20,8 @@ const meta = {
       description: {
         component:
           'Terminal-styled surface. The decorative corner ticks sit on the ' +
-          'card border and are hidden under the commerce themes (the border ' +
-          'and tick colors match) — switch the toolbar theme to `hydra-dark` ' +
+          'card border and are hidden under the modern style (the border ' +
+          'and tick colors match) — switch the toolbar style to `retro` ' +
           'to see them.',
       },
     },

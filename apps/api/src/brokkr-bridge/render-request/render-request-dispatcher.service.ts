@@ -6,6 +6,7 @@ import {
   ConfigAtomWriter,
   NETPLAN_LIVE_TTL_SECONDS,
   TTL_NEGATIVE_CACHE_SECONDS,
+  deployToken,
   deviceSecret,
   netplanConfig,
   serverToken,
@@ -13,7 +14,7 @@ import {
 import { DeviceSecretAtomPublisher } from 'src/device-secret/device-secret-atom-publisher.service';
 import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
-import { DeviceContextService } from '../device-context.service';
+import { DeviceContextService, DeviceZoneContext } from '../device-context.service';
 import { DeviceRecordPublisher } from '../device-record/device-record-publisher.service';
 import { DeviceResolverService } from '../device-record/device-resolver.service';
 import { NetplanAtomSchema } from '../netplan/netplan-atom.schema';
@@ -45,6 +46,8 @@ export class RenderRequestDispatcher {
     switch (domain) {
       case 'server_token':
         return this.dispatchServerToken(req);
+      case 'deploy_token':
+        return this.dispatchDeployToken(req);
       case 'device_record':
         return this.dispatchDeviceRecord(req);
       case 'netplan':
@@ -61,10 +64,36 @@ export class RenderRequestDispatcher {
   }
 
   private async dispatchServerToken(req: RenderRequest): Promise<void> {
+    await this.dispatchTokenRender(req, {
+      keyFn: serverToken,
+      render: async (ctx) => {
+        const atom = await this.serverTokenService.mintForCtx(ctx);
+        await this.serverTokenService.writeAtomForCtx(ctx, atom, { requestId: req.request_id });
+      },
+    });
+  }
+
+  private async dispatchDeployToken(req: RenderRequest): Promise<void> {
+    await this.dispatchTokenRender(req, {
+      keyFn: deployToken,
+      render: async (ctx) => {
+        const atom = await this.serverTokenService.mintDeployForCtx(ctx);
+        await this.serverTokenService.writeDeployAtomForCtx(ctx, atom, { requestId: req.request_id });
+      },
+    });
+  }
+
+  private async dispatchTokenRender(
+    req: RenderRequest,
+    opts: {
+      keyFn: (deviceId: string) => string;
+      render: (ctx: DeviceZoneContext) => Promise<void>;
+    },
+  ): Promise<void> {
     const deviceId = req.params?.entity_id;
     if (typeof deviceId !== 'string' || deviceId.length === 0) {
       throw new BadRequestException(
-        `render.request domain 'server_token' missing string params.entity_id (request=${req.request_id})`,
+        `render.request domain '${req.domain}' missing string params.entity_id (request=${req.request_id})`,
       );
     }
 
@@ -73,9 +102,9 @@ export class RenderRequestDispatcher {
       select: { id: true },
     });
     if (!device) {
-      await this.writeServerTokenError(req, deviceId, `no Device with id=${deviceId}`);
+      await this.writeTokenError(req, deviceId, `no Device with id=${deviceId}`, opts.keyFn);
       throw new BadRequestException(
-        `render.request domain 'server_token' no Device with id=${deviceId} (request=${req.request_id})`,
+        `render.request domain '${req.domain}' no Device with id=${deviceId} (request=${req.request_id})`,
       );
     }
 
@@ -84,27 +113,26 @@ export class RenderRequestDispatcher {
       if (ctx.zoneId !== req.zone_id) {
         const reason = `device ${device.id} resolves to zone ${ctx.zoneId} but bridge polls zone ${req.zone_id}`;
         this.logger.error(
-          `render.request server_token zone mismatch: ${reason} (request=${req.request_id}) — writing negative-cache envelope under polling zone`,
+          `render.request ${req.domain} zone mismatch: ${reason} (request=${req.request_id}) — writing negative-cache envelope under polling zone`,
           undefined,
           req.request_id,
         );
-        await this.writeServerTokenError(req, device.id, reason);
+        await this.writeTokenError(req, device.id, reason, opts.keyFn);
         return;
       }
 
-      const atom = await this.serverTokenService.mintForCtx(ctx);
-      await this.serverTokenService.writeAtomForCtx(ctx, atom, { requestId: req.request_id });
+      await opts.render(ctx);
     } catch (error) {
       const reason = getErrorMessage(error);
       this.logger.warn(
-        `Failed to render server_token for device ${device.id} (request=${req.request_id}): ${reason} — writing negative-cache envelope`,
+        `Failed to render ${req.domain} for device ${device.id} (request=${req.request_id}): ${reason} — writing negative-cache envelope`,
         req.request_id,
       );
-      await this.writeServerTokenError(req, device.id, reason);
+      await this.writeTokenError(req, device.id, reason, opts.keyFn);
       return;
     }
     this.logger.log(
-      `Rendered server_token atom for device ${device.id} on demand (request=${req.request_id}, reason=${req.reason ?? 'unspecified'})`,
+      `Rendered ${req.domain} atom for device ${device.id} on demand (request=${req.request_id}, reason=${req.reason ?? 'unspecified'})`,
     );
   }
 
@@ -379,8 +407,13 @@ export class RenderRequestDispatcher {
     );
   }
 
-  private async writeServerTokenError(req: RenderRequest, deviceId: string, reason: string): Promise<void> {
-    await this.atomWriter.writeAtomError(req.zone_id, serverToken(deviceId), reason, TTL_NEGATIVE_CACHE_SECONDS, {
+  private async writeTokenError(
+    req: RenderRequest,
+    deviceId: string,
+    reason: string,
+    keyFn: (deviceId: string) => string,
+  ): Promise<void> {
+    await this.atomWriter.writeAtomError(req.zone_id, keyFn(deviceId), reason, TTL_NEGATIVE_CACHE_SECONDS, {
       request_id: req.request_id,
     });
   }

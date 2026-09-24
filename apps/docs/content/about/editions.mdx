@@ -8,7 +8,7 @@ slug: about/editions
 
 import { BRAND_NAME } from '~/lib/branding';
 
-The open-source edition (**BOSS**) and the **managed edition** are built from one codebase. BOSS runs the same hub, Bridges, provisioning engine, and API as the managed service. Inside the hub, the two editions differ by exactly three injectable policies and a plugin set. Outside the hub, the managed edition adds a standalone admin panel. There are no license keys or feature flags, and nothing phones home. The packages installed on disk decide which edition an instance runs. The one exception is `HH_FORCE_BOSS`, a local-development environment variable that can only force the BOSS edition.
+The open-source edition (**BOSS**) and the **managed edition** are built from one codebase. BOSS runs the same hub, Bridges, provisioning engine, and API as the managed service. Inside the hub, the two editions differ by exactly three injectable policies and a plugin set. There are no license keys or feature flags, and nothing phones home. The packages installed on disk decide which edition an instance runs. The one exception is `HH_FORCE_BOSS`, a local-development environment variable that can only force the BOSS edition.
 
 ## One codebase, one seam
 
@@ -90,7 +90,6 @@ Published files are copied as written, with no content redaction step. Proprieta
 The managed edition layers proprietary packages on top of the same core:
 
 - **Edition overrides** replace the three policy providers above. Under the managed policy, instance-operator designation is denied and the operator bootstrap is skipped.
-- **A standalone admin panel** (separate backend and SPA) is the proprietary counterpart to Operator Hub. Instance administration moves there instead of running inside the hub.
 - **Proprietary plugins** add analytics and helpdesk integration. They also add operator lifecycle and bridge-request APIs whose access is gated to the operator or the admin organization.
 
 None of these paths appear in `.public-paths`, so none of them reach the public mirror.

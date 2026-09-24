@@ -1,6 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RedisService } from '../../common/redis/redis.service';
 import { allSpecs, resetForTests as resetCronRegistry } from '../../crons/cron-registry';
@@ -16,6 +16,14 @@ import {
   leaderCacheProvider,
   leaderInterfaceEnumeratorProvider,
 } from '../leader-election-factory';
+
+vi.hoisted(() => {
+  vi.stubEnv('BRIDGE_API_VERSION', '9.9.9');
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
 
 class FakeRedisService {
   setNx = async (): Promise<boolean> => true;
@@ -48,13 +56,13 @@ describe('LeaderElectionModule composition', () => {
     expect(opts.cacheToken).toBe(LEADER_CACHE);
     expect(opts.interfacesToken).toBe(LEADER_INTERFACE_ENUMERATOR);
     const versions = opts.versionInfo();
-    expect(versions.brokkrWorkerVersion).toBe('0.0.0');
-    expect(versions.brokkrLiveVersion).toBe('1.1.9');
+    expect(versions.brokkrWorkerVersion).toBe('9.9.9');
+    expect(versions.brokkrLiveVersion).toBe('latest-prod');
   });
 
-  it('buildLeaderElectionVersionInfo reads BRIDGE_VERSION and BROKKR_LIVE_VERSION from env', () => {
+  it('buildLeaderElectionVersionInfo publishes the bridge version from BRIDGE_API_VERSION, not BRIDGE_VERSION', () => {
     const versionInfo = buildLeaderElectionVersionInfo({
-      BRIDGE_VERSION: '9.9.9',
+      BRIDGE_VERSION: '0.0.0',
       BROKKR_LIVE_VERSION: '2.0.0',
     });
     expect(versionInfo()).toEqual({

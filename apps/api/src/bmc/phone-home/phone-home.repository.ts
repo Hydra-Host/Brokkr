@@ -19,6 +19,7 @@ export class PhoneHomeRepository {
     return this.prisma.device.findUnique({
       where: {
         id: deviceId,
+        deletedAt: null,
       },
       include: {
         supplier: true,

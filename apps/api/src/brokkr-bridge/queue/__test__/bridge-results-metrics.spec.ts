@@ -6,6 +6,7 @@ import { SealOpenError } from 'src/crypto/sealed-envelope.types';
 import { DeviceSecretAuditService } from 'src/device-secret/device-secret-audit.service';
 import { DeviceTestRunsService } from 'src/device-test-runs/device-test-runs.service';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { LifecycleInboundService } from 'src/lifecycle/inbound/lifecycle-inbound.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { SanitizationReportService } from 'src/sanitization-reports/sanitization-report.service';
@@ -18,6 +19,7 @@ import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../../lifecycle/qualify-orchestration.service';
 import { RenderRequestDispatcher } from '../../render-request/render-request-dispatcher.service';
 import { BridgeResultsConsumer, type ProcessableJob } from '../bridge-results.consumer';
+import { TestableConsumer } from './bridge-results-test-helpers';
 
 const { counterAdd, histogramRecord } = vi.hoisted(() => ({ counterAdd: vi.fn(), histogramRecord: vi.fn() }));
 vi.mock('@repo/telemetry', () => ({
@@ -34,12 +36,6 @@ vi.mock('@repo/telemetry', () => ({
 }));
 
 const ZONE = '00000000-0000-0000-0000-111111111111';
-
-class TestableConsumer extends BridgeResultsConsumer {
-  invoke(job: ProcessableJob): Promise<void> {
-    return this.processResult(job);
-  }
-}
 
 describe('BridgeResultsConsumer — brokkr.bridge_results.processed outcomes', () => {
   let consumer: TestableConsumer;
@@ -106,6 +102,7 @@ describe('BridgeResultsConsumer — brokkr.bridge_results.processed outcomes', (
           provide: DeviceTokensService,
           useValue: { revokeBrokkrLiveTokensForDevice: vi.fn().mockResolvedValue(undefined) },
         },
+        { provide: RedisPubSubService, useValue: { publish: vi.fn().mockResolvedValue(undefined) } },
         {
           provide: LifecycleInboundService,
           useValue: {
@@ -172,6 +169,20 @@ describe('BridgeResultsConsumer — brokkr.bridge_results.processed outcomes', (
     expect(counterAdd).toHaveBeenCalledExactlyOnceWith('brokkr.bridge_results.processed', 1, {
       kind: 'device.phone_home',
       outcome: 'ok',
+    });
+  });
+
+  it('counts a valid-envelope result that fails its schema as outcome=error and acks-without-retry', async () => {
+    openBridgeToHub.mockResolvedValue({
+      plaintext: Buffer.from(JSON.stringify({ zone_prefix: ZONE, boot_id: 'b', timestamp: 1 })),
+      zoneId: ZONE,
+    });
+    const job: ProcessableJob = { id: 'x1', name: 'device.phone_home', data: { envelope_v: 1 } };
+    await expect(consumer.invoke(job)).resolves.toBeUndefined();
+    expect(deviceFindUnique).not.toHaveBeenCalled();
+    expect(counterAdd).toHaveBeenCalledExactlyOnceWith('brokkr.bridge_results.processed', 1, {
+      kind: 'device.phone_home',
+      outcome: 'error',
     });
   });
 

@@ -113,12 +113,14 @@ export interface CollectionJobData {
   device_id: string;
   plan_id?: string;
   job_id?: string;
+  saga_name?: string;
 }
 
 export interface DiagnosticsJobData {
   device_id: string;
   plan_id?: string;
   job_id?: string;
+  saga_name?: string;
 }
 
 export interface TestingJobData {
@@ -127,4 +129,5 @@ export interface TestingJobData {
   job_id?: string;
   duration?: string;
   intensity?: string;
+  saga_name?: string;
 }

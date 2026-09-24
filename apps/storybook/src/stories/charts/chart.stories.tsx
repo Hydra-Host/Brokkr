@@ -35,7 +35,7 @@ const meta = {
         component:
           'Recharts wrapper: `ChartContainer` takes a `ChartConfig` and exposes ' +
           'each series color as `--color-<key>`. ChartConfig’s ' +
-          '`theme: { light, dark }` variant predates the data-theme system ' +
+          '`theme: { light, dark }` variant predates the theme-axes system ' +
           '— always use `color` with CSS vars (e.g. ' +
           '`var(--color-accent)`) so charts follow the active theme. Every ' +
           '`ChartContainer` needs an explicit height class (e.g. `h-64 w-full` ' +

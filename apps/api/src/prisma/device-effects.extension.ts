@@ -7,6 +7,7 @@ import {
   type StatusTransitionJob,
 } from 'src/devices/device-status-effects/device-status-effects.types';
 import { detectStatusTransition } from 'src/devices/device-status-effects/transitions';
+import { DEVICE_METADATA_UPDATED } from 'src/events/events.types';
 import type { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import type { LoggerService } from 'src/logger/logger.service';
 
@@ -27,6 +28,7 @@ interface AfterRow {
   powerStatus: ServerPowerStatus | null;
   lifecycleStatus: ServerLifecycleStatus | null;
   deployments: { id: string; customerId: string }[];
+  supplierId: string | null;
 }
 
 interface ExtensionDeps {
@@ -62,6 +64,7 @@ async function captureAfter(ids: string[], baseClient: PrismaClient): Promise<Af
     select: {
       id: true,
       status: true,
+      supplierId: true,
       server: {
         select: {
           lifecycleStatus: true,
@@ -88,9 +91,11 @@ async function fanOut(before: BeforeRow | undefined, after: AfterRow, deps: Exte
 
   try {
     await deps.redisPubSub.publish({
+      type: DEVICE_METADATA_UPDATED,
       deviceId: after.id,
       deploymentId: activeDeployment?.id ?? null,
       organizationId: activeDeployment?.customerId ?? null,
+      supplierId: after.supplierId,
       status: (after.lifecycleStatus ?? after.status)?.toLowerCase() ?? null,
       powerStatus: serverPowerStatusToLegacy(after.powerStatus ?? null),
     });

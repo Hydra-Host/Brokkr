@@ -6,7 +6,7 @@ echo Phone home endpoint {{ phone_home_endpoint }}
 echo Chainload URL {{ ipxe_url }}
 
 params
-param --header Authorization Bearer {{ brokkr_live_token }}
+param --header Authorization Bearer {{ deployment_os_token }}
 param --header x-brokkr-job-id {{ job_id }}
 
 # Phone home with bearer token

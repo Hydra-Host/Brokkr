@@ -46,6 +46,8 @@ export interface PluginRetryAttribution {
   retriedFromJobId: string;
   /** Operator who retried; becomes `triggeredBy` / `performedBy` on the new job. */
   retriedBy: string;
+  /** Optional operator note explaining why the retry was requested. */
+  retryReason?: string;
 }
 
 export interface PluginProvisionRequest extends PluginLifecycleActor, Partial<PluginRetryAttribution> {

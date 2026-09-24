@@ -46,6 +46,11 @@ stub_devenv_version() {
   chmod +x "$MOCKBIN/devenv"
 }
 
+stub_nix_log() {
+  printf '#!/bin/sh\necho "nix $*" >> "$MOCKLOG"\nexit 0\n' >"$MOCKBIN/nix"
+  chmod +x "$MOCKBIN/nix"
+}
+
 @test "the bootstrap devenv floor equals devenv.latestVersion in devenv.nix" {
   run env BROKK_BOOTSTRAP_LIB=1 bash -c '
     . apps/local-sim/provisioning/bootstrap.sh
@@ -89,11 +94,11 @@ short
 major" ]
 }
 
-@test "install_nix_and_direnv warns when devenv is below the floor" {
+@test "the version report warns when devenv is below the floor" {
   stub_devenv_version 1.0.0
   run env BROKK_BOOTSTRAP_LIB=1 bash -c '
     . apps/local-sim/provisioning/bootstrap.sh
-    install_nix_and_direnv
+    _check_devenv_version
   '
   [ "$status" -eq 0 ]
   [[ "$output" == *"devenv 1.0.0 is below the"* ]]
@@ -102,7 +107,7 @@ major" ]
   [[ "$output" == *"home-manager switch"* ]]
 }
 
-@test "install_nix_and_direnv does not warn when devenv meets the floor" {
+@test "the version report does not warn when devenv meets the floor" {
   run env BROKK_BOOTSTRAP_LIB=1 bash -c '
     . apps/local-sim/provisioning/bootstrap.sh
     printf "%s" "$DEVENV_MIN_VERSION"
@@ -110,17 +115,17 @@ major" ]
   stub_devenv_version "$output"
   run env BROKK_BOOTSTRAP_LIB=1 bash -c '
     . apps/local-sim/provisioning/bootstrap.sh
-    install_nix_and_direnv
+    _check_devenv_version
   '
   [ "$status" -eq 0 ]
   [[ "$output" == *"satisfies the >="* ]]
   [[ "$output" != *"is below the"* ]]
 }
 
-@test "install_nix_and_direnv tolerates devenv --version output it cannot parse" {
+@test "the version report tolerates devenv --version output it cannot parse" {
   run env BROKK_BOOTSTRAP_LIB=1 bash -c '
     . apps/local-sim/provisioning/bootstrap.sh
-    install_nix_and_direnv
+    _check_devenv_version
   '
   [ "$status" -eq 0 ]
   [[ "$output" == *"skipping the >="* ]]
@@ -129,17 +134,48 @@ major" ]
 
 @test "the bootstrap does not upgrade a devenv below the floor" {
   stub_devenv_version 1.0.0
-  cat >"$MOCKBIN/nix" <<'EOF'
-#!/bin/sh
-echo "nix $*" >> "$MOCKLOG"
-exit 0
-EOF
-  chmod +x "$MOCKBIN/nix"
+  stub_nix_log
   run env BROKK_BOOTSTRAP_LIB=1 bash -c '
     . apps/local-sim/provisioning/bootstrap.sh
     install_nix_and_direnv
   '
   [ "$status" -eq 0 ]
+  run cat "$MOCKLOG"
+  [ "$output" = "" ]
+}
+
+@test "the devenv pin ref names the version the repo declares" {
+  run env BROKK_BOOTSTRAP_LIB=1 bash -c '
+    . apps/local-sim/provisioning/bootstrap.sh
+    printf "%s %s" "$DEVENV_MIN_VERSION" "$DEVENV_PIN_REF"
+  '
+  [ "$status" -eq 0 ]
+  set -- $output
+  [ -n "$1" ]
+  [ "$2" = "github:cachix/devenv/v$1" ]
+}
+
+@test "the devenv install names the pin, not the unlocked registry" {
+  run grep -c 'nix profile install --accept-flake-config "\$DEVENV_PIN_REF"' \
+    apps/local-sim/provisioning/bootstrap.sh
+  [ "$output" = "1" ]
+  run grep -c 'nix profile install nixpkgs#devenv' apps/local-sim/provisioning/bootstrap.sh
+  [ "$output" = "0" ]
+  run grep -c 'nix profile install nixpkgs#direnv' apps/local-sim/provisioning/bootstrap.sh
+  [ "$output" = "1" ]
+}
+
+@test "the version report notes a devenv ahead of the pin without upgrading it" {
+  stub_devenv_version 9.9.9
+  stub_nix_log
+  run env BROKK_BOOTSTRAP_LIB=1 bash -c '
+    . apps/local-sim/provisioning/bootstrap.sh
+    _check_devenv_version
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"devenv 9.9.9 is ahead of the"* ]]
+  [[ "$output" == *"github:cachix/devenv/v"* ]]
+  [[ "$output" != *"is below the"* ]]
   run cat "$MOCKLOG"
   [ "$output" = "" ]
 }

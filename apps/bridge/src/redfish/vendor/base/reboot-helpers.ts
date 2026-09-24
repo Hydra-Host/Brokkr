@@ -28,6 +28,8 @@ export async function pollResetRebootUntilBiosSettled(handler: RedfishPowerHandl
   const { device } = handler;
   const payload = { ResetType: device.bootState === 'Off' ? 'On' : 'ForceRestart' };
   await handler.fetch('POST', device.rebootEndpoint, payload);
+  // epoch seconds, the clock SessionHandle.connectedAt uses, so an agent session can be dated against this reset
+  device.lastHostResetAt = Date.now() / 1000;
 
   let pending: JsonRecord = {};
   for (let i = 0; i < device.rebootWaits; i++) {

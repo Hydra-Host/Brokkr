@@ -8,6 +8,7 @@ import { Separator } from '@repo/ui/components/separator';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { formatSize, perDriveSizeGb } from '@repo/utils';
 import { Fragment, type ReactNode } from 'react';
+import { ActiveDeploymentDiagnostics } from '~/components/active-deployment-diagnostics';
 
 const parentRoute = getRouteApi('/_app/dcim/servers/$deviceId');
 
@@ -216,6 +217,7 @@ function ServerOverview() {
           )}
         </CardContent>
       </Card>
+      {device.deployment?.id && <ActiveDeploymentDiagnostics deploymentId={device.deployment.id} />}
 
       {device.availableBaseLayers.length > 0 && (
         <Card className="md:col-span-2">

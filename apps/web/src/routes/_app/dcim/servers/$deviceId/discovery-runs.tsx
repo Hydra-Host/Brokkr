@@ -5,6 +5,7 @@ import { useServerTable } from '@repo/domain-ui/hooks/use-server-table';
 import { Badge } from '@repo/ui/components/badge';
 import { Button } from '@repo/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
+import { ClickToCopyString } from '@repo/ui/components/click-to-copy-string';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@repo/ui/components/dialog';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { formatDuration, formatShortDateTime } from '@repo/utils';
@@ -102,7 +103,7 @@ function ServerDiscoveryRuns() {
         id: 'jobId',
         accessorKey: 'jobId',
         header: 'Job',
-        cell: ({ row }) => <span className="font-mono text-xs">{row.original.jobId}</span>,
+        cell: ({ row }) => <ClickToCopyString value={row.original.jobId} className="text-xs" />,
       },
       {
         id: 'collectors',

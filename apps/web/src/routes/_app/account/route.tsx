@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, useLocation } from '@tanstack/react-router';
 
+import { ResponsiveNavTabs } from '@repo/domain-ui/components/responsive-nav-tabs';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import { ResponsiveNavTabs } from '~/components/responsive-nav-tabs';
 
 const tabs = [
   { name: 'User Profile', href: '/account/profile' },

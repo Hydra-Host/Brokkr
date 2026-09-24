@@ -71,6 +71,8 @@ interface DataTableProps<TData, TValue> {
   filters?: DataTableFilter[];
   globalFilterFn?: (row: Row<TData>, columnId: string, filterValue: string) => boolean;
   tableContainerClassName?: string;
+  /** `visible` lets an ancestor scroller own both axes (e.g. ServerDataTable). */
+  overflow?: 'x-auto' | 'visible';
   defaultPageSize?: number;
   renderTableActions?: (table: TableType<TData>) => React.ReactNode;
   tableInstanceRef?: React.MutableRefObject<TableType<TData> | null>;
@@ -416,6 +418,7 @@ export function DataTable<TData, TValue>({
   enableColumnVisbility = false,
   enablePagination = false,
   tableContainerClassName,
+  overflow = 'x-auto',
   defaultPageSize = 10,
   renderTableActions,
   tableInstanceRef,
@@ -706,8 +709,11 @@ export function DataTable<TData, TValue>({
         </div>
       )}
 
-      <div className="overflow-x-auto">
-        <Table containerClassName={cn('h-auto', tableContainerClassName)} style={{ minWidth: minTableWidth }}>
+      <div className={overflow === 'visible' ? 'min-w-0' : 'overflow-x-auto'}>
+        <Table
+          containerClassName={cn('h-auto', overflow === 'visible' && 'overflow-x-visible', tableContainerClassName)}
+          containerStyle={{ minWidth: minTableWidth }}
+        >
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>

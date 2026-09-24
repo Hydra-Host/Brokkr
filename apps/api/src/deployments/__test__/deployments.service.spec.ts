@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ActiveRecordRegistry } from '@repo/active-record';
 import type { OperatingSystemSlug, ReprovisionDiskLayout } from '@repo/api-client';
 import { DeploymentType, InterruptibleClaimStatus, JobType, RequestSource, TeeCapability } from '@repo/database';
+import { LifecycleJobRecord } from '@repo/lifecycle';
 import { randomUUID } from 'crypto';
 import { DeviceContextService } from 'src/brokkr-bridge/device-context.service';
 import { DeviceRecordPublisher } from 'src/brokkr-bridge/device-record/device-record-publisher.service';
@@ -434,38 +435,34 @@ describe('DeploymentsService', () => {
   });
 
   describe('getLogsForDeploymentJob', () => {
+    const aggregate = createMockDeploymentAggregate({ customIpxeScript: true });
+    let findOneUnscoped: ReturnType<typeof vi.spyOn>;
+
     beforeEach(() => {
       mockSolLogService.getLogsForPlan.mockReset();
+      mockPrismaClient.job.findMany.mockReset();
+      vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue(aggregate);
+      findOneUnscoped = vi.spyOn(LifecycleJobRecord, 'findOneUnscoped').mockResolvedValue(null);
     });
 
-    it('reads SOL logs from Redis using the zone prefix and latest job id', async () => {
+    it('reads SOL logs from Redis using the zone prefix and the newest lifecycle job of the deployment', async () => {
       const latestJobId = randomUUID();
-      const mockJobs = [{ id: latestJobId, jobType: JobType.Provision, createdAt: new Date() }];
-      const mockAggregate = {
-        ...mockDeployment,
-        customIpxeScript: true,
-        server: {
-          device: {
-            ...mockDevice,
-            ...mockDeviceMetadata,
-            supplier: mockSupplyOrganization,
-          },
-        },
-      } as any;
-
-      vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue(mockAggregate);
-      mockPrismaClient.job.findMany.mockResolvedValue(mockJobs as any);
+      findOneUnscoped.mockResolvedValue({ data: { id: latestJobId } });
       mockSolLogService.getLogsForPlan.mockResolvedValue({
         entries: [{ timestamp: '2026-05-30T00:00:00.000', message: 'booting' }],
         complete: false,
       });
 
       const result = await service.getLogsForDeploymentJob({
-        deploymentId: mockDeployment.id,
+        deploymentId: aggregate.id,
         jobType: JobType.Provision,
       });
 
-      expect(mockResolveZoneContext).toHaveBeenCalledWith(mockAggregate.server.device.id);
+      expect(findOneUnscoped).toHaveBeenCalledWith({
+        where: { deploymentId: aggregate.id, jobType: JobType.Provision },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(mockResolveZoneContext).toHaveBeenCalledWith(aggregate.server.device.id);
       expect(mockSolLogService.getLogsForPlan).toHaveBeenCalledWith('zone-1', latestJobId);
       expect(result).toEqual({
         success: true,
@@ -476,21 +473,7 @@ describe('DeploymentsService', () => {
     });
 
     it('reports streaming complete when the bridge sentinel has landed', async () => {
-      const latestJobId = randomUUID();
-      vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue({
-        ...mockDeployment,
-        customIpxeScript: true,
-        server: {
-          device: {
-            ...mockDevice,
-            ...mockDeviceMetadata,
-            supplier: mockSupplyOrganization,
-          },
-        },
-      } as any);
-      mockPrismaClient.job.findMany.mockResolvedValue([
-        { id: latestJobId, jobType: JobType.Provision, createdAt: new Date() },
-      ] as any);
+      findOneUnscoped.mockResolvedValue({ data: { id: randomUUID() } });
       mockSolLogService.getLogsForPlan.mockResolvedValue({
         entries: [
           { timestamp: '2026-05-30T00:00:00.000', message: 'booting' },
@@ -500,7 +483,7 @@ describe('DeploymentsService', () => {
       });
 
       const result = await service.getLogsForDeploymentJob({
-        deploymentId: mockDeployment.id,
+        deploymentId: aggregate.id,
         jobType: JobType.Provision,
       });
 
@@ -511,37 +494,68 @@ describe('DeploymentsService', () => {
     it('throws NotFoundException when deployment not found', async () => {
       vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue(null);
       await expect(
-        service.getLogsForDeploymentJob({ deploymentId: mockDeployment.id, jobType: JobType.Provision }),
+        service.getLogsForDeploymentJob({ deploymentId: aggregate.id, jobType: JobType.Provision }),
       ).rejects.toThrow(NotFoundException);
+      expect(findOneUnscoped).not.toHaveBeenCalled();
     });
 
-    it('throws BadRequestException when the deployment did not use a custom iPXE script', async () => {
-      vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue({
-        ...mockDeployment,
-        customIpxeScript: false,
-      } as any);
+    it('returns the log when the deployment did not use a custom iPXE script', async () => {
+      const latestJobId = randomUUID();
+      vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue(
+        createMockDeploymentAggregate({ customIpxeScript: false }),
+      );
+      findOneUnscoped.mockResolvedValue({ data: { id: latestJobId } });
+      mockSolLogService.getLogsForPlan.mockResolvedValue({ entries: [], complete: false });
+
+      const result = await service.getLogsForDeploymentJob({
+        deploymentId: aggregate.id,
+        jobType: JobType.Provision,
+      });
+
+      expect(mockSolLogService.getLogsForPlan).toHaveBeenCalledWith('zone-1', latestJobId);
+      expect(result.success).toBe(true);
+    });
+
+    it('throws NotFoundException when the deployment has no lifecycle job of that type', async () => {
       await expect(
-        service.getLogsForDeploymentJob({ deploymentId: mockDeployment.id, jobType: JobType.Provision }),
-      ).rejects.toThrow(BadRequestException);
+        service.getLogsForDeploymentJob({ deploymentId: aggregate.id, jobType: JobType.Provision }),
+      ).rejects.toThrow(new NotFoundException('No jobs found for deployment'));
       expect(mockSolLogService.getLogsForPlan).not.toHaveBeenCalled();
     });
 
-    it('throws NotFoundException when no jobs found', async () => {
-      vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue({
-        ...mockDeployment,
-        customIpxeScript: true,
-        server: {
-          device: {
-            ...mockDevice,
-            ...mockDeviceMetadata,
-            supplier: mockSupplyOrganization,
-          },
+    it('ignores a legacy device-keyed job row and reports no jobs for the deployment', async () => {
+      mockPrismaClient.job.findMany.mockResolvedValue([
+        {
+          id: randomUUID(),
+          jobType: JobType.Provision,
+          deviceId: aggregate.server.device.id,
+          createdAt: new Date(),
         },
-      } as any);
-      mockPrismaClient.job.findMany.mockResolvedValue([]);
+      ]);
+
       await expect(
-        service.getLogsForDeploymentJob({ deploymentId: mockDeployment.id, jobType: JobType.Provision }),
-      ).rejects.toThrow(NotFoundException);
+        service.getLogsForDeploymentJob({ deploymentId: aggregate.id, jobType: JobType.Provision }),
+      ).rejects.toThrow(new NotFoundException('No jobs found for deployment'));
+      expect(mockPrismaClient.job.findMany).not.toHaveBeenCalled();
+      expect(mockSolLogService.getLogsForPlan).not.toHaveBeenCalled();
+    });
+
+    it('resolves a deprovision log through the lifecycle job of the deployment', async () => {
+      const latestJobId = randomUUID();
+      findOneUnscoped.mockResolvedValue({ data: { id: latestJobId } });
+      mockSolLogService.getLogsForPlan.mockResolvedValue({ entries: [], complete: true });
+
+      const result = await service.getLogsForDeploymentJob({
+        deploymentId: aggregate.id,
+        jobType: JobType.Deprovision,
+      });
+
+      expect(findOneUnscoped).toHaveBeenCalledWith({
+        where: { deploymentId: aggregate.id, jobType: JobType.Deprovision },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(mockSolLogService.getLogsForPlan).toHaveBeenCalledWith('zone-1', latestJobId);
+      expect(result.complete).toBe(true);
     });
   });
 
@@ -679,7 +693,7 @@ describe('DeploymentsService', () => {
   });
 
   describe('reprovisionDirectProvisionDeployment', () => {
-    it('should reprovision via aggregate', async () => {
+    it('reads the device unscoped so a customer outside the supplier organization can reprovision', async () => {
       const mockAggregate = {
         ...mockDeployment,
         isLocked: false,
@@ -687,7 +701,8 @@ describe('DeploymentsService', () => {
       } as any;
 
       vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue(mockAggregate);
-      vi.spyOn(BaremetalRecord, 'findByDeviceId').mockResolvedValue({
+      const scoped = vi.spyOn(BaremetalRecord, 'findByDeviceId');
+      const unscoped = vi.spyOn(BaremetalRecord, 'findByIdUnscoped').mockResolvedValue({
         data: { deletedAt: null },
       } as unknown as BaremetalRecord);
       mockLifecycleService.requestReprovision.mockResolvedValue({ id: 'job-1' } as any);
@@ -709,6 +724,8 @@ describe('DeploymentsService', () => {
         }),
       );
       expect(result).toEqual({ id: 'job-1' });
+      expect(unscoped).toHaveBeenCalledWith(mockAggregate.server.device.id, { includeDeleted: true });
+      expect(scoped).not.toHaveBeenCalled();
     });
 
     it('forwards the device storageDrives to the homogeneity check', async () => {
@@ -723,7 +740,7 @@ describe('DeploymentsService', () => {
       } as any;
 
       vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue(mockAggregate);
-      vi.spyOn(BaremetalRecord, 'findByDeviceId').mockResolvedValue({
+      vi.spyOn(BaremetalRecord, 'findByIdUnscoped').mockResolvedValue({
         data: { deletedAt: null, storageDrives },
       } as unknown as BaremetalRecord);
       mockLifecycleService.requestReprovision.mockResolvedValue({ id: 'job-1' } as any);
@@ -780,7 +797,7 @@ describe('DeploymentsService', () => {
         isLocked: false,
         server: { device: { ...mockDevice, ...mockDeviceMetadata } },
       } as any);
-      vi.spyOn(BaremetalRecord, 'findByDeviceId').mockResolvedValue({
+      vi.spyOn(BaremetalRecord, 'findByIdUnscoped').mockResolvedValue({
         data: { deletedAt: new Date() },
       } as unknown as BaremetalRecord);
       mockLifecycleService.requestReprovision.mockClear();
@@ -802,7 +819,7 @@ describe('DeploymentsService', () => {
         isLocked: false,
         server: { device: { ...mockDevice, ...mockDeviceMetadata } },
       } as any);
-      vi.spyOn(BaremetalRecord, 'findByDeviceId').mockResolvedValue(null);
+      vi.spyOn(BaremetalRecord, 'findByIdUnscoped').mockResolvedValue(null);
       mockLifecycleService.requestReprovision.mockClear();
 
       await expect(
@@ -822,7 +839,7 @@ describe('DeploymentsService', () => {
         isLocked: false,
         server: { device: { ...mockDevice, ...mockDeviceMetadata } },
       } as any);
-      vi.spyOn(BaremetalRecord, 'findByDeviceId').mockResolvedValue({
+      vi.spyOn(BaremetalRecord, 'findByIdUnscoped').mockResolvedValue({
         data: {
           deletedAt: null,
           cpus: [{ model: 'EPYC', architecture: 'aarch64', coreCount: 64, threadCount: 128 }],
@@ -859,7 +876,7 @@ describe('DeploymentsService', () => {
         isLocked: false,
         server: { device: { ...mockDevice, ...mockDeviceMetadata, netboxId: mockDeviceMetadata.id } },
       } as any);
-      vi.spyOn(BaremetalRecord, 'findByDeviceId').mockResolvedValue({
+      vi.spyOn(BaremetalRecord, 'findByIdUnscoped').mockResolvedValue({
         data: {
           deletedAt: null,
           cpus: [{ model: 'EPYC', architecture: 'x86_64', coreCount: 64, threadCount: 128 }],
@@ -887,7 +904,7 @@ describe('DeploymentsService', () => {
         isLocked: false,
         server: { device: { ...mockDevice, ...mockDeviceMetadata, netboxId: mockDeviceMetadata.id } },
       } as any);
-      vi.spyOn(BaremetalRecord, 'findByDeviceId').mockResolvedValue({
+      vi.spyOn(BaremetalRecord, 'findByIdUnscoped').mockResolvedValue({
         data: {
           deletedAt: null,
           cpus: [{ model: 'EPYC', architecture: 'x86_64', coreCount: 64, threadCount: 128 }],
@@ -915,7 +932,7 @@ describe('DeploymentsService', () => {
         isLocked: false,
         server: { device: { ...mockDevice, ...mockDeviceMetadata, netboxId: mockDeviceMetadata.id } },
       } as any);
-      vi.spyOn(BaremetalRecord, 'findByDeviceId').mockResolvedValue({
+      vi.spyOn(BaremetalRecord, 'findByIdUnscoped').mockResolvedValue({
         data: {
           deletedAt: null,
           server: { teeEnabled: false, teeCapable: TeeCapability.UNVERIFIED },
@@ -942,7 +959,7 @@ describe('DeploymentsService', () => {
         server: { device: { ...mockDevice, ...mockDeviceMetadata } },
       } as any;
       vi.spyOn(DeploymentRecord, 'findActiveAggregateById').mockResolvedValue(mockAggregate);
-      vi.spyOn(BaremetalRecord, 'findByDeviceId').mockResolvedValue({
+      vi.spyOn(BaremetalRecord, 'findByIdUnscoped').mockResolvedValue({
         data: { deletedAt: null, zoneId: 'zone-1' },
       } as unknown as BaremetalRecord);
       vi.mocked(resolveZoneBuildId).mockRejectedValueOnce(new BadRequestException('zone deleted'));

@@ -198,10 +198,13 @@ export class SagaRunnerService {
       attempt?: number;
     } = {},
   ): Promise<void> {
+    // the plan manager writes '' for a step declared without a label
+    const operation = plan.steps.find((step) => step.step_name === stepName)?.operation || null;
     try {
       await this.notifications.notifyStepTransition({
         planId: plan.plan_id,
         stepName,
+        operation,
         status,
         deviceId: plan.device_id,
         error: opts.error ?? null,

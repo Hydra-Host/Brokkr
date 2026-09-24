@@ -1,4 +1,4 @@
-import type { PluginLifecycleControl } from '@hydrahost/plugin-sdk';
+import type { AbortDeferredOptions, PluginLifecycleControl } from '@hydrahost/plugin-sdk';
 import { Injectable } from '@nestjs/common';
 
 import { LifecycleService } from './lifecycle.service';
@@ -11,7 +11,7 @@ export class HostPluginLifecycleControl implements PluginLifecycleControl {
     return this.lifecycle.resumeDeferred(jobId);
   }
 
-  abortDeferred(jobId: string, reason: string): Promise<boolean> {
-    return this.lifecycle.abortDeferred(jobId, reason);
+  abortDeferred(jobId: string, reason: string, options?: AbortDeferredOptions): Promise<boolean> {
+    return this.lifecycle.abortDeferred(jobId, reason, options);
   }
 }

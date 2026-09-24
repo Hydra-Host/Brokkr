@@ -89,7 +89,7 @@ export class BullmqRenderRequestService {
           zoneCrypto: this.zoneCrypto.getZoneCryptoState(),
         }),
         {
-          removeOnComplete: { count: 5000 },
+          removeOnComplete: { count: 0 },
           removeOnFail: { count: 1000 },
         },
       );

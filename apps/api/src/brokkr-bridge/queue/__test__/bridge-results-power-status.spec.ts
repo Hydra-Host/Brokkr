@@ -5,6 +5,8 @@ import { SealedEnvelopeService } from 'src/crypto/sealed-envelope.service';
 import { DeviceSecretAuditService } from 'src/device-secret/device-secret-audit.service';
 import { DeviceTestRunsService } from 'src/device-test-runs/device-test-runs.service';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { DEVICE_HEALTH_RECORDED } from 'src/events/events.types';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { LifecycleInboundService } from 'src/lifecycle/inbound/lifecycle-inbound.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { SanitizationReportService } from 'src/sanitization-reports/sanitization-report.service';
@@ -71,8 +73,10 @@ describe('BridgeResultsConsumer — power status updates', () => {
     deviceHealthCheck: { create: Mock };
   };
   let processResult: (job: unknown) => Promise<void>;
+  let publish: Mock;
 
   beforeEach(async () => {
+    publish = vi.fn().mockResolvedValue(undefined);
     prisma = {
       device: {
         update: vi.fn().mockResolvedValue({}),
@@ -117,6 +121,7 @@ describe('BridgeResultsConsumer — power status updates', () => {
           provide: DeviceTokensService,
           useValue: { revokeBrokkrLiveTokensForDevice: vi.fn().mockResolvedValue(undefined) },
         },
+        { provide: RedisPubSubService, useValue: { publish } },
         {
           provide: LifecycleInboundService,
           useValue: {
@@ -403,6 +408,29 @@ describe('BridgeResultsConsumer — power status updates', () => {
           OR: [{ powerStatus: { not: ServerPowerStatus.On } }, { powerStatus: null }],
         },
         data: { powerStatus: ServerPowerStatus.On },
+      });
+    });
+
+    it('publishes the health event to the supplier and the active customer', async () => {
+      prisma.device.findUnique.mockResolvedValue({
+        id: DEVICE_UUID,
+        supplierId: 'org-supplier',
+        server: { deployments: [{ customerId: 'org-customer' }] },
+      });
+      prisma.deviceHealthCheck.create.mockResolvedValue({
+        id: 'hc-1',
+        testedAt: new Date('2026-09-16T12:00:00.000Z'),
+      });
+
+      await processResult(makeHealthJob(true));
+
+      expect(publish).toHaveBeenCalledWith({
+        type: DEVICE_HEALTH_RECORDED,
+        deviceId: DEVICE_UUID,
+        organizationId: 'org-customer',
+        supplierId: 'org-supplier',
+        healthCheckId: 'hc-1',
+        testedAt: '2026-09-16T12:00:00.000Z',
       });
     });
 

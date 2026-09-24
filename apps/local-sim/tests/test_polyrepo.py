@@ -143,3 +143,36 @@ def test_taskfile_wires_sudo_teardown():
     sudo_nix = _read(REPO_ROOT / "devenv" / "modules" / "sudo.nix")
     assert "- sudo-sim-teardown" in tf, "task sudo:teardown must invoke the sudo-sim-teardown script directly"
     assert "scripts.sudo-sim-teardown" in sudo_nix, "sudo-sim-teardown script must be declared in sudo.nix"
+
+
+def test_datastore_port_gate_reads_the_intended_port_not_the_allocated_one():
+    nix = _read(POLYREPO_NIX)
+    assert "datastorePortSpecs" in nix, "the blocking datastore port specs must be declared here"
+    for knob in ("config.ports.postgres", "config.ports.redis"):
+        assert knob in nix, f"the datastore specs must be spliced from {knob}"
+    for allocated in ("P.ports.postgres", "P.ports.redis"):
+        assert allocated not in nix, (
+            f"{allocated} resolves through ports.nix `allocated` to devenv's allocator output, "
+            "which is the post-shift port rather than the one the gate must probe"
+        )
+    for literal in ("5432", "6379"):
+        assert literal not in nix, f"port {literal} must come from ports.nix, never a literal here"
+
+
+def test_datastore_port_gate_runs_in_both_the_gate_and_the_doctor():
+    nix = _read(POLYREPO_NIX)
+    assert "port-guard.sh" in nix, "the preflight must call the datastore port guard"
+    assert nix.count("check_datastore_ports") >= 3, (
+        "the gate must be defined once and called from both the preflight and the doctor branch"
+    )
+    guard = REPO_ROOT / "devenv" / "lib" / "port-guard.sh"
+    assert guard.exists(), "devenv/lib/port-guard.sh must exist"
+
+
+def test_installer_explains_a_failed_step_from_its_own_log_slice():
+    installer = _read(REPO_ROOT / "install.sh")
+    assert installer.count("  mark_step_log\n") == 2, "both step helpers must mark the log"
+    assert installer.count("\n    explain_step_failure\n") == 2, (
+        "the toolchain build and the stack bring-up are the only two steps whose output reaches "
+        "the log, so they are the only two that can explain themselves"
+    )

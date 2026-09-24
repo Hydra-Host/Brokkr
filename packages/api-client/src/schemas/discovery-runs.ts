@@ -35,7 +35,6 @@ export const DiscoveryRunSchema = z.object({
   deviceId: z.string().describe('Device the discovery pass ran against'),
   status: DiscoveryRunStatusSchema,
   jobId: z.string().describe('Job ID that carried the discovery pass'),
-  zonePrefix: z.string().describe('Zone prefix the collection was drained from'),
   handlerVersion: z.string().describe('Hub build identifier that processed the run'),
   bridgeCollectorVersion: z.string().nullable().describe('Collector version reported by the bridge, when it sent one'),
   collectorsExpected: z.number().nullable().describe('Collector count the envelope announced'),

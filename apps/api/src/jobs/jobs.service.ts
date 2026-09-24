@@ -1,8 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { LifecycleJobSummary, ListLifecycleJobsQuery } from '@repo/api-client';
-import type { LifecycleJob } from '@repo/database';
 import type { PaginatedResult } from '@repo/database/pagination';
-import { LifecycleJobRecord, TERMINAL_PHASES } from '@repo/lifecycle';
+import { LifecycleJobRecord, toLifecycleJobSummary } from '@repo/lifecycle';
 import { ContextService } from 'src/common/context/context.service';
 
 @Injectable()
@@ -19,21 +18,6 @@ export class JobsService {
     }
 
     const page = await LifecycleJobRecord.findPageByTargetUnscoped(paginationQuery, { deviceId, deploymentId });
-    return { ...page, data: page.data.map(toSummary) };
+    return { ...page, data: page.data.map(toLifecycleJobSummary) };
   }
-}
-
-function toSummary(row: LifecycleJob): LifecycleJobSummary {
-  return {
-    id: row.id,
-    jobType: row.jobType,
-    phase: row.phase,
-    deviceId: row.deviceId,
-    deploymentId: row.deploymentId,
-    source: row.source,
-    performedBy: row.performedBy,
-    error: row.error,
-    createdAt: row.createdAt.toISOString(),
-    completedAt: TERMINAL_PHASES.has(row.phase) ? row.updatedAt.toISOString() : null,
-  };
 }

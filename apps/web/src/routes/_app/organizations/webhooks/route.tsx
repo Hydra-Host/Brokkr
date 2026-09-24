@@ -1,9 +1,9 @@
+import { ResponsiveNavTabs } from '@repo/domain-ui/components/responsive-nav-tabs';
 import { Button } from '@repo/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/components/card';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { createFileRoute, Link, Outlet, useLocation } from '@tanstack/react-router';
 import { Plus } from 'lucide-react';
-import { ResponsiveNavTabs } from '~/components/responsive-nav-tabs';
 
 export const Route = createFileRoute('/_app/organizations/webhooks')({
   staticData: { breadcrumb: 'Webhooks', description: 'Configure webhook endpoints for real-time event notifications' },

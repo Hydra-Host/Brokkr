@@ -77,7 +77,7 @@ let
 
   # One list, two consumers: prek's cheap `files` pre-filter, and batsGate re-applying it to the
   # branch diff, which is the scope prek cannot compute.
-  batsGateFiles = "(install\\.sh|devenv\\.nix|Taskfile\\.yml|devenv/(lib/.*|modules/[^/]*\\.nix|scripts/[^/]*\\.sh|tests/([^/]*|nix/.*))|apps/local-sim/(scripts/tasks/(stack-reconcile|stack-libvirt-up)\\.sh|provisioning/linux-bootstrap\\.sh))$";
+  batsGateFiles = "(install\\.sh|devenv\\.nix|Taskfile\\.yml|devenv/(lib/.*|modules/[^/]*\\.nix|scripts/[^/]*\\.sh|tests/([^/]*|nix/.*))|apps/local-sim/(scripts/tasks/(stack-reconcile|stack-libvirt-up)\\.sh|provisioning/(bootstrap|linux-bootstrap)\\.sh))$";
 
   # the devenv shell suite's darwin half: the only run of either tier against real BSD userland,
   # which is the divergence most of these matchers exist to survive.

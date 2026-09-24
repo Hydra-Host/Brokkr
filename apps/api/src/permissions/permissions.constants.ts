@@ -1,10 +1,6 @@
-import { MAIN_APP_PERMISSIONS } from '@repo/auth/rbac';
-
-export interface PermissionDefinition {
-  resource: string;
-  action: string;
-  description: string;
-}
+import { mergePluginPermissions } from '@hydrahost/plugin-sdk';
+import pluginsConfig from '@hydrahost/plugins-config';
+import { MAIN_APP_PERMISSIONS as CORE_APP_PERMISSIONS, type PermissionDefinition } from '@repo/auth/rbac';
 
 export interface SystemRoleDefinition {
   slug: string;
@@ -17,7 +13,7 @@ function permissionKey(resource: string, action: string): string {
   return `${resource}:${action}`;
 }
 
-export { MAIN_APP_PERMISSIONS };
+export const MAIN_APP_PERMISSIONS: PermissionDefinition[] = mergePluginPermissions(CORE_APP_PERMISSIONS, pluginsConfig);
 
 const allKeys = MAIN_APP_PERMISSIONS.map((p) => permissionKey(p.resource, p.action));
 const allKeySet = new Set(allKeys);

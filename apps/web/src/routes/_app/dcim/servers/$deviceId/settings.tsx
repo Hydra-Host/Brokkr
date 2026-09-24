@@ -19,10 +19,19 @@ import { MobileTabSelect } from '~/components/mobile-tab-select';
 import { tsr } from '~/lib/api';
 import { BRAND_NAME } from '~/lib/branding';
 import { ipxeTargetOptions } from '~/lib/enum-options';
+import { DecommissionSection } from './-settings-decommission';
 
 const parentRoute = getRouteApi('/_app/dcim/servers/$deviceId');
 
+const SettingsTabSchema = z.enum(['settings', 'monetization', 'decommission']);
+const TAB_NAMES: Record<z.infer<typeof SettingsTabSchema>, string> = {
+  settings: 'Server Info',
+  monetization: 'Monetization',
+  decommission: 'Decommission',
+};
+
 export const Route = createFileRoute('/_app/dcim/servers/$deviceId/settings')({
+  validateSearch: z.object({ tab: SettingsTabSchema.optional() }),
   staticData: { breadcrumb: 'Settings' },
   component: ServerSettingsPage,
 });
@@ -39,28 +48,33 @@ const IPXE_TARGET_OPTIONS = ipxeTargetOptions('Inherit from prefix (default)');
 function ServerSettingsPage() {
   const device = parentRoute.useLoaderData();
   const params = Route.useParams();
+  const { tab = 'settings' } = Route.useSearch();
+  const navigate = Route.useNavigate();
   const router = useRouter();
   const queryClient = useQueryClient();
 
   useDocumentTitle('Settings');
-  const [activeTab, setActiveTab] = useState('settings');
+
+  const selectTab = (value: string) => {
+    void navigate({ search: (previous) => ({ ...previous, tab: SettingsTabSchema.parse(value) }), replace: true });
+  };
 
   return (
     <div className="relative">
       <DecommissionedServerOverlay deletedAt={device.deletedAt} />
       <MobileTabSelect
-        tabs={[
-          { name: 'Server Info', value: 'settings' },
-          { name: 'Monetization', value: 'monetization' },
-        ]}
-        value={activeTab}
-        onValueChange={setActiveTab}
+        tabs={SettingsTabSchema.options.map((value) => ({ name: TAB_NAMES[value], value }))}
+        value={tab}
+        onValueChange={selectTab}
       />
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(String(v))} className="w-full">
+      <Tabs value={tab} onValueChange={(value) => selectTab(String(value))} className="w-full">
         <div className="hidden sm:block">
           <TabsList className="mb-4">
-            <TabsTrigger value="settings">Server Info</TabsTrigger>
-            <TabsTrigger value="monetization">Monetization</TabsTrigger>
+            {SettingsTabSchema.options.map((value) => (
+              <TabsTrigger key={value} value={value}>
+                {TAB_NAMES[value]}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </div>
         <TabsContent value="settings">
@@ -68,6 +82,9 @@ function ServerSettingsPage() {
         </TabsContent>
         <TabsContent value="monetization">
           <MonetizationTab device={device} deviceId={params.deviceId} queryClient={queryClient} router={router} />
+        </TabsContent>
+        <TabsContent value="decommission">
+          <DecommissionSection device={device} />
         </TabsContent>
       </Tabs>
     </div>

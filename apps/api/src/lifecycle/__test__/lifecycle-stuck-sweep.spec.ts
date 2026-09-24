@@ -5,6 +5,7 @@ import { JobType, LifecycleJobPhase, RequestSource, ServerLifecycleStatus } from
 import { LIFECYCLE_WATCHDOG_QUEUE, LifecycleJobRecord } from '@repo/lifecycle';
 import { DeploymentRecord } from 'src/deployments/deployment.record';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LifecycleInboundService, STUCK_SWEEP_PAGE_SIZE } from '../inbound/lifecycle-inbound.service';
@@ -81,6 +82,7 @@ describe('LifecycleInboundService.sweepStuckJobs', () => {
         { provide: getQueueToken(LIFECYCLE_WATCHDOG_QUEUE), useValue: watchdogQueue },
         { provide: LifecycleService, useValue: lifecycleService },
         { provide: DeviceTokensService, useValue: { runWithDeploymentTokenRevocation: vi.fn() } },
+        { provide: RedisPubSubService, useValue: { publish: vi.fn() } },
         {
           provide: 'LoggerServiceLifecycleInboundService',
           useValue: { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

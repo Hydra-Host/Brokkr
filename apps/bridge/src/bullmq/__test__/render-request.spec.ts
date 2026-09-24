@@ -72,8 +72,10 @@ describe('enqueueRenderRequest', () => {
 
     expect(sent).toBe(true);
     expect(queue.added).toHaveLength(1);
-    const { name, data } = queue.added[0];
+    const { name, data, opts } = queue.added[0];
     expect(name).toBe('render.request');
+    expect(opts.removeOnComplete).toEqual({ count: 0 });
+    expect(opts.removeOnFail).toEqual({ count: 1000 });
     expect(data.request_id).toBe(REQUEST_ID_1);
     expect(data.zone_id).toBe(ZONE_ID);
     expect(data.bridge_id).toBe('bridge-1');

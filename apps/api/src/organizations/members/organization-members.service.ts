@@ -1,13 +1,14 @@
 import { PLUGIN_EVENT_BUS, type PluginEventBus } from '@hydrahost/plugin-sdk';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { OrganizationMembersQuery } from '@repo/api-client';
-import { MAIN_APP_PERMISSIONS, RbacService, roleBelongsToCatalog, type RolePermissionSource } from '@repo/auth/rbac';
+import { RbacService, roleBelongsToCatalog, type RolePermissionSource } from '@repo/auth/rbac';
 import { OrganizationMembershipRole, type Prisma } from '@repo/database';
 import { ContextService, type PermissionIntentHandle } from 'src/common/context/context.service';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { EventLogService } from 'src/event-log/event-log.service';
 import type { EventLogMetadata } from 'src/event-log/event-log.types';
 import { LoggerService } from 'src/logger/logger.service';
+import { MAIN_APP_PERMISSIONS } from 'src/permissions/permissions.constants';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { OrganizationMembershipsRepository } from './organization-members.repository';
 

@@ -5,4 +5,4 @@ export class IpxeServiceError extends Error {
   }
 }
 
-export class IpxeServerTokenUnavailableError extends IpxeServiceError {}
+export class IpxeDeployTokenUnavailableError extends IpxeServiceError {}

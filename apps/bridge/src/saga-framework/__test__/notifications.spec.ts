@@ -13,6 +13,7 @@ import { JobStatus } from '../state.types';
 interface EnqueueResultCall {
   planId: string;
   stepName: string;
+  operation: string | null;
   status: string;
   deviceId: unknown;
   eventType: EventType;
@@ -54,6 +55,7 @@ describe('NotificationsService', () => {
     await svc.notifyStepTransition({
       planId: 'plan-1',
       stepName: 'deploy_os',
+      operation: 'Deploy the operating system',
       status: JobStatus.COMPLETED,
       deviceId: 42,
       result: { ok: true },
@@ -65,10 +67,26 @@ describe('NotificationsService', () => {
     const call = enqueueResult.mock.calls[0][0] as EnqueueResultCall;
     expect(call.planId).toBe('plan-1');
     expect(call.stepName).toBe('deploy_os');
+    expect(call.operation).toBe('Deploy the operating system');
     expect(call.status).toBe(JobStatus.COMPLETED);
     expect(call.eventType).toBe('stage_changed');
     expect(call.actionType).toBe('provision');
     expect(call.result).toEqual({ ok: true });
+  });
+
+  it('defaults operation to null when the transition carries none', async () => {
+    const { producer, enqueueResult } = makeProducer();
+    const svc = new NotificationsService(producer);
+
+    await svc.notifyStepTransition({
+      planId: 'plan-1',
+      stepName: 'deploy_os',
+      status: JobStatus.COMPLETED,
+      deviceId: 42,
+      metadata: { saga_name: 'provision' },
+    });
+
+    expect(enqueueResult).toHaveBeenCalledWith(expect.objectContaining({ operation: null }));
   });
 
   it('enqueues job_completed for a plan-level __plan__ COMPLETED', async () => {
@@ -117,6 +135,7 @@ describe('NotificationsService', () => {
       status: JobStatus.FAILED,
       deviceId: 42,
       error: 'disk not found',
+      metadata: { saga_name: 'provision' },
     });
 
     const call = enqueueResult.mock.calls[0][0] as EnqueueResultCall;
@@ -177,6 +196,7 @@ describe('NotificationsService', () => {
         stepName: 'deploy_os',
         status: JobStatus.RUNNING,
         deviceId: 42,
+        metadata: { saga_name: 'provision' },
       }),
     ).rejects.toBeInstanceOf(NotificationDeliveryError);
     expect(warns.some((m) => m.includes('Redis down'))).toBe(true);
@@ -199,6 +219,7 @@ describe('NotificationsService', () => {
         stepName: 'deploy_os',
         status: JobStatus.RUNNING,
         deviceId: 42,
+        metadata: { saga_name: 'provision' },
       }),
     ).rejects.toBeInstanceOf(NotificationDeliveryError);
     expect(warns).toEqual([expect.stringContaining('rejected notification')]);
@@ -227,6 +248,62 @@ describe('NotificationsService', () => {
     expect(warns).toEqual([expect.stringContaining('rejected notification')]);
   });
 
+  it('rejects when metadata carries no saga_name', async () => {
+    const { producer, enqueueResult, enqueueJobCompleted } = makeProducer();
+    const svc = new NotificationsService(producer);
+
+    await expect(
+      svc.notifyStepTransition({
+        planId: 'plan-unlabeled',
+        stepName: 'deploy_os',
+        status: JobStatus.RUNNING,
+        deviceId: 42,
+        metadata: {},
+      }),
+    ).rejects.toThrow(/saga_name.*plan-unlabeled.*deploy_os/);
+    await expect(
+      svc.notifyStepTransition({
+        planId: 'plan-unlabeled',
+        stepName: 'deploy_os',
+        status: JobStatus.RUNNING,
+        deviceId: 42,
+        metadata: { saga_name: '' },
+      }),
+    ).rejects.toThrow(/saga_name/);
+    expect(enqueueResult).not.toHaveBeenCalled();
+    expect(enqueueJobCompleted).not.toHaveBeenCalled();
+  });
+
+  it('forwards metadata.saga_name as the actionType', async () => {
+    const { producer, enqueueResult } = makeProducer();
+    const svc = new NotificationsService(producer);
+
+    await svc.notifyStepTransition({
+      planId: 'plan-collect',
+      stepName: 'collect_inventory',
+      status: JobStatus.RUNNING,
+      deviceId: 42,
+      metadata: { saga_name: 'inventory_collection' },
+    });
+
+    expect(enqueueResult).toHaveBeenCalledWith(expect.objectContaining({ actionType: 'inventory_collection' }));
+  });
+
+  it('forwards metadata.saga_name as the sagaName for job_completed events', async () => {
+    const { producer, enqueueJobCompleted } = makeProducer();
+    const svc = new NotificationsService(producer);
+
+    await svc.notifyStepTransition({
+      planId: 'plan-collect',
+      stepName: '__plan__',
+      status: JobStatus.COMPLETED,
+      deviceId: 42,
+      metadata: { saga_name: 'inventory_collection' },
+    });
+
+    expect(enqueueJobCompleted).toHaveBeenCalledWith(expect.objectContaining({ sagaName: 'inventory_collection' }));
+  });
+
   it('with no producer wired, throws NotificationDeliveryError', async () => {
     const warns: string[] = [];
     const svc = new NotificationsService(null, {
@@ -241,6 +318,7 @@ describe('NotificationsService', () => {
         stepName: 'deploy_os',
         status: JobStatus.RUNNING,
         deviceId: 42,
+        metadata: { saga_name: 'provision' },
       }),
     ).rejects.toBeInstanceOf(NotificationDeliveryError);
     expect(warns.length).toBe(1);

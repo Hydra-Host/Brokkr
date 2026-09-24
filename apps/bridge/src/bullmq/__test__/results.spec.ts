@@ -194,6 +194,7 @@ describe('enqueueResult', () => {
       deviceId: 42,
       eventType: 'stage_changed',
       actionType: 'provision',
+      operation: 'Deploy the operating system',
       result: { ok: true },
     });
 
@@ -201,11 +202,27 @@ describe('enqueueResult', () => {
     expect(queue.added).toHaveLength(1);
     const [call] = queue.added;
     expect(call.name).toBe('job.result');
+    expect(call.opts.removeOnComplete).toEqual({ count: 0 });
+    expect(call.opts.removeOnFail).toEqual({ count: 1000 });
     const data = plain(call.data);
     expect(data.plan_id).toBe('plan-1');
     expect(data.step_name).toBe('deploy_os');
+    expect(data.operation).toBe('Deploy the operating system');
     expect(data.status).toBe('completed');
     expect(data.device_id).toBe('42');
+  });
+
+  it('forwards actionType into the payload action_type', async () => {
+    const queue = new FakeResultsQueue();
+    const service = makeService({ queue });
+    await service.enqueueResult({
+      planId: 'plan-1',
+      stepName: 'deploy_os',
+      status: 'completed',
+      deviceId: 42,
+      actionType: 'inventory_collection',
+    });
+    expect(plain(queue.added[0].data).action_type).toBe('inventory_collection');
   });
 
   it('returns false when the queue is unavailable', async () => {
@@ -215,6 +232,7 @@ describe('enqueueResult', () => {
       stepName: 'deploy_os',
       status: 'completed',
       deviceId: 42,
+      actionType: 'provision',
     });
     expect(sent).toBe(false);
   });
@@ -229,6 +247,7 @@ describe('enqueueResult', () => {
       stepName: 'deploy_os',
       status: 'failed',
       deviceId: 42,
+      actionType: 'provision',
       error: 'disk full',
     });
     expect(sent).toBe(false);
@@ -242,6 +261,7 @@ describe('enqueueResult', () => {
       stepName: 'wipe_disks',
       status: 'failed',
       deviceId: 42,
+      actionType: 'provision',
       error: 'timeout exceeded',
     });
     expect(plain(queue.added[0].data).error).toEqual({ message: 'timeout exceeded' });
@@ -255,8 +275,22 @@ describe('enqueueResult', () => {
       stepName: 'deploy_os',
       status: 'completed',
       deviceId: 42,
+      actionType: 'provision',
     });
     expect(plain(queue.added[0].data).error).toBeNull();
+  });
+
+  it('emits null operation when none is provided', async () => {
+    const queue = new FakeResultsQueue();
+    const service = makeService({ queue });
+    await service.enqueueResult({
+      planId: 'plan-1',
+      stepName: 'deploy_os',
+      status: 'completed',
+      deviceId: 42,
+      actionType: 'provision',
+    });
+    expect(plain(queue.added[0].data).operation).toBeNull();
   });
 });
 
@@ -611,6 +645,7 @@ describe('outbound sealing', () => {
       stepName: 'deploy_os',
       status: 'completed',
       deviceId: 42,
+      actionType: 'provision',
     });
 
     expect(sent).toBe(true);
@@ -690,6 +725,7 @@ describe('outbound sealing', () => {
       stepName: 's',
       status: 'completed',
       deviceId: 1,
+      actionType: 'provision',
     });
 
     const data = plain(queue.added[0].data);

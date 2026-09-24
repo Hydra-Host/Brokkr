@@ -1,3 +1,4 @@
+import { RENDER_DOMAINS } from '@repo/utils';
 import { z } from 'zod';
 
 export const renderRequestSchema = z
@@ -5,9 +6,7 @@ export const renderRequestSchema = z
     request_id: z.string().uuid().describe('Idempotency / correlation token chosen by the bridge.'),
     zone_id: z.string().uuid().describe('Brokkr Zone UUID — atom-key prefix the bridge polls.'),
     bridge_id: z.string().describe('Identifier of the bridge instance enqueueing this request.'),
-    domain: z
-      .enum(['device_record', 'server_token', 'netplan', 'device_secret'])
-      .describe('Domain identifier. MR-specific variants validate params further.'),
+    domain: z.enum(RENDER_DOMAINS).describe('Domain identifier. MR-specific variants validate params further.'),
     reason: z
       .enum(['missing', 'stale', 'explicit'])
       .nullish()

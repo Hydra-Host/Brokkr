@@ -20,11 +20,14 @@ import express from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { blockUnsupportedMethods } from './common/block-unsupported-methods.middleware';
+import { bodyParserErrorHandler } from './common/body-parser-error-handler.middleware';
 import { bootstrapInstanceOperator } from './common/bootstrap/operator-bootstrap';
 import { seedBypassUser } from './common/bootstrap/seed-bypass-user';
 import { seedRbac } from './common/bootstrap/seed-rbac';
 import { registerApiDocs } from './common/docs-setup';
+import { GateUnavailableErrorFilter } from './common/errors/gate-unavailable-error.filter';
 import { HttpExceptionFilter } from './common/errors/http-exception.filter';
+import { LifecycleGateRejectionFilter } from './common/errors/lifecycle-gate-rejection.filter';
 import { PrismaKnownRequestExceptionFilter } from './common/errors/prisma-known-request-exception.filter';
 import { RecordNotFoundExceptionFilter } from './common/errors/record-not-found-exception.filter';
 import { TenantContextRequiredExceptionFilter } from './common/errors/tenant-context-required-exception.filter';
@@ -85,10 +88,14 @@ async function bootstrap() {
     app.use(express.json({ limit: '1mb' }));
     app.use(express.urlencoded({ limit: '1mb', extended: true }));
 
+    app.use(bodyParserErrorHandler);
+
     app.useGlobalFilters(
       new TenantContextRequiredExceptionFilter(),
       new RecordNotFoundExceptionFilter(),
       new PrismaKnownRequestExceptionFilter(),
+      new LifecycleGateRejectionFilter(),
+      new GateUnavailableErrorFilter(),
       new HttpExceptionFilter(),
     );
 

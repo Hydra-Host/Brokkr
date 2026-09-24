@@ -15,6 +15,7 @@ import { execFile } from 'node:child_process';
 import * as net from 'node:net';
 import { promisify } from 'node:util';
 import { expect } from 'vitest';
+import { z } from 'zod';
 
 import { BridgeRedis } from './bridge-redis';
 import {
@@ -542,32 +543,42 @@ export async function powerCycle(
   step('power-cycle complete -> still PROVISIONED');
 }
 
+// mirrors the contract's DeploymentActionResponseSchema; the harness aliases only schemas/common
+const DeprovisionAcceptedSchema = z.object({ jobId: z.string().optional() });
+
 /**
  * Drive a device to INVENTORY, picking the right admin call per device state:
  * end-rental when an active deployment exists (closes it AND decoms),
  * standalone deprovision otherwise. Probing avoids the 404 you get hitting
  * raw /deprovision on a device with a dangling Deployment row (e.g. left
  * PROVISIONED by an earlier provision-only quick-lifecycle run).
+ *
+ * Returns the deprovision job id, or null when nothing was fired.
  */
-export async function endRentalToInventory(hubAdmin: HubAdminClient, hubDb: HubDB, deviceId: string): Promise<void> {
+export async function endRentalToInventory(
+  hubAdmin: HubAdminClient,
+  hubDb: HubDB,
+  deviceId: string,
+): Promise<string | null> {
   step('--- end-rental -> INVENTORY ---');
   const depId = await hubDb.getActiveDeploymentId(deviceId);
   if (!depId) {
     const state = await hubDb.getServerState(deviceId);
     if (state.lifecycleStatus === 'INVENTORY') {
       step('already INVENTORY, skipping');
-      return;
+      return null;
     }
     // No active deployment and not INVENTORY -- cannot deprovision; warn and return
     console.warn(
       `no active deployment for ${deviceId} and not INVENTORY ` + `(${state.lifecycleStatus}) -- cannot deprovision`,
     );
-    return;
+    return null;
   }
 
   step(`firing end-rental (deployment=${depId})...`);
   const response = await hubAdmin.endRental(depId);
   expect(response.status, `end-rental rejected: ${JSON.stringify(response.body)}`).toBe(200);
+  const { jobId } = DeprovisionAcceptedSchema.parse(response.body);
 
   step('awaiting DEPROVISIONING...');
   const decomState = await pollUntil(
@@ -589,4 +600,5 @@ export async function endRentalToInventory(hubAdmin: HubAdminClient, hubDb: HubD
     'INVENTORY',
   );
   step('end-rental complete -> INVENTORY');
+  return jobId ?? null;
 }

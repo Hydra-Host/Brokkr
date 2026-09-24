@@ -42,6 +42,7 @@ model User {
   deviceSecretsCreated              DeviceSecret[] // device secret versions written by this user
   importedBuilds                    LayerBuild[]                       @relation("importedBuilds")
   platformSettingsUpdates           PlatformSettings[]                 @relation("platformSettingsUpdates")
+  notifications                     Notification[]
 }
 
 model Session {

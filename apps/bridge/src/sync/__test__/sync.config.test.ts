@@ -9,7 +9,7 @@ afterEach(() => {
 describe('buildSyncConfig — defaults', () => {
   it('instantiates with default env (no throw)', () => {
     const cfg = buildSyncConfig({});
-    expect(cfg.brokkrLiveVersion).toBe('1.1.9');
+    expect(cfg.brokkrLiveVersion).toBe('latest-prod');
     expect(cfg.httpsDownloadTimeout).toBe(3600);
     expect(cfg.httpsStallTimeout).toBe(120);
     expect(cfg.httpsVerifySsl).toBe(true);

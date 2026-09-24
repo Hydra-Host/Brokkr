@@ -155,6 +155,7 @@ describe('ServerSpecHelper.reservationData', () => {
   });
 });
 
+
 describe('ServerSpecHelper.reservationInviteData', () => {
   it('derives per-hour rates for a MONTHLY cadence', () => {
     const data = ServerSpecHelper.reservationInviteData(invite(BillingFrequency.MONTHLY, 74400), 4);
@@ -172,5 +173,11 @@ describe('ServerSpecHelper.reservationInviteData', () => {
       pricePerDeviceHour: null,
       pricePerGpuHour: null,
     });
+  });
+});
+
+describe('ServerSpecHelper.isHealthy', () => {
+  it('isHealthy is null when no test run exists', () => {
+    expect(ServerSpecHelper.isHealthy({ ...input({}), deviceTestRuns: [] })).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 import { OperatingSystemSlugSchema } from '@repo/api-client';
+import { ContractType } from '@repo/utils';
 import type { CliApiClient } from '../client.js';
 import type { DiskLayout } from '../deployments/deployments.js';
 
@@ -84,15 +85,16 @@ export async function provisionServer(
     cloudInit?: string | Record<string, unknown> | null;
     ipxeUrl?: string;
     projectId?: string;
-    isInterruptible?: boolean;
+    contractType?: string;
     customizations?: Record<string, string | string[]> | null;
   },
 ): Promise<DeviceActionResult> {
   const result = await client.provisionBaremetalServer({
     params: { deviceId },
     body: {
-      ...body,
+      deploymentName: body.deploymentName,
       operatingSystem: OperatingSystemSlugSchema.parse(body.operatingSystem),
+      sshKeyIds: body.sshKeyIds,
       diskLayouts: body.diskLayouts.map((dl) => ({
         ...dl,
         encrypt: dl.encrypt ?? false,
@@ -100,6 +102,9 @@ export async function provisionServer(
       })),
       cloudInit: body.cloudInit ?? null,
       ipxeUrl: body.ipxeUrl ?? null,
+      projectId: body.projectId,
+      contractType: ContractType.RESERVED_ROLLING,
+      isInterruptible: false,
       customizations: body.customizations ?? null,
     },
   });

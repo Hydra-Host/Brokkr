@@ -8,11 +8,10 @@ const meta = {
     docs: {
       description: {
         component:
-          'Dropdown for picking a theme or System mode, backed by the same `ThemeProvider` context the ' +
-          'Storybook toolbar drives — selecting a theme here mutates the toolbar theme and vice versa. ' +
-          'Choices persist to localStorage (`brokkr-theme`, `brokkr-preferred-dark`, ' +
-          '`brokkr-preferred-light`); System mode follows the OS light/dark preference using the ' +
-          'preferred theme for each.',
+          'Dropdown for picking the style, color, and mode axes, backed by the same `ThemeProvider` ' +
+          'context the Storybook toolbar drives. The menu stays open while adjusting and closes on ' +
+          'click outside. Choices persist to localStorage (`brokkr-style`, `brokkr-color`, ' +
+          '`brokkr-mode`); System mode follows the OS light/dark preference.',
       },
     },
   },

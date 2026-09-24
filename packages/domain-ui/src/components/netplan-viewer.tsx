@@ -50,13 +50,19 @@ const ERROR_PRESENTATIONS: Record<number, ErrorPresentation> = {
   },
 };
 
+function errorPresentation(status: number | undefined): ErrorPresentation {
+  return (
+    ERROR_PRESENTATIONS[status ?? 0] ?? {
+      title: 'Failed to load Netplan',
+      fallback: 'The Netplan configuration could not be loaded.',
+      variant: 'destructive',
+    }
+  );
+}
+
 function ErrorState({ error }: { error: unknown }) {
   const status = isRecord(error) && typeof error.status === 'number' ? error.status : undefined;
-  const presentation = ERROR_PRESENTATIONS[status ?? 0] ?? {
-    title: 'Failed to load Netplan',
-    fallback: 'The Netplan configuration could not be loaded.',
-    variant: 'destructive',
-  };
+  const presentation = errorPresentation(status);
 
   return (
     <Alert variant={presentation.variant}>

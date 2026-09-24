@@ -1,4 +1,5 @@
 import { deviceServerToken } from '../common/redis/redis-keys.js';
+import type { AtomFetchRequest } from '../device-record/atom/atom-fetcher.js';
 import type { ServerTokenAtom } from '../device-record/atom/server-token.schema.js';
 
 import { getLogger } from '../logger/logger.service';
@@ -10,12 +11,7 @@ export class PhoneHomeCredsUnavailable extends Error {
   }
 }
 
-export interface ServerTokenAtomRequest {
-  domain: string;
-  entityId: string;
-  atomKey: string;
-  jobId: string;
-}
+export type ServerTokenAtomRequest = AtomFetchRequest<'server_token'>;
 
 export type ServerTokenAtomFetcher = (params: ServerTokenAtomRequest) => Promise<ServerTokenAtom | null>;
 

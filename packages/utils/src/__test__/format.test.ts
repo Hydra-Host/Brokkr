@@ -2,6 +2,7 @@ import { BillingFrequency } from '../enums';
 import {
   capitalizeFirstLetter,
   convertSize,
+  formatDemandRequestDeviceSpecs,
   formatDriveCountSize,
   formatDriveSizeGroups,
   formatMillisecondsToDuration,
@@ -147,6 +148,26 @@ describe('formatSize', () => {
 
   it('accepts the bigint StorageDrive.sizeBytes carries', () => {
     expect(formatSize(3840n * 1024n ** 3n)).toBe('3.8 TB');
+  });
+});
+
+describe('formatDemandRequestDeviceSpecs', () => {
+  it('joins gpu, cpu, and storage fragments', () => {
+    expect(
+      formatDemandRequestDeviceSpecs({
+        gpuModel: 'H100',
+        gpuCount: 8,
+        cpuModel: 'EPYC',
+        cpuCount: 2,
+        cpuCoreCount: 64,
+        memory: 512,
+        ssdSize: 2000,
+      }),
+    ).toBe('8x H100, 2x EPYC (64 cores), 512 GB RAM, 1.95 TB SSD');
+  });
+
+  it('returns empty string when nothing is set', () => {
+    expect(formatDemandRequestDeviceSpecs({})).toBe('');
   });
 });
 

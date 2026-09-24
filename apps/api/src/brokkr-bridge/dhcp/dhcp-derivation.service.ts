@@ -3,6 +3,7 @@ import { isIPv4 } from 'node:net';
 import { Injectable } from '@nestjs/common';
 import { DhcpRelayAgentIpSchema, DhcpReservationSchema, type DhcpReservation } from '@repo/api-client';
 import { Prisma } from '@repo/database';
+import { mergeProxyAllowlist } from '@repo/utils';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { getErrorMessage } from 'src/common/error-utils';
 import { LoggerService } from 'src/logger/logger.service';
@@ -241,18 +242,16 @@ export class DhcpDerivationService {
     // Fail-closed: non-PROXY modes publish an empty proxyAllowedMacs (empty = deny-all).
     let proxyAllowedMacs: string[] = [];
     if (row.dhcpMode === 'PROXY') {
-      const macSet = new Set(dedupedReservations.map((r) => r.mac));
-      for (const operatorMac of row.dhcpProxyAllowedMacs ?? []) {
-        const normalized = operatorMac.toLowerCase();
-        if (CANONICAL_MAC_RE.test(normalized)) {
-          macSet.add(normalized);
-        } else {
-          this.logger.warn(
-            `DHCP prefix ${row.prefixId}: operator proxyAllowedMac skipped: malformed MAC ${JSON.stringify(operatorMac)}`,
-          );
-        }
+      const merged = mergeProxyAllowlist(
+        row.dhcpProxyAllowedMacs ?? [],
+        dedupedReservations.map((r) => r.mac),
+      );
+      for (const operatorMac of merged.rejected) {
+        this.logger.warn(
+          `DHCP prefix ${row.prefixId}: operator proxyAllowedMac skipped: malformed MAC ${JSON.stringify(operatorMac)}`,
+        );
       }
-      proxyAllowedMacs = [...macSet].sort();
+      proxyAllowedMacs = merged.macs;
     }
 
     let nextServer: string | null = null;

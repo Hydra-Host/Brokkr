@@ -137,4 +137,20 @@ export const MAIN_APP_PERMISSIONS: PermissionDefinition[] = [
   { resource: 'reservation-invite', action: 'delete', description: 'Delete reservation invites', audit: 'mutating' },
 
   { resource: 'job', action: 'read', description: 'View device lifecycle job history', audit: 'read-only' },
+
+  // Dispatches a saga that logs into a BMC; an auditor of a lockout must see who asked. Not `read`, so Member does not inherit it.
+  {
+    resource: 'device',
+    action: 'health-check',
+    description: 'Request an immediate BMC health check',
+    audit: 'mutating',
+  },
+
+  // `access`, not `read`, so token telemetry does not flow to every Member; read-only because a view is throttled, not recorded.
+  {
+    resource: 'device-token',
+    action: 'access',
+    description: 'View device token status and recency',
+    audit: 'read-only',
+  },
 ];

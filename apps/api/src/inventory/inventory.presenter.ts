@@ -119,13 +119,13 @@ export class InventoryPresenter {
     return InventoryPresenter.inviteBelongsToIdentity(ctx, invite, identity);
   }
 
-  /** Active invite: caller must be invitee or supplier party (listing status is ignored). No active invite: host must be listed. */
-  static isListedOrInvitee(ctx: InventoryListingContext, identity: IdentityContext): boolean {
+  /** Active invite: party check ignores listing status and plugin catalog visibility. No invite: listed AND plugin-visible. */
+  static isListedOrInvitee(ctx: InventoryListingContext, identity: IdentityContext, catalogVisible = true): boolean {
     const invite = ServerSpecHelper.activeReservationInvite(ctx.device.server?.serversInReservationInvite ?? []);
     if (invite) {
       return InventoryPresenter.inviteBelongsToIdentity(ctx, invite, identity);
     }
-    return ctx.device.server?.isListed ?? false;
+    return catalogVisible && (ctx.device.server?.isListed ?? false);
   }
 
   private static identityEmail(identity: IdentityContext): string {

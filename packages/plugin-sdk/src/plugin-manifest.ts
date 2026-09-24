@@ -4,6 +4,7 @@ import type { z } from 'zod';
 
 import type { BrokkrGateName } from './gates';
 import type { PluginCspContribution } from './plugin-csp';
+import type { PluginPermissionDefinition } from './plugin-permissions';
 
 export interface PluginManifest<TConfigSchema extends z.ZodTypeAny | undefined = z.ZodTypeAny | undefined> {
   id: string;
@@ -22,6 +23,9 @@ export interface PluginManifest<TConfigSchema extends z.ZodTypeAny | undefined =
   configSchema?: TConfigSchema;
 
   allowedGates?: readonly BrokkrGateName[];
+
+  /** Catalog keys this plugin owns. Merged for every loaded plugin, including disabled ones. */
+  permissions?: readonly PluginPermissionDefinition[];
 
   bridgeModule?: () => Promise<{ default: Type<unknown> } | Type<unknown>>;
 

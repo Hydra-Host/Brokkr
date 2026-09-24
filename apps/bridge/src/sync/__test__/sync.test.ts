@@ -14,8 +14,6 @@ import type { FetchLike } from '../brokkr-live-https-sync.service.js';
 import {
   BrokkrLiveHTTPSSyncService,
   buildArchCacheDir,
-  buildDiscoveryManifestUrl,
-  buildFlavorBaseUrl,
   classifyDownloadVerification,
   decideCacheAction,
   HTTPSSyncError,
@@ -56,21 +54,8 @@ class FakeVersionCache implements SyncVersionCache {
 }
 
 describe('pure sync helpers', () => {
-  it('buildDiscoveryManifestUrl strips trailing slashes', () => {
-    expect(buildDiscoveryManifestUrl('https://assets.example/brokkr-live/', '1.0.4', 'amd64')).toBe(
-      'https://assets.example/brokkr-live/1.0.4/amd64/manifest.json',
-    );
-  });
-
   it('buildArchCacheDir joins the flavor and arch subdirs', () => {
     expect(buildArchCacheDir('/brokkr/brokkr-live', 'light', 'arm64')).toBe('/brokkr/brokkr-live/light/arm64');
-  });
-
-  it('buildFlavorBaseUrl appends -light for the light flavor and nothing for full', () => {
-    expect(buildFlavorBaseUrl('https://assets.example/brokkr-live/', 'light')).toBe(
-      'https://assets.example/brokkr-live-light',
-    );
-    expect(buildFlavorBaseUrl('https://assets.example/brokkr-live', 'full')).toBe('https://assets.example/brokkr-live');
   });
 
   it('classifyDownloadVerification checks size before sha', () => {
@@ -98,6 +83,7 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     process.env.PERSISTENT_STORAGE_PATH = baseDir;
     process.env.HTTPS_RETRY_ATTEMPTS = '2';
     process.env.HTTPS_RETRY_DELAY = '0';
+    process.env.BROKKR_LIVE_VERSION = '1.2.3';
     resetPersistentStorageConfig();
     resetStorageConfig();
     resetSyncConfig();
@@ -108,6 +94,8 @@ describe('BrokkrLiveHTTPSSyncService', () => {
     delete process.env.HTTPS_RETRY_ATTEMPTS;
     delete process.env.HTTPS_RETRY_DELAY;
     delete process.env.DISCOVERY_ARCHITECTURES;
+    delete process.env.DISCOVERY_BASE_URL;
+    delete process.env.BROKKR_LIVE_VERSION;
     resetPersistentStorageConfig();
     resetStorageConfig();
     resetSyncConfig();
@@ -124,6 +112,34 @@ describe('BrokkrLiveHTTPSSyncService', () => {
       return Promise.resolve(new Response('not found', { status: 404 }));
     };
   }
+
+  it('requests the light tree under a suffixed version segment without doubling an aliased version', async () => {
+    process.env.DISCOVERY_BASE_URL = ROOT_URL;
+    process.env.BROKKR_LIVE_VERSION = 'latest-prod-light';
+    process.env.DISCOVERY_ARCHITECTURES = 'arm64';
+    resetSyncConfig();
+    resetDiscoveryFileConfig();
+    const content = 'image';
+    const manifest = {
+      version: '1.2.3-light',
+      files: [{ name: 'vmlinuz', size: content.length, sha256sum: sha256Hex(content) }],
+    };
+    const requested: string[] = [];
+    const fetchFn: FetchLike = (input) => {
+      const url = String(input);
+      requested.push(url);
+      return Promise.resolve(
+        new Response(url.endsWith('/manifest.json') ? JSON.stringify(manifest) : content, { status: 200 }),
+      );
+    };
+
+    await new BrokkrLiveHTTPSSyncService('job-1', fetchFn).syncDiscoveryImages('light');
+
+    expect(requested).toEqual([
+      'https://assets.test/brokkr-live/latest-prod-light/arm64/manifest.json',
+      'https://assets.test/brokkr-live/1.2.3-light/arm64/vmlinuz',
+    ]);
+  });
 
   it('downloads manifest files, verifies sha256, and writes cache metadata', async () => {
     const isoContent = 'fake-iso-bytes';
@@ -612,8 +628,8 @@ describe('syncDiscoveryImages orchestration', () => {
     await syncDiscoveryImages(cache, 'job-1', { syncService: new BrokkrLiveHTTPSSyncService('job-1', fetchFn) });
 
     expect(requested.filter((u) => u.endsWith('/manifest.json')).map((u) => new URL(u).pathname)).toEqual([
-      '/brokkr-live-light/9.9.9/amd64/manifest.json',
-      '/brokkr-live-light/9.9.9/arm64/manifest.json',
+      '/brokkr-live/9.9.9-light/amd64/manifest.json',
+      '/brokkr-live/9.9.9-light/arm64/manifest.json',
       '/brokkr-live/9.9.9/amd64/manifest.json',
       '/brokkr-live/9.9.9/arm64/manifest.json',
     ]);

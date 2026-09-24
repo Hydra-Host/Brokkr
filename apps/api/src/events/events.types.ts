@@ -1,13 +1,14 @@
-import { z } from 'zod';
-
-export const DEVICE_METADATA_UPDATED = 'device.metadata.updated';
-
-export const DeviceMetadataUpdatedEventSchema = z.object({
-  deviceId: z.string(),
-  deploymentId: z.string().nullable(),
-  organizationId: z.string().nullable(),
-  status: z.string().nullable(),
-  powerStatus: z.string().nullable(),
-});
-
-export type DeviceMetadataUpdatedEvent = z.infer<typeof DeviceMetadataUpdatedEventSchema>;
+export { DEVICE_HEALTH_RECORDED, DEVICE_METADATA_UPDATED, JOB_EVENT_RECORDED } from '@repo/api-client';
+export {
+  DeviceEventSchema,
+  DeviceHealthRecordedEventSchema,
+  DeviceMetadataUpdatedEventSchema,
+  JobEventRecordedEventSchema,
+  eventVisibleTo,
+  toWire,
+  type DeviceEvent,
+  type DeviceHealthRecordedEvent,
+  type DeviceMetadataUpdatedEvent,
+  type EventViewer,
+  type JobEventRecordedEvent,
+} from '@repo/device-domain';

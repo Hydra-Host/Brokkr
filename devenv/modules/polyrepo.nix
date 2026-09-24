@@ -40,6 +40,17 @@ let
   ++ lib.optional (builtins.pathExists ../../apps/admin-api) "hub-admin:${toString P.ports.hubAdmin.base}"
   ++ lib.optional (builtins.pathExists ../../apps/admin-web) "hub-web-admin:${toString P.ports.hubWebAdmin}";
 
+  # The two ports devenv RESERVES while it evaluates `devenv up` — its services.{postgres,redis}
+  # modules declare processes.<n>.ports.main.allocate and devenv.yaml sets strict_ports, so a
+  # foreign listener here aborts the evaluation before any process starts. That is why these block
+  # where squatterPortSpecs only warns: nothing downstream can report a fault that stops the eval.
+  # config.ports.*, NOT P.ports.* — the latter resolves through ports.nix `allocated` to the
+  # allocator's own output, which is the post-shift port rather than the one we intend to bind.
+  datastorePortSpecs = [
+    "postgres:${toString config.ports.postgres}"
+    "redis:${toString config.ports.redis}"
+  ];
+
   # Shared by preflight (BROKK_PREFLIGHT_GATE=1 → hard checks only, exit 1 on failure) and doctor
   # (full report). `expand` resolves a leading ~ / $HOME the same way modules/lib.nix cdRepo does
   # (dotenv stores HUB_REPO_PATH verbatim). No `set -e`: the report runs every check.
@@ -185,7 +196,19 @@ let
       done
     }
 
+    # The blocking half of the port story (squatterPortSpecs is the advisory half). `|| rc=$?`
+    # because `devenv tasks run` execs this under errexit, where a bare non-zero exit would abort
+    # the script and take the whole verdict down with it — same reason as the host-check call below.
+    check_datastore_ports() {
+      local rc=0
+      REAP_LSOF="${lsofBin}" \
+        bash "${config.devenv.root}/devenv/lib/port-guard.sh" \
+        ${toString config.stack.slot} ${lib.concatStringsSep " " datastorePortSpecs} || rc=$?
+      [ "$rc" = 0 ] || fail=$((fail + 1))
+    }
+
     if [ -n "$gate" ]; then
+      check_datastore_ports
       check_port_squatters
       check_portless_orphans
       if [ "$fail" != 0 ]; then
@@ -195,6 +218,7 @@ let
       fi
       exit 0
     fi
+    check_datastore_ports
     check_port_squatters   # also surface squatters in the full `task doctor` report
     check_portless_orphans
     check_subnet_overlaps

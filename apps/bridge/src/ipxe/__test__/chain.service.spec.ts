@@ -9,7 +9,7 @@ import { MAX_KNOWN_RECORD_MISSING_RETRIES } from '../chain-decision';
 import { extractIdentifiers } from '../chain.helpers';
 import { CHAIN_RESOLVE_TIMEOUT_S, ChainService, IPXE_RENDERER } from '../chain.service';
 import { NIL_DEVICE_ID, type RendererCall, type RendererSpy } from '../chain.types';
-import { IpxeServerTokenUnavailableError, IpxeServiceError } from '../ipxe-errors';
+import { IpxeDeployTokenUnavailableError, IpxeServiceError } from '../ipxe-errors';
 import type { RenderRequest } from '../ipxe-renderer.helpers';
 
 const DEVICE_UUID = '12121212-1212-1212-1212-121212121212';
@@ -479,7 +479,7 @@ describe('ChainService.renderForRecord — custom iPXE', () => {
       },
       render_custom: async (kwargs) => {
         events.push({ method: 'render_custom', kwargs });
-        throw new IpxeServerTokenUnavailableError('server_token atom unavailable for device');
+        throw new IpxeDeployTokenUnavailableError('deploy_token atom unavailable for device');
       },
     };
     const chain = new ChainService(
@@ -508,7 +508,7 @@ describe('ChainService.renderForRecord — custom iPXE', () => {
     const rec = record({ id: DEVICE_UUID, status: 'provisioning', installed_os: 'ipxe-custom' });
     const req: RenderRequest = { ...request('x86_64'), retry_count: MAX_KNOWN_RECORD_MISSING_RETRIES };
     await expect(chain.renderForRecord(rec, req, 'test-job-123')).rejects.toBeInstanceOf(
-      IpxeServerTokenUnavailableError,
+      IpxeDeployTokenUnavailableError,
     );
     expect(events.find((e) => e.method === 'render_retry')).toBeUndefined();
   });

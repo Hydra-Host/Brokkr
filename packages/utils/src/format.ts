@@ -1,5 +1,19 @@
 import { HOURS_IN_MONTH, HOURS_IN_MONTH_INDUSTRY_STANDARD, HOURS_IN_WEEK, MIB_PER_GIB } from './constants';
-import { BillingFrequency, DeviceStatus, InvoiceStatus, NetTerms, TransactionStatus } from './enums';
+import { BillingFrequency, ContractType, DeviceStatus, InvoiceStatus, NetTerms, TransactionStatus } from './enums';
+
+export { formatContractType } from './contract-type';
+
+const CONTRACT_TYPE_FINE_PRINT = {
+  [ContractType.ON_DEMAND]: '*If you cancel early, we refund the unused portion of the billing cycle.',
+  [ContractType.INTERRUPTIBLE]:
+    '*Interruptible servers may be reclaimed after the notice period. Unused time is refunded.',
+  [ContractType.RESERVED_ROLLING]: '*Reserved Rolling cancellations are non-refundable for the current billing cycle.',
+  [ContractType.RESERVED]: '',
+} as const satisfies Record<ContractType, string>;
+
+export function getContractTypeFinePrint(contractType: string) {
+  return CONTRACT_TYPE_FINE_PRINT[contractType as ContractType] ?? '';
+}
 
 type ReservationInvitePricing = {
   billingFrequency: string;
@@ -170,6 +184,41 @@ export function formatSize(value?: number | bigint | null, from: SizeUnit = 'B',
 
   const scaled = convertSize(value, from, unit);
   return `${trimTrailingZeros(scaled.toFixed(decimals))} ${unit}`;
+}
+
+export interface DemandRequestDeviceSpecsInput {
+  gpuModel?: string | null;
+  gpuCount?: number | null;
+  cpuModel?: string | null;
+  cpuCount?: number | null;
+  cpuCoreCount?: number | null;
+  memory?: number | null;
+  ssdSize?: number | null;
+  hddSize?: number | null;
+  nvmeSize?: number | null;
+}
+
+export function formatDemandRequestDeviceSpecs({
+  gpuModel,
+  gpuCount,
+  cpuModel,
+  cpuCount,
+  cpuCoreCount,
+  memory,
+  ssdSize,
+  hddSize,
+  nvmeSize,
+}: DemandRequestDeviceSpecsInput): string {
+  return [
+    `${gpuCount ? gpuCount + 'x ' : ''}${gpuModel || ''}`.trim(),
+    `${cpuCount ? cpuCount + 'x ' : ''}${cpuModel || ''}${cpuCoreCount ? ` (${cpuCoreCount} cores)` : ''}`.trim(),
+    memory ? `${formatSize(memory, 'GB', 2)} RAM` : '',
+    ssdSize ? `${formatSize(ssdSize, 'GB', 2)} SSD` : '',
+    hddSize ? `${formatSize(hddSize, 'GB', 2)} HDD` : '',
+    nvmeSize ? `${formatSize(nvmeSize, 'GB', 2)} NVMe` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
 }
 
 /** Only touches digits after the point, so `decimals: 0` can't turn 100 into 1. */

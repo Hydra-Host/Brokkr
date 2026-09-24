@@ -395,6 +395,17 @@ describe('enqueueCollectionJob', () => {
     expect(call.opts.attempts).toBe(2);
   });
 
+  it('labels the payload with the inventory_collection saga name', async () => {
+    const queue = new FakeQueue();
+    const { factory } = makeFactory(queue);
+    const service = new BullmqQueueService(factory);
+
+    await service.enqueueCollectionJob({ deviceId: 42, jobId: 'test-job' });
+
+    const [call] = queue.added;
+    expect(call.data.saga_name).toBe('inventory_collection');
+  });
+
   it('falls back to the generated plan id when no jobId is given', async () => {
     const queue = new FakeQueue();
     const { factory } = makeFactory(queue);

@@ -6,18 +6,18 @@ import {
   Interface,
   IpAddress,
   Organization,
-  Reservation,
   ReservationInvite,
   Server,
   ServersInReservationInvite,
   StorageDrive,
   User,
 } from '@repo/database';
+import { type ReservationWithInvite } from '@repo/device-domain';
 
 export type DeviceDeploymentAggregate = Deployment & {
-  deployer?: User;
+  deployer?: Pick<User, 'email'> | null;
   customer?: Organization;
-  reservation?: Reservation;
+  reservation?: ReservationWithInvite;
   deviceDiagnostics?: DeviceDiagnostics[];
 };
 

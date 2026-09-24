@@ -51,6 +51,7 @@ model LifecycleJobEvent {
   job        LifecycleJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
   sagaName   String
   stepName   String
+  operation  String?
   eventType  String
   status     String
   result     Json?

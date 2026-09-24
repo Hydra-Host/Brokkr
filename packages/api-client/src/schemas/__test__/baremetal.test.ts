@@ -103,6 +103,7 @@ const VALID_SERVER = {
   name: 'srv-1',
   role: 'Baremetal',
   zoneName: 'zone-1',
+  zoneId: null,
   status: { value: 'active', label: 'Active' },
   powerStatus: { value: 'on', label: 'On' },
   customer: {},
@@ -148,5 +149,15 @@ describe('ServerSchema', () => {
   it.each(['interfaces', 'tenant', 'status', 'specs', 'listing'] as const)('rejects a server missing %s', (field) => {
     const { [field]: _omitted, ...rest } = VALID_SERVER;
     expect(ServerSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('accepts an active deployment carrying its id', () => {
+    const withDeployment = { ...VALID_SERVER, deployment: { id: 'dep-1', deployerEmail: null, reservation: null } };
+    expect(ServerSchema.safeParse(withDeployment).success).toBe(true);
+  });
+
+  it('rejects an active deployment without an id', () => {
+    const withoutId = { ...VALID_SERVER, deployment: { deployerEmail: null, reservation: null } };
+    expect(ServerSchema.safeParse(withoutId).success).toBe(false);
   });
 });

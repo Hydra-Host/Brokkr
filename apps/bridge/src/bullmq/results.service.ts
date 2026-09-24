@@ -60,7 +60,7 @@ export interface ResultsLogger {
 }
 
 const REMOVE_OPTS: ResultsQueueAddOptions = {
-  removeOnComplete: { count: 5000 },
+  removeOnComplete: { count: 0 },
   removeOnFail: { count: 1000 },
 };
 
@@ -330,10 +330,11 @@ export class ResultsService {
   async enqueueResult(args: {
     planId: string;
     stepName: string;
+    operation?: string | null;
     status: string;
     deviceId: unknown;
     eventType?: string;
-    actionType?: string;
+    actionType: string;
     result?: Record<string, unknown> | null;
     error?: string | null;
     attempt?: number;
@@ -351,6 +352,7 @@ export class ResultsService {
       const payload = buildResultPayload({
         plan_id: args.planId,
         step_name: args.stepName,
+        operation: args.operation,
         status: args.status,
         device_id: args.deviceId,
         zone_prefix: this.getZonePrefix(),

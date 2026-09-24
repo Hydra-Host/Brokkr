@@ -428,7 +428,7 @@ describe('StorageService.resync', () => {
 });
 
 describe('StorageService.verify', () => {
-  const manifestUrl = `${SPOKE_VARS.DISCOVERY_BASE_URL}-light/1.1.9/arm64/manifest.json`;
+  const manifestUrl = `${SPOKE_VARS.DISCOVERY_BASE_URL}/1.1.9-light/arm64/manifest.json`;
   const root = mkdtempSync(join(tmpdir(), 'verify-'));
   mkdirSync(join(root, 'brokkr-live', 'light', 'arm64'), { recursive: true });
   writeFileSync(

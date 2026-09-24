@@ -10,7 +10,7 @@ import {
   type NodeKind,
   type VerifyFinding,
 } from '@repo/local-lab-contract';
-import { BOOT_CODES, getErrorMessage, type BootCode } from '@repo/utils';
+import { BOOT_CODES, getErrorMessage, TRAIL_BOOT_CODES, trailFindings, type BootCode } from '@repo/utils';
 import { DiscoveryInventorySchema } from '../common/discovery-inventory';
 import { hubApiFetch, hubApiSignIn } from '../common/hub-client';
 import { HOSTS, URLS } from '../ports';
@@ -30,12 +30,9 @@ import {
 } from './hub-prefix';
 import { simNetworkCidrs } from './sim-network';
 
-/** The lab's semantic names for the shared registry's codes; every severity is looked up, never restated. */
+/** The lab's semantic names for the shared registry's codes; the trail codes come from the shared table, the rest are lab producers. */
 export const LAB_BOOT_CODES = {
-  unevaluated: 'PXE-107',
-  noSubnet: 'PXE-102',
-  refused: 'PXE-110',
-  silent: 'PXE-111',
+  ...TRAIL_BOOT_CODES,
   authoritative: 'PXE-112',
   noPeer: 'PXE-04',
   noFullImage: 'PXE-113',
@@ -379,32 +376,16 @@ async function hubFindings(
   };
 }
 
-type PxeOutcome = NonNullable<BootTrail['pxe']>['outcome'];
-
-// keyed off the contract's outcome enum, so a new bridge decision is a compile error here rather than a silent pass
-const DECIDED: Record<PxeOutcome, ((node: string, at: string) => VerifyFinding) | null> = {
-  offered: null,
-  'refused-allowlist': (node, at) =>
-    labFinding(
-      node,
-      LAB_BOOT_CODES.refused,
-      `The bridge refused this machine's PXE request at ${at}: its MAC is not in the proxy allowlist.`,
-    ),
-  'no-subnet': (node, at) =>
-    labFinding(
-      node,
-      LAB_BOOT_CODES.noSubnet,
-      `The bridge had no DHCP subnet to answer this machine's PXE request at ${at}.`,
-    ),
-};
+// the lab flags every silent machine, so the shared rule runs with an always-expected boot
+const LAB_TRAIL_OPTIONS = { bootExpectedSinceMs: 0, graceMs: 0 } as const;
 
 async function trailFinding(node: PxeNode, transport: BootReadinessTransport): Promise<VerifyFinding | null> {
   const trail = await transport.trail(node.pxeMac);
-  if (trail.readError !== null)
-    return unevaluated(node.name, `The PXE trail for ${node.name} could not be read (${trail.readError}).`);
-  if (trail.pxe === null)
-    return labFinding(node.name, LAB_BOOT_CODES.silent, 'No PXE request from this machine has reached the bridge.');
-  return DECIDED[trail.pxe.outcome]?.(node.name, new Date(trail.pxe.atMs).toISOString()) ?? null;
+  const [finding] = trailFindings(trail, node.name, LAB_TRAIL_OPTIONS);
+  if (finding === undefined) return null;
+  return finding.code === TRAIL_BOOT_CODES.unevaluated
+    ? unevaluated(node.name, finding.message)
+    : labFinding(node.name, finding.code, finding.message);
 }
 
 export async function composeBootReadiness(

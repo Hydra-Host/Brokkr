@@ -7,7 +7,7 @@ GRUB_TIMEOUT=5
 GRUB_RECORDFAIL_TIMEOUT=5
 GRUB_DISABLE_OS_PROBER=true
 GRUB_CMDLINE_LINUX_DEFAULT=""
-GRUB_CMDLINE_LINUX="quiet splash console=tty0 console=ttyS1,115200n8 earlyprintk=ttyS1,115200 earlycon=ttyS1,115200"
+GRUB_CMDLINE_LINUX="quiet splash nohibernate console=tty0 console=ttyS1,115200n8 earlyprintk=ttyS1,115200 earlycon=ttyS1,115200"
 GRUB_SERIAL_COMMAND="serial --unit=1 --speed=115200 --word=8 --parity=no --stop=1"
 GRUB_TERMINAL="console serial"
 GRUB_SAVEDEFAULT=false`;
@@ -18,7 +18,7 @@ GRUB_TIMEOUT=5
 GRUB_RECORDFAIL_TIMEOUT=5
 GRUB_DISABLE_OS_PROBER=true
 GRUB_CMDLINE_LINUX_DEFAULT=""
-GRUB_CMDLINE_LINUX="quiet splash console=tty0"
+GRUB_CMDLINE_LINUX="quiet splash nohibernate console=tty0"
 GRUB_SAVEDEFAULT=false`;
 
 const GRUB_GH200_ROCE_TTY = `GRUB_DEFAULT=0
@@ -27,7 +27,7 @@ GRUB_TIMEOUT=5
 GRUB_RECORDFAIL_TIMEOUT=5
 GRUB_DISABLE_OS_PROBER=true
 GRUB_CMDLINE_LINUX_DEFAULT="memhp_default_state=online_movable"
-GRUB_CMDLINE_LINUX="quiet splash iommu=pt nvidia-drm.modeset=0 console=tty0 console=ttyS1,115200n8 earlyprintk=ttyS1,115200 earlycon=ttyS1,115200 intel_iommu=on iommu=pt"
+GRUB_CMDLINE_LINUX="quiet splash nohibernate iommu=pt nvidia-drm.modeset=0 console=tty0 console=ttyS1,115200n8 earlyprintk=ttyS1,115200 earlycon=ttyS1,115200 intel_iommu=on iommu=pt"
 GRUB_SERIAL_COMMAND="serial --unit=1 --speed=115200 --word=8 --parity=no --stop=1"
 GRUB_TERMINAL="console serial"
 GRUB_SAVEDEFAULT=false`;
@@ -38,7 +38,7 @@ GRUB_TIMEOUT=5
 GRUB_RECORDFAIL_TIMEOUT=5
 GRUB_DISABLE_OS_PROBER=true
 GRUB_CMDLINE_LINUX_DEFAULT=""
-GRUB_CMDLINE_LINUX="quiet splash iommu=pt nvidia-drm.modeset=0 pci=realloc=off console=tty0"
+GRUB_CMDLINE_LINUX="quiet splash nohibernate iommu=pt nvidia-drm.modeset=0 pci=realloc=off console=tty0"
 GRUB_SAVEDEFAULT=false`;
 
 describe('renderGrubDefaults', () => {

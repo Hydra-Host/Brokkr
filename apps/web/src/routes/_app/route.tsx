@@ -29,7 +29,6 @@ import {
   Plug,
   PlugZap,
   Plus,
-  Puzzle,
   Rocket,
   Route as RouteIcon,
   Router,
@@ -55,9 +54,6 @@ import {
 import * as React from 'react';
 import { useLayoutEffect, useState } from 'react';
 
-import { getDocsUrl } from '~/lib/runtime-config';
-
-import type { SidebarNavContribution } from '@hydrahost/plugin-sdk';
 import { signOut, useSession } from '@repo/auth/client';
 import { ApiMonitorContext, BottomBar, useApiMonitorProvider } from '@repo/ui/bottom-bar';
 import { Avatar, AvatarFallback } from '@repo/ui/components/avatar';
@@ -75,7 +71,7 @@ import {
 } from '@repo/ui/components/dropdown-menu';
 import { SidebarInset, SidebarMenuButton, SidebarProvider, SidebarTrigger } from '@repo/ui/components/sidebar';
 import { ThemeSelector } from '@repo/ui/theme-selector';
-import { isRecord } from '@repo/utils';
+import { NotificationsBell } from '~/components/notifications-bell';
 import { getSectionForPathname, getVisibleLeaves, mergeNavSections, type NavSection } from '~/lib/nav';
 import { AppSidebar } from './-components/app-sidebar';
 
@@ -84,11 +80,14 @@ import { AppSearch, AppSearchProvider, AppSearchTrigger } from '~/components/app
 import { NotFound } from '~/components/not-found';
 import { RouteError } from '~/components/route-error';
 import { useActiveOrganizationId } from '~/hooks/use-active-organization-id';
+import { usePermissions } from '~/hooks/use-permissions';
 import { tsr } from '~/lib/api';
 import { isLocalSimulationEnabled } from '~/lib/env';
 import { getLandingRoute } from '~/lib/landing-route';
+import { getDocsUrl } from '~/lib/runtime-config';
 import { sanitizeRedirect } from '~/lib/safe-redirect';
-import { PluginSlot, publicRedirectFromPluginAppMount, usePluginRegistry, wrapPluginIcon } from '~/plugin-host';
+import { PluginSlot, publicRedirectFromPluginAppMount, usePluginRegistry } from '~/plugin-host';
+import { buildPluginSections } from '~/plugin-host/build-plugin-sections';
 
 export const Route = createFileRoute('/_app')({
   component: AppLayout,
@@ -508,6 +507,7 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
   }, [menuStates]);
 
   const pluginRegistry = usePluginRegistry();
+  const { can, isLoading: isLoadingPermissions } = usePermissions();
   const sections: NavSection[] = mergeNavSections(
     platformNav
       .filter((item) => item.items && item.items.length > 0)
@@ -524,7 +524,7 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
               : [],
         ),
       })),
-    buildPluginSections(pluginRegistry.slots.get('sidebar-nav') ?? []),
+    buildPluginSections(pluginRegistry.slots.get('sidebar-nav') ?? [], can, isLoadingPermissions),
   );
 
   return (
@@ -733,7 +733,8 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
           <div className="min-w-0 flex-1">
             <AppBreadcrumbs sections={sections} typewriterKey={typewriterKey} />
           </div>
-          <div>
+          <div className="flex items-center gap-1">
+            <NotificationsBell organizationId={activeOrgId} />
             <ThemeSelector />
           </div>
         </header>
@@ -752,31 +753,6 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
       <BottomBar />
     </>
   );
-}
-
-function isSidebarNavContribution(contribution: unknown): contribution is SidebarNavContribution {
-  return isRecord(contribution) && typeof contribution.to === 'string' && typeof contribution.label === 'string';
-}
-
-function buildPluginSections(entries: ReadonlyArray<{ pluginId: string; contribution: unknown }>): NavSection[] {
-  const bySection = new Map<string, NavSection>();
-  for (const entry of entries) {
-    if (!isSidebarNavContribution(entry.contribution)) continue;
-    const c = entry.contribution;
-    const title = c.section ?? 'Plugins';
-    const key = title.toLowerCase();
-    const sectionIcon = c.sectionIcon ? wrapPluginIcon(entry.pluginId, c.sectionIcon, Puzzle) : Puzzle;
-    const leafIcon = c.icon ? wrapPluginIcon(entry.pluginId, c.icon, Puzzle) : Puzzle;
-    let section = bySection.get(key);
-    if (!section) {
-      section = { title, icon: sectionIcon, items: [] };
-      bySection.set(key, section);
-    } else if (c.sectionIcon && section.icon === Puzzle) {
-      section.icon = sectionIcon;
-    }
-    section.items.push({ title: c.label, url: c.to, icon: leafIcon, external: c.external, popup: c.popup });
-  }
-  return [...bySection.values()];
 }
 
 function nonNavSectionLabel(pathname: string): string | null {

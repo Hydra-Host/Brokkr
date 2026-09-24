@@ -1,37 +1,21 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Injectable, type OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DeviceRole, Prisma, ServerLifecycleStatus } from '@repo/database';
-import { DeviceSpecHelper } from '@repo/device-domain';
 import { getBullMqTelemetry } from '@repo/telemetry';
 import { Job } from 'bullmq';
 import { randomUUID } from 'crypto';
-import {
-  bmcSecretDispatchFields,
-  deviceContextSelect,
-  DeviceContextService,
-  type DeviceContext,
-} from 'src/brokkr-bridge/device-context.service';
+import { DeviceContextService, type DeviceContext } from 'src/brokkr-bridge/device-context.service';
 import { BridgeQueueService } from 'src/brokkr-bridge/queue/bridge-queue.service';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { getErrorMessage } from 'src/common/error-utils';
 import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
+import {
+  buildHealthCheckDispatch,
+  HEALTH_CHECK_ELIGIBLE_WHERE,
+  healthCheckDeviceSelect,
+} from './device-health-check.dispatch';
 import { DEVICE_HEALTH_CHECK_INTERVAL_MS, DEVICE_HEALTH_CHECK_QUEUE } from './device-health-check.types';
-
-const healthCheckDeviceSelect = {
-  ...deviceContextSelect,
-  networkType: true,
-  interfaces: {
-    where: { deletedAt: null },
-    include: {
-      ipAddresses: {
-        where: { deletedAt: null },
-        include: { natOutside: { where: { deletedAt: null }, select: { address: true } } },
-      },
-    },
-  },
-} satisfies Prisma.DeviceSelect;
 
 @Injectable()
 @Processor(DEVICE_HEALTH_CHECK_QUEUE, { telemetry: getBullMqTelemetry('brokkr-hub') })
@@ -60,13 +44,7 @@ export class DeviceHealthCheckCron extends WorkerHost implements OnApplicationBo
 
     try {
       const devices = await this.prisma.device.findMany({
-        where: {
-          deletedAt: null,
-          NOT: { server: { lifecycleStatus: ServerLifecycleStatus.OFFLINE } },
-          // canonical role for new rows is Server; Baremetal is the legacy import value
-          role: { in: [DeviceRole.Baremetal, DeviceRole.Server] },
-          interfaces: { some: { mgmtOnly: true, deletedAt: null, ipAddresses: { some: { deletedAt: null } } } },
-        },
+        where: HEALTH_CHECK_ELIGIBLE_WHERE,
         select: healthCheckDeviceSelect,
       });
 
@@ -103,23 +81,14 @@ export class DeviceHealthCheckCron extends WorkerHost implements OnApplicationBo
           }
 
           try {
+            const { payload, options } = buildHealthCheckDispatch(device, ctx);
             await this.bridgeQueueService.enqueueSagaJob(
               zoneId,
               'device_health_check',
               jobId,
-              {
-                device_id: device.id,
-                bmc_ip: ctx.bmcIp,
-                primary_ip:
-                  DeviceSpecHelper.ipv4({ networkType: device.networkType, interfaces: device.interfaces }) || null,
-                ...bmcSecretDispatchFields(ctx.bmcSecret),
-              },
+              payload,
               device.id,
-              {
-                removeOnComplete: { age: 60 },
-                removeOnFail: { age: 600 },
-                coalesceKey: `health-cron-${device.id}`,
-              },
+              options,
             );
             enqueued++;
           } catch (error) {

@@ -20,6 +20,10 @@ model Organization {
   /// partial unique index enforces the singleton at the database level.
   isInstanceOperator Boolean @default(false)
 
+  /// Managed-edition GTM: we already have a relationship with this org.
+  /// Not billing onboarding — invites do not need this flag.
+  knownAccount Boolean @default(false)
+
   organizationMembershipInvitations OrganizationMembershipInvitation[]
   storefrontSettings                StorefrontSettings?
   organizationApiKey                OrganizationApiKey[]
@@ -54,6 +58,7 @@ model Organization {
   bgpSessions                       BgpSession[]
   circuits                          Circuit[]
   orgRoles                          OrganizationMemberRole[]
+  notifications                     Notification[]
 }
 
 /// Canonical org-membership table (better-auth shaped). Single source of truth

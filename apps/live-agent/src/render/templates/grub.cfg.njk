@@ -14,10 +14,10 @@ GRUB_CMDLINE_LINUX_DEFAULT=""
 {% set serial_port = serial_ports.port -%}
 {% set serial_baud = serial_ports.baud or 115200 -%}
 {% set serial_unit = (serial_port | last) if (serial_port | startswith('ttyS')) else '0' -%}
-GRUB_CMDLINE_LINUX="quiet splash{{ gpu_params }}{{ pci_params }} console=tty0 console={{ serial_port }},{{ serial_baud }}n8 earlyprintk={{ serial_port }},{{ serial_baud }} earlycon={{ serial_port }},{{ serial_baud }}{% if roce_iommu %} intel_iommu=on iommu=pt{% endif %}"
+GRUB_CMDLINE_LINUX="quiet splash nohibernate{{ gpu_params }}{{ pci_params }} console=tty0 console={{ serial_port }},{{ serial_baud }}n8 earlyprintk={{ serial_port }},{{ serial_baud }} earlycon={{ serial_port }},{{ serial_baud }}{% if roce_iommu %} intel_iommu=on iommu=pt{% endif %}"
 GRUB_SERIAL_COMMAND="serial --unit={{ serial_unit }} --speed={{ serial_baud }} --word=8 --parity=no --stop=1"
 GRUB_TERMINAL="console serial"
 {% else -%}
-GRUB_CMDLINE_LINUX="quiet splash{{ gpu_params }}{{ pci_params }} console=tty0{% if roce_iommu %} intel_iommu=on iommu=pt{% endif %}"
+GRUB_CMDLINE_LINUX="quiet splash nohibernate{{ gpu_params }}{{ pci_params }} console=tty0{% if roce_iommu %} intel_iommu=on iommu=pt{% endif %}"
 {% endif -%}
 GRUB_SAVEDEFAULT=false

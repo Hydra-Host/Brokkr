@@ -6,6 +6,7 @@ import { DeviceTestRunsModule } from 'src/device-test-runs/device-test-runs.modu
 import { DeviceTokensModule } from 'src/device-tokens/device-tokens.module';
 import { DevicesModule } from 'src/devices/devices.module';
 import { InventoryModule } from 'src/inventory/inventory.module';
+import { IpamModule } from 'src/ipam/ipam.module';
 import { LifecycleModule } from 'src/lifecycle/lifecycle.module';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { SanitizationReportModule } from 'src/sanitization-reports/sanitization-report.module';
@@ -15,6 +16,9 @@ import { SealedEnvelopeService } from '../crypto/sealed-envelope.service';
 import { ZoneCryptoModule } from '../zone-crypto/zone-crypto.module';
 import { BenchmarksRepository } from './benchmarks/benchmarks.repository';
 import { BenchmarkService } from './benchmarks/benchmarks.service';
+import { BootTrailController } from './boot-trail/boot-trail.controller';
+import { BootTrailService } from './boot-trail/boot-trail.service';
+import { DeviceBootReadinessService } from './boot-trail/device-boot-readiness.service';
 import { RESULTS_PREFIX, RESULTS_QUEUE_NAME } from './constants/queue.constants';
 import { DeviceContextModule } from './device-context/device-context.module';
 import { DeviceRecordModule } from './device-record/device-record.module';
@@ -59,6 +63,7 @@ import { ServerTokenModule } from './server-token/server-token.module';
     DeviceRecordModule,
     DeviceTokensModule,
     DeviceTestRunsModule,
+    IpamModule,
     JobLogWriterModule,
     NetplanModule,
     RedisModule,
@@ -72,7 +77,7 @@ import { ServerTokenModule } from './server-token/server-token.module';
     forwardRef(() => InventoryModule),
     forwardRef(() => LifecycleModule),
   ],
-  controllers: [DiscoveryRunsController],
+  controllers: [DiscoveryRunsController, BootTrailController],
   providers: [
     BenchmarksRepository,
     BenchmarkService,
@@ -98,6 +103,8 @@ import { ServerTokenModule } from './server-token/server-token.module';
     DiscoveryEventsService,
     DiscoveryRunIssueRecorder,
     DiscoveryRunsService,
+    BootTrailService,
+    DeviceBootReadinessService,
     DiscoveryOrchestratorService,
     {
       provide: CollectorRegistry,

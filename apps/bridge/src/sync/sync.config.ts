@@ -1,3 +1,5 @@
+import { discoveryRootUrl } from '@repo/utils';
+
 import { parseDiscoveryFlavors, type DiscoveryFlavor } from '../download/discovery.config.js';
 import { getBrokkrEnv, isLocalSimulationEnabled } from '../redfish/redfish.config.js';
 
@@ -54,12 +56,9 @@ const TLS_OPTIONAL_ENVIRONMENTS: ReadonlySet<string> = new Set(['local', 'dev'])
 // Defense-in-depth against command injection in the curl-over-SSH layer.
 const FORBIDDEN_URL_CHARS = new Set('"\'\\`$;&|<>\n\r\t '.split(''));
 
-export const DEFAULT_BROKKR_LIVE_VERSION = '1.1.9';
-
-// an older bridge pointed DISCOVERY_BASE_URL at the light tree itself; the flavor rule extends the flavor-less root
-function discoveryRootUrl(url: string): string {
-  return url.replace(/\/+$/, '').replace(/-light$/, '');
-}
+// flavor-less alias, not a pin: every synced flavor shares this one value and appends its own suffix, and the
+// last concretely-pinned default (1.1.9) was only ever published amd64-full, so light and arm64 both 404 on it
+export const DEFAULT_BROKKR_LIVE_VERSION = 'latest-prod';
 
 export function buildSyncConfig(env: NodeJS.ProcessEnv = process.env): SyncConfig {
   const environment = (getBrokkrEnv(env) || 'prod').trim().toLowerCase();

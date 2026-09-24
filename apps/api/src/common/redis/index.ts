@@ -30,6 +30,7 @@ export {
   TTL_IPXE_URL_SECONDS,
   TTL_RESCUE_SSH_KEYS_SECONDS,
   TTL_VRRP_VIP_SECONDS,
+  deployToken,
   deviceData,
   deviceLookup,
   devicePointers,

@@ -1,23 +1,14 @@
-import { DeviceNetplanQuerySchema, type NetplanPhase } from '@repo/api-client';
-import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import { createFileRoute } from '@tanstack/react-router';
-import { DeviceNetplanContent } from '~/components/device-netplan-content';
+import { DeviceNetplanQuerySchema } from '@repo/api-client';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 
 export const Route = createFileRoute('/_app/dcim/servers/$deviceId/netplan')({
   validateSearch: DeviceNetplanQuerySchema,
-  staticData: { breadcrumb: 'Netplan' },
-  component: ServerNetplanPage,
+  beforeLoad: ({ params, search }) => {
+    throw redirect({
+      to: '/dcim/servers/$deviceId/networking',
+      params,
+      search: { tab: 'netplan', phase: search.phase },
+      replace: true,
+    });
+  },
 });
-
-function ServerNetplanPage() {
-  const { deviceId } = Route.useParams();
-  const { phase } = Route.useSearch();
-  const navigate = Route.useNavigate();
-  useDocumentTitle('Netplan');
-
-  const changePhase = (nextPhase: NetplanPhase) => {
-    void navigate({ search: { phase: nextPhase }, replace: true });
-  };
-
-  return <DeviceNetplanContent deviceId={deviceId} phase={phase} onPhaseChange={changePhase} />;
-}

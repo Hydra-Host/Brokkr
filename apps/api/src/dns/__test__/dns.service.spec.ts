@@ -80,10 +80,24 @@ describe('DnsService', () => {
     it('returns domains for a zone', async () => {
       const result = await svc.service.listDomains('zone-1');
       expect(result).toHaveLength(1);
-      expect(svc.prisma.dnsDomain.findMany).toHaveBeenCalledWith({
-        where: { zoneId: 'zone-1', deletedAt: null },
-        orderBy: { name: 'asc' },
-      });
+      expect(svc.prisma.dnsDomain.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { zoneId: 'zone-1', deletedAt: null },
+          orderBy: { name: 'asc' },
+        }),
+      );
+    });
+
+    it('projects a lean domain shape (no deletedAt leak)', async () => {
+      await svc.service.listDomains('zone-1');
+      expect(svc.prisma.dnsDomain.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ id: true, name: true, type: true, zoneId: true }),
+        }),
+      );
+      const arg = svc.prisma.dnsDomain.findMany.mock.calls[0][0];
+      expect(arg.select).not.toHaveProperty('deletedAt');
+      expect(arg).not.toHaveProperty('include');
     });
 
     it('throws NotFoundException when zone does not exist', async () => {
@@ -116,6 +130,16 @@ describe('DnsService', () => {
       expect(result.id).toBe('dom-1');
     });
 
+    it('strips deletedAt from the returned domain', async () => {
+      const result = await svc.service.getDomain('zone-1', 'dom-1');
+      expect(result).not.toHaveProperty('deletedAt');
+      expect(svc.prisma.dnsDomain.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ id: true, deletedAt: true }),
+        }),
+      );
+    });
+
     it('throws NotFoundException when domain is soft-deleted', async () => {
       svc.prisma.dnsDomain.findUnique.mockResolvedValue({
         id: 'dom-1',
@@ -146,8 +170,16 @@ describe('DnsService', () => {
       expect(result.id).toBe('dom-1');
       expect(svc.prisma.dnsDomain.create).toHaveBeenCalledWith({
         data: { name: 'test.lan', type: 'FORWARD', zoneId: 'zone-1' },
+        select: expect.not.objectContaining({ deletedAt: expect.anything() }),
       });
       expect(svc.publisher.republishForZone).toHaveBeenCalledWith('zone-1');
+    });
+
+    it('projects a lean domain shape on create (no deletedAt leak)', async () => {
+      await svc.service.createDomain('zone-1', { name: 'test.lan', type: 'FORWARD' });
+      const arg = svc.prisma.dnsDomain.create.mock.calls[0][0];
+      expect(arg.select).toBeDefined();
+      expect(arg.select).not.toHaveProperty('deletedAt');
     });
 
     it('throws ConflictException on duplicate name', async () => {
@@ -173,8 +205,16 @@ describe('DnsService', () => {
       expect(svc.prisma.dnsDomain.update).toHaveBeenCalledWith({
         where: { id: 'dom-1' },
         data: { name: 'new-name' },
+        select: expect.not.objectContaining({ deletedAt: expect.anything() }),
       });
       expect(svc.publisher.republishForZone).toHaveBeenCalledWith('zone-1');
+    });
+
+    it('projects a lean domain shape on update (no deletedAt leak)', async () => {
+      await svc.service.updateDomain('zone-1', 'dom-1', { name: 'new-name' });
+      const arg = svc.prisma.dnsDomain.update.mock.calls[0][0];
+      expect(arg.select).toBeDefined();
+      expect(arg.select).not.toHaveProperty('deletedAt');
     });
 
     it('throws ConflictException on duplicate name', async () => {
@@ -276,6 +316,16 @@ describe('DnsService', () => {
         }),
       );
     });
+
+    it('projects a lean record shape (no deletedAt leak)', async () => {
+      await svc.service.listRecords('zone-1', 'dom-1', {});
+      const arg = svc.prisma.dnsRecord.findMany.mock.calls[0][0];
+      expect(arg.select).toEqual(
+        expect.objectContaining({ id: true, name: true, value: true, device: { select: { role: true } } }),
+      );
+      expect(arg.select).not.toHaveProperty('deletedAt');
+      expect(arg).not.toHaveProperty('include');
+    });
   });
 
   describe('createRecord', () => {
@@ -286,10 +336,19 @@ describe('DnsService', () => {
         type: 'A',
         value: '10.0.0.2',
       });
-      expect(svc.prisma.dnsRecord.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ source: 'MANUAL' }),
-      });
+      expect(svc.prisma.dnsRecord.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ source: 'MANUAL' }) }),
+      );
       expect(svc.publisher.republishForZone).toHaveBeenCalledWith('zone-1');
+    });
+
+    it('projects a lean record shape on create (no deletedAt leak)', async () => {
+      svc.prisma.dnsRecord.findFirst.mockResolvedValueOnce(null);
+      await svc.service.createRecord('zone-1', 'dom-1', { name: 'web', type: 'A', value: '10.0.0.2' });
+      const arg = svc.prisma.dnsRecord.create.mock.calls[0][0];
+      expect(arg.select).toBeDefined();
+      expect(arg.select).not.toHaveProperty('deletedAt');
+      expect(arg).not.toHaveProperty('include');
     });
 
     it('passes ttlOverride when provided', async () => {
@@ -300,9 +359,9 @@ describe('DnsService', () => {
         value: '10.0.0.2',
         ttlOverride: 300,
       });
-      expect(svc.prisma.dnsRecord.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ ttlOverride: 300 }),
-      });
+      expect(svc.prisma.dnsRecord.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ ttlOverride: 300 }) }),
+      );
     });
 
     it('sets ttlOverride to null when not provided', async () => {
@@ -312,9 +371,9 @@ describe('DnsService', () => {
         type: 'A',
         value: '10.0.0.2',
       });
-      expect(svc.prisma.dnsRecord.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ ttlOverride: null }),
-      });
+      expect(svc.prisma.dnsRecord.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ ttlOverride: null }) }),
+      );
     });
 
     it('prefers the live row when a soft-deleted twin coexists', async () => {
@@ -337,11 +396,22 @@ describe('DnsService', () => {
         type: 'A',
         value: '10.0.0.2',
       });
-      expect(svc.prisma.dnsRecord.update).toHaveBeenCalledWith({
-        where: { id: 'rec-auto' },
-        data: expect.objectContaining({ source: 'MANUAL', deviceId: null, ipAddressId: null }),
-      });
+      expect(svc.prisma.dnsRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'rec-auto' },
+          data: expect.objectContaining({ source: 'MANUAL', deviceId: null, ipAddressId: null }),
+        }),
+      );
       expect(svc.prisma.dnsRecord.create).not.toHaveBeenCalled();
+    });
+
+    it('projects a lean record shape when pinning an existing row (no deletedAt leak)', async () => {
+      svc.prisma.dnsRecord.findFirst.mockResolvedValueOnce({ id: 'rec-auto', source: 'AUTO', deletedAt: null });
+      await svc.service.createRecord('zone-1', 'dom-1', { name: 'web', type: 'A', value: '10.0.0.2' });
+      const arg = svc.prisma.dnsRecord.update.mock.calls[0][0];
+      expect(arg.select).toBeDefined();
+      expect(arg.select).not.toHaveProperty('deletedAt');
+      expect(arg).not.toHaveProperty('include');
     });
 
     it('throws ConflictException when a live record with the same key exists', async () => {
@@ -376,16 +446,18 @@ describe('DnsService', () => {
         ttlOverride: 600,
       });
       expect(svc.prisma.dnsRecord.create).not.toHaveBeenCalled();
-      expect(svc.prisma.dnsRecord.update).toHaveBeenCalledWith({
-        where: { id: 'rec-deleted' },
-        data: {
-          deletedAt: null,
-          ttlOverride: 600,
-          source: 'MANUAL',
-          deviceId: null,
-          ipAddressId: null,
-        },
-      });
+      expect(svc.prisma.dnsRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'rec-deleted' },
+          data: {
+            deletedAt: null,
+            ttlOverride: 600,
+            source: 'MANUAL',
+            deviceId: null,
+            ipAddressId: null,
+          },
+        }),
+      );
       expect(svc.publisher.republishForZone).toHaveBeenCalledWith('zone-1');
     });
   });
@@ -393,11 +465,21 @@ describe('DnsService', () => {
   describe('updateRecord', () => {
     it('updates a manual record and republishes', async () => {
       await svc.service.updateRecord('zone-1', 'dom-1', 'rec-1', { name: 'new-host' });
-      expect(svc.prisma.dnsRecord.update).toHaveBeenCalledWith({
-        where: { id: 'rec-1' },
-        data: { name: 'new-host' },
-      });
+      expect(svc.prisma.dnsRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'rec-1' },
+          data: { name: 'new-host' },
+        }),
+      );
       expect(svc.publisher.republishForZone).toHaveBeenCalledWith('zone-1');
+    });
+
+    it('projects a lean record shape on update (no deletedAt leak)', async () => {
+      await svc.service.updateRecord('zone-1', 'dom-1', 'rec-1', { name: 'new-host' });
+      const arg = svc.prisma.dnsRecord.update.mock.calls[0][0];
+      expect(arg.select).toBeDefined();
+      expect(arg.select).not.toHaveProperty('deletedAt');
+      expect(arg).not.toHaveProperty('include');
     });
 
     it('rejects updating AUTO records', async () => {
@@ -490,10 +572,12 @@ describe('DnsService', () => {
 
     it('only includes provided fields in update data', async () => {
       await svc.service.updateRecord('zone-1', 'dom-1', 'rec-1', { value: '10.0.0.5' });
-      expect(svc.prisma.dnsRecord.update).toHaveBeenCalledWith({
-        where: { id: 'rec-1' },
-        data: { value: '10.0.0.5' },
-      });
+      expect(svc.prisma.dnsRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'rec-1' },
+          data: { value: '10.0.0.5' },
+        }),
+      );
     });
 
     it('throws NotFoundException for missing record', async () => {

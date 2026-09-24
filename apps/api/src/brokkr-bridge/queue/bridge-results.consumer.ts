@@ -37,6 +37,8 @@ import { DeviceSecretAuditService } from 'src/device-secret/device-secret-audit.
 import { deriveStashKey, encryptStash } from 'src/device-secret/reveal-stash.crypto';
 import { DeviceTestRunsService } from 'src/device-test-runs/device-test-runs.service';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { DEVICE_HEALTH_RECORDED } from 'src/events/events.types';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { LifecycleInboundService } from 'src/lifecycle/inbound/lifecycle-inbound.service';
 import { LoggerService } from 'src/logger/logger.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
@@ -50,6 +52,7 @@ import { DeviceRecordPublisher } from '../device-record/device-record-publisher.
 import { DiscoveryIngressService } from '../discovery/discovery-ingress.service';
 import { discoveryCompleteDataSchema } from '../discovery/discovery.types';
 import { type JobLogLevel, isJobLogSuppressed, JobLogWriterService } from '../job-logs/job-log-writer.service';
+import { resolvePlanDeviceId } from '../job-logs/plan-device-id';
 import { BridgeNetworkScanService } from '../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../lifecycle/qualify-orchestration.service';
 import { isTeeRequested } from '../lifecycle/tee-requested';
@@ -63,9 +66,11 @@ import {
   isResultJobName,
   jobCompletedDataSchema,
   jobResultDataSchema,
+  observedTeeState,
   phoneHomeDataSchema,
   RESULT_JOB_NAME,
   sanitizationReportSchema,
+  teeConfigStepResultSchema,
   WIPE_STEP_NAMES,
 } from './bridge-queue.types';
 
@@ -141,6 +146,7 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
     private readonly renderRequestDispatcher: RenderRequestDispatcher,
     private readonly deviceRecordPublisher: DeviceRecordPublisher,
     private readonly deviceTokensService: DeviceTokensService,
+    private readonly redisPubSub: RedisPubSubService,
     @Inject(forwardRef(() => LifecycleInboundService))
     private readonly lifecycleInbound: LifecycleInboundService,
     private readonly sealedEnvelope: SealedEnvelopeService,
@@ -365,7 +371,12 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
   }
 
   private async handleDiscoveryComplete(job: ProcessableJob) {
-    const data = discoveryCompleteDataSchema.parse(job.data);
+    const parsed = discoveryCompleteDataSchema.safeParse(job.data);
+    if (!parsed.success) {
+      this.logger.error(`discovery.complete: invalid payload (id=${job.id}): ${parsed.error.message}`);
+      return HANDLER_SOFT_FAIL;
+    }
+    const data = parsed.data;
 
     this.logger.log(
       `Discovery complete: zone=${data.zone_prefix} device=${data.device_id} fields=${data.fields.length}`,
@@ -375,7 +386,12 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
   }
 
   private async handleStepResult(job: ProcessableJob) {
-    const data = jobResultDataSchema.parse(job.data);
+    const parsed = jobResultDataSchema.safeParse(job.data);
+    if (!parsed.success) {
+      this.logger.error(`job.result: invalid payload (id=${job.id}): ${parsed.error.message}`);
+      return HANDLER_SOFT_FAIL;
+    }
+    const data = parsed.data;
 
     this.logger.log(
       `Step result: zone=${data.zone_prefix} job=${data.plan_id} step=${data.step_name} status=${data.status} event=${data.event_type}`,
@@ -536,10 +552,26 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
       await this.clearDeploymentRescueOs(data.device_id);
       await this.republishDeviceRecord(data.device_id, data.plan_id, 'deploy_os complete');
     }
+
+    if (
+      data.action_type === 'provision' &&
+      data.event_type === 'stage_changed' &&
+      data.step_name === 'tee_config' &&
+      data.status === 'complete' &&
+      data.result
+    ) {
+      const outcome = await this.recordTeeConfigResult(data);
+      if (outcome === HANDLER_SOFT_FAIL) return outcome;
+    }
   }
 
   private async handleJobCompleted(job: ProcessableJob) {
-    const data = jobCompletedDataSchema.parse(job.data);
+    const parsed = jobCompletedDataSchema.safeParse(job.data);
+    if (!parsed.success) {
+      this.logger.error(`job.completed: invalid payload (id=${job.id}): ${parsed.error.message}`);
+      return HANDLER_SOFT_FAIL;
+    }
+    const data = parsed.data;
     // Count after handling settles: a transient failure rethrows for a BullMQ retry (avoid double-count
     // per attempt), and a trust-gate refusal soft-fails without recording — it was never a real completion.
     const result = await this.applyJobCompleted(data);
@@ -757,25 +789,35 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
   }
 
   private async handleDeviceHealth(job: ProcessableJob) {
-    const data = deviceHealthDataSchema.parse(job.data);
+    const parsed = deviceHealthDataSchema.safeParse(job.data);
+    if (!parsed.success) {
+      this.logger.error(`device_health: invalid payload (id=${job.id}): ${parsed.error.message}`);
+      return HANDLER_SOFT_FAIL;
+    }
+    const data = parsed.data;
 
     try {
       const device = await this.prisma.device.findUnique({
         where: { id: data.device_id, deletedAt: null },
-        select: { id: true },
+        select: {
+          id: true,
+          supplierId: true,
+          server: { select: { deployments: { where: { endDate: null }, select: { customerId: true }, take: 1 } } },
+        },
       });
 
       if (!device) {
         this.logger.warn(`Device health result for unknown device ${data.device_id}`, data.job_id);
         return;
       }
+      const activeDeployment = device.server?.deployments[0] ?? null;
 
       // Device health results carry job_id (the saga plan_id); if a hub-side Job row exists it must
       // point at the same device. Health checks may fire autonomously without a Job, so a missing row is allowed.
       const gate = await this.assertPlanMatchesDevice(data.job_id, data.device_id);
       if (gate !== 'proceed') return gate === 'reject' ? HANDLER_SOFT_FAIL : undefined;
 
-      await this.prisma.deviceHealthCheck.create({
+      const created = await this.prisma.deviceHealthCheck.create({
         data: {
           deviceId: device.id,
           primaryReachable: data.primary_reachable ?? null,
@@ -787,6 +829,19 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
           brokkrLiveRunning: data.brokkr_live_running ?? null,
         },
       });
+
+      try {
+        await this.redisPubSub.publish({
+          type: DEVICE_HEALTH_RECORDED,
+          deviceId: device.id,
+          organizationId: activeDeployment?.customerId ?? null,
+          supplierId: device.supplierId,
+          healthCheckId: created.id,
+          testedAt: created.testedAt.toISOString(),
+        });
+      } catch (error) {
+        this.logger.warn(`Failed to publish health event for ${device.id}: ${getErrorMessage(error)}`, data.job_id);
+      }
 
       if (data.powered_on != null) {
         const powerStatus = data.powered_on ? ServerPowerStatus.On : ServerPowerStatus.Off;
@@ -818,7 +873,12 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
 
   // Clears any transitional power state a saga left (else the next power command is rejected); never touch lifecycleStatus — only the deployed-OS HTTP phone-home may drive a device to "provisioned".
   private async handleBrokkrLivePhoneHome(job: ProcessableJob) {
-    const data = phoneHomeDataSchema.parse(job.data);
+    const parsed = phoneHomeDataSchema.safeParse(job.data);
+    if (!parsed.success) {
+      this.logger.error(`device.phone_home: invalid payload (id=${job.id}): ${parsed.error.message}`);
+      return HANDLER_SOFT_FAIL;
+    }
+    const data = parsed.data;
 
     const device = await this.prisma.device.findUnique({
       where: { id: data.device_id, deletedAt: null },
@@ -955,18 +1015,16 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
     sagaName: string,
   ): Promise<void> {
     if (isJobLogSuppressed(planId, sagaName)) return;
-    let jobRecord: { deviceId: string | null; device: { zoneId: string | null } | null } | null;
+    let zoneId: string | null;
     try {
-      jobRecord = await this.prisma.job.findUnique({
-        where: { id: planId },
-        select: { deviceId: true, device: { select: { zoneId: true } } },
-      });
+      const planDeviceId = await resolvePlanDeviceId(this.prisma, planId);
+      if (!planDeviceId || planDeviceId !== deviceId) return;
+      const device = await this.prisma.device.findUnique({ where: { id: deviceId }, select: { zoneId: true } });
+      zoneId = device?.zoneId ?? null;
     } catch (error) {
       this.logger.warn(`Skipping job log for plan ${planId}: ${getErrorMessage(error)}`, planId);
       return;
     }
-    if (!jobRecord?.deviceId || jobRecord.deviceId !== deviceId) return;
-    const zoneId = jobRecord.device?.zoneId;
     if (!zoneId) return;
     await this.jobLogWriter.write(zoneId, planId, level, message, 'BridgeResultsConsumer');
   }
@@ -1007,6 +1065,50 @@ export class BridgeResultsConsumer implements OnModuleInit, OnModuleDestroy {
 
   private async clearDevicePowerStatus(deviceId: string, jobId: string) {
     await this.writeServerPowerStatus(deviceId, null, jobId, 'cleared (power saga failed)');
+  }
+
+  // the observed BIOS state lands before the saga ends, so a plan that fails after this step still leaves the
+  // true state behind; reconcileTeeEnabled on job.completed stays as the backstop
+  private async recordTeeConfigResult(data: JobResultData): Promise<typeof HANDLER_SOFT_FAIL | undefined> {
+    const parsed = teeConfigStepResultSchema.safeParse(data.result);
+    if (!parsed.success) {
+      this.logger.warn(
+        `Invalid tee_config result from device ${data.device_id}: ${parsed.error.message}`,
+        data.plan_id,
+      );
+      return;
+    }
+    const teeEnabled = observedTeeState(parsed.data);
+    if (teeEnabled === null) return;
+
+    const gate = await this.assertPlanMatchesDevice(data.plan_id, data.device_id);
+    if (gate !== 'proceed') return gate === 'reject' ? HANDLER_SOFT_FAIL : undefined;
+    if (await this.isSupersededLifecycleWrite(data.device_id, data.plan_id)) {
+      this.logger.warn(
+        `Skipping stale teeEnabled write for device ${data.device_id}: plan ${data.plan_id} predates the device's ` +
+          `last applied lifecycle job (replayed/out-of-order bridge result)`,
+        data.plan_id,
+      );
+      return;
+    }
+    await this.writeServerTeeEnabled(data.device_id, teeEnabled, data.plan_id);
+  }
+
+  private async writeServerTeeEnabled(deviceId: string, teeEnabled: boolean, planId: string) {
+    try {
+      // UPDATE-only: a step result must never CREATE the Server row (same rule as writeServerPowerStatus)
+      const { count } = await this.prisma.server.updateMany({
+        where: { deviceId, device: { deletedAt: null } },
+        data: { teeEnabled },
+      });
+      if (count > 0) this.logger.log(`Device ${deviceId} teeEnabled recorded from tee_config: ${teeEnabled}`, planId);
+    } catch (error) {
+      this.logger.error(
+        `Failed to record teeEnabled for device ${deviceId}: ${getErrorMessage(error)}`,
+        undefined,
+        planId,
+      );
+    }
   }
 
   private async reconcileTeeEnabled(deviceId: string, planId: string): Promise<void> {

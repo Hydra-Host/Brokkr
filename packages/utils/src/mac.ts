@@ -12,3 +12,18 @@ export function canonicalMac(mac: string): string | null {
 export function isCanonicalMac(mac: string): boolean {
   return CANONICAL_MAC_REGEX.test(mac);
 }
+
+/** The proxy allowlist the bridge enforces: operator MACs plus reservation MACs, canonical, deduplicated, sorted. */
+export function mergeProxyAllowlist(
+  operatorMacs: readonly string[],
+  reservationMacs: readonly string[],
+): { macs: string[]; rejected: string[] } {
+  const macs = new Set<string>();
+  const rejected: string[] = [];
+  for (const raw of [...operatorMacs, ...reservationMacs]) {
+    const mac = canonicalMac(raw);
+    if (mac === null) rejected.push(raw);
+    else macs.add(mac);
+  }
+  return { macs: [...macs].sort(), rejected };
+}

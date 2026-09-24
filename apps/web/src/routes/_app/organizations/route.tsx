@@ -1,7 +1,7 @@
+import { ResponsiveNavTabs } from '@repo/domain-ui/components/responsive-nav-tabs';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { createFileRoute, Outlet, useLocation } from '@tanstack/react-router';
 import { useMemo } from 'react';
-import { ResponsiveNavTabs } from '~/components/responsive-nav-tabs';
 import { usePermissions } from '~/hooks/use-permissions';
 import { activeOrganizationTab, visibleOrganizationTabs } from '~/lib/organization-tabs';
 

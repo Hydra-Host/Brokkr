@@ -21,14 +21,19 @@ function repositorySource(): string {
   return readFileSync(join(API_ROOT, 'src/ipam/prefix/prefix.repository.ts'), 'utf8');
 }
 
+function bootQueriesSource(): string {
+  return readFileSync(join(REPO_ROOT, 'packages/device-domain/src/prefix-boot-queries.ts'), 'utf8');
+}
+
 function deviceColumnsInRawSql(): string[] {
-  return [...repositorySource().matchAll(/\bd(?:ev)?\."([A-Za-z_][A-Za-z0-9_]*)"/g)].map((m) => m[1]);
+  const sql = repositorySource() + bootQueriesSource();
+  return [...sql.matchAll(/\bd(?:ev)?\."([A-Za-z_][A-Za-z0-9_]*)"/g)].map((m) => m[1]);
 }
 
 function bootIdentitySubqueries(): { pxe: string; bmc: string } {
-  const source = repositorySource();
-  const start = source.indexOf('async resolveBootIdentity(');
-  const method = source.slice(start, source.indexOf('\n  }\n', start));
+  const source = bootQueriesSource();
+  const start = source.indexOf('async function resolveBootIdentity(');
+  const method = source.slice(start, source.indexOf('\n}\n', start));
   const pxeEnd = method.indexOf('AS "pxeDeviceId"');
   const bmcEnd = method.indexOf('AS "bmcDeviceId"');
   return { pxe: method.slice(0, pxeEnd), bmc: method.slice(pxeEnd, bmcEnd) };
@@ -54,7 +59,7 @@ describe('prefix repository raw sql tracks the Device schema', () => {
 });
 
 describe('prefix repository boot identity fences both subqueries on the supplier', () => {
-  const SUPPLIER_FENCE = 'd."supplierId" = ${this.contextService.organizationId}';
+  const SUPPLIER_FENCE = '${organizationFence(\'d."supplierId"\', organizationId)}';
 
   it('locates the pxe and bmc subqueries', () => {
     const { pxe, bmc } = bootIdentitySubqueries();

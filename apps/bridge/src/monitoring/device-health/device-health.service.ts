@@ -55,6 +55,7 @@ export interface HealthCheckResult {
 export interface IcmpPingService {
   executePingTest(args: { ip: string; count: number; timeout: number }): Promise<
     {
+      result?: 'success' | 'failure';
       metrics?: { icmpping?: number } & Record<string, unknown>;
     } & Record<string, unknown>
   >;
@@ -177,9 +178,9 @@ export class DeviceHealthService {
 
         const { name, value } = entry;
         if (name === 'primary_reachable') {
-          result.primary_reachable = value as boolean;
+          result.primary_reachable = typeof value === 'boolean' ? value : null;
         } else if (name === 'bmc_icmp_reachable') {
-          result.bmc_icmp_reachable = value as boolean;
+          result.bmc_icmp_reachable = typeof value === 'boolean' ? value : null;
         } else if (name === 'bmc_ipmi_reachable') {
           result.bmc_ipmi_reachable = value as boolean;
         } else if (name === 'bmc_redfish_reachable') {
@@ -253,7 +254,7 @@ export class DeviceHealthService {
     }
 
     await queue.add('device_health', this.sealForHub(payload, zonePrefix), {
-      removeOnComplete: { count: 1000 },
+      removeOnComplete: { count: 0 },
       removeOnFail: { count: 100 },
     });
 
@@ -273,14 +274,16 @@ export class DeviceHealthService {
     });
   }
 
-  private async checkPing(ip: string): Promise<boolean> {
+  // null means the probe could not run (no ping binary, spawn error); false means it ran and every packet was lost
+  private async checkPing(ip: string): Promise<boolean | null> {
     try {
       const service = this.deps.icmpFactory.create(this.jobId);
       const result = await service.executePingTest({ ip, count: 1, timeout: 3 });
-      const metrics = result.metrics ?? {};
-      return (metrics.icmpping ?? 0) === 1;
-    } catch {
-      return false;
+      if (result.result === 'failure') return null;
+      return (result.metrics?.icmpping ?? 0) === 1;
+    } catch (error) {
+      await logDebug(`ICMP probe for ${ip} could not run: ${getErrorMessage(error)}`, { jobId: this.jobId });
+      return null;
     }
   }
 

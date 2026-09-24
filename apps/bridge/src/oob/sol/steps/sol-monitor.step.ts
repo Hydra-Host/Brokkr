@@ -21,30 +21,12 @@ interface SolServiceFactoryLike {
   create(jobId: string): Promise<SolServiceLike>;
 }
 
-interface LoggerLike {
-  info(message: string, context?: { jobId?: string }): Promise<void>;
-}
-
-interface SimModeProbe {
-  isLocalSimulationEnabled(): boolean;
-}
-
 @Injectable()
 export class SolMonitorStep {
-  constructor(
-    private readonly factory: SolServiceFactoryLike,
-    private readonly logger: LoggerLike,
-    private readonly simMode: SimModeProbe,
-  ) {}
+  constructor(private readonly factory: SolServiceFactoryLike) {}
 
   async execute(ctx: SagaContext): Promise<Record<string, unknown>> {
     const { jobId } = ctx;
-
-    if (this.simMode.isLocalSimulationEnabled()) {
-      await this.logger.info('[sim] SOL monitor skipped', { jobId });
-      return { detected: false, reason: 'local_simulation_enabled', log_count: 0 };
-    }
-
     const payload = ctx.payload;
     const { bmcIp, username, password } = credsFromContext(ctx);
     const service = await this.factory.create(jobId);

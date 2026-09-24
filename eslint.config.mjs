@@ -17,7 +17,7 @@ export default [
   })),
   ...baseConfig.map((config) => ({
     ...config,
-    files: ['packages/plugins/device-monitoring/**/*.{ts,js}'],
+    files: ['packages/plugins/**/*.{ts,tsx,js,jsx}'],
   })),
   {
     files: ['apps/api/src/app.module.ts'],
@@ -33,6 +33,31 @@ export default [
             {
               name: 'src/admin/admin.module',
               message: 'Main app must not import AdminModule.',
+            },
+            {
+              name: '@hydrahost/plugin-sdk/testing',
+              message: 'plugin-sdk testing helpers are spec-only.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: [
+      'apps/api/**/*.{ts,js}',
+      'packages/plugins/**/*.{ts,tsx,js,jsx}',
+      'packages/plugin-sdk/**/*.{ts,tsx,js,jsx}',
+    ],
+    ignores: ['**/*.{spec,test}.{ts,tsx,js}', '**/__test__/**', 'apps/api/src/app.module.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@hydrahost/plugin-sdk/testing',
+              message: 'plugin-sdk testing helpers are spec-only.',
             },
           ],
         },

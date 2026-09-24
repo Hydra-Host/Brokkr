@@ -2,7 +2,7 @@ import { PLUGIN_EVENT_BUS, type PluginEventBus } from '@hydrahost/plugin-sdk';
 import { HttpException, HttpStatus, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { Invitation } from '@repo/api-client';
 import { InvitationStatusSchema } from '@repo/api-client';
-import { MAIN_APP_PERMISSIONS, RbacService, roleBelongsToCatalog } from '@repo/auth/rbac';
+import { RbacService, roleBelongsToCatalog } from '@repo/auth/rbac';
 import { OrganizationMembershipRole, type Prisma } from '@repo/database';
 import { PaginatedResult, PaginationQuery } from '@repo/database/pagination';
 import { AuthType } from 'src/auth/identity-context';
@@ -14,6 +14,7 @@ import { resolveErrorCode } from 'src/event-log/event-log-status-mapper';
 import { EventLogService } from 'src/event-log/event-log.service';
 import type { EventLogWrite } from 'src/event-log/event-log.types';
 import { LoggerService } from 'src/logger/logger.service';
+import { MAIN_APP_PERMISSIONS } from 'src/permissions/permissions.constants';
 import { OrganizationMembershipsRepository } from '../members/organization-members.repository';
 import {
   OrganizationInvitationsRepository,

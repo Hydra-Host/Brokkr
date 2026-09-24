@@ -17,6 +17,8 @@ function makeService() {
     server: { findUnique: vi.fn() },
     user: { findUnique: vi.fn() },
     reservation: { findUnique: vi.fn() },
+    deployment: { findUnique: vi.fn() },
+    organization: { findUnique: vi.fn() },
   };
   const reservationsService = { createReservation: vi.fn().mockResolvedValue({ id: 'res-1' }) };
   const service = new ReservationProvisioningService(prisma as never, reservationsService as never);
@@ -203,5 +205,187 @@ describe('ReservationProvisioningService.acceptInviteForReservation', () => {
 
     await expect(ctx.service.acceptInviteForReservation('res-1')).resolves.toBe(true);
     expect(acceptSpy).toHaveBeenCalledWith('invite-1');
+  });
+});
+
+describe('ReservationProvisioningService.resolveProvisionInviteFlags', () => {
+  let ctx: ReturnType<typeof makeService>;
+  const inviteInput = { deviceId: 'device-1', userId: 'user-1', organizationId: 'org-1' };
+
+  beforeEach(() => {
+    ctx = makeService();
+  });
+
+  it('returns both flags false when there is no applicable invite', async () => {
+    ctx.prisma.server.findUnique.mockResolvedValue({ serversInReservationInvite: [] });
+
+    await expect(ctx.service.resolveProvisionInviteFlags(inviteInput)).resolves.toEqual({
+      fromInvite: false,
+      manualBilling: false,
+    });
+    expect(ctx.reservationsService.createReservation).not.toHaveBeenCalled();
+  });
+
+  it('returns fromInvite true and manualBilling true for a manual-billing org invite', async () => {
+    ctx.prisma.server.findUnique.mockResolvedValue({
+      serversInReservationInvite: [
+        {
+          reservationInvite: {
+            id: 'invite-1',
+            inviteeOrganizationId: 'org-1',
+            inviteeEmail: null,
+            manualBilling: true,
+          },
+        },
+      ],
+    });
+
+    await expect(ctx.service.resolveProvisionInviteFlags(inviteInput)).resolves.toEqual({
+      fromInvite: true,
+      manualBilling: true,
+    });
+    expect(ctx.reservationsService.createReservation).not.toHaveBeenCalled();
+  });
+
+  it('returns fromInvite true and manualBilling false for an auto-billed org invite', async () => {
+    ctx.prisma.server.findUnique.mockResolvedValue({
+      serversInReservationInvite: [
+        {
+          reservationInvite: {
+            id: 'invite-1',
+            inviteeOrganizationId: 'org-1',
+            inviteeEmail: null,
+            manualBilling: false,
+          },
+        },
+      ],
+    });
+
+    await expect(ctx.service.resolveProvisionInviteFlags(inviteInput)).resolves.toEqual({
+      fromInvite: true,
+      manualBilling: false,
+    });
+  });
+
+  it('matches an invite by caller email when the org does not match', async () => {
+    ctx.prisma.server.findUnique.mockResolvedValue({
+      serversInReservationInvite: [
+        {
+          reservationInvite: {
+            id: 'invite-2',
+            inviteeOrganizationId: 'other-org',
+            inviteeEmail: 'buyer@example.com',
+            manualBilling: true,
+          },
+        },
+      ],
+    });
+    ctx.prisma.user.findUnique.mockResolvedValue({ email: 'buyer@example.com' });
+
+    await expect(ctx.service.resolveProvisionInviteFlags(inviteInput)).resolves.toEqual({
+      fromInvite: true,
+      manualBilling: true,
+    });
+  });
+});
+
+describe('ReservationProvisioningService.isKnownAccount', () => {
+  let ctx: ReturnType<typeof makeService>;
+
+  beforeEach(() => {
+    ctx = makeService();
+  });
+
+  it('returns false when the organization is missing or not known', async () => {
+    ctx.prisma.organization.findUnique.mockResolvedValue(null);
+    await expect(ctx.service.isKnownAccount('org-1')).resolves.toBe(false);
+    ctx.prisma.organization.findUnique.mockResolvedValue({ knownAccount: false });
+    await expect(ctx.service.isKnownAccount('org-1')).resolves.toBe(false);
+  });
+
+  it('returns true when knownAccount is set', async () => {
+    ctx.prisma.organization.findUnique.mockResolvedValue({ knownAccount: true });
+    await expect(ctx.service.isKnownAccount('org-1')).resolves.toBe(true);
+  });
+});
+
+describe('ReservationProvisioningService.billedLineForDeployment', () => {
+  let ctx: ReturnType<typeof makeService>;
+  beforeEach(() => {
+    ctx = makeService();
+  });
+
+  it('maps reservation price, GPU model, and device supplier', async () => {
+    ctx.prisma.deployment.findUnique.mockResolvedValue({
+      reservation: { price: 50_000, billingFrequency: BillingFrequency.MONTHLY },
+      server: {
+        device: {
+          id: 'device-1',
+          name: 'box-1',
+          supplierId: 'supplier-org-1',
+          gpus: [{ model: 'H100' }],
+        },
+      },
+    });
+
+    await expect(ctx.service.billedLineForDeployment('dep-1')).resolves.toEqual({
+      billingFrequency: BillingFrequency.MONTHLY,
+      reservationPrice: 50_000,
+      deviceName: 'box-1',
+      deviceClass: 'H100',
+      supplierOrganizationId: 'supplier-org-1',
+    });
+    expect(ctx.prisma.deployment.findUnique).toHaveBeenCalledWith({
+      where: { id: 'dep-1' },
+      select: {
+        reservation: { select: { price: true, billingFrequency: true } },
+        server: {
+          select: {
+            device: {
+              select: {
+                id: true,
+                name: true,
+                supplierId: true,
+                gpus: { select: { model: true }, orderBy: { index: 'asc' }, take: 1 },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it('falls back to server class when GPU is missing', async () => {
+    ctx.prisma.deployment.findUnique.mockResolvedValue({
+      reservation: { price: null, billingFrequency: BillingFrequency.WEEKLY },
+      server: { device: { id: 'device-1', name: 'box-1', supplierId: null, gpus: [] } },
+    });
+
+    await expect(ctx.service.billedLineForDeployment('dep-1')).resolves.toEqual({
+      billingFrequency: BillingFrequency.WEEKLY,
+      reservationPrice: null,
+      deviceName: 'box-1',
+      deviceClass: 'server',
+      supplierOrganizationId: null,
+    });
+  });
+
+  it('rejects when the deployment is missing', async () => {
+    ctx.prisma.deployment.findUnique.mockResolvedValue(null);
+
+    await expect(ctx.service.billedLineForDeployment('dep-1')).rejects.toThrow(
+      'Deployment dep-1 not found for billed provision line',
+    );
+  });
+
+  it('rejects when the deployment has no reservation cadence', async () => {
+    ctx.prisma.deployment.findUnique.mockResolvedValue({
+      reservation: null,
+      server: { device: { id: 'device-1', name: 'box-1', supplierId: null, gpus: [] } },
+    });
+
+    await expect(ctx.service.billedLineForDeployment('dep-1')).rejects.toThrow(
+      'Deployment dep-1 has no reservation billing frequency',
+    );
   });
 });

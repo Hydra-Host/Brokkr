@@ -1,9 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { CreateReservationInviteRequest, EditReservationInviteRequest } from '@repo/api-client';
 import { paginateArray, type PaginationQuery } from '@repo/database/pagination';
+import { interruptibleNoticePeriodRejectionMessage, inviteContractTypeWriteRejection } from '@repo/utils';
 import { ContextService } from 'src/common/context/context.service';
 import { EmailService } from 'src/email/email.service';
 import { InventoryRecord } from 'src/inventory/inventory.record';
+import { HostPluginGateBus } from 'src/plugin-host/host-plugin-gate-bus';
 import { ReservationInvitePresenter } from './reservation-invite.presenter';
 import { ReservationInviteAggregate, ReservationInviteRecord } from './reservation-invite.record';
 
@@ -17,6 +19,7 @@ export class ReservationInvitesService {
   constructor(
     private readonly contextService: ContextService,
     private readonly emailService: EmailService,
+    private readonly gateBus: HostPluginGateBus,
   ) {}
 
   async createReservationInviteAsASupplyCustomer(dto: CreateReservationInviteRequest) {
@@ -24,17 +27,29 @@ export class ReservationInvitesService {
     if (dto.inviterEmail !== this.contextService.email) {
       throw new BadRequestException('Inviter must be the same as the current user');
     }
-    const deviceAggregate = await this.assertDeviceAvailableForInvite(dto.deviceIds[0]);
+    await this.assertDeviceAvailableForInvite(dto.deviceIds[0]);
 
-    if ((deviceAggregate.server?.isInterruptible ?? false) && dto.interruptibleNoticePeriod == null) {
-      throw new BadRequestException('Interruptible devices require an interruptible invite (set a notice period)');
+    const contractTypeRejection = inviteContractTypeWriteRejection({
+      contractType: dto.contractType,
+      interruptibleNoticePeriod: dto.interruptibleNoticePeriod,
+    });
+    if (contractTypeRejection) {
+      throw new BadRequestException(contractTypeRejection);
+    }
+    if (dto.interruptibleNoticePeriod != null) {
+      throw new BadRequestException(interruptibleNoticePeriodRejectionMessage());
     }
 
     await this.checkDevicesBelongToSupplyOrganization({ deviceIds: dto.deviceIds });
 
+    await this.gateBus.runGate('reservation.invite.authorize', {
+      supplierOrganizationId: this.contextService.organizationId,
+    });
+
     const sanitisedDto: CreateReservationInviteRequest = {
       ...dto,
       organizationId: this.contextService.organizationId,
+      interruptibleNoticePeriod: null,
     };
 
     const aggregate = await ReservationInviteRecord.createInviteWithDeviceLinks(sanitisedDto);
@@ -62,7 +77,21 @@ export class ReservationInvitesService {
     this.checkInviterBelongsToSupplyOrganization(aggregate);
     await this.checkDevicesBelongToSupplyOrganization({ deviceIds: dto.deviceIds });
 
-    const updated = await ReservationInviteRecord.applyEditWithDeviceLinks(id, dto);
+    const contractTypeRejection = inviteContractTypeWriteRejection({
+      contractType: dto.contractType,
+      interruptibleNoticePeriod: dto.interruptibleNoticePeriod,
+    });
+    if (contractTypeRejection) {
+      throw new BadRequestException(contractTypeRejection);
+    }
+    if (dto.interruptibleNoticePeriod != null) {
+      throw new BadRequestException(interruptibleNoticePeriodRejectionMessage());
+    }
+
+    const updated = await ReservationInviteRecord.applyEditWithDeviceLinks(id, {
+      ...dto,
+      interruptibleNoticePeriod: null,
+    });
     return ReservationInvitePresenter.toFullResponse(updated);
   }
 

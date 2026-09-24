@@ -8,6 +8,8 @@ export const EXTENSION_SLOTS = [
   'address-autocomplete',
   'inventory-page-extras',
   'inventory-item-cta',
+  /** Managed-edition only: host registers contributions only when `managed-edition` is enabled. */
+  'inventory-device-provision',
   'app-banner',
 ] as const;
 
@@ -52,6 +54,11 @@ export interface DashboardWidgetContribution {
   label?: string;
 }
 
+export interface PluginRequiredPermission {
+  resource: string;
+  action: string;
+}
+
 export interface SidebarNavContribution {
   label: string;
   to: string;
@@ -62,6 +69,8 @@ export interface SidebarNavContribution {
   /** Open `to` in a popup window; an already-open window is never re-navigated, so its state survives
    * repeat clicks. Takes precedence over `external`. Defaults to `false`. */
   popup?: boolean;
+  /** Hide this item unless the signed-in member holds the key. Omit to always show. */
+  requiredPermission?: PluginRequiredPermission;
 }
 
 /** Geocoder result. All optional: the host writes only present keys, so a partial match never blanks a user-filled field. Field names mirror the zone address form. */
@@ -125,6 +134,22 @@ export interface InventoryItemCtaContribution {
   component: ComponentType<InventoryItemCtaSlotProps>;
 }
 
+export interface InventoryDeviceProvisionSlotProps {
+  pluginId: string;
+  knownAccount: boolean;
+  hasActiveInvite: boolean;
+  category?: string;
+  userEmail?: string;
+  device: InventoryItemCtaDevice;
+  deviceName: string;
+  pending: boolean;
+  disabled: boolean;
+}
+
+export interface InventoryDeviceProvisionContribution {
+  component: ComponentType<InventoryDeviceProvisionSlotProps>;
+}
+
 /** Rendered above the page content on every authenticated app route. Contributions render `null` when they have nothing to say. */
 export interface AppBannerSlotProps {
   /** Current route pathname, so a plugin can suppress its banner on its own pages without importing the router. */
@@ -144,6 +169,7 @@ export interface SlotContributionMap {
   'address-autocomplete': AddressAutocompleteContribution;
   'inventory-page-extras': InventoryPageExtrasContribution;
   'inventory-item-cta': InventoryItemCtaContribution;
+  'inventory-device-provision': InventoryDeviceProvisionContribution;
   'app-banner': AppBannerSlotContribution;
 }
 

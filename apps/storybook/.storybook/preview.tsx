@@ -1,6 +1,14 @@
 import { setDocumentTitleSuffix } from '@repo/ui/hooks/use-document-title';
 import { configureUiBrand } from '@repo/ui/lib/brand';
-import { THEME_CATEGORIES, ThemeProvider, useTheme, type Theme } from '@repo/ui/theme-provider';
+import {
+  THEME_COLORS,
+  THEME_STYLES,
+  ThemeProvider,
+  useTheme,
+  type ResolvedMode,
+  type ThemeColor,
+  type ThemeStyle,
+} from '@repo/ui/theme-provider';
 import type { Decorator, Preview } from '@storybook/react-vite';
 import { useEffect } from 'react';
 import './preview.css';
@@ -8,15 +16,15 @@ import './preview.css';
 configureUiBrand({ name: 'Hydra' });
 setDocumentTitleSuffix('Hydra UI');
 
-// ThemeProvider owns [data-theme] on <html> and persists to localStorage
-// (brokkr-* keys). Rather than fighting it by writing dataset.theme directly,
-// this bridge pushes the toolbar global through setTheme() so the toolbar
-// always wins over the provider's localStorage restore.
-function ThemeSync({ theme }: { theme: Theme }) {
-  const { setTheme } = useTheme();
+// ThemeProvider owns the <html> axis attributes and the localStorage keys, so
+// push toolbar globals through its setters: the toolbar then wins the restore.
+function ThemeSync({ style, color, mode }: { style: ThemeStyle; color: ThemeColor; mode: ResolvedMode }) {
+  const { setStyle, setColor, setMode } = useTheme();
   useEffect(() => {
-    setTheme(theme);
-  }, [theme, setTheme]);
+    setStyle(style);
+    setColor(color);
+    setMode(mode);
+  }, [style, color, mode, setStyle, setColor, setMode]);
   return null;
 }
 
@@ -24,7 +32,11 @@ function ThemeSync({ theme }: { theme: Theme }) {
 // block hugs its content instead of stretching to viewport height.
 const withTheme: Decorator = (Story, context) => (
   <ThemeProvider>
-    <ThemeSync theme={context.globals.theme as Theme} />
+    <ThemeSync
+      style={context.globals.themeStyle as ThemeStyle}
+      color={context.globals.themeColor as ThemeColor}
+      mode={context.globals.themeMode as ResolvedMode}
+    />
     <div
       className={`bg-background text-text-primary p-8 ${context.viewMode === 'docs' ? '' : 'flex min-h-svh flex-col'}`}
     >
@@ -35,22 +47,38 @@ const withTheme: Decorator = (Story, context) => (
 
 const preview: Preview = {
   globalTypes: {
-    theme: {
-      description: 'Brokkr theme (data-theme on <html>)',
+    themeStyle: {
+      description: 'Style axis (data-style on <html>)',
       toolbar: {
-        title: 'Theme',
+        title: 'Style',
+        icon: 'component',
+        dynamicTitle: true,
+        items: THEME_STYLES.map((style) => ({ value: style.value, title: style.label })),
+      },
+    },
+    themeColor: {
+      description: 'Color axis (data-color on <html>)',
+      toolbar: {
+        title: 'Color',
         icon: 'paintbrush',
         dynamicTitle: true,
-        items: THEME_CATEGORIES.flatMap((category) =>
-          category.themes.map((theme) => ({
-            value: theme.value,
-            title: `${category.name} · ${theme.label} (${theme.value})`,
-          })),
-        ),
+        items: THEME_COLORS.map((color) => ({ value: color.value, title: color.label })),
+      },
+    },
+    themeMode: {
+      description: 'Mode axis (data-mode on <html>)',
+      toolbar: {
+        title: 'Mode',
+        icon: 'sun',
+        dynamicTitle: true,
+        items: [
+          { value: 'dark', title: 'Dark' },
+          { value: 'light', title: 'Light' },
+        ],
       },
     },
   },
-  initialGlobals: { theme: 'commerce-dark' },
+  initialGlobals: { themeStyle: 'modern', themeColor: 'violet', themeMode: 'dark' },
   decorators: [withTheme],
   parameters: {
     layout: 'centered',

@@ -5,6 +5,7 @@ import { SealedEnvelopeService } from 'src/crypto/sealed-envelope.service';
 import { DeviceSecretAuditService } from 'src/device-secret/device-secret-audit.service';
 import { DeviceTestRunsService } from 'src/device-test-runs/device-test-runs.service';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { LifecycleInboundService } from 'src/lifecycle/inbound/lifecycle-inbound.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { SanitizationReportService } from 'src/sanitization-reports/sanitization-report.service';
@@ -17,18 +18,13 @@ import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../../lifecycle/qualify-orchestration.service';
 import { RenderRequestDispatcher } from '../../render-request/render-request-dispatcher.service';
 import { BridgeResultsConsumer, type ProcessableJob } from '../bridge-results.consumer';
+import { TestableConsumer } from './bridge-results-test-helpers';
 
 const BASE_ENVELOPE = {
   request_id: '11111111-1111-1111-1111-111111111111',
   zone_id: '22222222-2222-2222-2222-222222222222',
   bridge_id: 'bridge-a',
 };
-
-class TestableConsumer extends BridgeResultsConsumer {
-  invoke(job: ProcessableJob): Promise<void> {
-    return this.processResult(job);
-  }
-}
 
 function makeRenderRequestJob(data: unknown): ProcessableJob {
   return { id: 'job-1', name: 'render.request', data };
@@ -76,6 +72,7 @@ describe('BridgeResultsConsumer — render.request', () => {
           provide: DeviceTokensService,
           useValue: { revokeBrokkrLiveTokensForDevice: vi.fn().mockResolvedValue(undefined) },
         },
+        { provide: RedisPubSubService, useValue: { publish: vi.fn().mockResolvedValue(undefined) } },
         {
           provide: LifecycleInboundService,
           useValue: {

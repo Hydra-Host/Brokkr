@@ -1,9 +1,11 @@
 import { buildPluginConfigProviders } from '@hydrahost/plugin-runtime';
 import {
   PLUGIN_AUTH_CLIENT,
+  PLUGIN_ENABLED_IDS,
   PLUGIN_IDENTITY_BINDER,
   PLUGIN_PRISMA_CLIENT,
   PLUGIN_REQUEST_CONTEXT,
+  type PluginEnabledIds,
 } from '@hydrahost/plugin-sdk';
 import { Global, Module, type Provider } from '@nestjs/common';
 
@@ -21,6 +23,9 @@ import { PluginEventBusModule } from './plugin-event-bus.module';
 
 const pluginConfigProviders: Provider[] = buildPluginConfigProviders(pluginsConfig);
 const pluginConfigTokens = pluginConfigProviders.map((p) => (typeof p === 'object' && 'provide' in p ? p.provide : p));
+const enabledPluginIds: PluginEnabledIds = new Set(
+  pluginsConfig.filter((entry) => entry.enabled).map((entry) => entry.plugin.id),
+);
 
 const GATE_ALLOWLIST_SEEDED = Symbol.for('@hydrahost/plugin-host/GATE_ALLOWLIST_SEEDED');
 
@@ -43,6 +48,7 @@ function seedGateAllowlist(gateBus: HostPluginGateBus): HostPluginGateBus {
     { provide: PLUGIN_IDENTITY_BINDER, useExisting: HostPluginIdentityBinder },
     HostPluginAuthClient,
     { provide: PLUGIN_AUTH_CLIENT, useExisting: HostPluginAuthClient },
+    { provide: PLUGIN_ENABLED_IDS, useValue: enabledPluginIds },
     { provide: GATE_ALLOWLIST_SEEDED, useFactory: seedGateAllowlist, inject: [HostPluginGateBus] },
     ...pluginConfigProviders,
   ],
@@ -51,6 +57,7 @@ function seedGateAllowlist(gateBus: HostPluginGateBus): HostPluginGateBus {
     PLUGIN_REQUEST_CONTEXT,
     PLUGIN_IDENTITY_BINDER,
     PLUGIN_AUTH_CLIENT,
+    PLUGIN_ENABLED_IDS,
     PluginEventBusModule,
     ...pluginConfigTokens,
   ],

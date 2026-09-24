@@ -1,4 +1,3 @@
-
 import { describe, expect, it, vi } from 'vitest';
 import type { IPMIDevice } from '../../oob/ipmi/device.js';
 import type { IPMIResult } from '../../oob/ipmi/result.js';
@@ -7,6 +6,19 @@ import { performIpmiWithRetry } from '../ipmi-operations.js';
 
 function makeDevice(): IPMIDevice {
   return { ip: '10.0.0.5', port: 623 } as unknown as IPMIDevice;
+}
+
+function successResult(): IPMIResult {
+  return {
+    ok: true,
+    stdout: 'Set Boot Device to pxe',
+    stderr: '',
+    returncode: 0,
+    command: ['ipmitool'],
+    cipherUsed: null,
+    durationMs: 0,
+    timedOut: false,
+  };
 }
 
 function failureResult(stderr: string): IPMIResult {
@@ -78,5 +90,43 @@ describe('performIpmiWithRetry — never silently succeeds on no-op', () => {
         },
       }),
     ).rejects.toThrowError(/Unknown IPMI operation/);
+  });
+});
+
+describe('performIpmiWithRetry — boot override persistence reaches the handler', () => {
+  it('forwards a one-time override to bootDevice when the caller asks for it', async () => {
+    const bootDevice = vi.fn().mockResolvedValue(successResult());
+
+    const result = await performIpmiWithRetry(makeDevice(), 'pxe', 'job-4', 1, {
+      persistent: false,
+      deps: {
+        ipmiPing: async () => true,
+        sleep: async () => {},
+        bootDevice,
+        power: vi.fn(),
+        mcReset: vi.fn(),
+        shouldExecutePowerOp: vi.fn(),
+      },
+    });
+
+    expect(result.result).toBe('success');
+    expect(bootDevice).toHaveBeenCalledWith(expect.anything(), 'pxe', { uefi: true, persistent: false });
+  });
+
+  it('keeps the persistent override for callers that do not ask', async () => {
+    const bootDevice = vi.fn().mockResolvedValue(successResult());
+
+    await performIpmiWithRetry(makeDevice(), 'pxe', 'job-5', 1, {
+      deps: {
+        ipmiPing: async () => true,
+        sleep: async () => {},
+        bootDevice,
+        power: vi.fn(),
+        mcReset: vi.fn(),
+        shouldExecutePowerOp: vi.fn(),
+      },
+    });
+
+    expect(bootDevice).toHaveBeenCalledWith(expect.anything(), 'pxe', { uefi: true, persistent: true });
   });
 });

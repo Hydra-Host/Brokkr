@@ -19,6 +19,9 @@ export type {
   ClusterDetachRequest,
   ClusterNetworkProvider,
 } from './cluster-provider';
+export { InventoryVisibilityFilterRegistry } from './inventory-visibility-filter';
+export type { InventoryVisibilityFilter } from './inventory-visibility-filter';
+
 export { defineFrontendPlugin } from './define-frontend-plugin';
 export { definePlugin } from './define-plugin';
 export { PLUGIN_DEVICE_OPS_REQUESTS } from './device-ops-requests';
@@ -28,6 +31,8 @@ export type {
   PluginDeviceOpsRequests,
   PluginForceDiscoveryRequest,
   PluginForceDiscoveryResult,
+  PluginRequestDeviceHealthCheckRequest,
+  PluginRequestDeviceHealthCheckResult,
   PluginRunBenchmarksRequest,
   PluginRunBenchmarksResult,
 } from './device-ops-requests';
@@ -38,7 +43,14 @@ export type { BrokkrEventHandler, BrokkrEventMap, BrokkrEventName, PluginEventBu
 export { defineFrontendPluginsConfig } from './frontend-plugins-config';
 export type { FrontendPluginConfigEntry } from './frontend-plugins-config';
 export { GateRegistrationDeniedError, LifecycleGateDeferral, LifecycleGateRejection, PLUGIN_GATE_BUS } from './gates';
-export type { BrokkrGateHandler, BrokkrGateMap, BrokkrGateName, GateRegisterOptions, PluginGateBus } from './gates';
+export type {
+  BrokkrGateHandler,
+  BrokkrGateMap,
+  BrokkrGateName,
+  GateRegisterOptions,
+  LifecycleGateRejectionKind,
+  PluginGateBus,
+} from './gates';
 export { PLUGIN_IPAM_PROVISIONING } from './ipam-provisioning';
 export type {
   PluginCreateIpAddressInput,
@@ -52,8 +64,8 @@ export type {
   PluginIpamRollbackInput,
   PluginSetPrefixGatewayInput,
 } from './ipam-provisioning';
-export { PLUGIN_LIFECYCLE } from './lifecycle-control';
-export type { PluginLifecycleControl } from './lifecycle-control';
+export { DEFERRED_ABORT_CAUSE_OPERATOR_APPROVAL_REJECTED, PLUGIN_LIFECYCLE } from './lifecycle-control';
+export type { AbortDeferredOptions, DeferredAbortCause, PluginLifecycleControl } from './lifecycle-control';
 export { PLUGIN_LIFECYCLE_REQUESTS } from './lifecycle-requests';
 export type {
   PluginDeprovisionRequest,
@@ -86,10 +98,20 @@ export { PLUGIN_PRISMA_CLIENT } from './plugin-db';
 export type { PluginDb, PluginTransactionalDb } from './plugin-db';
 export { PLUGIN_EMAIL } from './plugin-email';
 export type { PluginEmail } from './plugin-email';
+export { PLUGIN_ENABLED_IDS } from './plugin-enabled-ids';
+export type { PluginEnabledIds } from './plugin-enabled-ids';
 export type { PluginFrontendManifest } from './plugin-frontend-manifest';
 export { PLUGIN_IDENTITY_BINDER } from './plugin-identity-binder';
 export type { PluginIdentityBinder } from './plugin-identity-binder';
 export type { PluginManifest } from './plugin-manifest';
+export { PLUGIN_NOTIFICATIONS } from './plugin-notifications';
+export type {
+  PluginNotificationChannels,
+  PluginNotificationPublishInput,
+  PluginNotifications,
+} from './plugin-notifications';
+export { mergePluginPermissions } from './plugin-permissions';
+export type { PluginPermissionDefinition, PluginPermissionSource } from './plugin-permissions';
 export { PLUGIN_RATE_LIMITER } from './plugin-rate-limiter';
 export type {
   PluginRateLimitPolicy,
@@ -113,6 +135,8 @@ export type {
   AppBannerSlotProps,
   DashboardWidgetContribution,
   ExtensionSlot,
+  InventoryDeviceProvisionContribution,
+  InventoryDeviceProvisionSlotProps,
   InventoryItemCtaContribution,
   InventoryItemCtaDevice,
   InventoryItemCtaSlotProps,
@@ -121,6 +145,7 @@ export type {
   PluginFrontendModule,
   PluginPublicRoute,
   PluginPublicRouteLayout,
+  PluginRequiredPermission,
   PluginRoute,
   PluginRouteProps,
   PublicNavbarContribution,

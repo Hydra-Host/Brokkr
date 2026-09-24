@@ -4,6 +4,7 @@ import { SealedEnvelopeService } from 'src/crypto/sealed-envelope.service';
 import { DeviceSecretAuditService } from 'src/device-secret/device-secret-audit.service';
 import { DeviceTestRunsService } from 'src/device-test-runs/device-test-runs.service';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { LifecycleInboundService } from 'src/lifecycle/inbound/lifecycle-inbound.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { SanitizationReportService } from 'src/sanitization-reports/sanitization-report.service';
@@ -16,15 +17,10 @@ import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../../lifecycle/qualify-orchestration.service';
 import { RenderRequestDispatcher } from '../../render-request/render-request-dispatcher.service';
 import { BridgeResultsConsumer, type ProcessableJob } from '../bridge-results.consumer';
+import { TestableConsumer } from './bridge-results-test-helpers';
 
 const ZONE = '00000000-0000-0000-0000-111111111111';
 const OTHER_ZONE = '00000000-0000-0000-0000-222222222222';
-
-class TestableConsumer extends BridgeResultsConsumer {
-  invoke(job: ProcessableJob): Promise<void> {
-    return this.processResult(job);
-  }
-}
 
 describe('BridgeResultsConsumer — plaintext-after-activation gate', () => {
   let consumer: TestableConsumer;
@@ -65,6 +61,7 @@ describe('BridgeResultsConsumer — plaintext-after-activation gate', () => {
           provide: DeviceTokensService,
           useValue: { revokeBrokkrLiveTokensForDevice: vi.fn().mockResolvedValue(undefined) },
         },
+        { provide: RedisPubSubService, useValue: { publish: vi.fn().mockResolvedValue(undefined) } },
         {
           provide: LifecycleInboundService,
           useValue: {

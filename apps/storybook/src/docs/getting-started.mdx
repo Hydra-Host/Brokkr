@@ -56,8 +56,9 @@ JetBrains Mono) load automatically through `brokkr.css`.
 
 ## Theme setup
 
-Wrap your app in the `ThemeProvider`. It applies `data-theme` to `<html>`, persists the
-choice to `localStorage`, and follows the OS light/dark preference in `system` mode:
+Wrap your app in the `ThemeProvider`. It applies the `data-style`/`data-color`/`data-mode`
+attributes to `<html>`, persists the choice to `localStorage`, and follows the OS light/dark
+preference in `system` mode:
 
 ```tsx
 import { ThemeProvider } from '@repo/ui/theme-provider';

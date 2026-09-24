@@ -65,4 +65,15 @@ describe('identifierBundleFor', () => {
 
     expect('interface_macs' in bundle).toBe(false);
   });
+
+  it('takes the mac of the data interface that holds an address over an earlier one without', () => {
+    const bundle = identifierBundleFor({
+      interfaces: [
+        { macAddress: '58:a2:e1:2e:16:88', mgmtOnly: false, ipAddresses: [] },
+        { macAddress: '80:61:5f:2c:59:ac', mgmtOnly: false, ipAddresses: [{ address: '172.16.12.50' }] },
+      ],
+    });
+    expect(bundle.mac).toBe('80:61:5f:2c:59:ac');
+    expect(bundle.interface_macs).toEqual(['58:a2:e1:2e:16:88', '80:61:5f:2c:59:ac']);
+  });
 });

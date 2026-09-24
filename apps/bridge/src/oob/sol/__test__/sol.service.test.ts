@@ -217,6 +217,16 @@ describe('SOLService.monitorSession', () => {
     expect(rpush.mock.calls.every((call) => call[0] === 'sol:logs:plan-1')).toBe(true);
   });
 
+  it('tags each console line with the sol-logs app class in the job log', async () => {
+    const logger = noopLogger();
+    const streamFactory = (): SolStream => streamOf(['boot line one\n', ' login: ']);
+    const service = new SOLService('job-1', makeDeps({ streamFactory, logger }));
+
+    await service.monitorSession(SESSION_ARGS);
+
+    expect(logger.info).toHaveBeenCalledWith('boot line one', { jobId: 'job-1', appClassName: 'sol-logs' });
+  });
+
   it('detects the fail condition', async () => {
     const streamFactory = (): SolStream => streamOf(['grub> ']);
     const service = new SOLService('job-1', makeDeps({ streamFactory }));

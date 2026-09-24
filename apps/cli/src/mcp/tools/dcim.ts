@@ -28,10 +28,6 @@ const provisioningSchema = {
   cloudInit: z.string().optional().nullable().describe('Cloud-init user data (YAML string)'),
   ipxeUrl: z.string().optional().describe('iPXE boot URL (overrides OS selection)'),
   projectId: z.string().optional().describe('Project ID to assign the deployment to'),
-  isInterruptible: z
-    .boolean()
-    .optional()
-    .describe('Provision as an interruptible instance (may be interrupted with notice). Defaults to on-demand.'),
 };
 
 export function registerDcimTools(server: McpServer) {

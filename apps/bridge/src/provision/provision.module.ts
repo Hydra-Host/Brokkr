@@ -31,6 +31,7 @@ import { registerSagaDef } from '../saga-framework/saga-registry';
 import { buildProvisionSaga } from './provision.workflow';
 import { ArmCustomIpxeBootStep } from './steps/arm-custom-ipxe-boot.step';
 import { DeployOsStep } from './steps/deploy-os.step';
+import { DisarmCustomIpxeBootStep } from './steps/disarm-custom-ipxe-boot.step';
 import { PrepareStorageStep } from './steps/prepare-storage.step';
 import { ProvisionCompleteStep } from './steps/provision-complete.step';
 import { ResolveDeployTargetStep } from './steps/resolve-deploy-target.step';
@@ -82,6 +83,11 @@ function buildDeployFactory(
       inject: [RedisService],
     },
     {
+      provide: DisarmCustomIpxeBootStep,
+      useFactory: (redis: RedisService) => new DisarmCustomIpxeBootStep(redis),
+      inject: [RedisService],
+    },
+    {
       provide: DeployOsStep,
       useFactory: (
         dispatcher: Dispatcher,
@@ -119,7 +125,14 @@ function buildDeployFactory(
       inject: [Dispatcher, RedisService, ATOM_FETCHER, NetplanAtomService, ContextLogger],
     },
   ],
-  exports: [ArmCustomIpxeBootStep, DeployOsStep, PrepareStorageStep, ProvisionCompleteStep, ResolveDeployTargetStep],
+  exports: [
+    ArmCustomIpxeBootStep,
+    DisarmCustomIpxeBootStep,
+    DeployOsStep,
+    PrepareStorageStep,
+    ProvisionCompleteStep,
+    ResolveDeployTargetStep,
+  ],
 })
 export class ProvisionModule implements OnModuleInit {
   constructor(
@@ -139,6 +152,7 @@ export class ProvisionModule implements OnModuleInit {
     private readonly prepareStorage: PrepareStorageStep,
     private readonly deployOs: DeployOsStep,
     private readonly armCustomIpxeBoot: ArmCustomIpxeBootStep,
+    private readonly disarmCustomIpxeBoot: DisarmCustomIpxeBootStep,
     private readonly ensureSolEnabled: EnsureSolEnabledStep,
     private readonly solActivation: SolActivationStep,
     private readonly provisionComplete: ProvisionCompleteStep,
@@ -147,6 +161,7 @@ export class ProvisionModule implements OnModuleInit {
   onModuleInit(): void {
     registerSagaDef(
       buildProvisionSaga({
+        disarmCustomIpxeBoot: this.disarmCustomIpxeBoot,
         brokkrLiveCheck: this.brokkrLiveCheck,
         pcPowerOff: this.pcPowerOff,
         pcVerifyPowerOff: this.pcVerifyPowerOff,

@@ -48,6 +48,7 @@ export const DEPROVISION_SAGA = buildDeprovisionSaga({
 });
 
 export const PROVISION_SAGA = buildProvisionSaga({
+  disarmCustomIpxeBoot: stubSagaStep,
   brokkrLiveCheck: stubSagaStep,
   pcPowerOff: stubSagaStep,
   pcVerifyPowerOff: stubSagaStep,

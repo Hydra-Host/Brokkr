@@ -12,6 +12,9 @@ import {
   DEVICE_HEALTH_CHECK_QUEUE,
   DEVICE_HEALTH_CHECK_SCHEDULE,
 } from './device-health-check.types';
+import { DeviceHealthRequestController } from './device-health-request.controller';
+import { DeviceHealthRequestService } from './device-health-request.service';
+import { HealthCheckDispatcher } from './health-check-dispatcher';
 import { HeartbeatMonitorCron } from './heartbeat-monitor.cron';
 import { HeartbeatMonitorService } from './heartbeat-monitor.service';
 import { HEARTBEAT_MONITOR_JOB, HEARTBEAT_MONITOR_QUEUE, HEARTBEAT_MONITOR_SCHEDULE } from './heartbeat-monitor.types';
@@ -39,12 +42,15 @@ const repeatableOpts = {
     HeartbeatMonitorCron,
     HeartbeatRetentionCron,
     DeviceHealthCheckCron,
+    DeviceHealthRequestService,
+    HealthCheckDispatcher,
     ZoneAlertingService,
     ZoneFlapDetectionService,
     ZoneFlapAlertingService,
     BridgeAlertingService,
   ],
-  exports: [ZoneAlertingService],
+  controllers: [DeviceHealthRequestController],
+  exports: [ZoneAlertingService, HealthCheckDispatcher],
 })
 export class HeartbeatMonitorModule implements OnModuleInit {
   constructor(

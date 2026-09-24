@@ -10,7 +10,8 @@ import { LifecycleModule } from 'src/lifecycle/lifecycle.module';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { ProvisionModule } from 'src/provision/provision.module';
 import { WebhookModule } from 'src/webhook/webhook.module';
-import { DeviceHealthService } from './device-health.service';
+import { DeviceHealthChecksController } from './device-health-checks.controller';
+import { DeviceHealthChecksService } from './device-health-checks.service';
 import { InventoryCollectionCron } from './inventory-collection.cron';
 import {
   INVENTORY_COLLECTION_JOB,
@@ -32,9 +33,9 @@ import { InventoryService } from './inventory.service';
     CloudInitTemplatesModule,
     BullModule.registerQueue({ name: INVENTORY_COLLECTION_QUEUE }),
   ],
-  providers: [InventoryService, DeviceHealthService, InventoryCollectionCron],
-  controllers: [InventoryController],
-  exports: [InventoryService, DeviceHealthService],
+  providers: [InventoryService, DeviceHealthChecksService, InventoryCollectionCron],
+  controllers: [InventoryController, DeviceHealthChecksController],
+  exports: [InventoryService],
 })
 export class InventoryModule implements OnModuleInit {
   constructor(

@@ -1,6 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { DeviceTokenRevocationReason, TeeCapability } from '@repo/database';
+import { DeviceTokenRevocationReason, TeeCapability, ZoneEastWestNetworkType } from '@repo/database';
 import * as layersModule from '@repo/layers';
 import { ConfigAtomWriter, TTL_IPXE_URL_SECONDS, ipxeUrl } from 'src/common/redis';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
@@ -85,8 +85,7 @@ describe('BridgeProvisionService', () => {
   let mockPublishForProvisioning: Mock;
   let mockRenderDeployNetplan: Mock;
   let mockResolveOsLayers: Mock;
-  let mockMintForCtx: Mock;
-  let mockWriteAtomBestEffort: Mock;
+  let mockWriteDeployAtomBestEffort: Mock;
   let mockSetString: Mock;
   let mockIssueDeploymentOsToken: Mock;
   let mockRevokeToken: Mock;
@@ -121,12 +120,7 @@ describe('BridgeProvisionService', () => {
       entries: [{ layer: 'ubuntu-24.04-hpc', sha256: 'a'.repeat(64), compression: 'zstd', stack_position: 0 }],
       resolved: [],
     });
-    mockMintForCtx = vi.fn().mockResolvedValue({
-      brokkr_live_token: 'test-live-token',
-      endpoint: 'https://brokkr.example/api/v1/bmc/phone-home',
-      exp: 1_900_000_000,
-    });
-    mockWriteAtomBestEffort = vi.fn().mockResolvedValue(undefined);
+    mockWriteDeployAtomBestEffort = vi.fn().mockResolvedValue(undefined);
     mockSetString = vi.fn().mockResolvedValue(undefined);
     mockIssueDeploymentOsToken = vi.fn().mockResolvedValue({
       tokenId: 'deployment-token-id',
@@ -189,8 +183,7 @@ describe('BridgeProvisionService', () => {
         {
           provide: ServerTokenService,
           useValue: {
-            mintForCtx: mockMintForCtx,
-            writeAtomBestEffort: mockWriteAtomBestEffort,
+            writeDeployAtomBestEffort: mockWriteDeployAtomBestEffort,
           },
         },
         {
@@ -331,7 +324,7 @@ describe('BridgeProvisionService', () => {
     });
   });
 
-  it('revokes Brokkr Live tokens when custom-iPXE enqueueSagaJob rejects after mint', async () => {
+  it('revokes the deployment-os token when custom-iPXE enqueueSagaJob rejects (live token already cleared pre-enqueue)', async () => {
     mockEnqueueSagaJob.mockRejectedValueOnce(new Error('queue down'));
 
     await expect(
@@ -344,22 +337,45 @@ describe('BridgeProvisionService', () => {
       ),
     ).rejects.toThrow('queue down');
 
-    expect(mockMintForCtx).toHaveBeenCalledOnce();
-    expect(mockWriteAtomBestEffort).toHaveBeenCalledOnce();
+    expect(mockWriteDeployAtomBestEffort).toHaveBeenCalledOnce();
     expect(mockRevokeToken).toHaveBeenCalledWith({
       tokenId: 'deployment-token-id',
       reason: DeviceTokenRevocationReason.REPROVISION,
       note: expect.stringContaining('queue down'),
       actor: 'system',
     });
+    expect(mockRevokeBrokkrLiveTokensForDevice).toHaveBeenCalledOnce();
     expect(mockRevokeBrokkrLiveTokensForDevice).toHaveBeenCalledWith(
       DEVICE_UUID,
       DeviceTokenRevocationReason.REPROVISION,
-      expect.stringContaining('queue down'),
+      `Custom-iPXE provisioning cleared stale Brokkr Live token material for job ${JOB_ID}`,
     );
   });
 
-  it('does not revoke tokens when a post-enqueue action throws', async () => {
+  it('aborts the custom-iPXE provision before the deploy atom and enqueue when the live-token revoke fails', async () => {
+    mockRevokeBrokkrLiveTokensForDevice.mockRejectedValueOnce(new Error('revoke failed'));
+
+    await expect(
+      service.provisionDevice(
+        DEVICE_UUID,
+        JOB_ID,
+        'provisioning',
+        { ...LIFECYCLE_DATA, ipxeUrl: 'https://boot.example/custom.ipxe' },
+        OS_SLUG,
+      ),
+    ).rejects.toThrow('revoke failed');
+
+    expect(mockWriteDeployAtomBestEffort).not.toHaveBeenCalled();
+    expect(mockEnqueueSagaJob).not.toHaveBeenCalled();
+    expect(mockRevokeToken).toHaveBeenCalledWith({
+      tokenId: 'deployment-token-id',
+      reason: DeviceTokenRevocationReason.REPROVISION,
+      note: expect.stringContaining('revoke failed'),
+      actor: 'system',
+    });
+  });
+
+  it('does not revoke the deployment-os token when a post-enqueue action throws', async () => {
     mockLogger.log.mockImplementation((message: string) => {
       if (message.includes('saga enqueued:')) {
         throw new Error('logger down');
@@ -378,7 +394,7 @@ describe('BridgeProvisionService', () => {
 
     expect(mockEnqueueSagaJob).toHaveBeenCalledOnce();
     expect(mockRevokeToken).not.toHaveBeenCalled();
-    expect(mockRevokeBrokkrLiveTokensForDevice).not.toHaveBeenCalled();
+    expect(mockRevokeBrokkrLiveTokensForDevice).toHaveBeenCalledOnce();
   });
 
   it('rejects a TEE request on a non-TEE-capable device before mutating any state', async () => {
@@ -686,11 +702,10 @@ describe('BridgeProvisionService', () => {
     });
   });
 
-  it('revokes Brokkr Live tokens (no atom write) on the standard OS-deploy path', async () => {
+  it('revokes Brokkr Live tokens (no deploy atom write) on the standard OS-deploy path', async () => {
     await service.provisionDevice(DEVICE_UUID, JOB_ID, 'provisioning', LIFECYCLE_DATA, OS_SLUG);
 
-    expect(mockMintForCtx).not.toHaveBeenCalled();
-    expect(mockWriteAtomBestEffort).not.toHaveBeenCalled();
+    expect(mockWriteDeployAtomBestEffort).not.toHaveBeenCalled();
     expect(mockRevokeBrokkrLiveTokensForDevice).toHaveBeenCalledWith(
       DEVICE_UUID,
       DeviceTokenRevocationReason.REPROVISION,
@@ -698,7 +713,7 @@ describe('BridgeProvisionService', () => {
     );
   });
 
-  it('mints a Brokkr Live token and writes the server_token atom when a custom iPXE URL is present', async () => {
+  it('writes the deploy_token atom (DEPLOYMENT_OS material) when a custom iPXE URL is present', async () => {
     await service.provisionDevice(
       DEVICE_UUID,
       JOB_ID,
@@ -712,20 +727,21 @@ describe('BridgeProvisionService', () => {
       zoneId: ZONE_ID,
     };
 
-    expect(mockMintForCtx).toHaveBeenCalledOnce();
-    expect(mockMintForCtx).toHaveBeenCalledWith(expectedTokenCtx);
-
-    expect(mockWriteAtomBestEffort).toHaveBeenCalledOnce();
-    expect(mockWriteAtomBestEffort).toHaveBeenCalledWith(
+    expect(mockWriteDeployAtomBestEffort).toHaveBeenCalledOnce();
+    expect(mockWriteDeployAtomBestEffort).toHaveBeenCalledWith(
       expectedTokenCtx,
       {
-        brokkr_live_token: 'test-live-token',
+        deployment_os_token: 'test-os-token',
         endpoint: 'https://brokkr.example/api/v1/bmc/phone-home',
-        exp: 1_900_000_000,
       },
       { requestId: JOB_ID, opLabel: 'provisioning' },
     );
-    expect(mockRevokeBrokkrLiveTokensForDevice).not.toHaveBeenCalled();
+    expect(mockRevokeBrokkrLiveTokensForDevice).toHaveBeenCalledOnce();
+    expect(mockRevokeBrokkrLiveTokensForDevice).toHaveBeenCalledWith(
+      DEVICE_UUID,
+      DeviceTokenRevocationReason.REPROVISION,
+      `Custom-iPXE provisioning cleared stale Brokkr Live token material for job ${JOB_ID}`,
+    );
   });
 
   it('reuses the publisher-returned deploy YAML for device_data on VPC devices (no second render)', async () => {
@@ -882,6 +898,19 @@ describe('BridgeProvisionService', () => {
 
     const [, , , payload] = mockEnqueueSagaJob.mock.calls[0];
     expect(payload.device_data.network_type).toBe('ethernet');
+  });
+
+  it('emits the exact string the bridge infiniband gate compares against: INFINIBAND → infiniband', async () => {
+    mockZoneFindUnique.mockResolvedValueOnce({
+      id: ZONE_ID,
+      layerBuildId: LAYER_BUILD_ID,
+      eastWestNetworkType: ZoneEastWestNetworkType.INFINIBAND,
+    });
+
+    await service.provisionDevice(DEVICE_UUID, JOB_ID, 'provisioning', LIFECYCLE_DATA, OS_SLUG);
+
+    const [, , , payload] = mockEnqueueSagaJob.mock.calls[0];
+    expect(payload.device_data.network_type).toBe('infiniband');
   });
 
   it('throws NotFoundException for missing device row before enqueueing the saga', async () => {

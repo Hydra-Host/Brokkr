@@ -1,6 +1,6 @@
 import { getErrorMessage } from '../common/error-utils';
 import { RedfishBootHandler, RedfishDevice, RedfishDiscoveryHandler } from '../redfish/index.js';
-import type { TeeVerificationResult } from '../redfish/vendor/base/tee.js';
+import type { TeeSetResult, TeeVerificationResult } from '../redfish/vendor/base/tee.js';
 
 import { getLogger } from '../logger/logger.service';
 
@@ -53,22 +53,23 @@ export async function disableTee(
   password: string,
   jobId: string,
   deps: RedfishOperationsDeps = {},
-): Promise<boolean> {
+): Promise<TeeSetResult> {
   if (deps.createRedfishService === undefined) {
     logError('Redfish service not wired — refusing to silently no-op TEE disable', { jobId });
     throw new RedfishServiceUnavailableError('disableTee');
   }
+  let device: RedfishDevice | null = null;
   try {
-    const device = createDevice(deviceId, bmcIp, username, password, jobId);
+    device = createDevice(deviceId, bmcIp, username, password, jobId);
     const service = await deps.createRedfishService(jobId);
     const success = await service.setTee(device, false);
     if (success) {
       logInfo('TEE disabled via Redfish', { jobId });
     }
-    return success;
+    return { success, hostResetAt: device.lastHostResetAt };
   } catch (e) {
     logError(`Failed to disable TEE via Redfish: ${getErrorMessage(e)}`, { jobId });
-    return false;
+    return { success: false, hostResetAt: device?.lastHostResetAt ?? null };
   }
 }
 
@@ -79,22 +80,23 @@ export async function enableTee(
   password: string,
   jobId: string,
   deps: RedfishOperationsDeps = {},
-): Promise<boolean> {
+): Promise<TeeSetResult> {
   if (deps.createRedfishService === undefined) {
     logError('Redfish service not wired — refusing to silently no-op TEE enable', { jobId });
     throw new RedfishServiceUnavailableError('enableTee');
   }
+  let device: RedfishDevice | null = null;
   try {
-    const device = createDevice(deviceId, bmcIp, username, password, jobId);
+    device = createDevice(deviceId, bmcIp, username, password, jobId);
     const service = await deps.createRedfishService(jobId);
     const success = await service.setTee(device, true);
     if (success) {
       logInfo('TEE enabled via Redfish', { jobId });
     }
-    return success;
+    return { success, hostResetAt: device.lastHostResetAt };
   } catch (e) {
     logError(`Failed to enable TEE via Redfish: ${getErrorMessage(e)}`, { jobId });
-    return false;
+    return { success: false, hostResetAt: device?.lastHostResetAt ?? null };
   }
 }
 

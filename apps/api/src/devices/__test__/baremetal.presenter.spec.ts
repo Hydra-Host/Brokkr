@@ -1,10 +1,13 @@
-import { DeviceRole, InterfaceType, ServerPowerStatus } from '@repo/database';
+import { BillingFrequency, DeviceRole, InterfaceType, ServerPowerStatus } from '@repo/database';
 import { type CustomizationCatalog } from '@repo/layers';
 import { DeviceAggregate } from 'src/common/device.types';
 import { describe, expect, it } from 'vitest';
 import { BaremetalPresenter } from '../baremetal.presenter';
 
-function createMinimalAggregate(overrides: Partial<DeviceAggregate> = {}): DeviceAggregate {
+function createMinimalAggregate(
+  overrides: Partial<DeviceAggregate> = {},
+  deployments: unknown[] = [],
+): DeviceAggregate {
   return {
     id: 'device-1',
     name: 'test-device',
@@ -65,7 +68,7 @@ function createMinimalAggregate(overrides: Partial<DeviceAggregate> = {}): Devic
       isListed: false,
       createdAt: new Date(),
       updatedAt: new Date(),
-      deployments: [],
+      deployments,
       serversInReservationInvite: [],
     } as any,
     ...overrides,
@@ -90,6 +93,23 @@ describe('BaremetalPresenter', () => {
         { id: 'l-1', slug: 'ubuntu-noble', name: 'Ubuntu Noble', family: 'base' },
         { id: 'l-2', slug: 'debian-bookworm', name: 'Debian Bookworm', family: 'base' },
       ]);
+    });
+
+    it('exposes the active deployment id for the deployment page', () => {
+      const aggregate = createMinimalAggregate({}, [
+        {
+          id: 'dep-1',
+          nickname: null,
+          startDate: new Date('2026-09-16T10:00:00.000Z'),
+          endDate: null,
+          deployer: null,
+          reservation: null,
+        },
+      ]);
+
+      const result = BaremetalPresenter.toResponse(aggregate);
+
+      expect(result.deployment?.id).toBe('dep-1');
     });
 
     it('returns empty availableBaseLayers when no catalog is provided', () => {
@@ -179,5 +199,60 @@ describe('BaremetalPresenter', () => {
         },
       ]);
     });
+
+    it('includes deployerEmail when the reservation invite belongs to the supplier', () => {
+      const result = BaremetalPresenter.toResponse(createDeployedAggregate('supplier-1'));
+      expect(result.deployment?.deployerEmail).toBe('buyer@example.com');
+    });
+
+    it('redacts deployerEmail when the reservation has no invite', () => {
+      const result = BaremetalPresenter.toResponse(createDeployedAggregate(null));
+      expect(result.deployment?.deployerEmail).toBeNull();
+    });
+
+    it('redacts deployerEmail when the invite belongs to another org', () => {
+      const result = BaremetalPresenter.toResponse(createDeployedAggregate('hydra-org'));
+      expect(result.deployment?.deployerEmail).toBeNull();
+    });
   });
 });
+
+function createDeployedAggregate(inviteOrganizationId: string | null): DeviceAggregate {
+  const reservationInvite =
+    inviteOrganizationId === null
+      ? null
+      : {
+          id: 'invite-1',
+          inviteeEmail: 'buyer@example.com',
+          inviterEmail: 'sales@supplier.com',
+          inviteeOrganizationId: null,
+          price: 100,
+          billingFrequency: BillingFrequency.WEEKLY,
+          manualBilling: false,
+          interruptibleNoticePeriod: null,
+          notes: null,
+          dateAccepted: new Date('2026-01-02'),
+          dateCreated: new Date('2026-01-01'),
+          dateDeleted: null,
+          dateExpires: new Date('2027-01-01'),
+          dateUpdated: null,
+          organizationId: inviteOrganizationId,
+          reservationId: 'res-1',
+        };
+
+  return createMinimalAggregate({}, [
+    {
+      id: 'dep-1',
+      nickname: '',
+      startDate: new Date('2026-01-01'),
+      endDate: null,
+      deployer: { email: 'buyer@example.com' },
+      reservation: {
+        id: 'res-1',
+        price: 100,
+        billingFrequency: BillingFrequency.WEEKLY,
+        reservationInvite,
+      },
+    },
+  ]);
+}

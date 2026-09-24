@@ -16,6 +16,7 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { shutdownTelemetry } from '@repo/telemetry';
 
+import { getBridgeVersion } from './bridge-status/bridge.config';
 import { getErrorMessage } from './common/error-utils';
 import { buildStartupArgs } from './composition/startup-args';
 import { NIL_JOB_ID } from './constants';
@@ -77,6 +78,7 @@ export async function startProductionServer(
   if (gate === 'unset') {
     throw new OrchestratorGateUnsetError(env.BRIDGE_ORCHESTRATOR_ENABLED);
   }
+  await logInfo(`bridge version ${getBridgeVersion()}`, { jobId, appClassName: 'main' });
 
   const runStartupFn = deps.runStartup ?? runStartup;
 

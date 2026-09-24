@@ -1,5 +1,6 @@
 // Must stay in sync with hub's renderRequestSchema at apps/api/src/brokkr-bridge/types/render-request.types.ts.
 
+import { RENDER_DOMAINS } from '@repo/utils';
 import { z } from 'zod';
 
 export const renderReasonSchema = z.enum(['missing', 'stale', 'explicit']);
@@ -11,7 +12,7 @@ export const renderRequestSchema = z
     request_id: z.string().uuid(),
     zone_id: z.string().uuid(),
     bridge_id: z.string(),
-    domain: z.enum(['device_record', 'server_token', 'netplan', 'device_secret']),
+    domain: z.enum(RENDER_DOMAINS),
     reason: renderReasonSchema.nullable().default(null),
     params: z.record(z.unknown()).nullable().default(null),
   })

@@ -16,6 +16,7 @@ export const deviceSpecColumnsFixture: DeviceSpecColumns = {
   deviceType: null,
   networkType: null,
   architecture: null,
+  ipmiBootDeviceOverride: null,
   uefiBoot: null,
   secureBootEnabled: null,
   iommuEnabled: null,

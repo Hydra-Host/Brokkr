@@ -15,6 +15,7 @@ describe('public OrganizationSchema (barrel re-export)', () => {
     tenantType: 'DemandCustomer',
     logo: null,
     metadata: null,
+    knownAccount: false,
     createdAt: new Date(),
     updatedAt: null,
   };

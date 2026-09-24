@@ -24,26 +24,15 @@ interface LoggerLike {
   warning(message: string, context?: { jobId?: string }): Promise<void>;
 }
 
-interface SimModeProbe {
-  isLocalSimulationEnabled(): boolean;
-}
-
 @Injectable()
 export class EnsureSolEnabledStep {
   constructor(
     private readonly factory: SolProvisioningServiceFactoryLike,
     private readonly logger: LoggerLike,
-    private readonly simMode: SimModeProbe,
   ) {}
 
   async execute(ctx: SagaContext): Promise<Record<string, unknown>> {
     const { jobId } = ctx;
-
-    if (this.simMode.isLocalSimulationEnabled()) {
-      await this.logger.info('[sim] SOL prerequisites skipped', { jobId });
-      return { sol_ready: false, reason: 'local_simulation_enabled' };
-    }
-
     const payload = ctx.payload;
     try {
       const { bmcIp, username, password } = credsFromContext(ctx);

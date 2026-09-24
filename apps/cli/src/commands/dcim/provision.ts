@@ -1,4 +1,5 @@
 import * as p from '@clack/prompts';
+import { ContractType, newContractTypeRejectionMessage } from '@repo/utils';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { getAuthenticatedClient } from '../../core/client.js';
@@ -23,7 +24,11 @@ export function registerProvisionCommand(parent: Command): void {
     .option('--cloud-init <config>', 'Cloud-init configuration (YAML string)')
     .option('--ipxe-url <url>', 'Custom iPXE script URL')
     .option('--project-id <id>', 'Project ID to assign the deployment to')
-    .option('--interruptible', 'Provision as an interruptible instance (may be interrupted with notice)')
+    .option('--contract-type <type>', 'Contract type (only RESERVED_ROLLING until commerce billing is ready)')
+    .option(
+      '--interruptible',
+      'Deprecated: Interruptible provisions are unavailable until commerce billing is ready. Use --contract-type=RESERVED_ROLLING.',
+    )
     .option(
       '--customizations <json>',
       'Layer customizations as JSON (e.g. \'{"gpuDriver":"nvidia-driver-580","miscSoftware":["docker"]}\')',
@@ -39,7 +44,7 @@ disk layouts from the server are used. Use --disk-layout to override.
 
 Examples:
   brokkr dcim servers:provision                                Interactive mode
-  brokkr dcim servers:provision <id> --name "my-server" --os ubuntu-noble-vanilla --ssh-keys "key1-uuid,key2-uuid" --force
+  brokkr dcim servers:provision <id> --name "my-server" --os ubuntu-noble-vanilla --ssh-keys "key1-uuid,key2-uuid" --contract-type RESERVED_ROLLING --force
   brokkr dcim servers:provision <id> --name "srv" --os ubuntu-noble-vanilla --ssh-keys "key-uuid" --force --json`,
     )
     .action(
@@ -53,6 +58,7 @@ Examples:
           cloudInit?: string;
           ipxeUrl?: string;
           projectId?: string;
+          contractType?: string;
           interruptible?: boolean;
           customizations?: string;
           force: boolean;
@@ -71,7 +77,20 @@ Examples:
         }
         let sshKeyIds = parseCsvFlag(flags.sshKeys, '--ssh-keys must contain at least one SSH key ID');
 
-        const needsPrompts = !deploymentName || !operatingSystem || !sshKeyIds;
+        if (flags.interruptible) {
+          fail(
+            newContractTypeRejectionMessage(ContractType.INTERRUPTIBLE) ??
+              'Interruptible provisions are unavailable; use --contract-type=RESERVED_ROLLING',
+          );
+        }
+
+        let contractType = flags.contractType;
+        if (contractType) {
+          const rejection = newContractTypeRejectionMessage(contractType);
+          if (rejection) fail(rejection);
+        }
+
+        const needsPrompts = !deploymentName || !operatingSystem || !sshKeyIds || !contractType;
 
         if (needsPrompts) {
           p.intro(chalk.bold('Provision Server'));
@@ -117,6 +136,21 @@ Examples:
                 hint: `${k.userName} · ${k.fingerprint.slice(0, 20)}`,
               })),
               required: true,
+            }),
+          );
+        }
+
+        if (!contractType) {
+          contractType = prompt(
+            await p.select({
+              message: 'Contract type',
+              options: [
+                // Only Reserved Rolling until commerce billing can price the other terms.
+                // { value: 'ON_DEMAND', label: 'On Demand', hint: 'Billed hourly, cancel any time' },
+                { value: 'RESERVED_ROLLING', label: 'Reserved Rolling', hint: 'Reserved with rolling renewal' },
+                // { value: 'INTERRUPTIBLE', label: 'Interruptible', hint: 'Lower price, may be interrupted' },
+                // { value: 'RESERVED', label: 'Reserved', hint: 'Fixed-term reservation' },
+              ],
             }),
           );
         }
@@ -168,7 +202,7 @@ Examples:
             cloudInit: flags.cloudInit,
             ipxeUrl: flags.ipxeUrl,
             projectId: flags.projectId,
-            isInterruptible: flags.interruptible ?? false,
+            contractType: contractType || ContractType.RESERVED_ROLLING,
             customizations,
           }),
         );

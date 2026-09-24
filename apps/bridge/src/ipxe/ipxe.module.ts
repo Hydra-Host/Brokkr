@@ -8,11 +8,11 @@ import {
 import { fetchLiveNetplanForInitrd } from '../bridge-network/initrd-netplan';
 import { NetplanAtomService } from '../bridge-network/netplan-atom.service';
 import { BULLMQ_QUEUE_FACTORY, BullmqQueueService, type BullmqQueueFactory } from '../bullmq/queue.service';
-import { deviceIpxeUrl, deviceServerToken, ipxeChainHit, normalizeDiscoveryMac } from '../common/redis/redis-keys';
+import { deviceDeployToken, deviceIpxeUrl, ipxeChainHit, normalizeDiscoveryMac } from '../common/redis/redis-keys';
 import { RedisService } from '../common/redis/redis.service';
 import { createRealBullmqQueueFactory } from '../composition/bullmq-factories';
 import { getAtom, type EnqueueRenderRequest } from '../device-record/atom/atom-fetcher';
-import { serverTokenAtomSchema } from '../device-record/atom/server-token.schema';
+import { deployTokenAtomSchema } from '../device-record/atom/deploy-token.schema';
 import type { DeviceRecord } from '../device-record/device-record.schema';
 import {
   DEVICE_RECORD_CACHE,
@@ -38,7 +38,7 @@ import {
   type RedisIpxeUrlLookup,
 } from './chain.service';
 import type { InventoryTriggerLogger } from './chain.types';
-import { IpxeTemplateRenderer, type ServerTokenAtomFetcher } from './ipxe-renderer.service';
+import { IpxeTemplateRenderer, type DeployTokenAtomFetcher } from './ipxe-renderer.service';
 import { getIpxeConfig } from './ipxe.config';
 import {
   IPXE_CHAIN_HIT_RECORDER,
@@ -59,7 +59,7 @@ const ipxeRendererProvider: Provider = {
   provide: IPXE_RENDERER,
   useFactory: (redis: RedisService, enqueueRenderRequest: EnqueueRenderRequest) => {
     const config = getIpxeConfig();
-    const fetcher: ServerTokenAtomFetcher = (request) =>
+    const fetcher: DeployTokenAtomFetcher = (request) =>
       getAtom({
         cache: redis,
         enqueueRenderRequest,
@@ -67,7 +67,7 @@ const ipxeRendererProvider: Provider = {
         domain: request.domain,
         entityId: request.entityId,
         atomKey: request.atomKey,
-        valueSchema: serverTokenAtomSchema,
+        valueSchema: deployTokenAtomSchema,
         jobId: request.jobId,
       });
     return new IpxeTemplateRenderer(config, fetcher);
@@ -76,7 +76,7 @@ const ipxeRendererProvider: Provider = {
 };
 
 // Keeps the key helper imported so a redis-keys rename breaks compilation here, not at runtime.
-void deviceServerToken;
+void deviceDeployToken;
 
 const redisIpxeUrlLookupProvider: Provider = {
   provide: IPXE_REDIS_IPXE_URL_LOOKUP,

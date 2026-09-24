@@ -66,12 +66,22 @@
     "./theme-selector": {
       "types": "./src/components/theme-selector.tsx",
       "import": "./src/components/theme-selector.tsx"
+    },
+    "./theme-scope": {
+      "types": "./src/components/theme-scope.tsx",
+      "import": "./src/components/theme-scope.tsx"
+    },
+    "./theme-settings-panel": {
+      "types": "./src/components/theme-settings-panel.tsx",
+      "import": "./src/components/theme-settings-panel.tsx"
     }
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "lint": "eslint .",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -114,10 +124,16 @@
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
     "@tanstack/react-router": "^1.158.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
-    "typescript": "^5.9.3"
+    "@vitejs/plugin-react": "^5.1.2",
+    "happy-dom": "20.11.6",
+    "jsdom": "^27.4.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.17"
   }
 }

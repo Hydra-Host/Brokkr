@@ -523,7 +523,7 @@ export class SOLService {
 
               await this.logger.info(processed.trim(), {
                 jobId: this.jobId,
-                app_class_name: 'sol-logs',
+                appClassName: 'sol-logs',
               });
             }
           }

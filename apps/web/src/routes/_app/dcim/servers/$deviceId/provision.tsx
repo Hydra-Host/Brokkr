@@ -1,8 +1,8 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQueryClient } from '@tanstack/react-query';
-import { createFileRoute, getRouteApi, Link, useNavigate, useRouter } from '@tanstack/react-router';
+import { createFileRoute, getRouteApi, useNavigate, useRouter } from '@tanstack/react-router';
 import { load } from 'js-yaml';
-import { AlertTriangle, Loader2, PlusCircle } from 'lucide-react';
+import { Loader2, PlusCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -14,6 +14,7 @@ import {
   validateDiskLayoutEncryption,
   type SshKeyWithUser,
 } from '@repo/api-client';
+import { BootReadinessVerdict } from '@repo/domain-ui/components/boot-readiness-verdict';
 import { CustomizationLayers, type CustomizationLayersData } from '@repo/domain-ui/provision/customization-layers';
 import {
   applyDirectModeToSubmission,
@@ -22,6 +23,7 @@ import {
   validateDiskLayoutSizeInputs,
 } from '@repo/domain-ui/provision/disk-layout-selector';
 import { ProvisionAdvancedSettings } from '@repo/domain-ui/provision/provision-advanced-settings';
+import { Alert, AlertDescription } from '@repo/ui/components/alert';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -39,7 +41,7 @@ import { FormMultiSelect } from '@repo/ui/form/form-multi-select';
 import { FormSelect } from '@repo/ui/form/form-select';
 import { FormSubmitButton } from '@repo/ui/form/form-submit-button';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
-import { formatPriceFromCentsToDollars, unwrapErrorMessage } from '@repo/utils';
+import { CONTRACT_TYPE_OPTIONS, ContractType, unwrapErrorMessage } from '@repo/utils';
 import { AddSshKeyInlineForm } from '~/components/add-ssh-key-inline-form';
 import { DecommissionedServerOverlay } from '~/components/decommissioned-server-overlay';
 import { tsr } from '~/lib/api';
@@ -166,9 +168,6 @@ function ProvisionDeviceForm() {
     },
   });
 
-  const interruptibleOnly = device.listing.isInterruptibleOnly ?? false;
-  const interruptibleAllowed = interruptibleOnly || (device.listing.interruptiblePrice?.perWeek?.total ?? 0) > 0;
-
   const sshKeyOptions = useMemo(
     () =>
       (sshKeys as SshKeyWithUser[]).map((key) => ({
@@ -187,7 +186,8 @@ function ProvisionDeviceForm() {
         DEFAULT_OPERATING_SYSTEM,
       ),
       sshKeyIds: [],
-      isInterruptible: interruptibleOnly,
+      contractType: ContractType.RESERVED_ROLLING,
+      isInterruptible: false,
       diskLayouts: getDefaultDiskLayouts(device.storageLayouts),
       cloudInit: '',
       ipxeUrl: '',
@@ -197,7 +197,6 @@ function ProvisionDeviceForm() {
   });
 
   const operatingSystem = form.watch('operatingSystem');
-  const isInterruptible = form.watch('isInterruptible');
 
   const osOptions = device.availableBaseLayers
     .map((layer) => ({ label: layer.name, value: layer.slug }))
@@ -211,8 +210,10 @@ function ProvisionDeviceForm() {
   })();
 
   const hasNoOs = device.availableBaseLayers.length === 0;
-  const isNotProvisionable =
+  const interruptibleOnly = device.listing?.isInterruptibleOnly ?? false;
+  const hasOtherProvisionBlocks =
     !!device.deployment || device.status?.label?.toLowerCase() !== 'inventory' || !!device.reservationInvite || hasNoOs;
+  const isNotProvisionable = hasOtherProvisionBlocks || interruptibleOnly;
 
   const handleFormSubmit = () => {
     setShowConfirmDialog(true);
@@ -240,13 +241,14 @@ function ProvisionDeviceForm() {
 
     const customizations = flattenCustomizationsForSubmit(data.customizations);
 
-    await provisionDevice({
+    const response = await provisionDevice({
       params: { deviceId: params.deviceId },
       body: {
         deploymentName: data.deploymentName,
         operatingSystem: data.operatingSystem,
         sshKeyIds: data.sshKeyIds,
-        isInterruptible: data.isInterruptible,
+        contractType: data.contractType ?? ContractType.RESERVED_ROLLING,
+        isInterruptible: data.contractType === ContractType.INTERRUPTIBLE,
         diskLayouts,
         cloudInit,
         ipxeUrl: data.ipxeUrl || null,
@@ -259,23 +261,34 @@ function ProvisionDeviceForm() {
     queryClient.removeQueries({ queryKey: ['server', params.deviceId] });
     void queryClient.invalidateQueries({ queryKey: LIFECYCLE_JOBS_KEY });
     await router.invalidate();
-    navigate({
-      to: '/dcim/servers/$deviceId',
-      params: { deviceId: params.deviceId },
-    });
+    const jobId = response.status === 200 ? response.body.jobId : undefined;
+    if (jobId) {
+      navigate({ to: '/dcim/servers/$deviceId/jobs', params: { deviceId: params.deviceId }, search: { job: jobId } });
+    } else {
+      navigate({ to: '/dcim/servers/$deviceId', params: { deviceId: params.deviceId } });
+    }
   };
 
   return (
     <>
       <div className="relative">
         <DecommissionedServerOverlay deletedAt={device.deletedAt} />
+        <BootReadinessVerdict deviceId={device.id} />
         <Card>
           <CardHeader>
             <h2 className="text-base leading-7 font-semibold">Provision</h2>
             <p className="text-muted-foreground mt-1 text-sm leading-6">
               Provisioning installs the operating system and configures the server for use. This action is irreversible.
             </p>
-            {isNotProvisionable && (
+            {interruptibleOnly && (
+              <Alert variant="warning" className="mt-4">
+                <AlertDescription>
+                  This device is interruptible-only and cannot be provisioned with Reserved Rolling until commerce
+                  billing is ready.
+                </AlertDescription>
+              </Alert>
+            )}
+            {hasOtherProvisionBlocks && (
               <div className="bg-muted mt-4 rounded-lg p-4 font-semibold">
                 <p>This server is not available for provisioning.</p>
                 <ul className="list-disc pl-4 text-sm text-amber-500">
@@ -380,74 +393,14 @@ function ProvisionDeviceForm() {
                   }
                 />
 
-                {interruptibleAllowed && (
-                  <FormCheckbox
-                    control={form.control}
-                    name="isInterruptible"
-                    label="Interruptible"
-                    description={
-                      interruptibleOnly
-                        ? 'This server is only available as interruptible.'
-                        : 'Rent as interruptible — cheaper, but can be evicted after a notice period.'
-                    }
-                    disabled={isNotProvisionable || interruptibleOnly}
-                  />
-                )}
-
-                {isInterruptible && (
-                  <Card className="border-amber-500/20 bg-amber-500/5">
-                    <CardHeader className="flex flex-row items-center gap-2">
-                      <AlertTriangle className="h-4 w-4 text-amber-500" />
-                      <p className="text-sm font-medium">Interruptible Self-Provisioning</p>
-                    </CardHeader>
-                    <CardContent className="space-y-3 text-sm">
-                      <div>
-                        <p>When you set this server to self-provision as interruptible:</p>
-                        <ul className="list-disc space-y-1 pl-6">
-                          <li>Server will remain listed and rentable on-demand at the LISTED price.</li>
-                          <li>Server will remain listed and rentable as interruptible at the set FLOOR price.</li>
-                          <li>
-                            If the server is rented, your current workload will be terminated after a 5 minute delay.
-                          </li>
-                          <li>The server will be fully wiped and re-imaged before being handed over to the renter.</li>
-                          <li>Any unsaved data will be lost permanently.</li>
-                        </ul>
-                      </div>
-                      <div>
-                        <p className="font-semibold">Current price configuration:</p>
-                        <p>
-                          LISTED:{' '}
-                          <span className="text-emerald-500">
-                            {formatPriceFromCentsToDollars(
-                              device.specs.gpu.count
-                                ? device.listing.onDemandPrice.perHour.perGpu!
-                                : device.listing.onDemandPrice.perHour.total!,
-                            )}{' '}
-                            {device.specs.gpu.count ? 'GPU/Hr' : 'Server/Hr'}
-                          </span>
-                        </p>
-                        <p>
-                          FLOOR:{' '}
-                          <span className="text-emerald-500">
-                            {formatPriceFromCentsToDollars(
-                              device.specs.gpu.count
-                                ? device.listing.interruptiblePrice.perHour.perGpu!
-                                : device.listing.interruptiblePrice.perHour.total!,
-                            )}{' '}
-                            {device.specs.gpu.count ? 'GPU/Hr' : 'Server/Hr'}
-                          </span>
-                        </p>
-                      </div>
-                      <Link
-                        to="/dcim/servers/$deviceId/settings"
-                        params={{ deviceId: params.deviceId }}
-                        className="text-primary text-sm hover:underline"
-                      >
-                        Configure your price settings
-                      </Link>
-                    </CardContent>
-                  </Card>
-                )}
+                <FormSelect
+                  control={form.control}
+                  name="contractType"
+                  label="Contract Type"
+                  options={CONTRACT_TYPE_OPTIONS}
+                  placeholder="Select contract type"
+                  disabled={isNotProvisionable}
+                />
 
                 <ProvisionAdvancedSettings
                   storageLayouts={device.storageLayouts}

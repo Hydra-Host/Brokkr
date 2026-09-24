@@ -19,6 +19,7 @@ import { IpamModule } from './ipam/ipam.module';
 import { JobLogsModule } from './job-logs/job-logs.module';
 import { JobsModule } from './jobs/jobs.module';
 import { LoggerModule } from './logger/logger.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { WebhookModule } from './webhook/webhook.module';
 
 import { PluginRuntimeModule } from '@hydrahost/plugin-runtime';
@@ -54,6 +55,7 @@ import { DnsModule } from './dns/dns.module';
 import { EditionModule } from './edition/edition.module';
 import { EmailModule } from './email/email.module';
 import { PluginEmailModule } from './email/plugin-email.module';
+import { PluginNotificationsModule } from './email/plugin-notifications.module';
 import { EventsModule } from './events/events.module';
 import { HeartbeatMonitorModule } from './heartbeat-monitor/heartbeat-monitor.module';
 import { PluginIpamProvisioningModule } from './ipam/plugin-ipam-provisioning.module';
@@ -140,7 +142,9 @@ const enabledPluginManifests = enabledPluginEntries.map((entry) => entry.plugin)
     PrismaModule,
     LifecycleModule,
     PluginLifecycleControlModule,
+    NotificationsModule,
     PluginEmailModule,
+    PluginNotificationsModule,
     ProvisionModule,
     RegionsModule,
     ReservationsModule,

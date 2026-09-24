@@ -254,10 +254,7 @@ function ReprovisionForm() {
     queryClient.removeQueries({ queryKey: DEPLOYMENT_PROJECTS_KEY });
     void queryClient.invalidateQueries({ queryKey: LIFECYCLE_JOBS_KEY });
     await router.invalidate();
-    navigate({
-      to: '/deployments/$deploymentId',
-      params: { deploymentId },
-    });
+    navigate({ to: '/deployments/$deploymentId', params: { deploymentId } });
   };
 
   return (

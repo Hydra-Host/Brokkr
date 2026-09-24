@@ -52,7 +52,6 @@ function toResponse(run: DiscoveryRunWithIssues) {
     deviceId: run.deviceId,
     status: run.status,
     jobId: run.jobId,
-    zonePrefix: run.zonePrefix,
     handlerVersion: run.handlerVersion,
     bridgeCollectorVersion: run.bridgeCollectorVersion,
     collectorsExpected: run.collectorsExpected,

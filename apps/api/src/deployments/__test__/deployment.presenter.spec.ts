@@ -20,6 +20,7 @@ describe('DeploymentPresenter', () => {
 
       expect(result).toMatchObject({
         id: aggregate.id,
+        deviceId: aggregate.server.device.id,
         location: 'North America',
         status: { value: 'provisioned', label: 'Provisioned' },
         powerStatus: { value: 'Running', label: 'Running' },

@@ -8,6 +8,7 @@ import { EMAIL_SENDER, type EmailMessage, type EmailSender } from './email-sende
 import { DeviceProvisioningErrorEmail } from './templates/DeviceProvisioningErrorEmail';
 import { EmailVerificationEmail } from './templates/EmailVerificationEmail';
 import { ForgotPasswordEmailEmail } from './templates/ForgotPasswordEmail';
+import { InAppNotificationEmail } from './templates/InAppNotificationEmail';
 import { InterruptibleInitiatedEmail } from './templates/InterruptibleInitiatedEmail';
 import { InterruptionCompleteEmail } from './templates/InterruptionCompleteEmail';
 import { InterruptionQueuedEmail } from './templates/InterruptionQueuedEmail';
@@ -31,7 +32,11 @@ export class EmailService implements OnApplicationBootstrap {
   ) {
     this.isLocal = this.configService.get('IS_LOCAL') === 'true';
     this.localDelivery = this.configService.get('EMAIL_LOCAL_DELIVERY') === 'true';
-    this.baseUrl = this.configService.get<string>('BASE_URL') ?? '';
+    // Prefer WEB_BASE_URL (Vite SPA in local) over BASE_URL (API); prod leaves WEB unset.
+    const apiBaseUrl = this.configService.get<string>('BASE_URL') ?? '';
+    const webBaseUrl = this.configService.get<string>('WEB_BASE_URL')?.trim() ?? '';
+    const linkBase = webBaseUrl || apiBaseUrl;
+    this.baseUrl = linkBase.endsWith('/') ? linkBase.slice(0, -1) : linkBase;
   }
 
   onApplicationBootstrap(): void {
@@ -323,6 +328,31 @@ export class EmailService implements OnApplicationBootstrap {
             reservationType,
             primaryIp,
             baseUrl: this.baseUrl,
+          }),
+        ),
+      });
+    },
+
+    inAppNotification: async ({
+      email,
+      title,
+      body,
+      href,
+    }: {
+      email: string;
+      title: string;
+      body: string;
+      href?: string;
+    }) => {
+      const linkUrl = href ? `${this.baseUrl}${href.startsWith('/') ? href : `/${href}`}` : undefined;
+      await this.sendEmail({
+        to: email,
+        subject: title,
+        html: await render(
+          InAppNotificationEmail({
+            title,
+            body,
+            linkUrl,
           }),
         ),
       });

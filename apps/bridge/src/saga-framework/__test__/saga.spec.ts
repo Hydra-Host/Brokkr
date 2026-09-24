@@ -96,6 +96,7 @@ function makeRecordingNotifications(): {
   calls: Array<{
     planId: string;
     stepName: string;
+    operation: string | null;
     status: JobStatus;
     error?: string | null;
     result?: unknown;
@@ -105,6 +106,7 @@ function makeRecordingNotifications(): {
   const calls: Array<{
     planId: string;
     stepName: string;
+    operation: string | null;
     status: JobStatus;
     error?: string | null;
     result?: unknown;
@@ -115,6 +117,7 @@ function makeRecordingNotifications(): {
       calls.push({
         planId: event.planId,
         stepName: event.stepName,
+        operation: event.operation ?? null,
         status: event.status,
         error: event.error ?? null,
         result: event.result ?? null,
@@ -242,6 +245,33 @@ describe('SagaRunner — happy path', () => {
 
     const planFinal = calls.filter((c) => c.stepName === '__plan__' && c.status === JobStatus.COMPLETED);
     expect(planFinal.length).toBe(1);
+  });
+
+  it('notifies each step with its plan operation label and the __plan__ row with none', async () => {
+    const initial = makePlan([
+      makeStep('wipe_disks', { operation: 'Wipe all disks' }),
+      makeStep('step_b', { operation: '' }),
+    ]);
+    const { manager } = makeInMemoryPlanManager(initial);
+    const { notifications, calls } = makeRecordingNotifications();
+    const runner = new SagaRunnerService(manager, notifications, silentLogger);
+
+    await runner.execute(
+      {
+        name: 'test',
+        steps: [
+          { name: 'wipe_disks', operation: 'Wipe all disks', execute: successStep },
+          { name: 'step_b', execute: successStep },
+        ],
+      },
+      { planId: 'test-plan', payload: {} },
+    );
+
+    const completed = (stepName: string) =>
+      calls.find((c) => c.stepName === stepName && c.status === JobStatus.COMPLETED);
+    expect(completed('wipe_disks')?.operation).toBe('Wipe all disks');
+    expect(completed('step_b')?.operation).toBeNull();
+    expect(completed('__plan__')?.operation).toBeNull();
   });
 });
 

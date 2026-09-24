@@ -1,22 +1,23 @@
-import pluginsConfig from '@hydrahost/plugins-config';
-import { Controller } from '@nestjs/common';
+import { PLUGIN_ENABLED_IDS, type PluginEnabledIds } from '@hydrahost/plugin-sdk';
+import { Controller, Inject } from '@nestjs/common';
 import { contract } from '@repo/api-client';
 import { TsRestHandler, tsRestHandler } from '@ts-rest/nest';
 import { Public } from '../auth/decorators/public.decorator';
 import { ContextService } from '../common/context/context.service';
 
-const enabledPluginIds: string[] = pluginsConfig.filter((entry) => entry.enabled).map((entry) => entry.plugin.id);
-
 @Controller()
 export class PluginsMetaController {
-  constructor(private readonly contextService: ContextService) {}
+  constructor(
+    private readonly contextService: ContextService,
+    @Inject(PLUGIN_ENABLED_IDS) private readonly enabledPluginIds: PluginEnabledIds,
+  ) {}
 
   @Public()
   @TsRestHandler(contract.getEnabledPlugins)
   async getEnabledPlugins() {
     return tsRestHandler(contract.getEnabledPlugins, async () => ({
       status: 200,
-      body: { pluginIds: enabledPluginIds },
+      body: { pluginIds: [...this.enabledPluginIds] },
     }));
   }
 

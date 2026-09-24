@@ -68,6 +68,7 @@ export const mockDemandOrganization: Organization & {
   deletedAt: null,
   members: [],
   isInstanceOperator: false,
+  knownAccount: false,
 };
 
 export const mockSupplyOrganization: Organization & {
@@ -87,6 +88,7 @@ export const mockSupplyOrganization: Organization & {
   deletedAt: null,
   members: [],
   isInstanceOperator: false,
+  knownAccount: false,
 };
 
 export const mockSupplyOrganizationMembership: Member = {
@@ -224,7 +226,6 @@ export const mockDeviceMetadata = {
   cpuCoreCount: 16,
   cpuPhysicalCount: 2,
   ipamConfig: {},
-  virtualNetworkConfig: {},
   macAddress: '00:00:00:00:00:00',
   memory: 16,
   nvmeSize: 500,
@@ -336,6 +337,7 @@ export const mockCustomerOrganization: Organization & {
   deletedAt: null,
   members: [],
   isInstanceOperator: false,
+  knownAccount: false,
 };
 
 export const mockCustomerOrganizationMembership: Member = {

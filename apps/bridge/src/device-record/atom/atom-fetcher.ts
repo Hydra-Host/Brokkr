@@ -29,6 +29,13 @@ export const FORWARDING_LOGGER: AtomFetcherLogger = {
   warn: (msg, jobId) => void getLogger().warning(msg, { jobId }),
 };
 
+export interface AtomFetchRequest<D extends string = string> {
+  domain: D;
+  entityId: string;
+  atomKey: string;
+  jobId: string;
+}
+
 export interface EnqueueRenderRequestParams {
   requestId: string;
   domain: string;

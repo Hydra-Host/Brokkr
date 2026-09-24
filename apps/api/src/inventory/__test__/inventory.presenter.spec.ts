@@ -297,6 +297,20 @@ describe('InventoryPresenter', () => {
       expect(InventoryPresenter.isListedOrInvitee(contextWith(true), caller)).toBe(true);
     });
 
+    it('denies listed hosts when plugins hide the supplier and there is no invite', () => {
+      expect(InventoryPresenter.isListedOrInvitee(contextWith(true), caller, false)).toBe(false);
+    });
+
+    it('allows unlisted hosts for the invitee even when plugins hide the supplier', () => {
+      expect(
+        InventoryPresenter.isListedOrInvitee(
+          contextWith(false, { orgId: buyerOrgId, email: buyerEmail }),
+          caller,
+          false,
+        ),
+      ).toBe(true);
+    });
+
     it('denies listed hosts when the pending invite belongs to someone else', () => {
       expect(
         InventoryPresenter.isListedOrInvitee(contextWith(true, { orgId: otherOrgId, email: otherEmail }), caller),

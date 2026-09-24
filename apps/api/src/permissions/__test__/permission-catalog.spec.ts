@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MAIN_APP_PERMISSIONS as CORE_APP_PERMISSIONS } from '@repo/auth/rbac';
 import { MAIN_APP_PERMISSIONS, MAIN_APP_SYSTEM_ROLES } from '../permissions.constants';
 
 const key = (resource: string, action: string) => `${resource}:${action}`;
@@ -56,5 +57,16 @@ describe('permission catalog', () => {
     expect(ownerPerms).toEqual(catalogKeys);
     expect(adminPerms.has('organization:manage-owners')).toBe(false);
     expect(adminPerms).not.toEqual(catalogKeys);
+  });
+
+  it('grants plugin :read keys to Member and withholds their other actions', () => {
+    const coreKeys = new Set(CORE_APP_PERMISSIONS.map((p) => key(p.resource, p.action)));
+    for (const permission of MAIN_APP_PERMISSIONS) {
+      const k = key(permission.resource, permission.action);
+      if (coreKeys.has(k)) continue;
+      expect(ownerPerms.has(k)).toBe(true);
+      expect(adminPerms.has(k)).toBe(true);
+      expect(memberPerms.has(k)).toBe(permission.action === 'read');
+    }
   });
 });

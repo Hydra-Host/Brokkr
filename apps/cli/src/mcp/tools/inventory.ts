@@ -27,12 +27,6 @@ export function registerInventoryTools(server: McpServer) {
     'Rent an available server from the marketplace. Creates a new deployment for the organization. Use get_inventory_item first to see available OS images and disk layouts.',
     {
       id: z.string().uuid().describe('Device ID to rent'),
-      isInterruptible: z
-        .boolean()
-        .default(false)
-        .describe(
-          'Rent as an interruptible instance (lower price, may be interrupted with notice). Defaults to on-demand (hourly, cancel any time).',
-        ),
       deploymentName: z.string().min(1).describe('Name for the new deployment'),
       operatingSystem: z
         .string()
@@ -52,7 +46,6 @@ export function registerInventoryTools(server: McpServer) {
     (args) =>
       withClient((client) =>
         rentInventoryDevice(client, args.id, {
-          isInterruptible: args.isInterruptible,
           deploymentName: args.deploymentName,
           operatingSystem: args.operatingSystem,
           sshKeyIds: args.sshKeyIds,

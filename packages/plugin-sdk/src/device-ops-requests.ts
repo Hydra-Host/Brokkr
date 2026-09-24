@@ -33,6 +33,17 @@ export interface PluginDeactivateRescueModeRequest {
   deviceId: string;
 }
 
+export interface PluginRequestDeviceHealthCheckRequest {
+  /** Device the bridge probes now instead of at the next scheduled check. */
+  deviceId: string;
+}
+
+/** Same shape as api-client's `RequestDeviceHealthCheckResponse`; the SDK carries no api-client dependency. */
+export interface PluginRequestDeviceHealthCheckResult {
+  /** BullMQ job id of the enqueued `device_health_check` saga. */
+  jobId: string;
+}
+
 /** Request-side device operations that fall outside the `LifecycleJob` state machine. */
 export interface PluginDeviceOpsRequests {
   /** Manually enqueue the `inventory_collection` saga (the same saga the hourly cron runs). */
@@ -46,4 +57,7 @@ export interface PluginDeviceOpsRequests {
 
   /** Clear the rescue OS and reboot the device's active deployment back to its primary OS. */
   requestDeactivateRescueMode(input: PluginDeactivateRescueModeRequest): Promise<void>;
+
+  /** Enqueue one `device_health_check` saga now; the host refuses offline, non-server, zoneless, rejected-credential and recently checked devices. */
+  requestDeviceHealthCheck(input: PluginRequestDeviceHealthCheckRequest): Promise<PluginRequestDeviceHealthCheckResult>;
 }

@@ -26,7 +26,6 @@ function ctxWith(payload: Record<string, unknown>): SagaContext {
 
 function makeStep(
   opts: {
-    simEnabled?: boolean;
     monitorSession?: () => Promise<unknown>;
     create?: () => Promise<{ monitorSession: () => Promise<unknown> }>;
   } = {},
@@ -38,22 +37,11 @@ function makeStep(
     info: vi.fn(async () => undefined),
     warning: vi.fn(async () => undefined),
   };
-  const simMode = { isLocalSimulationEnabled: vi.fn(() => opts.simEnabled ?? false) };
-  const step = new SolActivationStep(factory, logger, simMode);
-  return { step, factory, create, logger, simMode };
+  const step = new SolActivationStep(factory, logger);
+  return { step, factory, create, logger };
 }
 
 describe('SolActivationStep.execute', () => {
-  it('skips and returns local_simulation_enabled when sim mode is on', async () => {
-    const { step, create, logger } = makeStep({ simEnabled: true });
-
-    const result = await step.execute(ctxWith({ bmc_ip: '10.0.0.9' }));
-
-    expect(result).toEqual({ sol_activated: false, reason: 'local_simulation_enabled' });
-    expect(create).not.toHaveBeenCalled();
-    expect(logger.info).toHaveBeenCalledWith('[sim] SOL activation skipped', { jobId: 'job-1' });
-  });
-
   it('returns a non-fatal envelope when the sealed credential is absent', async () => {
     const { step, create } = makeStep();
 

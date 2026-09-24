@@ -351,6 +351,7 @@ export class BullmqQueueService implements OnModuleDestroy {
           device_id: String(args.deviceId),
           plan_id: planId,
           job_id: args.jobId || planId,
+          saga_name: 'inventory_collection',
         } satisfies CollectionJobData,
         {
           jobId: dedupId,

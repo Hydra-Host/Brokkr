@@ -1,13 +1,14 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { Invitation, InvitationWithOrganization, PaginationMeta, User } from '@repo/api-client';
 import { type SecondaryStorage } from '@repo/auth';
-import { MAIN_APP_PERMISSIONS, roleBelongsToCatalog } from '@repo/auth/rbac';
+import { roleBelongsToCatalog } from '@repo/auth/rbac';
 import { Prisma } from '@repo/database';
 import { paginateArray } from '@repo/database/pagination';
 import { Logger } from 'src/common/decorators/logger.decorator';
 import { getErrorMessage } from 'src/common/error-utils';
 import { LoggerService } from 'src/logger/logger.service';
 import { OrganizationInvitationsService } from 'src/organizations/invitations/organization-invitations.service';
+import { MAIN_APP_PERMISSIONS } from 'src/permissions/permissions.constants';
 import { PrismaClient } from 'src/prisma/prisma.client';
 
 // ts-rest does not strip responses — this select is the actual runtime guard against leaking internal account state.

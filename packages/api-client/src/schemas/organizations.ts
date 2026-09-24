@@ -15,6 +15,11 @@ export const OrganizationSchema = z.object({
   metadata: z.string().nullable().describe('JSON-encoded metadata for the organization'),
   email: z.string().nullable().optional().describe('Contact email for the organization'),
   country: z.string().nullable().optional().describe('Country where the organization is based'),
+  knownAccount: z
+    .boolean()
+    .describe(
+      'Managed GTM flag: when true, inventory self-serve provision is allowed without a reservation invite. Public BOSS ignores this for authorization.',
+    ),
   createdAt: z.coerce.date().describe('When the organization was created'),
   updatedAt: z.coerce.date().nullable().describe('When the organization was last updated'),
 });

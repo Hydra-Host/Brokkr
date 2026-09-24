@@ -1,18 +1,8 @@
-import type { BootTrail } from '@/contract';
 import { tsr } from '@/lib/api';
 import { usePoll } from '@/lib/use-poll';
+import { bootTrailLine } from '@repo/utils';
 
-const clock = (ms: number) => new Date(ms).toLocaleTimeString();
-
-export function bootTrailLine(trail: BootTrail): string {
-  if (trail.readError !== null) return `boot trail unreadable: ${trail.readError}`;
-  if (trail.pxe === null) return 'no PXE request seen yet';
-  const pxe = `PXE ${trail.pxe.outcome} at ${clock(trail.pxe.atMs)}`;
-  if (trail.chainReached !== true) return `${pxe}; iPXE chain not reached yet`;
-  return trail.chainAtMs === null
-    ? `${pxe}; iPXE chain reached`
-    : `${pxe}; iPXE chain reached at ${clock(trail.chainAtMs)}`;
-}
+export { bootTrailLine };
 
 // the query key is the machine name alone, so the config page and the fleet card share one poll per machine
 export function BootTrailLine({ name }: { name: string }) {

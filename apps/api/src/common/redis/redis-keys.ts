@@ -1,3 +1,6 @@
+import { deviceRedisKeys } from '@repo/device-domain';
+import { jobRedisKeys } from '@repo/lifecycle';
+
 export const REDIS_KEYS = {
   bridgeInstance: (zoneId: string, instanceId?: string) => `${zoneId}:bridge:instance:${instanceId ?? '*'}`,
 
@@ -11,12 +14,14 @@ export const REDIS_KEYS = {
 
   sagaPlanById: (zoneUuid: string, planId: string) => `${zoneUuid}:bridge:jobs:plan:${planId}`,
 
-  solLogs: (zonePrefix: string, planId: string) => `${zonePrefix}:sol:logs:${planId}`,
+  solLogs: jobRedisKeys.solLogs,
 
-  jobLogs: (zonePrefix: string, planId: string) => `${zonePrefix}:job:logs:${planId}`,
+  jobLogs: jobRedisKeys.jobLogs,
 };
 
 export const serverToken = (deviceId: string): string => `device:${deviceId}:server_token`;
+
+export const deployToken = (deviceId: string): string => `device:${deviceId}:deploy_token`;
 
 export const ipxeUrl = (deviceId: string): string => `device:${deviceId}:config:ipxe_url`;
 
@@ -101,3 +106,8 @@ export const DNS_PREFIX_CONFIG_SCAN_PATTERN = '*:prefix:*:config:dns';
 export const DNS_RECORDS_KEY = 'config:dns-records';
 
 export const TTL_DNS_RECORDS_SECONDS = 0;
+
+export const { dhcpPxeDecision, ipxeChainHit, discoveryPendingFor, deviceHealthSnapshot } = deviceRedisKeys;
+
+// Hub-owned: one manual health check per device per cron interval
+export const deviceHealthRequested = (deviceId: string): string => `device:${deviceId}:health-check:requested`;

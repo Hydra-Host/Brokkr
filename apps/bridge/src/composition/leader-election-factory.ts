@@ -1,5 +1,6 @@
 import { type Provider, type Type } from '@nestjs/common';
 
+import { getBridgeVersion } from '../bridge-status/bridge.config.js';
 import { RedisService } from '../common/redis/redis.service.js';
 import type {
   InterfaceEntry,
@@ -62,7 +63,7 @@ export const leaderInterfaceEnumeratorProvider: Provider = {
 
 export function buildLeaderElectionVersionInfo(env: NodeJS.ProcessEnv = process.env): () => VersionInfo {
   return () => ({
-    brokkrWorkerVersion: env.BRIDGE_VERSION ?? '0.0.0',
+    brokkrWorkerVersion: getBridgeVersion(),
     brokkrLiveVersion: env.BROKKR_LIVE_VERSION ?? DEFAULT_BROKKR_LIVE_VERSION,
   });
 }

@@ -1,14 +1,16 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { LifecycleJobRecord } from '@repo/lifecycle';
 import { REDIS_CLIENT, REDIS_CONFIG } from 'src/common/redis';
 import { SealedEnvelopeService } from 'src/crypto/sealed-envelope.service';
 import { DeviceSecretAuditService } from 'src/device-secret/device-secret-audit.service';
 import { DeviceTestRunsService } from 'src/device-test-runs/device-test-runs.service';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { LifecycleInboundService } from 'src/lifecycle/inbound/lifecycle-inbound.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { SanitizationReportService } from 'src/sanitization-reports/sanitization-report.service';
 import { ZoneCryptoConfig } from 'src/zone-crypto/zone-crypto.config';
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { DeviceRecordPublisher } from '../../device-record/device-record-publisher.service';
 import { DiscoveryIngressService } from '../../discovery/discovery-ingress.service';
 import { JobLogWriterService } from '../../job-logs/job-log-writer.service';
@@ -64,11 +66,15 @@ describe('BridgeResultsConsumer — job log writes', () => {
   let jobLogWriter: { write: Mock };
   let lifecycleInbound: { applyStepResult: Mock; applyJobCompleted: Mock; applyPhoneHome: Mock };
   let jobFindUnique: Mock;
+  let deviceFindUnique: Mock;
+  let findByIdUnscoped: ReturnType<typeof vi.spyOn>;
   let processResult: (job: unknown) => Promise<void>;
 
   beforeEach(async () => {
     jobLogWriter = { write: vi.fn().mockResolvedValue(undefined) };
-    jobFindUnique = vi.fn().mockResolvedValue({ deviceId: DEVICE_UUID, device: { zoneId: ZONE } });
+    jobFindUnique = vi.fn().mockResolvedValue({ deviceId: DEVICE_UUID });
+    deviceFindUnique = vi.fn().mockResolvedValue({ id: DEVICE_UUID, zoneId: ZONE });
+    findByIdUnscoped = vi.spyOn(LifecycleJobRecord, 'findByIdUnscoped').mockResolvedValue(null);
     lifecycleInbound = {
       applyStepResult: vi.fn().mockResolvedValue(false),
       applyJobCompleted: vi.fn().mockResolvedValue(false),
@@ -87,7 +93,7 @@ describe('BridgeResultsConsumer — job log writes', () => {
           useValue: {
             device: {
               update: vi.fn().mockResolvedValue({}),
-              findUnique: vi.fn().mockResolvedValue({ id: DEVICE_UUID }),
+              findUnique: deviceFindUnique,
             },
             server: {
               updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -116,6 +122,7 @@ describe('BridgeResultsConsumer — job log writes', () => {
           provide: DeviceTokensService,
           useValue: { revokeBrokkrLiveTokensForDevice: vi.fn().mockResolvedValue(undefined) },
         },
+        { provide: RedisPubSubService, useValue: { publish: vi.fn().mockResolvedValue(undefined) } },
         { provide: LifecycleInboundService, useValue: lifecycleInbound },
         {
           provide: DeviceRecordPublisher,
@@ -141,6 +148,10 @@ describe('BridgeResultsConsumer — job log writes', () => {
     processResult = (consumer as unknown as { processResult: (job: unknown) => Promise<void> }).processResult.bind(
       consumer,
     );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('handleStepResult', () => {
@@ -248,9 +259,7 @@ describe('BridgeResultsConsumer — job log writes', () => {
       await processResult(makeJobCompletedJob({ saga_name: 'inventory_collection' }));
 
       expect(jobLogWriter.write).not.toHaveBeenCalled();
-      expect(jobFindUnique).not.toHaveBeenCalledWith(
-        expect.objectContaining({ select: { deviceId: true, device: { select: { zoneId: true } } } }),
-      );
+      expect(findByIdUnscoped).not.toHaveBeenCalled();
     });
 
     it('keeps the step and completion lines for the benchmarks saga', async () => {
@@ -287,7 +296,33 @@ describe('BridgeResultsConsumer — job log writes', () => {
       );
     });
 
-    it('drops the log write when no Job row exists for the plan', async () => {
+    it('writes the step line for a lifecycle plan id that has no legacy Job row', async () => {
+      findByIdUnscoped.mockResolvedValue({ data: { deviceId: DEVICE_UUID } });
+      jobFindUnique.mockResolvedValue(null);
+
+      await processResult(makeStepResultJob({ status: 'complete' }));
+
+      expect(findByIdUnscoped).toHaveBeenCalledWith(PLAN);
+      expect(jobLogWriter.write).toHaveBeenCalledWith(
+        ZONE,
+        PLAN,
+        'info',
+        'Step deploy_os: complete',
+        'BridgeResultsConsumer',
+      );
+    });
+
+    it('drops the log write when the lifecycle plan is bound to a different device', async () => {
+      findByIdUnscoped.mockResolvedValue({ data: { deviceId: 'other-device' } });
+      jobFindUnique.mockResolvedValue(null);
+
+      await processResult(makeStepResultJob());
+
+      expect(jobLogWriter.write).not.toHaveBeenCalled();
+      expect(deviceFindUnique).not.toHaveBeenCalledWith({ where: { id: 'other-device' }, select: { zoneId: true } });
+    });
+
+    it('drops the log write when neither a LifecycleJob nor a Job row exists for the plan', async () => {
       jobFindUnique.mockResolvedValue(null);
 
       await processResult(makeStepResultJob());
@@ -295,8 +330,8 @@ describe('BridgeResultsConsumer — job log writes', () => {
       expect(jobLogWriter.write).not.toHaveBeenCalled();
     });
 
-    it('drops the log write when the plan is bound to a different device', async () => {
-      jobFindUnique.mockResolvedValue({ deviceId: 'other-device', device: { zoneId: ZONE } });
+    it('drops the log write when the legacy plan is bound to a different device', async () => {
+      jobFindUnique.mockResolvedValue({ deviceId: 'other-device' });
 
       await processResult(makeJobCompletedJob());
 
@@ -304,7 +339,7 @@ describe('BridgeResultsConsumer — job log writes', () => {
     });
 
     it('drops the log write when the plan is not device-bound', async () => {
-      jobFindUnique.mockResolvedValue({ deviceId: null, device: null });
+      jobFindUnique.mockResolvedValue({ deviceId: null });
 
       await processResult(makeStepResultJob());
 
@@ -312,7 +347,7 @@ describe('BridgeResultsConsumer — job log writes', () => {
     });
 
     it('drops the log write when the device has no zone', async () => {
-      jobFindUnique.mockResolvedValue({ deviceId: DEVICE_UUID, device: { zoneId: null } });
+      deviceFindUnique.mockResolvedValue({ id: DEVICE_UUID, zoneId: null });
 
       await processResult(makeJobCompletedJob());
 

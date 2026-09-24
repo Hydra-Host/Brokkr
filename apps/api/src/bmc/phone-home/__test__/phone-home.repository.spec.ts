@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vite
 import { PhoneHomeRepository } from '../phone-home.repository';
 
 interface PrismaMock {
-  device: { update: Mock };
+  device: { update: Mock; findUnique: Mock };
   server: { updateMany: Mock; createMany: Mock };
   deployment: { findFirst: Mock };
   deviceDiagnostics: { create: Mock };
@@ -19,7 +19,7 @@ describe('PhoneHomeRepository', () => {
 
   beforeEach(() => {
     prisma = {
-      device: { update: vi.fn().mockResolvedValue({}) },
+      device: { update: vi.fn().mockResolvedValue({}), findUnique: vi.fn().mockResolvedValue(null) },
       server: {
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         createMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -136,6 +136,18 @@ describe('PhoneHomeRepository', () => {
       );
       expect(prisma.server.updateMany).not.toHaveBeenCalled();
       expect(prisma.device.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getDeviceByUuid', () => {
+    it('scopes the lookup to live devices (deletedAt: null)', async () => {
+      await repo.getDeviceByUuid(DEVICE_ID);
+
+      expect(prisma.device.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: DEVICE_ID, deletedAt: null },
+        }),
+      );
     });
   });
 

@@ -60,6 +60,14 @@ const cpuOnlyBundle = () => ({
   ghw_gpu: { gpu: { cards: [bmcVgaCard] } },
 });
 
+const ghwCpu = (...vendors: string[]) => ({
+  cpu: {
+    total_cores: 64,
+    total_threads: 128,
+    processors: vendors.map((vendor, id) => ({ id, model: `socket ${id}`, vendor })),
+  },
+});
+
 describe('TeeComposer', () => {
   let composer: TeeComposer;
 
@@ -298,5 +306,43 @@ describe('TeeComposer', () => {
     (composer as unknown as { attestationFetchedAt: number }).attestationFetchedAt = 0;
     const second = await composer.compose(makeCtx(capableBundle()));
     expect(second.serverUpdate).toEqual({ teeCapable: TeeCapability.TRUE });
+  });
+  it('writes FALSE when ghw_cpu reports an AMD vendor on a CPU-only otherwise-capable host', async () => {
+    const mutation = await composer.compose(makeCtx({ ...cpuOnlyBundle(), ghw_cpu: ghwCpu('AuthenticAMD') }));
+    expect(mutation.serverUpdate).toEqual({ teeCapable: TeeCapability.FALSE });
+  });
+
+  it('writes FALSE when ghw_cpu reports an AMD vendor even though the vBIOS attestation matches', async () => {
+    composer = new TeeComposer(mockHttp(['NV_GPU_VBIOS_H200_80G_SXM_DEADBEEF']));
+    const mutation = await composer.compose(
+      makeCtx({ ...capableBundle('DEADBEEF'), ghw_cpu: ghwCpu('AuthenticAMD') }),
+    );
+    expect(mutation.serverUpdate).toEqual({ teeCapable: TeeCapability.FALSE });
+  });
+
+  it('writes FALSE when a second socket reports an AMD vendor', async () => {
+    const mutation = await composer.compose(
+      makeCtx({ ...cpuOnlyBundle(), ghw_cpu: ghwCpu('GenuineIntel', 'AuthenticAMD') }),
+    );
+    expect(mutation.serverUpdate).toEqual({ teeCapable: TeeCapability.FALSE });
+  });
+
+  it('writes FALSE from the kernel_params cpu vendor when ghw_cpu carries none', async () => {
+    const bundle = {
+      ...cpuOnlyBundle(),
+      kernel_params: { current_cmdline: 'x', hardware_analysis: { cpu_vendor: 'amd' } },
+    };
+    const mutation = await composer.compose(makeCtx(bundle));
+    expect(mutation.serverUpdate).toEqual({ teeCapable: TeeCapability.FALSE });
+  });
+
+  it('writes TRUE when ghw_cpu reports GenuineIntel on a CPU-only host', async () => {
+    const mutation = await composer.compose(makeCtx({ ...cpuOnlyBundle(), ghw_cpu: ghwCpu('GenuineIntel') }));
+    expect(mutation.serverUpdate).toEqual({ teeCapable: TeeCapability.TRUE });
+  });
+
+  it('writes TRUE when no collector reports a cpu vendor, so the guard falls through', async () => {
+    const mutation = await composer.compose(makeCtx(cpuOnlyBundle()));
+    expect(mutation.serverUpdate).toEqual({ teeCapable: TeeCapability.TRUE });
   });
 });

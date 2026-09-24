@@ -73,10 +73,8 @@ export class BridgeProvisionService {
       );
     }
 
-    // The sim normally seeds `Server.netplanOverride` itself and the guest boots from that, so
-    // publishing would just echo it back. When the fleet opts into `rendered_netplan` it stops
-    // seeding the override, and the publish has to run for real — that is the whole point of the
-    // mode. Keying on the override rather than the sim flag keeps the two in step automatically.
+    // The sim seeds `Server.netplanOverride` itself, so publishing would just echo it back; keying on
+    // the override (not the sim flag) keeps this in step with `rendered_netplan`, which stops seeding it.
     let publishedDeployNetplan: string | null = null;
     const simSeededOverride =
       isLocalSimulationEnabled() && Boolean(ctx.device.server?.netplanOverride ?? ctx.device.netplanOverride);
@@ -134,7 +132,6 @@ export class BridgeProvisionService {
         issuedBy: 'system',
       }));
 
-    let mintedBrokkrLiveToken = false;
     let bullmqJobId: string | undefined;
     try {
       const deploymentMaterial = issuedDeploymentOsToken.material;
@@ -147,9 +144,13 @@ export class BridgeProvisionService {
         zoneId: ctx.zoneId,
       };
       if (lifecycleData.ipxeUrl) {
-        const liveAtom = await this.serverTokenService.mintForCtx(tokenCtx);
-        mintedBrokkrLiveToken = true;
-        await this.serverTokenService.writeAtomBestEffort(tokenCtx, liveAtom, {
+        await this.deviceTokensService.revokeBrokkrLiveTokensForDevice(
+          deviceId,
+          DeviceTokenRevocationReason.REPROVISION,
+          `Custom-iPXE ${status} cleared stale Brokkr Live token material for job ${jobId}`,
+        );
+
+        await this.serverTokenService.writeDeployAtomBestEffort(tokenCtx, deploymentMaterial, {
           requestId: jobId,
           opLabel: status,
         });
@@ -209,9 +210,6 @@ export class BridgeProvisionService {
       bullmqJobId = job.id;
     } catch (error) {
       await this.revokeDeploymentOsTokenAfterProvisionFailure(deviceId, jobId, issuedDeploymentOsToken, error);
-      if (mintedBrokkrLiveToken) {
-        await this.revokeBrokkrLiveTokenAfterProvisionFailure(deviceId, jobId, error);
-      }
       throw error;
     }
 
@@ -235,27 +233,6 @@ export class BridgeProvisionService {
     } catch (error) {
       this.logger.warn(
         `Failed to revoke deployment OS token ${deploymentOsToken.displayId} after provision job ${jobId} failed for device ${deviceId}: ${getErrorMessage(
-          error,
-        )}`,
-        jobId,
-      );
-    }
-  }
-
-  private async revokeBrokkrLiveTokenAfterProvisionFailure(
-    deviceId: string,
-    jobId: string,
-    provisionError: unknown,
-  ): Promise<void> {
-    try {
-      await this.deviceTokensService.revokeBrokkrLiveTokensForDevice(
-        deviceId,
-        DeviceTokenRevocationReason.REPROVISION,
-        `Provision job ${jobId} failed after Brokkr Live token mint: ${getErrorMessage(provisionError)}`,
-      );
-    } catch (error) {
-      this.logger.warn(
-        `Failed to revoke Brokkr Live token after provision job ${jobId} failed for device ${deviceId}: ${getErrorMessage(
           error,
         )}`,
         jobId,

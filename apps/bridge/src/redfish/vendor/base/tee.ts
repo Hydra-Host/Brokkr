@@ -28,6 +28,12 @@ export interface TeeStageResult {
   patched: number;
 }
 
+export interface TeeSetResult {
+  success: boolean;
+  /** Epoch seconds of the last host reset the BIOS fence recorded; null when no reset happened. */
+  hostResetAt: number | null;
+}
+
 export type TeeBiosCheck = readonly [section: string, key: string, expected: readonly unknown[]];
 
 export class RedfishTeeHandler extends RedfishPowerHandler {

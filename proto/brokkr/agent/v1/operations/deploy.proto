@@ -265,7 +265,7 @@ message DeployGrubVars {
 //     - systemctl daemon-reload && systemctl enable --now <units>
 message DeployRoceVars {
   // Drives the entire RoCE injection block in user-data. Derived from
-  // device.location_custom_fields.east_west_network_type == "roce".
+  // Zone.eastWestNetworkType == ROCE.
   bool enabled = 1;
 
   // Bridge-resolved DOCA APT repository URL for this device's OS + arch.
@@ -278,7 +278,8 @@ message DeployRoceVars {
 // InfiniBand node_desc config, rendered by the agent as the
 // 03-brokkr-infiniband.cfg cloud.cfg.d fragment (write_files only).
 message DeployInfinibandVars {
-  // False when node_desc is absent or fails bridge-side validation.
+  // False unless the zone's east-west fabric type is infiniband and
+  // node_desc passes bridge-side validation.
   bool enabled = 1;
 
   // Written to /sys/class/infiniband/<dev>/node_desc as "<node_desc> <dev>". Empty when disabled.

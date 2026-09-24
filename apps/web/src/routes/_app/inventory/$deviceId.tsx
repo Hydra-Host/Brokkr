@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useSession } from '@repo/auth/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Link, redirect, useNavigate, useRouter } from '@tanstack/react-router';
 import { load } from 'js-yaml';
@@ -8,6 +9,8 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { AddSshKeyInlineForm } from '~/components/add-ssh-key-inline-form';
 import { DetailListItem } from '~/components/detail-list-item';
+import { usePluginRegistry } from '~/plugin-host/plugin-registry-provider';
+import { PluginSlot } from '~/plugin-host/plugin-slot';
 
 import {
   CloudInitSchema,
@@ -35,10 +38,14 @@ import { FormSelect } from '@repo/ui/form/form-select';
 import { FormSubmitButton } from '@repo/ui/form/form-submit-button';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import {
+  CONTRACT_TYPE_OPTIONS,
+  ContractType,
   formatBillingFrequency,
+  formatContractType,
   formatMillisecondsToDuration,
   formatReservationInviteBillingFrequencyInterval,
   formatSize,
+  getContractTypeFinePrint,
   getHourlyOrInvitePrice,
   getWeeklyOrInvitePrice,
   unwrapErrorMessage,
@@ -63,7 +70,7 @@ export const Route = createFileRoute('/_app/inventory/$deviceId')({
   loader: async ({ context: { queryClient }, params }) => {
     const { deviceId } = params;
 
-    const [listingRes, sshKeysRes, projectsRes] = await Promise.all([
+    const [listingRes, sshKeysRes, projectsRes, orgRes] = await Promise.all([
       queryClient.ensureQueryData({
         queryKey: ['inventory-device', deviceId],
         queryFn: () =>
@@ -79,6 +86,10 @@ export const Route = createFileRoute('/_app/inventory/$deviceId')({
         queryKey: ['deployment-projects'],
         queryFn: () => tsr.getDeploymentProjects.query({ query: { pageSize: 100 } }),
       }),
+      queryClient.ensureQueryData({
+        queryKey: ['organization', 'active'],
+        queryFn: () => tsr.getOrganization.query({}),
+      }),
     ]);
 
     if (listingRes.status === 404) {
@@ -91,11 +102,13 @@ export const Route = createFileRoute('/_app/inventory/$deviceId')({
 
     const sshKeys = sshKeysRes.status === 200 ? sshKeysRes.body.data : [];
     const projects = projectsRes.status === 200 ? projectsRes.body.data : [];
+    const knownAccount = orgRes.status === 200 ? orgRes.body.knownAccount : false;
 
     return {
       device: listingRes.body,
       sshKeys,
       projects,
+      knownAccount,
     };
   },
   component: InventoryDevicePage,
@@ -158,16 +171,21 @@ function InventoryDevicePage() {
   const navigate = useNavigate();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { data: session } = useSession();
+  const pluginRegistry = usePluginRegistry();
   const { deviceId } = Route.useParams();
-  const { device, sshKeys, projects } = Route.useLoaderData();
+  const { device, sshKeys, projects, knownAccount } = Route.useLoaderData();
 
   const title = device.specs.gpu?.model ?? device.specs.cpu?.model ?? 'Hardware not discovered yet';
 
   useDocumentTitle(title);
 
   const [showAddSshKeyForm, setShowAddSshKeyForm] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
   const [provisionSubmitted, setProvisionSubmitted] = useState(false);
+  const hasManagedProvisionGate = (pluginRegistry.slots.get('inventory-device-provision') ?? []).length > 0;
+  const hasActiveInvite = device.activeReservationInvite != null;
+  const showContractPricingInsteadOfProvision = hasManagedProvisionGate && !knownAccount && !hasActiveInvite;
+  const userEmail = session?.user?.email;
 
   const { mutateAsync: provisionDevice } = tsr.provisionDevice.useMutation({
     meta: { successMessage: 'Your device has been successfully provisioned' },
@@ -182,9 +200,10 @@ function InventoryDevicePage() {
 
   const hasNoOs = osOptions.length === 0;
 
+  // Only Reserved Rolling is offered until commerce billing is ready. Interruptible-only listings
+  // and hosts occupied by an interruptible deployment cannot take that path — block the invalid CTA.
   const interruptibleOnly = device.listing.isInterruptibleOnly ?? false;
-  const interruptibleForced = interruptibleOnly || device.isInterruptibleDeployment;
-  const interruptibleAllowed = interruptibleForced || (device.listing.interruptiblePrice?.perWeek?.total ?? 0) > 0;
+  const reservedRollingBlocked = interruptibleOnly || device.isInterruptibleDeployment;
 
   const sshKeyOptions = useMemo(
     () =>
@@ -199,7 +218,8 @@ function InventoryDevicePage() {
     resolver: zodResolver(provisionFormSchema),
     defaultValues: {
       deploymentName: '',
-      isInterruptible: interruptibleForced,
+      contractType: ContractType.RESERVED_ROLLING,
+      isInterruptible: false,
       operatingSystem: resolveOperatingSystemSlug(
         osCandidateForMode(device.availableBaseLayers),
         DEFAULT_OPERATING_SYSTEM,
@@ -214,7 +234,7 @@ function InventoryDevicePage() {
     },
   });
 
-  const isInterruptible = form.watch('isInterruptible') ?? false;
+  const contractType = form.watch('contractType') ?? ContractType.RESERVED_ROLLING;
   const operatingSystem = form.watch('operatingSystem');
 
   const customizationsData: CustomizationLayersData | null = (() => {
@@ -225,14 +245,13 @@ function InventoryDevicePage() {
   })();
 
   const onSubmit = async (values: ProvisionFormData) => {
-    setSubmitError(null);
-
     const cloudInit = values.cloudInit?.trim() ? CloudInitSchema.parse(load(values.cloudInit)) : null;
     const customizations = flattenCustomizationsForSubmit(values.customizations);
 
     const body: ProvisionRequest = {
       deploymentName: values.deploymentName,
-      isInterruptible: values.isInterruptible,
+      contractType: values.contractType ?? ContractType.RESERVED_ROLLING,
+      isInterruptible: values.contractType === ContractType.INTERRUPTIBLE,
       operatingSystem: values.operatingSystem,
       sshKeyIds: values.sshKeyIds,
       projectId: values.projectId || undefined,
@@ -263,16 +282,15 @@ function InventoryDevicePage() {
       queryClient.invalidateQueries({ queryKey: DEPLOYMENT_PROJECTS_KEY });
       queryClient.invalidateQueries({ queryKey: ['interruptible-claims'] });
       await navigate({ to: '/deployments' });
-    } catch (error) {
+    } catch {
       setProvisionSubmitted(false);
-      setSubmitError(unwrapErrorMessage(error, 'Failed to provision device.'));
     }
   };
 
   const isPriceUnavailable =
     !device.listing.onDemandPrice.perWeek.total ||
     device.listing.onDemandPrice.perWeek.total === 0 ||
-    (device.listing.isInterruptibleOnly &&
+    (interruptibleOnly &&
       (!device.listing.interruptiblePrice.perWeek.total || device.listing.interruptiblePrice.perWeek.total === 0));
 
   return (
@@ -322,10 +340,63 @@ function InventoryDevicePage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="font-normal text-teal-400">Configure your device</CardTitle>
+              <CardTitle className="font-normal text-teal-400">
+                {showContractPricingInsteadOfProvision ? 'Contract pricing' : 'Configure your device'}
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              {showAddSshKeyForm ? (
+              {showContractPricingInsteadOfProvision ? (
+                <div className="space-y-6">
+                  <p className="text-muted-foreground text-sm">
+                    Contact sales for contract pricing on this device. Inventory self-serve provision is not available
+                    for this organization.
+                  </p>
+                  <div className="space-y-4 border-t pt-6">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="font-medium">On Demand</p>
+                      </div>
+                      {isPriceUnavailable ? (
+                        <span className="text-muted-foreground">Price unavailable</span>
+                      ) : (
+                        <div className="text-right">
+                          <p className="text-2xl">
+                            {getHourlyOrInvitePrice(device, false, undefined)}
+                            <span className="text-muted-foreground ml-1 text-sm">
+                              {formatBillingFrequency(device.specs.gpu.count)}
+                            </span>
+                          </p>
+                          <p className="text-2xl">
+                            {getWeeklyOrInvitePrice(device, false, undefined)}
+                            <span className="text-muted-foreground ml-1 text-sm">per week</span>
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    <PluginSlot
+                      name="inventory-device-provision"
+                      knownAccount={knownAccount}
+                      hasActiveInvite={hasActiveInvite}
+                      userEmail={userEmail}
+                      deviceName={title}
+                      pending={false}
+                      disabled={false}
+                      device={{
+                        name: device.name,
+                        gpuModel: device.specs.gpu?.model,
+                        gpuCount: device.specs.gpu?.count,
+                        cpuModel: device.specs.cpu?.model,
+                        cpuCount: device.specs.cpu?.count,
+                        cpuCoreCount: device.specs.cpu?.totalCores,
+                        memory: device.specs.memory.total,
+                        ssdSize: device.specs.storage?.ssdSize,
+                        hddSize: device.specs.storage?.hddSize,
+                        nvmeSize: device.specs.storage?.nvmeSize,
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : showAddSshKeyForm ? (
                 <AddSshKeyInlineForm
                   onCancel={() => setShowAddSshKeyForm(false)}
                   onSuccess={async () => {
@@ -407,21 +478,24 @@ function InventoryDevicePage() {
                     }
                   />
 
-                  {interruptibleAllowed && (
-                    <FormCheckbox
-                      control={form.control}
-                      name="isInterruptible"
-                      label="Interruptible"
-                      description={
-                        interruptibleOnly
-                          ? 'This device is only available as interruptible.'
-                          : device.isInterruptibleDeployment
-                            ? 'This host runs an interruptible deployment; taking it over requires an interruptible request.'
-                            : 'Rent as interruptible — cheaper, but can be evicted after a notice period.'
-                      }
-                      disabled={interruptibleForced}
-                    />
+                  {reservedRollingBlocked && (
+                    <Alert variant="warning">
+                      <AlertDescription>
+                        {interruptibleOnly
+                          ? 'This device is interruptible-only and cannot be provisioned with Reserved Rolling until commerce billing is ready.'
+                          : 'This host has an active interruptible deployment and cannot be provisioned with Reserved Rolling until commerce billing is ready.'}
+                      </AlertDescription>
+                    </Alert>
                   )}
+
+                  <FormSelect
+                    control={form.control}
+                    name="contractType"
+                    label="Contract Type"
+                    options={CONTRACT_TYPE_OPTIONS}
+                    placeholder="Select contract type"
+                    disabled={reservedRollingBlocked}
+                  />
 
                   <FormSelect
                     control={form.control}
@@ -460,7 +534,7 @@ function InventoryDevicePage() {
                   <div className="space-y-4 border-t pt-6">
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <p className="font-medium">{isInterruptible ? 'Interruptible' : 'On Demand'}</p>
+                        <p className="font-medium">{formatContractType(contractType)}</p>
                         {device.interruptibleNoticePeriod != null && device.interruptibleNoticePeriod > 0 && (
                           <p className="text-muted-foreground text-sm">
                             {formatMillisecondsToDuration(device.interruptibleNoticePeriod)} notice period
@@ -479,21 +553,13 @@ function InventoryDevicePage() {
                       ) : (
                         <div className="text-right">
                           <p className="text-2xl">
-                            {getHourlyOrInvitePrice(
-                              device,
-                              isInterruptible,
-                              device.activeReservationInvite ?? undefined,
-                            )}
+                            {getHourlyOrInvitePrice(device, false, device.activeReservationInvite ?? undefined)}
                             <span className="text-muted-foreground ml-1 text-sm">
                               {formatBillingFrequency(device.specs.gpu.count)}
                             </span>
                           </p>
                           <p className="text-2xl">
-                            {getWeeklyOrInvitePrice(
-                              device,
-                              isInterruptible,
-                              device.activeReservationInvite ?? undefined,
-                            )}
+                            {getWeeklyOrInvitePrice(device, false, device.activeReservationInvite ?? undefined)}
                             <span className="text-muted-foreground ml-1 text-sm">
                               {device.activeReservationInvite
                                 ? formatReservationInviteBillingFrequencyInterval(device.activeReservationInvite)
@@ -504,33 +570,38 @@ function InventoryDevicePage() {
                       )}
                     </div>
 
-                    {device.isInterruptibleDeployment &&
-                      device.interruptibleNoticePeriod != null &&
-                      device.interruptibleNoticePeriod > 0 && (
-                        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-                          <div className="flex justify-between">
-                            <p className="text-sm font-medium text-amber-500">Provision Delay</p>
-                            <p className="text-sm text-amber-500">
-                              {formatMillisecondsToDuration(device.interruptibleNoticePeriod)}
-                            </p>
-                          </div>
-                          <p className="text-muted-foreground mt-1 text-xs">
-                            Active interruptible deployment requires a notice period before provisioning.
-                          </p>
-                        </div>
-                      )}
+                    <p className="text-muted-foreground text-sm">{getContractTypeFinePrint(contractType)}</p>
 
-                    <p className="text-muted-foreground text-sm">
-                      {isInterruptible
-                        ? '*Interruptible servers may be reclaimed after the notice period. Unused time is refunded.'
-                        : '*If you cancel early, we refund the unused portion of the billing cycle.'}
-                    </p>
-
-                    {submitError && <p className="text-destructive text-sm">{submitError}</p>}
-
-                    <FormSubmitButton pending={form.formState.isSubmitting} disabled={hasNoOs || provisionSubmitted}>
-                      Provision
-                    </FormSubmitButton>
+                    {hasManagedProvisionGate ? (
+                      <PluginSlot
+                        name="inventory-device-provision"
+                        knownAccount={knownAccount}
+                        hasActiveInvite={hasActiveInvite}
+                        userEmail={userEmail}
+                        deviceName={title}
+                        pending={form.formState.isSubmitting}
+                        disabled={hasNoOs || provisionSubmitted || reservedRollingBlocked || isPriceUnavailable}
+                        device={{
+                          name: device.name,
+                          gpuModel: device.specs.gpu?.model,
+                          gpuCount: device.specs.gpu?.count,
+                          cpuModel: device.specs.cpu?.model,
+                          cpuCount: device.specs.cpu?.count,
+                          cpuCoreCount: device.specs.cpu?.totalCores,
+                          memory: device.specs.memory.total,
+                          ssdSize: device.specs.storage?.ssdSize,
+                          hddSize: device.specs.storage?.hddSize,
+                          nvmeSize: device.specs.storage?.nvmeSize,
+                        }}
+                      />
+                    ) : (
+                      <FormSubmitButton
+                        pending={form.formState.isSubmitting}
+                        disabled={hasNoOs || provisionSubmitted || reservedRollingBlocked || isPriceUnavailable}
+                      >
+                        Provision
+                      </FormSubmitButton>
+                    )}
                   </div>
                 </form>
               )}

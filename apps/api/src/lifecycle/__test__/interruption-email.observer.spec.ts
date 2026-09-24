@@ -1,9 +1,10 @@
 import { PLUGIN_EVENT_BUS } from '@hydrahost/plugin-sdk';
 import { Test } from '@nestjs/testing';
 import { DeploymentRecord } from 'src/deployments/deployment.record';
-import { EmailService } from 'src/email/email.service';
+import { NotificationService } from 'src/notifications/notification.service';
 import { OrganizationMembershipsService } from 'src/organizations/members/organization-members.service';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { InterruptionEmailObserver } from '../observers/interruption-email.observer';
 
 type Handler = (event: unknown) => void | Promise<void>;
@@ -19,13 +20,8 @@ describe('InterruptionEmailObserver', () => {
       return () => {};
     }),
   };
-  const email = {
-    send: {
-      interruptionNotice: vi.fn().mockResolvedValue(undefined),
-      interruptionComplete: vi.fn().mockResolvedValue(undefined),
-      interruptionQueued: vi.fn().mockResolvedValue(undefined),
-      provisioningStarted: vi.fn().mockResolvedValue(undefined),
-    },
+  const notifications = {
+    publish: vi.fn().mockResolvedValue(undefined),
   };
   const memberships = { getMembersForAnOrganization: vi.fn() };
 
@@ -37,55 +33,77 @@ describe('InterruptionEmailObserver', () => {
       providers: [
         InterruptionEmailObserver,
         { provide: PLUGIN_EVENT_BUS, useValue: eventBus },
-        { provide: EmailService, useValue: email },
+        { provide: NotificationService, useValue: notifications },
         { provide: OrganizationMembershipsService, useValue: memberships },
       ],
     }).compile();
     moduleRef.get(InterruptionEmailObserver).onModuleInit();
   });
 
-  it('sends a notice email to all org members on scheduled', async () => {
+  it('publishes a scheduled interruption notice to org members', async () => {
     memberships.getMembersForAnOrganization.mockResolvedValue([
-      { user: { email: 'a@x.com' } },
-      { user: { email: 'b@x.com' } },
+      { user: { id: 'u-a', email: 'a@x.com' } },
+      { user: { id: 'u-b', email: 'b@x.com' } },
     ]);
     vi.spyOn(DeploymentRecord, 'findAggregateUnscoped').mockResolvedValue({
       nickname: 'box',
     } as Awaited<ReturnType<FindAggregate>>);
 
+    const interruptAt = new Date('2030-01-01T00:05:00.000Z');
     await handlers.get('deployment.interruption.scheduled')!({
       deploymentId: 'dep-1',
       organizationId: 'org-1',
-      interruptAt: new Date(Date.now() + 300_000),
+      interruptAt,
     });
 
-    expect(email.send.interruptionNotice).toHaveBeenCalledWith(
-      expect.objectContaining({ emails: ['a@x.com', 'b@x.com'], deploymentName: 'box' }),
+    expect(notifications.publish).toHaveBeenCalledTimes(1);
+    expect(notifications.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'deployment.interruption.scheduled',
+        idempotencyKey: `interruption-scheduled:dep-1:${interruptAt.toISOString()}`,
+        userIds: ['u-a', 'u-b'],
+        organizationId: 'org-1',
+        href: '/deployments/dep-1',
+        channels: { inApp: true, email: true },
+      }),
     );
+    expect(String(notifications.publish.mock.calls[0]?.[0]?.body ?? '')).toContain('box');
   });
 
-  it('skips the notice when the org id is null', async () => {
+  it('skips the scheduled notice when the org id is null', async () => {
     await handlers.get('deployment.interruption.scheduled')!({
       deploymentId: 'dep-1',
       organizationId: null,
       interruptAt: new Date(),
     });
-    expect(email.send.interruptionNotice).not.toHaveBeenCalled();
+    expect(notifications.publish).not.toHaveBeenCalled();
   });
 
-  it('sends a completion email to the deployer on completed', async () => {
+  it('publishes completion to the deployer', async () => {
     vi.spyOn(DeploymentRecord, 'findAggregateUnscoped').mockResolvedValue({
       nickname: 'box',
-      deployer: { email: 'dep@x.com' },
+      customerId: 'org-1',
+      deployer: { id: 'deployer-1', email: 'dep@x.com' },
     } as Awaited<ReturnType<FindAggregate>>);
 
     await handlers.get('deployment.interruption.completed')!({ deploymentId: 'dep-1', organizationId: 'org-1' });
 
-    expect(email.send.interruptionComplete).toHaveBeenCalledWith({ email: 'dep@x.com', deploymentName: 'box' });
+    expect(notifications.publish).toHaveBeenCalledWith({
+      type: 'deployment.interruption.completed',
+      idempotencyKey: 'interruption-completed:dep-1',
+      userIds: ['deployer-1'],
+      organizationId: 'org-1',
+      title: 'Deployment interruption complete',
+      body: 'Your deployment has been interrupted. Deployment: box.',
+      href: '/deployments/dep-1',
+      channels: { inApp: true, email: true },
+    });
   });
 
-  it('sends a queued email to the incoming org members on interruption.queued', async () => {
-    memberships.getMembersForAnOrganization.mockResolvedValue([{ user: { email: 'incoming@x.com' } }]);
+  it('publishes queued interruption to the incoming org members', async () => {
+    memberships.getMembersForAnOrganization.mockResolvedValue([
+      { user: { id: 'incoming-user', email: 'incoming@x.com' } },
+    ]);
 
     await handlers.get('deployment.interruption.queued')!({
       incomingOrgId: 'incoming-org',
@@ -95,31 +113,20 @@ describe('InterruptionEmailObserver', () => {
     });
 
     expect(memberships.getMembersForAnOrganization).toHaveBeenCalledWith('incoming-org');
-    expect(email.send.interruptionQueued).toHaveBeenCalledWith({
-      email: 'incoming@x.com',
-      deploymentName: 'new-box',
-      deviceId: 'host-device',
-      delayInMs: 300_000,
-    });
+    expect(notifications.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'deployment.interruption.queued',
+        idempotencyKey: 'interruption-queued:incoming-org:host-device:300000',
+        userIds: ['incoming-user'],
+        organizationId: 'incoming-org',
+        channels: { inApp: true, email: true },
+      }),
+    );
+    expect(String(notifications.publish.mock.calls[0]?.[0]?.body ?? '')).toContain('new-box');
+    expect(String(notifications.publish.mock.calls[0]?.[0]?.body ?? '')).toContain('host-device');
   });
 
-  it('sends a provisioning-started email to the deployer on provision.started', async () => {
-    vi.spyOn(DeploymentRecord, 'findAggregateUnscoped').mockResolvedValue({
-      nickname: 'new-box',
-      deployer: { email: 'incoming@x.com' },
-    } as Awaited<ReturnType<FindAggregate>>);
-
-    await handlers.get('provision.started')!({
-      jobId: 'incoming-1',
-      deviceId: 'incoming-device',
-      deploymentId: 'dep-1',
-      organizationId: 'incoming-org',
-    });
-
-    expect(email.send.provisioningStarted).toHaveBeenCalledWith({
-      email: 'incoming@x.com',
-      deploymentName: 'new-box',
-      deploymentId: 'dep-1',
-    });
+  it('does not subscribe to provision.started', () => {
+    expect(handlers.has('provision.started')).toBe(false);
   });
 });

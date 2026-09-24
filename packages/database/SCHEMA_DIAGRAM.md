@@ -503,6 +503,7 @@ erDiagram
         string country
         string contactNotes "nullable — supply org contact directory note"
         boolean isInstanceOperator "At most one true (partial unique index)"
+        boolean knownAccount "Managed GTM relationship flag; default false"
     }
 
     Zone {
@@ -929,6 +930,7 @@ erDiagram
         string jobId FK
         string sagaName
         string stepName
+        string operation "bridge step label; null when the row carries none"
         string eventType "stage_changed, job_completed, phase_change, etc."
         string status
     }
@@ -1231,4 +1233,28 @@ erDiagram
     Asn ||--o{ BgpSession : "localAsnId / remoteAsnId"
     IpAddress ||--o{ BgpSession : "localAddressId / remoteAddressId"
     PrefixList ||--o{ BgpSession : "prefixListInId / prefixListOutId"
+```
+
+## In-App Notifications
+
+One inbox row per recipient user. Deduped by `(userId, idempotencyKey)`. Optional
+`organizationId` scopes a row to an org; null means unscoped (shown under any org filter).
+
+```mermaid
+erDiagram
+    Notification {
+        uuid id PK
+        string userId FK
+        string organizationId FK "nullable"
+        string type
+        string idempotencyKey "unique with userId"
+        string title
+        string body
+        string href "nullable in-app path"
+        datetime readAt "nullable"
+        datetime createdAt
+    }
+
+    User ||--o{ Notification : "userId"
+    Organization ||--o{ Notification : "organizationId"
 ```

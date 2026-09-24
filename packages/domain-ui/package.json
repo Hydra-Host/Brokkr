@@ -17,6 +17,10 @@
       "types": "./src/hooks/use-server-table.tsx",
       "import": "./src/hooks/use-server-table.tsx"
     },
+    "./hooks/use-diagnostics-api": {
+      "types": "./src/hooks/use-diagnostics-api.tsx",
+      "import": "./src/hooks/use-diagnostics-api.tsx"
+    },
     "./components/*": {
       "types": "./src/components/*.tsx",
       "import": "./src/components/*.tsx"
@@ -34,6 +38,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "lint": "eslint .",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -46,6 +52,7 @@
     "zod": "^3.25.0"
   },
   "peerDependencies": {
+    "@tanstack/react-query": "^5.0.0",
     "@tanstack/react-router": "^1.0.0",
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0",
@@ -61,10 +68,16 @@
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
+    "@tanstack/react-query": "^5.90.20",
     "@tanstack/react-router": "^1.158.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
-    "typescript": "^5.9.3"
+    "@vitejs/plugin-react": "^5.1.2",
+    "jsdom": "^27.4.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.17"
   }
 }

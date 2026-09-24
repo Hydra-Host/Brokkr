@@ -1,5 +1,5 @@
 import { ActiveRecordRegistry, createActiveRecord } from '@repo/active-record';
-import { LifecycleJobPhase, Prisma, type LifecycleJob } from '@repo/database';
+import { LifecycleJobPhase, Prisma, type LifecycleJob, type LifecycleJobEvent } from '@repo/database';
 import { paginateQuery, type PaginatedResult, type PaginationQuery } from '@repo/database/pagination';
 import { lifecycleJobPaginationConfig } from './lifecycle-job.pagination';
 import { LifecycleJobPersistenceSchema } from './lifecycle-job.schema';
@@ -96,6 +96,7 @@ export class LifecycleJobRecord extends createActiveRecord(LifecycleJobPersisten
     jobId: string;
     sagaName: string;
     stepName: string;
+    operation?: string | null;
     eventType: string;
     status: string;
     result?: Prisma.InputJsonValue;
@@ -109,6 +110,7 @@ export class LifecycleJobRecord extends createActiveRecord(LifecycleJobPersisten
           jobId: data.jobId,
           sagaName: data.sagaName,
           stepName: data.stepName,
+          operation: data.operation ?? null,
           eventType: data.eventType,
           status: data.status,
           result: data.result,
@@ -118,6 +120,14 @@ export class LifecycleJobRecord extends createActiveRecord(LifecycleJobPersisten
         },
       ],
       skipDuplicates: true,
+    });
+  }
+
+  static async listEventsUnscoped(jobId: string, limit: number): Promise<LifecycleJobEvent[]> {
+    return ActiveRecordRegistry.client.lifecycleJobEvent.findMany({
+      where: { jobId },
+      orderBy: [{ occurredAt: 'asc' }, { recordedAt: 'asc' }, { id: 'asc' }],
+      take: limit,
     });
   }
 }

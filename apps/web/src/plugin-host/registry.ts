@@ -12,6 +12,9 @@ import { type CorePathMatcher, type PublicRouteRegistryEntry, validatePublicPlug
 
 const api = createApiClient({ baseUrl: '' });
 
+const MANAGED_EDITION_ONLY_SLOTS: ReadonlySet<ExtensionSlot> = new Set(['inventory-device-provision']);
+const MANAGED_EDITION_PLUGIN_ID = 'managed-edition';
+
 async function fetchEnabledPluginIds(): Promise<Set<string>> {
   const res = await api.getEnabledPlugins();
   if (res.status !== 200) {
@@ -60,6 +63,7 @@ export async function loadPluginRegistry(isCorePath: CorePathMatcher): Promise<P
     fetchEnabledPluginIds(),
     fetchIsInstanceOperator(),
   ]);
+  const managedEditionActive = enabledPluginIds.has(MANAGED_EDITION_PLUGIN_ID);
 
   for (const entry of frontendPluginsConfig) {
     if (!enabledPluginIds.has(entry.plugin.id)) continue;
@@ -69,7 +73,11 @@ export async function loadPluginRegistry(isCorePath: CorePathMatcher): Promise<P
       const frontendModule: PluginFrontendModule = 'default' in mod ? mod.default : mod;
 
       if (frontendModule.slots) {
-        for (const slot of EXTENSION_SLOTS) {
+        // Union managed-only slots with EXTENSION_SLOTS so a stale Vite prebundle of
+        // @hydrahost/plugin-sdk (missing a newly added slot name) cannot drop the gate.
+        const slotsToScan = new Set<ExtensionSlot>([...EXTENSION_SLOTS, ...MANAGED_EDITION_ONLY_SLOTS]);
+        for (const slot of slotsToScan) {
+          if (MANAGED_EDITION_ONLY_SLOTS.has(slot) && !managedEditionActive) continue;
           const contributions = frontendModule.slots[slot];
           if (!contributions) continue;
           const list = slots.get(slot) ?? [];

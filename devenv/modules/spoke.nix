@@ -85,9 +85,11 @@ let
     GRPC_INSECURE = "true";
     BRIDGE_ORCHESTRATOR_ENABLED = "true";
     BRIDGE_API_VERSION = "0.0.0-dev";
-    BROKKR_LIVE_VERSION = "1.1.8";
+    # flavor-less: every synced flavor shares this one value and the bridge appends its own suffix,
+    # so a `-light` alias here would send the full tree to the light one.
+    BROKKR_LIVE_VERSION = "latest-prod";
     # derived from the single asset-origin knob (config.osLayerCache.originHost); no parallel literal.
-    # flavor-less root: the bridge appends -light for the VM image and syncs one tree per flavor.
+    # flavor-less root: the bridge appends -light to the version segment and syncs one tree per flavor.
     DISCOVERY_BASE_URL = "https://${config.osLayerCache.originHost}/brokkr-live";
     # the light image only fits the simulated VMs; the bm overlay below adds full for real machines.
     DISCOVERY_FLAVORS = "light";
@@ -205,7 +207,7 @@ let
       label = "Discovery/ISO base URL";
       group = "Boot/cache";
       kind = "text";
-      description = "Flavor-less root of the brokkr-live artifact tree the bridge syncs from. The full image a real machine boots lives at {base}/{version}/{arch}/ and the light image the simulated VMs boot at {base}-light/{version}/{arch}/; the bridge fetches each manifest.json and every file it lists (vmlinuz, initrd.img, the discovery ISO) into the dir the iPXE chain serves. Which flavors sync follows the planes (DISCOVERY_FLAVORS): light alone for the VM plane, light and full once the bare-metal plane is on.";
+      description = "Flavor-less root of the brokkr-live artifact tree the bridge syncs from. The full image a real machine boots lives at {base}/{version}/{arch}/ and the light image the simulated VMs boot at {base}/{version}-light/{arch}/; the bridge fetches each manifest.json and every file it lists (vmlinuz, initrd.img, the discovery ISO) into the dir the iPXE chain serves. Which flavors sync follows the planes (DISCOVERY_FLAVORS): light alone for the VM plane, light and full once the bare-metal plane is on.";
     };
     BROKKR_LIVE_VERSION = {
       label = "brokkr-live (ISO) version";

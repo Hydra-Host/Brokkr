@@ -69,6 +69,13 @@ export const TRANSITIONAL_POWER_STATUSES: readonly string[] = [
 
 export const MAX_INTERRUPTIBLE_NOTICE_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
 
+export enum ContractType {
+  ON_DEMAND = 'ON_DEMAND',
+  INTERRUPTIBLE = 'INTERRUPTIBLE',
+  RESERVED_ROLLING = 'RESERVED_ROLLING',
+  RESERVED = 'RESERVED',
+}
+
 export enum BillingFrequency {
   HOURLY = 'HOURLY',
   WEEKLY = 'WEEKLY',

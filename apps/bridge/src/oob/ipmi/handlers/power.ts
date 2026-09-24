@@ -77,6 +77,7 @@ export async function getBootParam(
 
 export interface BootDeviceOptions extends PowerOptions {
   uefi?: boolean;
+  persistent?: boolean;
 }
 
 export async function bootDevice(
@@ -86,10 +87,15 @@ export async function bootDevice(
 ): Promise<IPMIResult> {
   const timeout = opts.timeout ?? 30;
   const uefi = opts.uefi ?? true;
+  const persistent = opts.persistent ?? true;
   if (!BOOT_TARGETS.includes(target)) {
     throw new IPMIValidationError(`Unknown boot device target: ${target}`);
   }
-  const options = uefi ? 'persistent,efiboot' : 'persistent';
-  const command = [...buildBaseCommand(device), 'chassis', 'bootdev', target, `options=${options}`];
+  const flags: string[] = [];
+  if (persistent) flags.push('persistent');
+  if (uefi) flags.push('efiboot');
+  const command = [...buildBaseCommand(device), 'chassis', 'bootdev', target];
+  // A bare `options=` is malformed, so drop the argument entirely when no flag applies.
+  if (flags.length > 0) command.push(`options=${flags.join(',')}`);
   return transportRun(command, device.password, timeout, { cipherUsed: device.cipher, jobId: device.jobId });
 }

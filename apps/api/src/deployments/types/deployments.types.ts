@@ -59,6 +59,7 @@ export type CreateDeploymentData = {
 export const ExportLogsJobTypeEnum = {
   Provision: JobType.Provision,
   Reprovision: JobType.Reprovision,
+  Deprovision: JobType.Deprovision,
 } as const;
 
 export type ExportLogsJobType = (typeof ExportLogsJobTypeEnum)[keyof typeof ExportLogsJobTypeEnum];

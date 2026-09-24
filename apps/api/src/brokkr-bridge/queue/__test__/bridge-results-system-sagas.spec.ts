@@ -5,6 +5,7 @@ import { SealedEnvelopeService } from 'src/crypto/sealed-envelope.service';
 import { DeviceSecretAuditService } from 'src/device-secret/device-secret-audit.service';
 import { DeviceTestRunsService } from 'src/device-test-runs/device-test-runs.service';
 import { DeviceTokensService } from 'src/device-tokens/device-tokens.service';
+import { RedisPubSubService } from 'src/events/redis-pubsub.service';
 import { LifecycleInboundService } from 'src/lifecycle/inbound/lifecycle-inbound.service';
 import { PrismaClient } from 'src/prisma/prisma.client';
 import { SanitizationReportService } from 'src/sanitization-reports/sanitization-report.service';
@@ -17,17 +18,12 @@ import { BridgeNetworkScanService } from '../../lifecycle/network-scan.service';
 import { QualifyOrchestrationService } from '../../lifecycle/qualify-orchestration.service';
 import { RenderRequestDispatcher } from '../../render-request/render-request-dispatcher.service';
 import { BridgeResultsConsumer, type ProcessableJob } from '../bridge-results.consumer';
+import { TestableConsumer } from './bridge-results-test-helpers';
 
 const DEVICE_UUID = '550e8400-e29b-41d4-a716-446655440077';
 const PLAN = 'lifecycle-job-1';
 const ZONE = 'zone-uuid-1';
 const SYSTEM_SAGAS = Object.values(SYSTEM_JOB_SAGAS);
-
-class TestableConsumer extends BridgeResultsConsumer {
-  invoke(job: ProcessableJob): Promise<void> {
-    return this.processResult(job);
-  }
-}
 
 function stepResultJob(actionType: string): ProcessableJob {
   return {
@@ -121,6 +117,7 @@ describe('BridgeResultsConsumer — system sagas reach the lifecycle engine', ()
           provide: DeviceTokensService,
           useValue: { revokeBrokkrLiveTokensForDevice: vi.fn().mockResolvedValue(undefined) },
         },
+        { provide: RedisPubSubService, useValue: { publish: vi.fn().mockResolvedValue(undefined) } },
         {
           provide: LifecycleInboundService,
           useValue: { applyStepResult, applyJobCompleted, applyPhoneHome: vi.fn() },

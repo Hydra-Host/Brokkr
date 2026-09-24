@@ -18,6 +18,7 @@ import { useCopyToClipboard } from '@repo/ui/hooks/use-copy-to-clipboard';
 import { useDocumentTitle } from '@repo/ui/hooks/use-document-title';
 import { DecommissionedServerOverlay } from '~/components/decommissioned-server-overlay';
 import { tsr } from '~/lib/api';
+import { DeviceSecretAccessFeed } from './-device-secret-access-feed';
 import { DeviceSecretAuditTimeline } from './-device-secret-audit-timeline';
 
 const parentRoute = getRouteApi('/_app/dcim/servers/$deviceId');
@@ -72,6 +73,7 @@ function BmcSecretsPage() {
         onChanged={() => void versionsQuery.refetch()}
       />
       <DeviceSecretAuditTimeline deviceId={deviceId} />
+      <DeviceSecretAccessFeed deviceId={deviceId} />
     </div>
   );
 }

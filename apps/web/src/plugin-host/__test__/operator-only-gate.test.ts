@@ -57,6 +57,18 @@ vi.mock('@hydrahost/plugins-config/frontend', () => ({
         }),
       },
     },
+    {
+      plugin: {
+        id: 'hubspot-leads',
+        version: '0.0.0',
+        frontend: async () => ({
+          slots: {
+            'inventory-item-cta': [{ component: () => null }],
+            'inventory-device-provision': [{ component: () => null }],
+          },
+        }),
+      },
+    },
   ],
 }));
 
@@ -120,5 +132,18 @@ describe('loadPluginRegistry operatorOnly gate', () => {
       ),
     );
     consoleError.mockRestore();
+  });
+
+  it('registers inventory-device-provision only when managed-edition is enabled', async () => {
+    state.enabled = ['hubspot-leads'];
+    const withoutManaged = await loadPluginRegistry(noCorePath);
+    expect(withoutManaged.slots.has('inventory-device-provision')).toBe(false);
+    expect(withoutManaged.slots.get('inventory-item-cta')?.map(({ pluginId }) => pluginId)).toEqual(['hubspot-leads']);
+
+    state.enabled = ['hubspot-leads', 'managed-edition'];
+    const withManaged = await loadPluginRegistry(noCorePath);
+    expect(withManaged.slots.get('inventory-device-provision')?.map(({ pluginId }) => pluginId)).toEqual([
+      'hubspot-leads',
+    ]);
   });
 });

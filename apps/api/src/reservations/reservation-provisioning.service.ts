@@ -15,6 +15,14 @@ export interface CreateProvisionReservationInput {
   isInterruptible: boolean;
 }
 
+export interface BilledProvisionLine {
+  billingFrequency: BillingFrequency;
+  reservationPrice: number | null;
+  deviceName: string;
+  deviceClass: string;
+  supplierOrganizationId: string | null;
+}
+
 @Injectable()
 export class ReservationProvisioningService {
   constructor(
@@ -50,6 +58,63 @@ export class ReservationProvisioningService {
     });
 
     return reservation.id;
+  }
+
+  async billedLineForDeployment(deploymentId: string): Promise<BilledProvisionLine> {
+    const deployment = await this.prisma.deployment.findUnique({
+      where: { id: deploymentId },
+      select: {
+        reservation: { select: { price: true, billingFrequency: true } },
+        server: {
+          select: {
+            device: {
+              select: {
+                id: true,
+                name: true,
+                supplierId: true,
+                gpus: { select: { model: true }, orderBy: { index: 'asc' }, take: 1 },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!deployment) {
+      throw new Error(`Deployment ${deploymentId} not found for billed provision line`);
+    }
+    const reservation = deployment.reservation;
+    if (!reservation?.billingFrequency) {
+      throw new Error(`Deployment ${deploymentId} has no reservation billing frequency`);
+    }
+    const device = deployment.server?.device;
+    const gpuModel = device?.gpus[0]?.model.trim();
+    return {
+      billingFrequency: reservation.billingFrequency,
+      reservationPrice: reservation.price ?? null,
+      deviceName: device?.name.trim() || device?.id || '',
+      deviceClass: gpuModel || 'server',
+      supplierOrganizationId: device?.supplierId ?? null,
+    };
+  }
+
+  async resolveProvisionInviteFlags(input: {
+    deviceId: string;
+    userId: string;
+    organizationId: string;
+  }): Promise<{ fromInvite: boolean; manualBilling: boolean }> {
+    const invite = await this.resolveApplicableInvite(input.deviceId, input.userId, input.organizationId);
+    return {
+      fromInvite: invite !== null,
+      manualBilling: invite?.manualBilling === true,
+    };
+  }
+
+  async isKnownAccount(organizationId: string): Promise<boolean> {
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { knownAccount: true },
+    });
+    return org?.knownAccount === true;
   }
 
   async acceptInviteForReservation(reservationId: string): Promise<boolean> {
