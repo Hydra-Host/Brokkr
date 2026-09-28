@@ -15,7 +15,6 @@ function createMinimalAggregate(
     serial: 'SN-001',
     status: 'ACTIVE' as any,
     role: DeviceRole.Baremetal,
-    deviceType: 'Baremetal' as any,
     networkType: 'Public' as any,
     zoneId: null,
     supplierId: 'supplier-1',

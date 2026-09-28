@@ -44,6 +44,11 @@ export interface NetplanAddressExtractor {
   extract(netplanYaml: string): string[];
 }
 
+export interface DeviceBridgeIp {
+  ip: string;
+  authoritative: boolean;
+}
+
 export interface BridgeIpResolutionDeps {
   jobId?: string;
   cache?: ResolutionCache | null;
@@ -271,45 +276,87 @@ export class BridgeIpResolutionService {
   }
 
   async getBridgeIpForDevice(netplanYaml: string): Promise<string> {
-    try {
-      const deviceAddresses = this.netplanAddressExtractor.extract(netplanYaml);
-      if (deviceAddresses.length === 0) {
-        return await this.getBridgeIpForHostsFile();
-      }
+    return (await this.resolveBridgeIpForDevice(netplanYaml)).ip;
+  }
 
-      const interfaces = await this.getBridgeInterfaces();
-      for (const deviceAddr of deviceAddresses) {
+  async getBridgeIpForHostsFile(): Promise<string> {
+    return (await this.resolveBridgeIpForDevice(null)).ip;
+  }
+
+  // Reads live interfaces, never the Redis cache: `bridge:interfaces` is shared by every bridge in the zone.
+  // Authoritative only when the IP was derived from this device (netplan overlap, direct membership, route probe).
+  async resolveBridgeIpForDevice(netplanYaml: string | null): Promise<DeviceBridgeIp> {
+    try {
+      const interfaces = this.discoverLiveInterfaces();
+      for (const deviceAddr of this.extractDeviceAddresses(netplanYaml)) {
         for (const iface of interfaces) {
           if (ipInCidr(deviceAddr, iface.network)) {
             void getLogger().debug(
               `Device address ${deviceAddr} overlaps bridge interface ${iface.name} (${iface.ip}/${networkPrefix(iface.network)}); using ${iface.ip} for hosts file job=${this.jobId}`,
             );
-            return iface.ip;
+            return { ip: iface.ip, authoritative: true };
           }
         }
       }
 
-      void getLogger().debug(
-        `No bridge interface overlaps device netplan addresses; falling back to primary resolution job=${this.jobId}`,
-      );
-      return await this.getBridgeIpForHostsFile();
-    } catch (error) {
+      const configured = this.appConfig.bridgeUrl;
+      if (configured && configured !== DEFAULT_BRIDGE_URL) {
+        void getLogger().debug(`BRIDGE_URL override: ${configured} (bypassing interface logic) job=${this.jobId}`);
+        return { ip: await this.resolveBridgeUrlToIp(configured), authoritative: false };
+      }
+
+      if (interfaces.length === 0) throw new BridgeIpResolutionError('No valid network interfaces found');
+
+      const clientIp = this.getRequestContextClientIp();
+      if (clientIp && isIP(clientIp) !== 0) {
+        const direct = interfaces.find((iface) => ipInCidr(clientIp, iface.network));
+        if (direct) {
+          void getLogger().debug(`Same-network client: ${clientIp} → ${direct.ip} job=${this.jobId}`);
+          return { ip: direct.ip, authoritative: true };
+        }
+        const srcIp = await this.probeEgressSourceIp(clientIp);
+        if (srcIp && interfaces.some((iface) => iface.ip === srcIp)) {
+          void getLogger().info(`Layer 3 routed client: ${clientIp} → ${srcIp} job=${this.jobId}`);
+          return { ip: srcIp, authoritative: true };
+        }
+      }
+
+      const primary = interfaces.find((iface) => iface.isPrimary) ?? interfaces[0];
       void getLogger().warning(
-        `Device-aware bridge IP resolution failed, falling back: ${getErrorMessage(error)} job=${this.jobId}`,
+        `No device-derived bridge IP for client ${clientIp ?? 'unknown'}; using primary ${primary.ip} job=${this.jobId}`,
       );
-      return this.getBridgeIpForHostsFile();
+      return { ip: primary.ip, authoritative: false };
+    } catch (error) {
+      void getLogger().error(`Failed to resolve bridge IP for device: ${getErrorMessage(error)} job=${this.jobId}`);
+      return { ip: '127.0.0.1', authoritative: false };
     }
   }
 
-  async getBridgeIpForHostsFile(): Promise<string> {
+  private discoverLiveInterfaces(): NetworkInterface[] {
     try {
-      const bridgeUrl = await this.getBridgeUrlForRequest();
-      const bridgeIp = await this.resolveBridgeUrlToIp(bridgeUrl);
-      void getLogger().debug(`Bridge IP for hosts file: ${bridgeIp} job=${this.jobId}`);
-      return bridgeIp;
+      return this.interfaceDiscovery();
     } catch (error) {
-      void getLogger().error(`Failed to get bridge IP for hosts file: ${getErrorMessage(error)} job=${this.jobId}`);
-      return '127.0.0.1';
+      void getLogger().warning(`Live interface discovery failed: ${getErrorMessage(error)} job=${this.jobId}`);
+      return [];
+    }
+  }
+
+  private extractDeviceAddresses(netplanYaml: string | null): string[] {
+    if (!netplanYaml) return [];
+    try {
+      return this.netplanAddressExtractor.extract(netplanYaml);
+    } catch (error) {
+      void getLogger().warning(`Device netplan address extraction failed: ${getErrorMessage(error)} job=${this.jobId}`);
+      return [];
+    }
+  }
+
+  private async probeEgressSourceIp(clientIp: string): Promise<string | null> {
+    try {
+      return await this.egressSourceIpFn(clientIp);
+    } catch (error) {
+      void getLogger().warning(`Route analysis failed for ${clientIp}: ${getErrorMessage(error)} job=${this.jobId}`);
+      return null;
     }
   }
 

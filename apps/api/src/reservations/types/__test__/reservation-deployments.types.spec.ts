@@ -1,4 +1,4 @@
-import { DeviceRole, DeviceType } from '@repo/database';
+import { DeviceRole } from '@repo/database';
 import { describe, expect, it } from 'vitest';
 import {
   DeviceMetadataSchema,
@@ -66,7 +66,6 @@ const validDeployment = {
     nickname: 'nick',
     supplierId: '00000000-0000-0000-0000-000000000004',
     supplier: { id: 'supplier-123', name: 'Test Supplier', tenantType: 'SupplyCustomer', logo: null },
-    deviceType: DeviceType.Baremetal,
     price: 1000,
     isListed: true,
     createdAt: new Date(),

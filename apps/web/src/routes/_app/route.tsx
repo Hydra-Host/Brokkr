@@ -8,7 +8,6 @@ import {
   Building2,
   Cable,
   Check,
-  ChevronsUpDown,
   Cpu,
   Database,
   EthernetPort,
@@ -18,12 +17,14 @@ import {
   Laptop,
   Layers,
   Layers3,
+  LayoutDashboard,
   List,
   ListChecks,
   Loader2,
   LogOut,
   MapPin,
   Network,
+  Palette,
   PanelBottom,
   PanelTop,
   Plug,
@@ -69,7 +70,7 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '@repo/ui/components/dropdown-menu';
-import { SidebarInset, SidebarMenuButton, SidebarProvider, SidebarTrigger } from '@repo/ui/components/sidebar';
+import { SidebarInset, SidebarProvider, SidebarTrigger } from '@repo/ui/components/sidebar';
 import { ThemeSelector } from '@repo/ui/theme-selector';
 import { NotificationsBell } from '~/components/notifications-bell';
 import { getSectionForPathname, getVisibleLeaves, mergeNavSections, type NavSection } from '~/lib/nav';
@@ -179,8 +180,6 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
 
   useNavigationShortcuts();
 
-  const savedMenuStates = React.useRef<Record<MenuStateKey, boolean> | null>(null);
-
   const { data: organizations } = tsr.listOrganizations.useQuery({
     queryKey: ['organizations'],
     queryData: { query: { pageSize: 100 } },
@@ -282,73 +281,13 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
     });
   };
 
-  type MenuStateKey =
-    | 'dcim'
-    | 'reservations'
-    | 'rentals'
-    | 'admin'
-    | 'billing'
-    | 'ipam'
-    | 'dcimInfra'
-    | 'catalog'
-    | 'circuits'
-    | 'bgp'
-    | 'documentation'
-    | 'orgSettings';
-
-  interface NavItem {
-    title: string;
-    url?: string;
-    icon: React.ComponentType<{ className?: string }>;
-    isCollapsible?: boolean;
-    stateKey?: string;
-    items?: NavItem[];
-    isExternal?: boolean;
-    activePrefix?: string;
-  }
-
-  const [menuStates, setMenuStates] = useState<Record<MenuStateKey, boolean>>(() => ({
-    dcim:
-      location.pathname.startsWith('/dcim/zones') ||
-      location.pathname.startsWith('/dcim/bridges') ||
-      location.pathname.startsWith('/dcim/servers') ||
-      location.pathname.startsWith('/dcim/switches') ||
-      location.pathname.startsWith('/dcim/routers') ||
-      location.pathname.startsWith('/dcim/pdus') ||
-      location.pathname.startsWith('/dcim/cdus') ||
-      location.pathname.startsWith('/dcim/test-runs'),
-    reservations: location.pathname.startsWith('/admin/reservations/'),
-    rentals:
-      location.pathname.startsWith('/deployments/') ||
-      location.pathname.startsWith('/rentals/') ||
-      location.pathname.startsWith('/inventory/'),
-    admin: location.pathname.startsWith('/admin/'),
-    billing: location.pathname.startsWith('/admin/billing/'),
-    ipam: location.pathname.startsWith('/ipam/'),
-    dcimInfra:
-      location.pathname.startsWith('/dcim/racks') ||
-      location.pathname.startsWith('/dcim/interfaces') ||
-      location.pathname.startsWith('/dcim/cables') ||
-      location.pathname.startsWith('/dcim/console-') ||
-      location.pathname.startsWith('/dcim/power-') ||
-      location.pathname.startsWith('/dcim/front-') ||
-      location.pathname.startsWith('/dcim/rear-'),
-    catalog: location.pathname.startsWith('/device-models') || location.pathname.startsWith('/tags'),
-    circuits: location.pathname.startsWith('/circuits/'),
-    bgp: location.pathname.startsWith('/bgp/'),
-    documentation: location.pathname.startsWith('/docs/') || location.pathname === '/docs',
-    orgSettings: location.pathname.startsWith('/organizations/') || location.pathname === '/organizations',
-  }));
-
-  const platformNav: NavItem[] = [];
+  const platformNav: NavSection[] = [];
 
   if (isSupplier) {
     platformNav.push(
       {
         title: 'Zone Management',
         icon: Database,
-        isCollapsible: true,
-        stateKey: 'dcim',
         items: [
           { title: 'Zones', url: '/dcim/zones', icon: Warehouse },
           { title: 'Bridges', url: '/dcim/bridges', icon: Router },
@@ -363,8 +302,6 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
       {
         title: 'IPAM',
         icon: Globe,
-        isCollapsible: true,
-        stateKey: 'ipam',
         items: [
           { title: 'VRFs', url: '/ipam/vrfs', icon: RouteIcon },
           { title: 'Prefixes', url: '/ipam/prefixes', icon: Network },
@@ -380,8 +317,6 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
       {
         title: 'Physical Infrastructure',
         icon: Building2,
-        isCollapsible: true,
-        stateKey: 'dcimInfra',
         items: [
           { title: 'Racks', url: '/dcim/racks', icon: Rows3 },
           { title: 'Interfaces', url: '/dcim/interfaces', icon: EthernetPort },
@@ -397,8 +332,6 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
       {
         title: 'Catalog',
         icon: Shapes,
-        isCollapsible: true,
-        stateKey: 'catalog',
         items: [
           { title: 'Device Models', url: '/device-models', icon: Cpu },
           { title: 'Tags', url: '/tags', icon: Tag },
@@ -407,8 +340,6 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
       {
         title: 'Circuits',
         icon: Cable,
-        isCollapsible: true,
-        stateKey: 'circuits',
         items: [
           { title: 'Circuits', url: '/circuits/circuits', icon: Cable },
           { title: 'Providers', url: '/circuits/providers', icon: Building },
@@ -420,8 +351,6 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
       {
         title: 'BGP',
         icon: Network,
-        isCollapsible: true,
-        stateKey: 'bgp',
         items: [
           { title: 'Sessions', url: '/bgp/sessions', icon: ArrowLeftRight },
           { title: 'Peer Groups', url: '/bgp/peer-groups', icon: Users },
@@ -435,8 +364,6 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
   platformNav.push({
     title: 'Rentals',
     icon: Server,
-    isCollapsible: true,
-    stateKey: 'rentals',
     items: [
       { title: 'Deployments', url: '/deployments', icon: Rocket },
       { title: 'Servers Available', url: '/inventory/categories', icon: Server },
@@ -446,17 +373,14 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
   platformNav.push({
     title: 'Documentation',
     icon: BookOpen,
-    isCollapsible: true,
-    stateKey: 'documentation',
-    items: [{ title: 'Overview', url: getDocsUrl(), icon: BookOpen, isExternal: true }],
+    items: [{ title: 'Overview', url: getDocsUrl(), icon: BookOpen, external: true }],
   });
 
   if (activeOrg) {
     platformNav.push({
-      title: 'Org Settings',
+      title: 'Organization Settings',
       icon: Settings2,
-      isCollapsible: true,
-      stateKey: 'orgSettings',
+      footer: true,
       items: [
         { title: 'Members', url: '/organizations/members', icon: Users },
         { title: 'Roles', url: '/organizations/roles', icon: UserCog },
@@ -470,96 +394,78 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
     });
   }
 
-  React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Meta' && !savedMenuStates.current) {
-        savedMenuStates.current = { ...menuStates };
-        setMenuStates({
-          dcim: true,
-          reservations: true,
-          rentals: true,
-          admin: true,
-          billing: true,
-          ipam: true,
-          dcimInfra: true,
-          catalog: true,
-          circuits: true,
-          bgp: true,
-          documentation: true,
-          orgSettings: true,
-        });
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Meta' && savedMenuStates.current) {
-        setMenuStates(savedMenuStates.current);
-        savedMenuStates.current = null;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, [menuStates]);
-
   const pluginRegistry = usePluginRegistry();
   const { can, isLoading: isLoadingPermissions } = usePermissions();
   const sections: NavSection[] = mergeNavSections(
-    platformNav
-      .filter((item) => item.items && item.items.length > 0)
-      .map((item) => ({
-        title: item.title,
-        icon: item.icon,
-        items: item.items!.flatMap((sub) =>
-          sub.items && sub.items.length > 0
-            ? sub.items
-                .filter((n) => n.url)
-                .map((n) => ({ title: n.title, url: n.url!, icon: n.icon, external: n.isExternal }))
-            : sub.url
-              ? [{ title: sub.title, url: sub.url, icon: sub.icon, external: sub.isExternal }]
-              : [],
-        ),
-      })),
+    platformNav,
     buildPluginSections(pluginRegistry.slots.get('sidebar-nav') ?? [], can, isLoadingPermissions),
   );
 
   return (
     <>
-      <AppSidebar
-        sections={sections}
-        search={<AppSearchTrigger />}
-        orgSwitcher={
+      <AppSidebar sections={sections} dashboard={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
+
+      <SidebarInset className="content-plus-pattern bg-bg-primary relative flex min-w-0 flex-col">
+        {isSwitchingOrg && (
+          <div className="bg-background/80 absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
+              <span className="text-muted-foreground text-sm">Switching organization...</span>
+            </div>
+          </div>
+        )}
+        <header className="border-sidebar-border bg-bg-primary flex h-16 w-full shrink-0 items-center gap-3 border-b px-4">
+          <SidebarTrigger />
+          <div className="min-w-0 flex-1">
+            <AppBreadcrumbs sections={sections} typewriterKey={typewriterKey} />
+          </div>
+          <div className="flex items-center gap-1">
+            <NotificationsBell organizationId={activeOrgId} />
+            <ThemeSelector />
+          </div>
+          <div className="hidden md:block">
+            <AppSearchTrigger />
+          </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <SidebarMenuButton
-                size="lg"
-                className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              <button
+                type="button"
+                aria-label="Organization and account menu"
+                className="border-border-dim text-text-dim hover:text-text-primary hover:bg-accent/10 relative flex h-9 items-center gap-2.5 rounded-md border px-2.5 font-mono text-sm font-medium transition-colors"
               >
-                <div className="bg-sidebar-primary text-sidebar-primary-foreground relative flex aspect-square size-8 items-center justify-center">
-                  <Building2 className="size-4" />
-                  {pendingInvitations.length > 0 && (
-                    <span className="ring-sidebar absolute -top-1 -right-1 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[9px] font-bold text-white ring-2">
-                      {pendingInvitations.length}
-                    </span>
-                  )}
-                </div>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium">{activeOrg?.name || 'No Organization'}</span>
-                  <span className="truncate text-xs">{activeOrg?.role ?? ''}</span>
-                </div>
-                <ChevronsUpDown className="ml-auto" />
-              </SidebarMenuButton>
+                <span className="hidden truncate sm:inline">
+                  {activeOrg?.name || 'No Organization'}
+                  {activeOrg?.role ? ` · ${activeOrg.role}` : ''}
+                </span>
+                <span className="bg-sidebar-section-bg text-accent inline-flex h-6 items-center rounded-sm px-1.5 font-mono text-xs font-bold">
+                  {firstName?.[0]?.toUpperCase() || 'U'}
+                  {lastName?.[0]?.toUpperCase() || 'U'}
+                </span>
+                {pendingInvitations.length > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[9px] font-bold text-white">
+                    {pendingInvitations.length}
+                  </span>
+                )}
+              </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent
-              className="w-(--radix-dropdown-menu-trigger-width) min-w-56"
-              align="start"
-              side="right"
-              sideOffset={4}
-            >
+            <DropdownMenuContent className="w-72" align="end" sideOffset={8}>
+              <DropdownMenuLabel className="p-0 font-normal">
+                <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+                  <Avatar className="h-8 w-8">
+                    <AvatarFallback>
+                      {firstName?.[0]?.toUpperCase() || 'U'}
+                      {lastName?.[0]?.toUpperCase() || 'U'}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="grid flex-1 text-left text-sm leading-tight">
+                    <span className="truncate font-medium">
+                      {firstName} {lastName}
+                    </span>
+                    <span className="truncate text-xs">{user.email || ''}</span>
+                  </div>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
               <DropdownMenuLabel className="text-muted-foreground text-xs">Organizations</DropdownMenuLabel>
               <DropdownMenuGroup className="max-h-72 overflow-y-auto overscroll-contain">
                 {organizations?.body?.data
@@ -657,92 +563,32 @@ function AppShellContent({ session, location, activeOrgId }: AppShellContentProp
                   })}
                 </>
               )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        }
-        userMenu={
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label="Account menu"
-                className="hover:bg-accent/10 flex size-8 items-center justify-center rounded-sm transition-colors"
-              >
-                <Avatar className="size-7">
-                  <AvatarFallback className="text-xs">
-                    {firstName?.[0]?.toUpperCase() || 'U'}
-                    {lastName?.[0]?.toUpperCase() || 'U'}
-                  </AvatarFallback>
-                </Avatar>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              className="w-(--radix-dropdown-menu-trigger-width) min-w-56"
-              side="right"
-              align="end"
-              sideOffset={4}
-            >
-              <DropdownMenuLabel className="p-0 font-normal">
-                <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback>
-                      {firstName?.[0]?.toUpperCase() || 'U'}
-                      {lastName?.[0]?.toUpperCase() || 'U'}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-medium">
-                      {firstName} {lastName}
-                    </span>
-                    <span className="truncate text-xs">{user.email || ''}</span>
-                  </div>
-                </div>
-              </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuGroup>
-                <DropdownMenuItem className="gap-2 p-2" asChild>
-                  <Link to="/account/profile">
-                    <BadgeCheck className="size-4" />
-                    Account Settings
-                  </Link>
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator />
+              <DropdownMenuItem className="gap-2 p-2" asChild>
+                <Link to="/account/profile">
+                  <BadgeCheck className="size-4" />
+                  Account Settings
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="gap-2 p-2" asChild>
+                <Link to="/account/theme">
+                  <Palette className="size-4" />
+                  Theme
+                </Link>
+              </DropdownMenuItem>
               <DropdownMenuItem className="gap-2 p-2" onClick={handleLogout}>
                 <LogOut className="size-4" />
                 Log out
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        }
-      />
-
-      <SidebarInset className="content-plus-pattern bg-bg-primary relative flex min-w-0 flex-col">
-        {isSwitchingOrg && (
-          <div className="bg-background/80 absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm">
-            <div className="flex flex-col items-center gap-3">
-              <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
-              <span className="text-muted-foreground text-sm">Switching organization...</span>
-            </div>
-          </div>
-        )}
-        <header className="flex w-full shrink-0 items-start gap-2 bg-transparent px-4 pt-4">
-          <div className="pt-[7px]">
-            <SidebarTrigger />
-          </div>
-          <div className="min-w-0 flex-1">
-            <AppBreadcrumbs sections={sections} typewriterKey={typewriterKey} />
-          </div>
-          <div className="flex items-center gap-1">
-            <NotificationsBell organizationId={activeOrgId} />
-            <ThemeSelector />
-          </div>
         </header>
         <div className="min-w-0 flex-1 overflow-hidden">
-          <div className="h-full overflow-y-auto px-4 pb-14">
+          <div className="h-full overflow-y-auto px-4 pt-4 pb-14">
             {activeOrgId !== undefined && (
               <PluginSlot name="app-banner" pathname={location.pathname} organizationId={activeOrgId} />
             )}
+            <PageDescription />
             <Outlet />
           </div>
         </div>
@@ -774,36 +620,29 @@ function AppBreadcrumbs({ sections, typewriterKey }: { sections: NavSection[]; t
       return { id: match.id, label: label as string, path: match.pathname };
     });
 
-  const lastMatchWithDesc = [...matches].reverse().find((match) => match.staticData?.description);
-  let description: string | null = null;
-  if (lastMatchWithDesc?.staticData?.description) {
-    const desc = lastMatchWithDesc.staticData.description;
-    description = typeof desc === 'function' ? (desc(lastMatchWithDesc.loaderData) as string) : desc;
-  }
-
   const section = getSectionForPathname(sections, location.pathname)?.title ?? nonNavSectionLabel(location.pathname);
 
   if (crumbs.length === 0 && !section) return null;
 
-  return (
-    <BreadcrumbTypewriter
-      breadcrumbs={crumbs}
-      section={section}
-      description={description}
-      typewriterKey={typewriterKey}
-    />
-  );
+  return <BreadcrumbTypewriter breadcrumbs={crumbs} section={section} typewriterKey={typewriterKey} />;
+}
+
+function PageDescription() {
+  const matches = useMatches();
+  const match = [...matches].reverse().find((m) => m.staticData?.description);
+  if (!match?.staticData?.description) return null;
+  const desc = match.staticData.description;
+  const text = typeof desc === 'function' ? (desc(match.loaderData) as string) : desc;
+  return <p className="text-text-dim mb-3 truncate font-mono text-xs">{text}</p>;
 }
 
 function BreadcrumbTypewriter({
   breadcrumbs,
   section,
-  description,
   typewriterKey,
 }: {
   breadcrumbs: Array<{ id: string; label: string; path: string }>;
   section: string | null;
-  description: string | null;
   typewriterKey: number;
 }) {
   const allCrumbs = React.useMemo(() => {
@@ -851,67 +690,67 @@ function BreadcrumbTypewriter({
   });
 
   const cursor = (
-    <span className="bg-accent relative top-[1px] left-[2px] inline-block h-[14px] w-[7px] shadow-[0_0_4px_var(--color-accent-glow)] md:top-[2px] md:left-[3px] md:h-[20px] md:w-[9px]" />
+    <span
+      data-slot="crumb-cursor"
+      className="bg-accent relative top-[1px] left-[2px] inline-block h-[12px] w-[6px] shadow-[0_0_4px_var(--color-accent-glow)]"
+    />
   );
 
   if (allCrumbs.length === 0) return null;
 
   return (
-    <div className="mb-2 pt-0 md:mb-4">
-      <div className="flex items-center overflow-hidden font-mono text-[16px] leading-tight font-medium md:text-[24px]">
-        {segments.map((seg) => {
-          const slashVisible = Math.max(0, Math.min(count - seg.start, 1));
-          const labelVisible = Math.max(0, Math.min(count - seg.labelStart, seg.item.label.length));
-          const labelHidden = seg.item.label.length - labelVisible;
+    <div className="flex items-center overflow-hidden font-mono text-sm leading-tight font-bold">
+      {segments.map((seg) => {
+        const slashVisible = Math.max(0, Math.min(count - seg.start, 1));
+        const labelVisible = Math.max(0, Math.min(count - seg.labelStart, seg.item.label.length));
+        const labelHidden = seg.item.label.length - labelVisible;
 
-          const segRangeEnd = seg.isLast ? seg.labelEnd : seg.labelEnd + 1;
-          const cursorAfterSlash = count >= seg.start + 1 && count < seg.labelStart;
-          const cursorInLabel = count >= seg.labelStart && count <= segRangeEnd;
+        const segRangeEnd = seg.isLast ? seg.labelEnd : seg.labelEnd + 1;
+        const cursorAfterSlash = count >= seg.start + 1 && count < seg.labelStart;
+        const cursorInLabel = count >= seg.labelStart && count <= segRangeEnd;
 
-          const isSection = seg.item.isSection;
+        const isSection = seg.item.isSection;
 
-          return (
-            <React.Fragment key={seg.item.id}>
-              <span className="text-accent-glow mx-0.5">
-                {slashVisible > 0 ? '/' : <span className="invisible">/</span>}
+        return (
+          <React.Fragment key={seg.item.id}>
+            <span className="text-accent-glow mx-0.5">
+              {slashVisible > 0 ? '/' : <span className="invisible">/</span>}
+            </span>
+            {cursorAfterSlash && cursor}
+            {isSection ? (
+              <span className="text-muted-foreground">
+                {seg.item.label.slice(0, labelVisible)}
+                {cursorInLabel && cursor}
+                {labelHidden > 0 && (
+                  <span className="invisible" aria-hidden="true">
+                    {seg.item.label.slice(labelVisible)}
+                  </span>
+                )}
               </span>
-              {cursorAfterSlash && cursor}
-              {isSection ? (
-                <span className="text-muted-foreground">
-                  {seg.item.label.slice(0, labelVisible)}
-                  {cursorInLabel && cursor}
-                  {labelHidden > 0 && (
-                    <span className="invisible" aria-hidden="true">
-                      {seg.item.label.slice(labelVisible)}
-                    </span>
-                  )}
-                </span>
-              ) : !seg.isLast ? (
-                <Link to={seg.item.path as string} className="text-muted-foreground hover:text-foreground">
-                  {seg.item.label.slice(0, labelVisible)}
-                  {cursorInLabel && cursor}
-                  {labelHidden > 0 && (
-                    <span className="invisible" aria-hidden="true">
-                      {seg.item.label.slice(labelVisible)}
-                    </span>
-                  )}
-                </Link>
-              ) : (
-                <span className="text-accent-glow">
-                  {seg.item.label.slice(0, labelVisible)}
-                  {cursorInLabel && cursor}
-                  {labelHidden > 0 && (
-                    <span className="invisible" aria-hidden="true">
-                      {seg.item.label.slice(labelVisible)}
-                    </span>
-                  )}
-                </span>
-              )}
-            </React.Fragment>
-          );
-        })}
-      </div>
-      {description && <p className="text-muted-foreground mt-1 truncate text-sm md:text-base">{description}</p>}
+            ) : !seg.isLast ? (
+              <Link to={seg.item.path as string} className="text-muted-foreground hover:text-foreground">
+                {seg.item.label.slice(0, labelVisible)}
+                {cursorInLabel && cursor}
+                {labelHidden > 0 && (
+                  <span className="invisible" aria-hidden="true">
+                    {seg.item.label.slice(labelVisible)}
+                  </span>
+                )}
+              </Link>
+            ) : (
+              <span className="text-accent-glow">
+                {seg.item.label.slice(0, labelVisible)}
+                {cursorInLabel && cursor}
+                {labelHidden > 0 && (
+                  <span className="invisible" aria-hidden="true">
+                    {seg.item.label.slice(labelVisible)}
+                  </span>
+                )}
+              </span>
+            )}
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }

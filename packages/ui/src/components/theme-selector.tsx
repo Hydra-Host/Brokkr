@@ -15,18 +15,12 @@ import { cn } from './utils';
 export function ThemeSelector() {
   const { style, color, modePreference, resolvedMode, setStyle, setColor, setMode } = useTheme();
   const colorOptions = THEME_COLORS;
-  const currentColor = colorOptions.find((c) => c.value === color);
-  const swatch = resolvedMode === 'dark' ? currentColor?.swatchDark : currentColor?.swatchLight;
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" className="h-8 w-8">
-          {modePreference === 'system' ? (
-            <Monitor className="h-4 w-4" style={{ color: swatch }} />
-          ) : (
-            <Palette className="h-4 w-4" style={{ color: swatch }} />
-          )}
+          {modePreference === 'system' ? <Monitor className="h-4 w-4" /> : <Palette className="h-4 w-4" />}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" sideOffset={8} className="w-56">

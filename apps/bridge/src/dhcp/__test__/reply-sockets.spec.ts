@@ -35,6 +35,7 @@ describe('ReplySocketSet', () => {
       () => asSocket(fake),
       () => [iface()],
       logger,
+      vi.fn(),
     );
     const refresh = set.refresh();
     fake.completeBind();
@@ -50,6 +51,7 @@ describe('ReplySocketSet', () => {
       () => asSocket(sockets.shift()!),
       () => [iface()],
       logger,
+      vi.fn(),
     );
 
     const failing = set.refresh();
@@ -69,6 +71,7 @@ describe('ReplySocketSet', () => {
       () => asSocket(fake),
       () => [iface()],
       logger,
+      vi.fn(),
     );
     const refresh = set.refresh();
     set.closeAll();
@@ -85,6 +88,7 @@ describe('ReplySocketSet', () => {
       () => asSocket(fake),
       () => ifaces,
       logger,
+      vi.fn(),
     );
 
     const inflight = set.refresh();
@@ -104,6 +108,7 @@ describe('ReplySocketSet', () => {
       () => asSocket(sockets.shift()!),
       () => [iface(), iface({ name: 'eth1', ip: '192.168.1.1', network: '192.168.1.0/24' })],
       logger,
+      vi.fn(),
     );
 
     const refresh = set.refresh();
@@ -114,5 +119,45 @@ describe('ReplySocketSet', () => {
 
     expect(set.socketFor('10.0.0.50')).toBe(asSocket(eth0));
     expect(set.socketFor('192.168.1.50')).toBe(asSocket(eth1));
+  });
+
+  it('forwards a datagram received on a bound socket to onMessage with that socket', async () => {
+    const fake = new FakeSocket();
+    const onMessage = vi.fn();
+    const set = new ReplySocketSet(
+      () => asSocket(fake),
+      () => [iface()],
+      logger,
+      onMessage,
+    );
+    const refresh = set.refresh();
+    fake.completeBind();
+    await refresh;
+
+    const msg = Buffer.from([0x01]);
+    const rinfo: dgram.RemoteInfo = { address: '10.0.0.10', port: 68, family: 'IPv4', size: 1 };
+    fake.emit('message', msg, rinfo);
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage).toHaveBeenCalledWith(asSocket(fake), msg, rinfo);
+  });
+
+  it('never forwards from a socket discarded by a concurrent refresh', async () => {
+    const fake = new FakeSocket();
+    let ifaces: NetworkInterface[] = [iface()];
+    const set = new ReplySocketSet(
+      () => asSocket(fake),
+      () => ifaces,
+      logger,
+      vi.fn(),
+    );
+
+    const inflight = set.refresh();
+    ifaces = [];
+    await set.refresh();
+    fake.completeBind();
+    await inflight;
+
+    expect(fake.listenerCount('message')).toBe(0);
   });
 });

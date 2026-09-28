@@ -260,7 +260,16 @@ export class AgentServicer {
     }
     const hostnames = [...new Set(registrySnapshot.map(([hostname]) => hostname))].sort();
     const topology = this.deps.buildEndpoints(hostnames, this.deps.grpcConfig.externalPort);
-    const hostsEntries = hostsEntriesForPeer(peerIp, registrySnapshot);
+    const { hostsEntries, missingBridges } = await hostsEntriesForPeer(
+      peerIp,
+      registrySnapshot,
+      this.deps.peerAnchorResolver,
+    );
+    if (missingBridges.length > 0) {
+      await this.deps.logger.warning(
+        `SessionAccepted: partial hostsEntries device_id=${effectiveDeviceId} peer=${peerIp} unresolved bridges=[${missingBridges.join(', ')}]`,
+      );
+    }
 
     try {
       yield this.deps.buildSessionAcceptedMessage({

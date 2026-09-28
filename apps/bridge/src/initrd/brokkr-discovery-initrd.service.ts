@@ -5,6 +5,7 @@ import { getErrorMessage } from '../common/error-utils';
 
 import nunjucks from 'nunjucks';
 
+import { missingBridgeHostnames, type BridgeRegistrySnapshot } from '../bridge-network/bridge-registry-reader.js';
 import { extractStaticAddresses } from '../bridge-network/netplan-extract-addresses.js';
 import { NIL_DEVICE_ID } from '../common/redis/redis-keys.js';
 import { getLeaderConfig } from '../leader-election/leader-election.config.js';
@@ -23,6 +24,7 @@ const logError = (msg: string, ctx?: unknown): void => void getLogger().error(ms
 export interface BridgeIpResolver {
   getBridgeIpForDevice(netplanYaml: string): Promise<string>;
   getBridgeIpForHostsFile(): Promise<string>;
+  resolveBridgeIpForDevice(netplanYaml: string | null): Promise<{ ip: string; authoritative: boolean }>;
 }
 
 export interface AgentTokenMinter {
@@ -33,8 +35,13 @@ export interface AgentTokenMinter {
 export interface BrokkrDiscoveryInitrdDeps {
   fetchLiveNetplanForInitrd(deviceId: string, jobId: string): Promise<string | null>;
   createBridgeIpResolutionService(jobId: string): Promise<BridgeIpResolver>;
-  getBridgeHostsEntriesForClient(clientIp: string, jobId: string): Promise<ReadonlyArray<readonly [string, string]>>;
+  getBridgeHostsEntriesForClient(
+    clientIp: string,
+    jobId: string,
+    fallbackAddr?: string | null,
+  ): Promise<ReadonlyArray<readonly [string, string]>>;
   getAllBridgeHostnames(jobId: string): Promise<string[]>;
+  getBridgeRegistrySnapshot(jobId: string): Promise<BridgeRegistrySnapshot>;
   agentTokens: AgentTokenMinter;
 }
 
@@ -203,19 +210,19 @@ export class BrokkrDiscoveryInitrdService {
     const netplan = await this.deps.fetchLiveNetplanForInitrd(deviceId, this.jobId);
 
     let bridgeIp = '';
+    let bridgeIpAuthoritative = false;
     try {
       const bridgeIpService = await this.deps.createBridgeIpResolutionService(this.jobId);
-      if (netplan) {
-        bridgeIp = await bridgeIpService.getBridgeIpForDevice(netplan);
-      } else {
-        bridgeIp = await bridgeIpService.getBridgeIpForHostsFile();
-      }
+      const resolved = await bridgeIpService.resolveBridgeIpForDevice(netplan || null);
+      bridgeIp = resolved.ip;
+      bridgeIpAuthoritative = resolved.authoritative;
 
       if (bridgeIp) {
         logInfo(`Found bridge network IP: ${bridgeIp}`, { jobId: this.jobId });
       } else {
         logWarning('No bridge network IP found, using localhost', { jobId: this.jobId });
         bridgeIp = '127.0.0.1';
+        bridgeIpAuthoritative = false;
       }
     } catch (e) {
       logError(`Failed to get bridge network IP: ${getErrorMessage(e)}`, { jobId: this.jobId });
@@ -228,11 +235,15 @@ export class BrokkrDiscoveryInitrdService {
     templateVars['bridge_hosts'] = [];
     try {
       const addresses = extractStaticAddresses(netplan);
+      // Peers on the same subnet as our own IP for this device are reachable the same way it is; a guessed IP is not.
+      const peerFallbackAddr = bridgeIpAuthoritative ? bridgeIp : null;
       let populated = false;
+      let presentHostnames: string[] = [];
       for (const { ip } of addresses) {
-        const entries = await this.deps.getBridgeHostsEntriesForClient(ip, this.jobId);
+        const entries = await this.deps.getBridgeHostsEntriesForClient(ip, this.jobId, peerFallbackAddr);
         if (entries.length === 0) continue;
         templateVars['bridge_hosts'] = entries.map(([bridgeIp, hostname]) => ({ ip: bridgeIp, hostname }));
+        presentHostnames = entries.map(([, hostname]) => hostname);
         logInfo(`Populated ${entries.length} bridge_hosts entries for device ${deviceId} from address=${ip}`, {
           jobId: this.jobId,
         });
@@ -240,9 +251,10 @@ export class BrokkrDiscoveryInitrdService {
         break;
       }
       if (!populated && clientIp) {
-        const entries = await this.deps.getBridgeHostsEntriesForClient(clientIp, this.jobId);
+        const entries = await this.deps.getBridgeHostsEntriesForClient(clientIp, this.jobId, peerFallbackAddr);
         if (entries.length > 0) {
           templateVars['bridge_hosts'] = entries.map(([bridgeIp, hostname]) => ({ ip: bridgeIp, hostname }));
+          presentHostnames = entries.map(([, hostname]) => hostname);
           logInfo(`Populated ${entries.length} bridge_hosts entries for device ${deviceId} from address=${clientIp}`, {
             jobId: this.jobId,
           });
@@ -253,6 +265,15 @@ export class BrokkrDiscoveryInitrdService {
         logWarning(`No bridge hosts found for device ${deviceId}; bridge_hosts will be empty`, {
           jobId: this.jobId,
         });
+      } else {
+        const snapshot = await this.deps.getBridgeRegistrySnapshot(this.jobId);
+        const missing = missingBridgeHostnames(snapshot, presentHostnames);
+        if (missing.length > 0) {
+          logWarning(
+            `Partial bridge_hosts for device ${deviceId}: no reachable address for bridges=[${missing.join(', ')}]`,
+            { jobId: this.jobId },
+          );
+        }
       }
     } catch (exc) {
       logWarning(`Failed to populate bridge_hosts for device ${deviceId}: ${getErrorMessage(exc)}`, {

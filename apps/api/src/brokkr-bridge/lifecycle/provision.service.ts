@@ -252,7 +252,7 @@ export class BridgeProvisionService {
       purge_ttys: deviceFacts.purgeTtys ?? false,
       serial_port: deviceFacts.serialPort,
       serial_baud: deviceFacts.serialBaud,
-      device_type: deviceFacts.deviceType,
+      device_type: deviceFacts.deviceModelSlug,
       network_type: networkType,
     };
 
@@ -291,7 +291,7 @@ export class BridgeProvisionService {
     return {
       gpuModel: row.gpus[0]?.model ?? null,
       purgeTtys: row.server?.purgeTtys ?? null,
-      deviceType: row.deviceModel?.slug ?? null,
+      deviceModelSlug: row.deviceModel?.slug ?? null,
       serialPort: sol?.resolvedPort ?? sol?.optimalPort ?? null,
       serialBaud: sol?.resolvedBaud ?? sol?.baudRate ?? null,
     };
@@ -303,5 +303,5 @@ interface ProvisionDeviceFacts {
   purgeTtys: boolean | null;
   serialPort: string | null;
   serialBaud: number | null;
-  deviceType: string | null;
+  deviceModelSlug: string | null;
 }

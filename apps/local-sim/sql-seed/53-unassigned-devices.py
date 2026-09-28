@@ -37,12 +37,12 @@ def generate() -> str:
         out.append(f"-- {name} id={did} (role=null, PLANNED — admin Create Switch/Server picker)")
         out.append(
             f"""INSERT INTO "Device" (
-    id, name, status, role, "deviceType",
+    id, name, status, role,
     "zoneId", "networkType",
     "supplierId",
     architecture, "updatedAt"
 ) VALUES (
-    {q(did)}, {q(name)}, 'PLANNED'::"DeviceStatus", NULL, 'Baremetal'::"DeviceType",
+    {q(did)}, {q(name)}, 'PLANNED'::"DeviceStatus", NULL,
     {q(zone_id)}, 'Public'::"DeviceNetworkType",
     {q(org_id)},
     {q(host_arch)}, NOW()
@@ -51,7 +51,6 @@ ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
     status = EXCLUDED.status,
     role = EXCLUDED.role,
-    "deviceType" = EXCLUDED."deviceType",
     "zoneId" = EXCLUDED."zoneId",
     "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",

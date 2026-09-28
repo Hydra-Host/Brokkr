@@ -1,6 +1,7 @@
 // Partial results are intentional: a failed/timed-out probe contributes nothing, so one dead sensor endpoint never zeroes out the rest of the device.
 
 import { Injectable } from '@nestjs/common';
+import { runWithConcurrency } from '@repo/utils';
 
 import type { BmcCredentials } from '../../common/bmc.types';
 import { logDebug, logWarning } from '../../logger/logger.service';
@@ -163,26 +164,6 @@ function emptyDoc(measurementNames: readonly string[]): MeasurementPoints {
 
 function nonEmpty(points: SensorPoint[] | undefined): points is SensorPoint[] {
   return Array.isArray(points) && points.length > 0;
-}
-
-async function runWithConcurrency<T>(tasks: ReadonlyArray<() => Promise<T>>, limit: number): Promise<T[]> {
-  if (tasks.length === 0) return [];
-  const results: T[] = new Array(tasks.length);
-  const bound = Math.max(1, limit);
-  let next = 0;
-  const workers: Promise<void>[] = [];
-  const worker = async (): Promise<void> => {
-    while (true) {
-      const i = next++;
-      if (i >= tasks.length) return;
-      results[i] = await tasks[i]();
-    }
-  };
-  for (let i = 0; i < Math.min(bound, tasks.length); i++) {
-    workers.push(worker());
-  }
-  await Promise.all(workers);
-  return results;
 }
 
 class TimeoutError extends Error {

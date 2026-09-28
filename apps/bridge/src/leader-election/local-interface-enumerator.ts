@@ -50,8 +50,6 @@ function hexToIpv4(value: string): string | null {
   return [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff].join('.');
 }
 
-const MIN_ROUTED_PREFIX = 16;
-
 function contactIp(addrs: Array<{ ip: string; prefix: number }>, gateway: string | null): string {
   if (gateway) {
     for (const a of addrs) {
@@ -100,7 +98,7 @@ export function parseRouteTable(
     const mask = maskHex ? hexToIpv4(maskHex) : null;
     if (dest === null || mask === null) continue;
     const prefix = netmaskToPrefix(mask);
-    if (prefix === null || prefix < MIN_ROUTED_PREFIX) continue;
+    if (prefix === null || prefix <= 1) continue;
     const subnet = ipv4Network(dest, prefix);
     if (subnet === null) continue;
     const addrs = ifaceAddrs[iface];
@@ -118,6 +116,8 @@ export function parseRouteTable(
     });
   }
 
+  // Matchers take the first containing entry, so the longest prefix must come first.
+  routedEntries.sort((a, b) => parseInt(b.subnet.split('/')[1], 10) - parseInt(a.subnet.split('/')[1], 10));
   return { defaultGateways, routedEntries };
 }
 

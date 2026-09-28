@@ -13,7 +13,6 @@ export const deviceSpecColumnsFixture: DeviceSpecColumns = {
   assetTag: null,
   role: null,
   status: 'PLANNED',
-  deviceType: null,
   networkType: null,
   architecture: null,
   ipmiBootDeviceOverride: null,

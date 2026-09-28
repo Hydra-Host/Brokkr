@@ -831,7 +831,7 @@ export const DhcpReservationSchema = z.object({
     .catch(null)
     .describe('Device name offered as the reservation hostname (display only), or null when absent or over-long.'),
   ipxeBuildTarget: IpxeBuildTargetSchema.nullable().describe(
-    'Per-device iPXE firmware override (Device.ipxeBuildTarget); null means inherit the prefix/system default.',
+    'Per-device iPXE firmware override (Server.ipxeBuildTarget); null means inherit the prefix/system default.',
   ),
   deviceId: z.string().uuid().describe('Owning device UUID — used to link through to device management.'),
   interfaceId: z.string().uuid().describe('Interface UUID bearing the reserved IP — used for the link-to-manage.'),

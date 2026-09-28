@@ -197,6 +197,62 @@ describe('routedEntriesFromProc', () => {
       { iface: 'enp131s0f0np0', mac: '', subnet: '10.9.0.0/16', ip: '10.2.0.4', gateway: '10.2.0.1', routed: true },
     ]);
   });
+
+  const KYNDRYL_ROUTE = [
+    'Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT',
+    'eth3\t00000000\t0100020A\t0003\t0\t0\t0\t00000000\t0\t0\t0',
+    'eth3\t0000020A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0',
+    'eth3\t0000000A\t0100020A\t0003\t0\t0\t0\t0000F0FF\t0\t0\t0',
+    '',
+  ].join('\n');
+
+  it('registers a routed prefix wider than /16 like Python bridge-api', () => {
+    expect(
+      routedEntriesFromProc(KYNDRYL_ROUTE, { eth3: [{ ip: '10.2.0.2', prefix: 16 }] }, { eth3: 'aa:bb:cc:dd:ee:03' }),
+    ).toEqual([
+      {
+        iface: 'eth3',
+        mac: 'aa:bb:cc:dd:ee:03',
+        subnet: '10.0.0.0/12',
+        ip: '10.2.0.2',
+        gateway: '10.2.0.1',
+        routed: true,
+      },
+    ]);
+  });
+
+  it('resolves a device behind the /12 to every bridge in the zone', () => {
+    const snapshot: [string, unknown][] = [
+      [
+        'bridge-2247-334-242-3427',
+        routedEntriesFromProc(KYNDRYL_ROUTE, { eth3: [{ ip: '10.2.0.2', prefix: 16 }] }, {}),
+      ],
+      [
+        'bridge-2247-334-242-3428',
+        routedEntriesFromProc(KYNDRYL_ROUTE, { eth3: [{ ip: '10.2.0.3', prefix: 16 }] }, {}),
+      ],
+    ];
+    expect(subnetMatchEntries(snapshot, '10.9.0.210')).toEqual([
+      ['10.2.0.2', 'bridge-2247-334-242-3427'],
+      ['10.2.0.3', 'bridge-2247-334-242-3428'],
+    ]);
+  });
+
+  it('orders routed entries most-specific first regardless of route table order', () => {
+    const table = [
+      'Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT',
+      'eno8303\t0000000A\t0169A8C0\t0003\t0\t0\t0\t000000FF\t0\t0\t0',
+      'eth3\t0000000A\t0100020A\t0003\t0\t0\t0\t0000F0FF\t0\t0\t0',
+      '',
+    ].join('\n');
+    const entries = routedEntriesFromProc(
+      table,
+      { eno8303: [{ ip: '192.168.105.33', prefix: 24 }], eth3: [{ ip: '10.2.0.2', prefix: 16 }] },
+      {},
+    );
+    expect(entries.map((e) => e.subnet)).toEqual(['10.0.0.0/12', '10.0.0.0/8']);
+    expect(subnetMatchEntries([['bridge-a', entries]], '10.9.0.210')).toEqual([['10.2.0.2', 'bridge-a']]);
+  });
 });
 
 describe('defaultGatewaysFromProc', () => {
@@ -300,5 +356,32 @@ describe('OsNetworkInterfaceEnumerator.enumerate with mocked route table', () =>
 
     const unmatched = entries.find((e) => e.subnet === '172.16.0.0/16');
     expect(unmatched?.gateway).toBeUndefined();
+  });
+
+  it('keeps connected entries ahead of a wider routed prefix on the same iface', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const table = [
+      'Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT',
+      'eth3\t0000000A\t0100020A\t0003\t0\t0\t0\t0000F0FF\t0\t0\t0',
+      'eth3\t0000020A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0',
+      '',
+    ].join('\n');
+    vi.mocked(readFile).mockResolvedValue(table);
+
+    const enumerator = new OsNetworkInterfaceEnumerator(() => ({
+      eth3: [ipv4({ address: '10.2.0.2', netmask: '255.255.0.0' })],
+    }));
+
+    expect(await enumerator.enumerate()).toEqual([
+      { iface: 'eth3', mac: 'aa:bb:cc:dd:ee:ff', subnet: '10.2.0.0/16', ip: '10.2.0.2' },
+      {
+        iface: 'eth3',
+        mac: 'aa:bb:cc:dd:ee:ff',
+        subnet: '10.0.0.0/12',
+        ip: '10.2.0.2',
+        gateway: '10.2.0.1',
+        routed: true,
+      },
+    ]);
   });
 });

@@ -66,7 +66,13 @@ export function AppSearchProvider({ children }: { children: ReactNode }) {
 
 export function AppSearchTrigger() {
   const { openSearch } = useAppSearch();
-  return <SearchTriggerButton onClick={openSearch} />;
+  return (
+    <SearchTriggerButton
+      onClick={openSearch}
+      label="Jump to anything"
+      className="border-border-dim bg-bg-sidebar-alt hover:bg-hover-bg text-text-dim h-9 w-auto rounded-md px-2.5 text-sm font-medium"
+    />
+  );
 }
 
 export function AppSearch({ leaves }: { leaves: FlatLeaf[] }) {

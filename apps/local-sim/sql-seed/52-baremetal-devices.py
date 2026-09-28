@@ -36,19 +36,18 @@ def generate() -> str:
         out.append(emit_device_name_clear(device_id, zone_id, name, org))
         out.append(
             f"""INSERT INTO "Device" (
-    id, name, status, role, "deviceType",
+    id, name, status, role,
     "zoneId", "networkType",
     "supplierId",
     architecture, "updatedAt"
 ) VALUES (
-    {q(device_id)}, {q(name)}, 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
+    {q(device_id)}, {q(name)}, 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole",
     {q(zone_id)}, {q(network_type)}::"DeviceNetworkType",
     {sup},
     {q(arch)}, NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
-    "deviceType" = EXCLUDED."deviceType",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",
     architecture = EXCLUDED.architecture,

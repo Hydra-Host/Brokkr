@@ -153,38 +153,38 @@ ON CONFLICT ("zoneId", name) DO UPDATE SET
     "organizationId" = EXCLUDED."organizationId", description = EXCLUDED.description, "updatedAt" = NOW();
 
 -- Peer infra devices (role=Baremetal + model, no MTI child rows — matches the app seed)
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
 VALUES ('fb26b01a-15fd-5ff3-8a28-9611a46aceb6', 'sim-tor-1', 'ACTIVE'::"DeviceStatus", 'Baremetal'::"DeviceRole",
-    'Baremetal'::"DeviceType", '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
+    '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'NVIDIA' AND model = 'SN2201'), NOW())
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, "zoneId" = EXCLUDED."zoneId", "supplierId" = EXCLUDED."supplierId",
     "deviceModelId" = EXCLUDED."deviceModelId", "updatedAt" = NOW();
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
 VALUES ('fd2c9ff0-1c21-5a9b-b377-36f2922e13f0', 'sim-pdu-1', 'ACTIVE'::"DeviceStatus", 'Baremetal'::"DeviceRole",
-    'Baremetal'::"DeviceType", '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
+    '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Eaton' AND model = '9001-22313'), NOW())
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, "zoneId" = EXCLUDED."zoneId", "supplierId" = EXCLUDED."supplierId",
     "deviceModelId" = EXCLUDED."deviceModelId", "updatedAt" = NOW();
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
 VALUES ('8f1c3dfa-3d74-54aa-bf73-c771ee40a963', 'sim-conserver-1', 'ACTIVE'::"DeviceStatus", 'Baremetal'::"DeviceRole",
-    'Baremetal'::"DeviceType", '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
+    '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Opengear' AND model = 'IM7248'), NOW())
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, "zoneId" = EXCLUDED."zoneId", "supplierId" = EXCLUDED."supplierId",
     "deviceModelId" = EXCLUDED."deviceModelId", "updatedAt" = NOW();
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
 VALUES ('5a15cec4-60b5-55e9-9a3d-1cc7836fe065', 'sim-patch-1', 'ACTIVE'::"DeviceStatus", 'Baremetal'::"DeviceRole",
-    'Baremetal'::"DeviceType", '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
+    '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Generic' AND model = 'LC-24 Patch Panel'), NOW())
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, "zoneId" = EXCLUDED."zoneId", "supplierId" = EXCLUDED."supplierId",
     "deviceModelId" = EXCLUDED."deviceModelId", "updatedAt" = NOW();
 
 -- PDU-role devices (Device.role=PDU + Pdu child row) for /dcim/pdus
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
-VALUES ('5a09a894-c315-5393-8c4b-d1454e149847', 'sim-pdu-a', 'ACTIVE'::"DeviceStatus", 'PDU'::"DeviceRole", NULL,
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
+VALUES ('5a09a894-c315-5393-8c4b-d1454e149847', 'sim-pdu-a', 'ACTIVE'::"DeviceStatus", 'PDU'::"DeviceRole",
     '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Eaton' AND model = '9001-22313'), NOW())
 ON CONFLICT (id) DO UPDATE SET
@@ -196,8 +196,8 @@ VALUES ('ef16fd85-2bc7-59d5-978d-d732366d7901', 24, 30, '208V', 'On'::"PduPowerS
 ON CONFLICT ("deviceId") DO UPDATE SET
     "outletCount" = EXCLUDED."outletCount", "ratedAmperage" = EXCLUDED."ratedAmperage",
     "voltageType" = EXCLUDED."voltageType", "powerStatus" = EXCLUDED."powerStatus", "updatedAt" = NOW();
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
-VALUES ('e14c55d8-d315-5ead-93ea-e3edacc75110', 'sim-pdu-b', 'ACTIVE'::"DeviceStatus", 'PDU'::"DeviceRole", NULL,
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
+VALUES ('e14c55d8-d315-5ead-93ea-e3edacc75110', 'sim-pdu-b', 'ACTIVE'::"DeviceStatus", 'PDU'::"DeviceRole",
     '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Eaton' AND model = '9001-22313'), NOW())
 ON CONFLICT (id) DO UPDATE SET
@@ -211,8 +211,8 @@ ON CONFLICT ("deviceId") DO UPDATE SET
     "voltageType" = EXCLUDED."voltageType", "powerStatus" = EXCLUDED."powerStatus", "updatedAt" = NOW();
 
 -- CDU-role devices (Device.role=CDU + Cdu child row) for /dcim/cdus
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
-VALUES ('ceef5664-0ca6-58fe-851b-24e0b4b37ae0', 'sim-cdu-a', 'ACTIVE'::"DeviceStatus", 'CDU'::"DeviceRole", NULL,
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
+VALUES ('ceef5664-0ca6-58fe-851b-24e0b4b37ae0', 'sim-cdu-a', 'ACTIVE'::"DeviceStatus", 'CDU'::"DeviceRole",
     '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Motivair' AND model = 'ChilledDoor CDU-40'), NOW())
 ON CONFLICT (id) DO UPDATE SET
@@ -226,8 +226,8 @@ ON CONFLICT ("deviceId") DO UPDATE SET
     "coolantType" = EXCLUDED."coolantType", "ratedFlowRateLpm" = EXCLUDED."ratedFlowRateLpm",
     "ratedThermalCapacityKw" = EXCLUDED."ratedThermalCapacityKw", airflow = EXCLUDED.airflow,
     "powerStatus" = EXCLUDED."powerStatus", "updatedAt" = NOW();
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
-VALUES ('601b818c-7c33-5cce-a350-1da3d5b9cef6', 'sim-cdu-b', 'ACTIVE'::"DeviceStatus", 'CDU'::"DeviceRole", NULL,
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
+VALUES ('601b818c-7c33-5cce-a350-1da3d5b9cef6', 'sim-cdu-b', 'ACTIVE'::"DeviceStatus", 'CDU'::"DeviceRole",
     '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Motivair' AND model = 'ChilledDoor CDU-40'), NOW())
 ON CONFLICT (id) DO UPDATE SET
@@ -243,8 +243,8 @@ ON CONFLICT ("deviceId") DO UPDATE SET
     "powerStatus" = EXCLUDED."powerStatus", "updatedAt" = NOW();
 
 -- Switch-role devices (Device.role=Switch + Switch child row) for /dcim/switches
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
-VALUES ('a3cfdbc7-d9ef-5056-ad9d-f88b698cafd9', 'sim-switch-a', 'ACTIVE'::"DeviceStatus", 'Switch'::"DeviceRole", NULL,
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
+VALUES ('a3cfdbc7-d9ef-5056-ad9d-f88b698cafd9', 'sim-switch-a', 'ACTIVE'::"DeviceStatus", 'Switch'::"DeviceRole",
     '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'NVIDIA' AND model = 'SN2201'), NOW())
 ON CONFLICT (id) DO UPDATE SET
@@ -256,8 +256,8 @@ VALUES ('5da466ab-fafd-58a8-bb2e-0606c4b9450f', 'leaf', 'east-west', 48, 'On'::"
 ON CONFLICT ("deviceId") DO UPDATE SET
     "switchRole" = EXCLUDED."switchRole", fabric = EXCLUDED.fabric, "portCount" = EXCLUDED."portCount",
     "powerStatus" = EXCLUDED."powerStatus", "updatedAt" = NOW();
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
-VALUES ('9491f4dd-8703-5164-a227-feb9cce8bc93', 'sim-switch-b', 'ACTIVE'::"DeviceStatus", 'Switch'::"DeviceRole", NULL,
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
+VALUES ('9491f4dd-8703-5164-a227-feb9cce8bc93', 'sim-switch-b', 'ACTIVE'::"DeviceStatus", 'Switch'::"DeviceRole",
     '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'NVIDIA' AND model = 'SN2201'), NOW())
 ON CONFLICT (id) DO UPDATE SET
@@ -271,8 +271,8 @@ ON CONFLICT ("deviceId") DO UPDATE SET
     "powerStatus" = EXCLUDED."powerStatus", "updatedAt" = NOW();
 
 -- Router-role devices (Device.role=Router + Router child row) for /dcim/routers
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
-VALUES ('cab79d2d-80b7-5d32-a2bf-7ebcbd80b45b', 'sim-router-a', 'ACTIVE'::"DeviceStatus", 'Router'::"DeviceRole", NULL,
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
+VALUES ('cab79d2d-80b7-5d32-a2bf-7ebcbd80b45b', 'sim-router-a', 'ACTIVE'::"DeviceStatus", 'Router'::"DeviceRole",
     '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Juniper' AND model = 'MX204'), NOW())
 ON CONFLICT (id) DO UPDATE SET
@@ -284,8 +284,8 @@ VALUES ('c5f65149-5ad0-5741-8f76-701387fe5908', 'edge', 64512, 'On'::"RouterPowe
 ON CONFLICT ("deviceId") DO UPDATE SET
     "routerType" = EXCLUDED."routerType", "bgpAsn" = EXCLUDED."bgpAsn", "powerStatus" = EXCLUDED."powerStatus",
     "updatedAt" = NOW();
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
-VALUES ('42b758ac-a9bc-5a35-827d-234b927fb44e', 'sim-router-b', 'ACTIVE'::"DeviceStatus", 'Router'::"DeviceRole", NULL,
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
+VALUES ('42b758ac-a9bc-5a35-827d-234b927fb44e', 'sim-router-b', 'ACTIVE'::"DeviceStatus", 'Router'::"DeviceRole",
     '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Juniper' AND model = 'MX204'), NOW())
 ON CONFLICT (id) DO UPDATE SET
@@ -299,9 +299,9 @@ ON CONFLICT ("deviceId") DO UPDATE SET
     "updatedAt" = NOW();
 
 -- RackBrush-role devices (Device.role=RackBrush + RackBrush child row) for /dcim/rack-brushes
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
 VALUES ('ade8cc7a-f9ea-5a0a-9ef8-11db65ccae17', 'sim-rackbrush-a', 'ACTIVE'::"DeviceStatus", 'RackBrush'::"DeviceRole",
-    NULL, '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
+    '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Generic' AND model = '1U Cable Brush Panel'), NOW())
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, role = EXCLUDED.role, "zoneId" = EXCLUDED."zoneId", "supplierId" = EXCLUDED."supplierId",
@@ -310,9 +310,9 @@ INSERT INTO "RackBrush" (id, "brushMaterial", "rackUnitHeight", "deviceId", "upd
 VALUES ('df420c37-478c-5651-807c-89d4b43f3a67', 'nylon', 1, 'ade8cc7a-f9ea-5a0a-9ef8-11db65ccae17', NOW())
 ON CONFLICT ("deviceId") DO UPDATE SET
     "brushMaterial" = EXCLUDED."brushMaterial", "rackUnitHeight" = EXCLUDED."rackUnitHeight", "updatedAt" = NOW();
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
 VALUES ('dadbb27b-5782-5ba9-8453-7802aa9416fc', 'sim-rackbrush-b', 'ACTIVE'::"DeviceStatus", 'RackBrush'::"DeviceRole",
-    NULL, '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
+    '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Generic' AND model = '1U Cable Brush Panel'), NOW())
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, role = EXCLUDED.role, "zoneId" = EXCLUDED."zoneId", "supplierId" = EXCLUDED."supplierId",
@@ -323,9 +323,9 @@ ON CONFLICT ("deviceId") DO UPDATE SET
     "brushMaterial" = EXCLUDED."brushMaterial", "rackUnitHeight" = EXCLUDED."rackUnitHeight", "updatedAt" = NOW();
 
 -- PatchPanel-role devices (Device.role=PatchPanel + PatchPanel child row) for /dcim/patch-panels
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
 VALUES ('09bca92e-2c77-5e19-8b1a-e8a7048ff6af', 'sim-patchpanel-a', 'ACTIVE'::"DeviceStatus",
-    'PatchPanel'::"DeviceRole", NULL, '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
+    'PatchPanel'::"DeviceRole", '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Generic' AND model = 'LC-24 Patch Panel'), NOW())
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, role = EXCLUDED.role, "zoneId" = EXCLUDED."zoneId", "supplierId" = EXCLUDED."supplierId",
@@ -335,9 +335,9 @@ VALUES ('c8b83fa6-5126-503f-b618-c4478963938f', 'fiber', 24, 1, '09bca92e-2c77-5
 ON CONFLICT ("deviceId") DO UPDATE SET
     "panelType" = EXCLUDED."panelType", "portCount" = EXCLUDED."portCount",
     "rackUnitHeight" = EXCLUDED."rackUnitHeight", "updatedAt" = NOW();
-INSERT INTO "Device" (id, name, status, role, "deviceType", "zoneId", "supplierId", "deviceModelId", "updatedAt")
+INSERT INTO "Device" (id, name, status, role, "zoneId", "supplierId", "deviceModelId", "updatedAt")
 VALUES ('326bd015-4689-53af-942d-2643572828b8', 'sim-patchpanel-b', 'ACTIVE'::"DeviceStatus",
-    'PatchPanel'::"DeviceRole", NULL, '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
+    'PatchPanel'::"DeviceRole", '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000',
     (SELECT id FROM "DeviceModel" WHERE manufacturer = 'Generic' AND model = 'Cat6A-48 Patch Panel'), NOW())
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, role = EXCLUDED.role, "zoneId" = EXCLUDED."zoneId", "supplierId" = EXCLUDED."supplierId",

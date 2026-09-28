@@ -4,7 +4,9 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
+import type { BridgeRegistrySnapshot } from '../../bridge-network/bridge-registry-reader.js';
 import { NIL_DEVICE_ID } from '../../common/redis/redis-keys.js';
+import { getLogger } from '../../logger/logger.service.js';
 import { BrokkrDiscoveryInitrdService } from '../brokkr-discovery-initrd.service.js';
 import { CommonInitrdUtils } from '../common-utils.js';
 import { resetInitrdConfigForTests } from '../initrd.config.js';
@@ -40,6 +42,7 @@ interface FakeDeps {
   createBridgeIpResolutionService: Mock<(...args: any[]) => any>;
   getBridgeHostsEntriesForClient: Mock<(...args: any[]) => any>;
   getAllBridgeHostnames: Mock<(...args: any[]) => any>;
+  getBridgeRegistrySnapshot: Mock<(...args: any[]) => any>;
   agentTokens: {
     mintOrReuseDevice: Mock<(...args: any[]) => any>;
     mintOrReuseDiscovery: Mock<(...args: any[]) => any>;
@@ -55,6 +58,7 @@ function makeDeps(overrides: Partial<FakeDeps> = {}): FakeDeps {
       vi.fn(async () => ({
         getBridgeIpForDevice: async () => '10.0.0.1',
         getBridgeIpForHostsFile: async () => '10.0.0.1',
+        resolveBridgeIpForDevice: async () => ({ ip: '10.0.0.1', authoritative: true }),
       })),
     getBridgeHostsEntriesForClient:
       overrides.getBridgeHostsEntriesForClient ??
@@ -63,6 +67,7 @@ function makeDeps(overrides: Partial<FakeDeps> = {}): FakeDeps {
         ['10.0.0.232', 'bridge-9-57-16-232'],
       ]),
     getAllBridgeHostnames: overrides.getAllBridgeHostnames ?? vi.fn(async () => []),
+    getBridgeRegistrySnapshot: overrides.getBridgeRegistrySnapshot ?? vi.fn(async () => []),
     agentTokens: overrides.agentTokens ?? {
       mintOrReuseDevice: vi.fn(async () => 'test-agent-token'),
       mintOrReuseDiscovery: vi.fn(async () => 'test-agent-token'),
@@ -132,8 +137,8 @@ describe('BrokkrDiscoveryInitrdService.collectTemplateVariables — phone-home o
       { ip: '10.0.0.232', hostname: 'bridge-9-57-16-232' },
     ]);
     expect(getBridgeHostsEntriesForClient).toHaveBeenCalledTimes(2);
-    expect(getBridgeHostsEntriesForClient).toHaveBeenNthCalledWith(1, '172.16.8.10', 'test-job');
-    expect(getBridgeHostsEntriesForClient).toHaveBeenNthCalledWith(2, '172.16.8.11', 'test-job');
+    expect(getBridgeHostsEntriesForClient).toHaveBeenNthCalledWith(1, '172.16.8.10', 'test-job', '10.0.0.1');
+    expect(getBridgeHostsEntriesForClient).toHaveBeenNthCalledWith(2, '172.16.8.11', 'test-job', '10.0.0.1');
     expect(deps.agentTokens.mintOrReuseDevice).toHaveBeenCalledWith('42', 'test-job');
   });
 
@@ -204,7 +209,121 @@ describe('BrokkrDiscoveryInitrdService.collectTemplateVariables — phone-home o
       { ip: '10.0.0.231', hostname: 'bridge-9-57-16-231' },
       { ip: '10.0.0.232', hostname: 'bridge-9-57-16-232' },
     ]);
-    expect(deps.getBridgeHostsEntriesForClient).toHaveBeenCalledWith('192.0.2.50', 'test-job');
+    expect(deps.getBridgeHostsEntriesForClient).toHaveBeenCalledWith('192.0.2.50', 'test-job', '10.0.0.1');
+  });
+});
+
+describe('BrokkrDiscoveryInitrdService.collectTemplateVariables — routed peer fallback', () => {
+  const ROUTED_NETPLAN = `network:
+  version: 2
+  ethernets:
+    eth0:
+      addresses:
+        - 10.9.0.210/30
+`;
+
+  const SITE_SNAPSHOT: BridgeRegistrySnapshot = [
+    [
+      'bridge-2247-334-242-3427',
+      [
+        { iface: 'eth3', subnet: '10.2.0.0/16', ip: '10.2.0.2' },
+        { iface: 'eth4', subnet: '10.100.0.0/16', ip: '10.100.0.1' },
+      ],
+    ],
+    ['bridge-2247-334-242-3428', [{ iface: 'eth3', subnet: '10.2.0.0/16', ip: '10.2.0.3' }]],
+  ];
+
+  function routedDeps(bridgeIp: { ip: string; authoritative: boolean }, snapshot: BridgeRegistrySnapshot) {
+    const getBridgeHostsEntriesForClient = vi.fn(
+      async (_clientIp: string, _jobId: string, fallbackAddr?: string | null) =>
+        fallbackAddr === '10.2.0.2'
+          ? [
+              ['10.2.0.2', 'bridge-2247-334-242-3427'],
+              ['10.2.0.3', 'bridge-2247-334-242-3428'],
+            ]
+          : [['10.100.0.1', 'bridge-2247-334-242-3427']],
+    );
+    const deps = makeDeps({
+      fetchLiveNetplanForInitrd: vi.fn(async () => ROUTED_NETPLAN),
+      createBridgeIpResolutionService: vi.fn(async () => ({
+        getBridgeIpForDevice: async () => bridgeIp.ip,
+        getBridgeIpForHostsFile: async () => bridgeIp.ip,
+        resolveBridgeIpForDevice: async () => bridgeIp,
+      })),
+      getBridgeHostsEntriesForClient,
+      getBridgeRegistrySnapshot: vi.fn(async () => snapshot),
+    });
+    return { deps, getBridgeHostsEntriesForClient };
+  }
+
+  function partialWarnings(warning: Mock<(...args: any[]) => any>): string[] {
+    return warning.mock.calls.map(([msg]) => String(msg)).filter((msg) => msg.startsWith('Partial bridge_hosts'));
+  }
+
+  it('passes an authoritative bridge IP as the peer fallback and lists both bridges', async () => {
+    const warning = vi.spyOn(getLogger(), 'warning');
+    try {
+      const { deps, getBridgeHostsEntriesForClient } = routedDeps(
+        { ip: '10.2.0.2', authoritative: true },
+        SITE_SNAPSHOT,
+      );
+      const service = new BrokkrDiscoveryInitrdService('test-job', deps);
+
+      const templateVars = await asMutable(service).collectTemplateVariables(null, '42', 'test-job', '10.9.0.210');
+
+      expect(templateVars.bridge_ip).toBe('10.2.0.2');
+      expect(getBridgeHostsEntriesForClient).toHaveBeenNthCalledWith(1, '10.9.0.210', 'test-job', '10.2.0.2');
+      expect(templateVars.bridge_hosts).toEqual([
+        { ip: '10.2.0.2', hostname: 'bridge-2247-334-242-3427' },
+        { ip: '10.2.0.3', hostname: 'bridge-2247-334-242-3428' },
+      ]);
+      expect(partialWarnings(warning)).toEqual([]);
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it('skips the peer fallback for a non-authoritative bridge IP and names the missing bridge', async () => {
+    const warning = vi.spyOn(getLogger(), 'warning');
+    try {
+      const { deps, getBridgeHostsEntriesForClient } = routedDeps(
+        { ip: '192.168.105.33', authoritative: false },
+        SITE_SNAPSHOT,
+      );
+      const service = new BrokkrDiscoveryInitrdService('test-job', deps);
+
+      const templateVars = await asMutable(service).collectTemplateVariables(null, '42', 'test-job', '10.9.0.210');
+
+      expect(templateVars.bridge_ip).toBe('192.168.105.33');
+      expect(getBridgeHostsEntriesForClient).toHaveBeenCalledTimes(1);
+      expect(getBridgeHostsEntriesForClient).toHaveBeenCalledWith('10.9.0.210', 'test-job', null);
+      expect(templateVars.bridge_hosts).toEqual([{ ip: '10.100.0.1', hostname: 'bridge-2247-334-242-3427' }]);
+      const warnings = partialWarnings(warning);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('bridge-2247-334-242-3428');
+      expect(warnings[0]).not.toContain('bridge-2247-334-242-3427');
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it('does not warn for a non-authoritative bridge IP when no eligible bridge is missing', async () => {
+    const warning = vi.spyOn(getLogger(), 'warning');
+    try {
+      const snapshot: BridgeRegistrySnapshot = [
+        SITE_SNAPSHOT[0],
+        ['bridge-2247-334-242-3428', [{ iface: 'wt0', subnet: '100.125.0.0/16', ip: '100.125.9.9' }]],
+      ];
+      const { deps } = routedDeps({ ip: '192.168.105.33', authoritative: false }, snapshot);
+      const service = new BrokkrDiscoveryInitrdService('test-job', deps);
+
+      const templateVars = await asMutable(service).collectTemplateVariables(null, '42', 'test-job', '10.9.0.210');
+
+      expect(templateVars.bridge_hosts).toEqual([{ ip: '10.100.0.1', hostname: 'bridge-2247-334-242-3427' }]);
+      expect(partialWarnings(warning)).toEqual([]);
+    } finally {
+      warning.mockRestore();
+    }
   });
 });
 

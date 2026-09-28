@@ -11,6 +11,7 @@ import type {
   BridgeSnapshot,
   ConnectionRegistryPort,
   GrpcConfigPort,
+  PeerAnchorPort,
   SessionHandle,
   TopologyBroadcasterLogger,
 } from '../topology-broadcaster.types';
@@ -28,6 +29,8 @@ const silentLogger: TopologyBroadcasterLogger = {
 };
 
 const grpcCfg: GrpcConfigPort = { externalPort: 443 };
+
+const nullAnchor: PeerAnchorPort = { resolve: async () => null };
 
 class FastReader implements BridgeRegistryReaderPort {
   ticks = 0;
@@ -61,7 +64,7 @@ class BlockingReader implements BridgeRegistryReaderPort {
 }
 
 function buildService(reader: BridgeRegistryReaderPort): TopologyBroadcasterService {
-  return new TopologyBroadcasterService(emptyRegistry, reader, grpcCfg, silentLogger, POLL_INTERVAL_MS);
+  return new TopologyBroadcasterService(emptyRegistry, reader, nullAnchor, grpcCfg, silentLogger, POLL_INTERVAL_MS);
 }
 
 function flush(): Promise<void> {

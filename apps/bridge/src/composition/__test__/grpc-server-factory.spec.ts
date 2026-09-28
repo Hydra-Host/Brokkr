@@ -19,12 +19,13 @@ import { AuthContextService } from '../../auth/auth-context.service.js';
 import { AutoCollectionService } from '../../auto-collection/auto-collection.service.js';
 import { RedisService } from '../../common/redis/redis.service.js';
 import {
+  adaptBridgeRegistryReader,
   AGENT_UPGRADE_SERVICE,
   BRIDGE_REGISTRY_READER,
-  adaptBridgeRegistryReader,
   buildAgentServicerDepsFromInjected,
   buildAuthInterceptorDepsFromInjected,
   buildGatewayModuleOptions,
+  PEER_ANCHOR_RESOLVER,
   type AgentServicerCollaborators,
 } from '../grpc-server-factory.js';
 
@@ -66,6 +67,7 @@ describe('grpc-server-factory wiring', () => {
       autoCollection: {
         maybeEnqueueCollectionOnRegister: async () => undefined,
       },
+      peerAnchorResolver: { resolve: async () => null },
     } satisfies AgentServicerCollaborators;
 
     const service = new GrpcServerService({
@@ -157,6 +159,7 @@ describe('grpc-server-factory wiring', () => {
         { provide: FAKE_RESULTS_ADAPTER, useValue: fakeResultsAdapter },
         { provide: AGENT_UPGRADE_SERVICE, useValue: fakeUpgradeService },
         { provide: AutoCollectionService, useValue: fakeAutoCollection },
+        { provide: PEER_ANCHOR_RESOLVER, useValue: { resolve: async () => null } },
       ],
       exports: [
         AgentTokenService,
@@ -168,6 +171,7 @@ describe('grpc-server-factory wiring', () => {
         FAKE_RESULTS_ADAPTER,
         AGENT_UPGRADE_SERVICE,
         AutoCollectionService,
+        PEER_ANCHOR_RESOLVER,
       ],
     })
     class TestAuthShimModule {}
@@ -182,6 +186,7 @@ describe('grpc-server-factory wiring', () => {
             connectionRegistryToken: ConnectionRegistry,
             resultPublisherToken: ResultPublisherService,
             bridgeRegistryReaderToken: BRIDGE_REGISTRY_READER,
+            peerAnchorResolverToken: PEER_ANCHOR_RESOLVER,
             redisCacheToken: RedisService,
             resultsAdapterToken: FAKE_RESULTS_ADAPTER,
             agentUpgradeServiceToken: AGENT_UPGRADE_SERVICE,

@@ -126,7 +126,7 @@ export class BaremetalPresenter {
           }
         : null,
       ecoMode: device.server.ecoMode ?? false,
-      ipxeBuildTarget: device.ipxeBuildTarget ?? null,
+      ipxeBuildTarget: device.server.ipxeBuildTarget ?? null,
       isTeeCapable: ServerSpecHelper.isTeeCapable(device),
       isHealthy: ServerSpecHelper.isHealthy(device),
     };

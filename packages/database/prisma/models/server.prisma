@@ -65,8 +65,9 @@ model Server {
   powerStatus ServerPowerStatus?
 
   // ── Provisioning setup ─────────────────────────────────────────────
-  // Which brokkr-live build the host fetches at boot.
-  ipxeBuildTarget  String?
+  // Per-device PXE firmware override carried on each DHCP reservation.
+  // Null = inherit prefix.ipxeBuildTarget.
+  ipxeBuildTarget  IpxeBuildTarget?
   ipxeBuildVersion String?
   // Wipe leftover serial-console tty entries before/after install.
   purgeTtys        Boolean?

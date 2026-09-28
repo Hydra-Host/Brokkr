@@ -39,6 +39,7 @@ import {
 import { BenchmarksModule } from './benchmarks/benchmarks.module.js';
 import { BridgeNetworkModule } from './bridge-network/bridge-network.module.js';
 import { ATOM_FETCHER, type AtomFetcher } from './bridge-network/netplan-atom.service.js';
+import { PeerAnchorResolver } from './bridge-network/peer-anchor-resolver.js';
 import { BridgeStatusModule } from './bridge-status/bridge-status.module.js';
 import { BrokkrLiveModule } from './brokkr-live/brokkr-live.module.js';
 import { getBullmqConfig } from './bullmq/bullmq.config.js';
@@ -82,6 +83,7 @@ import {
   buildAgentUpgradeService,
   buildDispatchModuleOptions,
   buildGatewayModuleOptions,
+  PEER_ANCHOR_RESOLVER,
 } from './composition/grpc-server-factory.js';
 import {
   buildLeaderElectionModuleOptions,
@@ -229,8 +231,12 @@ const BRIDGE_REGISTRY_READER_PORT = Symbol('BRIDGE_REGISTRY_READER_PORT');
       useFactory: (reader: BridgeRegistryReaderPort) => adaptBridgeRegistryReader(reader),
       inject: [BRIDGE_REGISTRY_READER_PORT],
     },
+    {
+      provide: PEER_ANCHOR_RESOLVER,
+      useFactory: () => new PeerAnchorResolver(),
+    },
   ],
-  exports: [BRIDGE_REGISTRY_READER_PORT, BRIDGE_REGISTRY_READER],
+  exports: [BRIDGE_REGISTRY_READER_PORT, BRIDGE_REGISTRY_READER, PEER_ANCHOR_RESOLVER],
 })
 class BridgeRegistryReaderModule {}
 
@@ -569,6 +575,7 @@ class AgentUpgradeServiceModule {}
     TopologyBroadcasterModule.forRoot({
       ...topologyComposition.moduleOptions,
       readerToken: BRIDGE_REGISTRY_READER_PORT,
+      anchorResolverToken: PEER_ANCHOR_RESOLVER,
     }),
     BridgeRegistryReaderModule,
     AgentUpgradeServiceModule,
@@ -579,6 +586,7 @@ class AgentUpgradeServiceModule {}
         connectionRegistryToken: ConnectionRegistry,
         resultPublisherToken: ResultPublisherService,
         bridgeRegistryReaderToken: BRIDGE_REGISTRY_READER,
+        peerAnchorResolverToken: PEER_ANCHOR_RESOLVER,
         redisCacheToken: RedisService,
         resultsAdapterToken: RESULTS_ADAPTER,
         agentUpgradeServiceToken: AGENT_UPGRADE_SERVICE,

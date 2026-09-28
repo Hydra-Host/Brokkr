@@ -83,11 +83,11 @@ ON CONFLICT (id) DO UPDATE SET
 -- supplierId is the owner FK and MUST equal zone.organizationId.
 WITH up AS (
     INSERT INTO "Device" (
-        id, name, status, role, "deviceType",
+        id, name, status, role,
         "zoneId", "supplierId", "updatedAt"
     ) VALUES (
         '00000000-0000-0000-0000-000000008000', 'sim-bridge', 'PLANNED'::"DeviceStatus",
-        'Bridge'::"DeviceRole", 'Baremetal'::"DeviceType",
+        'Bridge'::"DeviceRole",
         '00000000-0000-0000-0000-111111111111', '00000000-0000-0000-0000-000000000000', NOW()
     )
     ON CONFLICT (id) DO UPDATE SET
@@ -229,11 +229,11 @@ ON CONFLICT (id) DO UPDATE SET
 -- supplierId is the owner FK and MUST equal zone.organizationId.
 WITH up AS (
     INSERT INTO "Device" (
-        id, name, status, role, "deviceType",
+        id, name, status, role,
         "zoneId", "supplierId", "updatedAt"
     ) VALUES (
         '00000000-0000-0000-0000-000000008001', 'sim-bridge-den-1', 'PLANNED'::"DeviceStatus",
-        'Bridge'::"DeviceRole", 'Baremetal'::"DeviceType",
+        'Bridge'::"DeviceRole",
         '00000000-0000-0000-0000-111111111112', '00000000-0000-0000-0000-000000000000', NOW()
     )
     ON CONFLICT (id) DO UPDATE SET
@@ -299,11 +299,11 @@ FROM "Interface" WHERE "deviceId" = '00000000-0000-0000-0000-000000008001' AND n
 -- supplierId is the owner FK and MUST equal zone.organizationId.
 WITH up AS (
     INSERT INTO "Device" (
-        id, name, status, role, "deviceType",
+        id, name, status, role,
         "zoneId", "supplierId", "updatedAt"
     ) VALUES (
         '00000000-0000-0000-0000-000000008002', 'sim-bridge-den-1-1', 'PLANNED'::"DeviceStatus",
-        'Bridge'::"DeviceRole", 'Baremetal'::"DeviceType",
+        'Bridge'::"DeviceRole",
         '00000000-0000-0000-0000-111111111112', '00000000-0000-0000-0000-000000000000', NOW()
     )
     ON CONFLICT (id) DO UPDATE SET

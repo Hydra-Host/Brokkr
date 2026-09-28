@@ -57,7 +57,7 @@ The DHCP server (`src/dhcp/`) is **driven entirely by the hub — there are no `
 - **Runtime tuning** (leader-poll, lease-prune, decline-backoff) comes from the zone-global `{zone}:config:dhcp` ops atom, derived from the hub's zone service-tuning settings; built-in defaults (2s/60s/600s) apply until it arrives. Lease persistence is always Redis (keyed `dhcp:lease:{ip}`) — there is no in-memory-only mode.
 - **Required**: `BROKKR_ZONE_ID` (the zone UUID) must be set and non-empty. The DHCP config-atom SCAN (`prefix:*:config:dhcp`) is scoped to this zone **only** by this Redis key prefix, so the bridge **refuses to start** (`bindDhcpHoldersForOrchestrator` throws) when it is unset — an empty prefix would scan every zone's atoms on a shared Redis (cross-zone config bleed).
 
-**Lease timers (Kea parity):** DHCP leases default to 600 seconds with standard Kea-style renewal timers (T1 at 25%, T2 at 50% of the lease).
+**Lease timers (Kea parity):** DHCP leases default to 600 seconds with standard Kea-style renewal timers (T1 at 25%, T2 at 50% of the lease). A REQUEST for an address the bridge still assigns renews the full lease, as Kea does.
 
 ### Active-passive HA (leader-elected hot-standby)
 

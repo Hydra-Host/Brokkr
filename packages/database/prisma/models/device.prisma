@@ -61,11 +61,10 @@ model Device {
   // Every device must carry a lifecycle status. New rows default to PLANNED
   // (pre-commissioning) when a caller doesn't set one. `role` stays nullable — an
   // unassigned device is a real, expected state (assign-role flow).
-  status     DeviceStatus @default(PLANNED)
+  status DeviceStatus @default(PLANNED)
   // Power state lives on the per-role extension tables (`Server.powerStatus`,
   // `Bridge.powerStatus`, …) — the base Device no longer carries it.
-  role       DeviceRole?
-  deviceType DeviceType?
+  role   DeviceRole?
 
   // Network
   networkType DeviceNetworkType?
@@ -129,11 +128,7 @@ model Device {
   // Operator override for the IPMI boot device; lifecycle ops fall back to "pxe".
   ipmiBootDeviceOverride String?
 
-  // Per-device PXE boot firmware override. Consumed end-to-end: DhcpDerivationService joins it
-  // onto each reservation, the DHCP atom carries it per-reservation, and the bridge engine serves
-  // that device's bootfile (bootfileFor) to the matching MAC. Null = inherit prefix.ipxeBuildTarget.
-  ipxeBuildTarget IpxeBuildTarget?
-  bootFilename    String?
+  bootFilename String?
 
   // ── Multi-table inheritance extensions ────────────────────────────
   // Per-role extension tables. 1:1, populated when `role` matches the

@@ -23,6 +23,7 @@ import type {
   AuthContextPort,
   BridgeRegistryReaderPort,
   ConnectionRegistryPort,
+  PeerAnchorPort,
   RedisCachePort,
   ResultPublisherPort,
   ResultsAdapterPort,
@@ -67,6 +68,8 @@ import { logDebug, logError, logInfo, logWarning, type LogContext } from '../log
 import { traceRelayEnabled } from '../telemetry/trace-relay-gate.js';
 
 export const BRIDGE_REGISTRY_READER = Symbol('BRIDGE_REGISTRY_READER');
+
+export const PEER_ANCHOR_RESOLVER = Symbol('PEER_ANCHOR_RESOLVER');
 
 export const AGENT_UPGRADE_SERVICE = Symbol('AGENT_UPGRADE_SERVICE');
 
@@ -241,6 +244,7 @@ export interface AgentServicerCollaborators {
   tokenService: AgentTokenServicePort;
   authContext: AuthContextPort;
   bridgeRegistryReader: BridgeRegistryReaderPort;
+  peerAnchorResolver: PeerAnchorPort;
   redisCache: RedisCachePort;
   results: ResultsAdapterPort;
   upgradeService: AgentUpgradeServicePort;
@@ -255,6 +259,7 @@ export function buildAgentServicerDepsFromInjected(collaborators: AgentServicerC
     upgradeService: collaborators.upgradeService,
     authContext: collaborators.authContext,
     bridgeRegistryReader: collaborators.bridgeRegistryReader,
+    peerAnchorResolver: collaborators.peerAnchorResolver,
     buildEndpoints,
     maybeEnqueueCollectionOnRegister: (deviceId) =>
       collaborators.autoCollection.maybeEnqueueCollectionOnRegister(deviceId),
@@ -350,6 +355,7 @@ export interface GatewayModuleDeps {
   connectionRegistryToken: GatewayInjectToken;
   resultPublisherToken: GatewayInjectToken;
   bridgeRegistryReaderToken: GatewayInjectToken;
+  peerAnchorResolverToken: GatewayInjectToken;
   resultsAdapterToken: GatewayInjectToken;
   redisCacheToken: GatewayInjectToken;
   agentUpgradeServiceToken: GatewayInjectToken;
@@ -370,6 +376,7 @@ export function buildGatewayModuleOptions(deps: GatewayModuleDeps): GatewayModul
       results: unknown,
       upgradeService: unknown,
       autoCollection: unknown,
+      peerAnchorResolver: unknown,
     ) =>
       buildAgentServicerDepsFromInjected({
         registry: registry as ConnectionRegistryPort,
@@ -381,6 +388,7 @@ export function buildGatewayModuleOptions(deps: GatewayModuleDeps): GatewayModul
         results: results as ResultsAdapterPort,
         upgradeService: upgradeService as AgentUpgradeServicePort,
         autoCollection: autoCollection as AutoCollectionPort,
+        peerAnchorResolver: peerAnchorResolver as PeerAnchorPort,
       }),
     agentServicerDepsInject: [
       deps.connectionRegistryToken,
@@ -392,6 +400,7 @@ export function buildGatewayModuleOptions(deps: GatewayModuleDeps): GatewayModul
       deps.resultsAdapterToken,
       deps.agentUpgradeServiceToken,
       deps.autoCollectionServiceToken,
+      deps.peerAnchorResolverToken,
     ],
     authInterceptorDeps: (tokenService: unknown, binder: unknown): AuthInterceptorDeps =>
       buildAuthInterceptorDepsFromInjected({

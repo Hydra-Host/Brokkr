@@ -3,11 +3,6 @@ enum DeviceNetworkType {
   Public
 }
 
-enum DeviceType {
-  Hypervisor
-  Baremetal
-}
-
 enum DeviceRole {
   // Legacy values, retained for backward compat with rows from the original
   // import pipeline. New rows use the canonical Brokkr role values below

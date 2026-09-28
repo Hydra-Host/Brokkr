@@ -5,7 +5,11 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import { AgentTokenService } from '../auth/agent-token.service.js';
 import { BridgeIpResolutionService } from '../bridge-network/bridge-ip-resolution.service.js';
-import { getAllBridgeHostnames, getBridgeHostsEntriesForClient } from '../bridge-network/bridge-registry-reader.js';
+import {
+  getAllBridgeHostnames,
+  getBridgeHostsEntriesForClient,
+  getBridgeRegistrySnapshot,
+} from '../bridge-network/bridge-registry-reader.js';
 import { fetchLiveNetplanForInitrd } from '../bridge-network/initrd-netplan.js';
 import { NetplanAtomService } from '../bridge-network/netplan-atom.service.js';
 import { RedisService } from '../common/redis/redis.service.js';
@@ -149,9 +153,10 @@ export class InitrdOrchestrationService {
           fetchLiveNetplanForInitrd: (id, netplanJobId) =>
             fetchLiveNetplanForInitrd(this.netplanAtom, id, { jobId: netplanJobId }),
           createBridgeIpResolutionService: async () => this.bridgeIpResolver,
-          getBridgeHostsEntriesForClient: (clientIp2, registryJobId) =>
-            getBridgeHostsEntriesForClient(this.redis, clientIp2, { jobId: registryJobId }),
+          getBridgeHostsEntriesForClient: (clientIp2, registryJobId, fallbackAddr) =>
+            getBridgeHostsEntriesForClient(this.redis, clientIp2, { jobId: registryJobId, fallbackAddr }),
           getAllBridgeHostnames: (registryJobId) => getAllBridgeHostnames(this.redis, { jobId: registryJobId }),
+          getBridgeRegistrySnapshot: (registryJobId) => getBridgeRegistrySnapshot(this.redis, { jobId: registryJobId }),
           agentTokens: this.agentTokens,
         });
         await buildService.buildBrokkrDiscoveryInitrd(buildJobId, deviceId, deviceData, outputName, clientIp);

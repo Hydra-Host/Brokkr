@@ -17,13 +17,13 @@ WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' 
 DELETE FROM "DeviceSecret"
 WHERE "deviceId" = '00000000-0000-0000-0000-000000000001' AND "zoneId" <> '00000000-0000-0000-0000-111111111111';
 INSERT INTO "Device" (
-    id, name, status, role, "deviceType",
+    id, name, status, role,
     serial, "systemSerial", "chassisSerial", "baseboardSerial",
     "zoneId", "networkType",
     "supplierId",
     architecture, "updatedAt"
 ) VALUES (
-    '00000000-0000-0000-0000-000000000001', 'cpu-1', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
+    '00000000-0000-0000-0000-000000000001', 'cpu-1', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole",
     'SIM525400BC0001', 'SIM525400BC0001', 'SIM525400BC0001', 'SIM525400BC0001',
     '00000000-0000-0000-0000-111111111111', 'NAT'::"DeviceNetworkType",
     (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
@@ -31,7 +31,6 @@ INSERT INTO "Device" (
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, status = EXCLUDED.status, role = EXCLUDED.role,
-    "deviceType" = EXCLUDED."deviceType",
     serial = EXCLUDED.serial,
     "systemSerial" = EXCLUDED."systemSerial", "chassisSerial" = EXCLUDED."chassisSerial",
     "baseboardSerial" = EXCLUDED."baseboardSerial",
@@ -221,13 +220,13 @@ WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' 
 DELETE FROM "DeviceSecret"
 WHERE "deviceId" = '00000000-0000-0000-0000-000000000002' AND "zoneId" <> '00000000-0000-0000-0000-111111111111';
 INSERT INTO "Device" (
-    id, name, status, role, "deviceType",
+    id, name, status, role,
     serial, "systemSerial", "chassisSerial", "baseboardSerial",
     "zoneId", "networkType",
     "supplierId",
     architecture, "updatedAt"
 ) VALUES (
-    '00000000-0000-0000-0000-000000000002', 'cpu-2', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
+    '00000000-0000-0000-0000-000000000002', 'cpu-2', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole",
     'SIM525400BC0002', 'SIM525400BC0002', 'SIM525400BC0002', 'SIM525400BC0002',
     '00000000-0000-0000-0000-111111111111', 'Public'::"DeviceNetworkType",
     (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
@@ -235,7 +234,6 @@ INSERT INTO "Device" (
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, status = EXCLUDED.status, role = EXCLUDED.role,
-    "deviceType" = EXCLUDED."deviceType",
     serial = EXCLUDED.serial,
     "systemSerial" = EXCLUDED."systemSerial", "chassisSerial" = EXCLUDED."chassisSerial",
     "baseboardSerial" = EXCLUDED."baseboardSerial",
@@ -419,13 +417,13 @@ WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' 
 DELETE FROM "DeviceSecret"
 WHERE "deviceId" = '00000000-0000-0000-0000-000000000004' AND "zoneId" <> '00000000-0000-0000-0000-111111111111';
 INSERT INTO "Device" (
-    id, name, status, role, "deviceType",
+    id, name, status, role,
     serial, "systemSerial", "chassisSerial", "baseboardSerial",
     "zoneId", "networkType",
     "supplierId",
     architecture, "updatedAt"
 ) VALUES (
-    '00000000-0000-0000-0000-000000000004', 'cpu-4', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
+    '00000000-0000-0000-0000-000000000004', 'cpu-4', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole",
     'SIM525400BC0004', 'SIM525400BC0004', 'SIM525400BC0004', 'SIM525400BC0004',
     '00000000-0000-0000-0000-111111111111', 'Public'::"DeviceNetworkType",
     (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
@@ -433,7 +431,6 @@ INSERT INTO "Device" (
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, status = EXCLUDED.status, role = EXCLUDED.role,
-    "deviceType" = EXCLUDED."deviceType",
     serial = EXCLUDED.serial,
     "systemSerial" = EXCLUDED."systemSerial", "chassisSerial" = EXCLUDED."chassisSerial",
     "baseboardSerial" = EXCLUDED."baseboardSerial",

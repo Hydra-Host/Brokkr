@@ -12,19 +12,18 @@ WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' 
 DELETE FROM "DeviceSecret"
 WHERE "deviceId" = '00000000-0000-0000-0000-000000000003' AND "zoneId" <> '00000000-0000-0000-0000-111111111111';
 INSERT INTO "Device" (
-    id, name, status, role, "deviceType",
+    id, name, status, role,
     "zoneId", "networkType",
     "supplierId",
     architecture, "netplanOverride", "updatedAt"
 ) VALUES (
-    '00000000-0000-0000-0000-000000000003', 'commission-1', 'PLANNED'::"DeviceStatus", NULL, 'Baremetal'::"DeviceType",
+    '00000000-0000-0000-0000-000000000003', 'commission-1', 'PLANNED'::"DeviceStatus", NULL,
     '00000000-0000-0000-0000-111111111111', 'Public'::"DeviceNetworkType",
     (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
     'amd64', NULL, NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, status = EXCLUDED.status, role = EXCLUDED.role,
-    "deviceType" = EXCLUDED."deviceType",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",
     architecture = EXCLUDED.architecture, "netplanOverride" = NULL,

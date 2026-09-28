@@ -170,23 +170,20 @@ def _eth0_ip_ref(i: int) -> str:
     )
 
 
-_DEVICE_COLS = "id name status role deviceType zoneId supplierId deviceModelId"
+_DEVICE_COLS = "id name status role zoneId supplierId deviceModelId"
 
 
-def _device(
-    out: list[str], name: str, role: str, dtype: str, mfr: str, model: str, zone: str, org: str, refresh: str
-) -> None:
+def _device(out: list[str], name: str, role: str, mfr: str, model: str, zone: str, org: str, refresh: str) -> None:
     """A Device row, supplier-scoped so the per-role DCIM page lists it. `status` never refreshes."""
     out.append(
         emit_upsert(
             "Device",
-            "id name status role deviceType zoneId supplierId deviceModelId",
+            "id name status role zoneId supplierId deviceModelId",
             [
                 q(did(f"device:{name}")),
                 q(name),
                 qe("ACTIVE", "DeviceStatus"),
                 qe(role, "DeviceRole"),
-                dtype,
                 q(zone),
                 q(org),
                 _model_ref(mfr, model),
@@ -198,15 +195,14 @@ def _device(
 
 
 def _peer_device(out: list[str], name: str, mfr: str, model: str, zone_id: str, org_id: str) -> None:
-    dtype = qe("Baremetal", "DeviceType")
     refresh = "name zoneId supplierId deviceModelId"
-    _device(out, name, "Baremetal", dtype, mfr, model, zone_id, org_id, refresh)
+    _device(out, name, "Baremetal", mfr, model, zone_id, org_id, refresh)
 
 
 def _role_device(out: list[str], name: str, role: str, mfr: str, model: str, zone_id: str, org_id: str) -> None:
-    """A facility device: a real DeviceRole and a NULL `deviceType` — no compute device-type."""
+    """A facility device: a real DeviceRole."""
     refresh = "name role zoneId supplierId deviceModelId"
-    _device(out, name, role, "NULL", mfr, model, zone_id, org_id, refresh)
+    _device(out, name, role, mfr, model, zone_id, org_id, refresh)
 
 
 def _extension(out: list[str], table: str, name: str, cols: str, values: list) -> None:

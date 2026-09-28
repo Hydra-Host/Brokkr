@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { Agent, request } from 'undici';
 
 import { type BareMetalPowerAction, type NodeKind, NodeKindSchema } from '@repo/local-lab-contract';
-import { getErrorMessage } from '@repo/utils';
+import { getErrorMessage, runWithConcurrency } from '@repo/utils';
 import { type BmcProbe, contract, type Machine } from '../contract';
 import { STACK_SLOT } from '../ports';
 import type { RunState } from '../runner/runner.service';
@@ -442,15 +442,4 @@ export class FleetPowerService {
       return err.code ?? 1;
     }
   }
-}
-
-// Same wave-worker shape as apps/bridge's device-sensors probe pool; that copy is module-private there.
-async function runWithConcurrency<T>(tasks: ReadonlyArray<() => Promise<T>>, limit: number): Promise<T[]> {
-  const results: T[] = new Array(tasks.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    for (let i = next++; i < tasks.length; i = next++) results[i] = await tasks[i]();
-  };
-  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), tasks.length) }, () => worker()));
-  return results;
 }

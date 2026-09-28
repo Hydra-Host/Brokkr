@@ -4,11 +4,9 @@ import {
   DeviceNetworkType,
   DeviceRole,
   DeviceStatus,
-  DeviceType,
   Gpu,
   Interface,
   IpAddress,
-  IpxeBuildTarget,
   MemoryConfig,
   StorageDrive,
 } from '@repo/database';
@@ -34,22 +32,17 @@ export const DeviceSpecColumnsSchema = z.object({
 
   role: z.nativeEnum(DeviceRole).nullable(),
   status: z.nativeEnum(DeviceStatus),
-  deviceType: z.nativeEnum(DeviceType).nullable(),
 
   networkType: z.nativeEnum(DeviceNetworkType).nullable(),
 
   architecture: z.string().nullable(),
-  // Free-text next-boot override sent to the BMC (null → default pxe). Declared here so list
-  // reads that parse through this schema don't strip it — the detail path skips the parse, so
-  // omitting it silently blanked the list.
+  // Declared so list reads that parse through this schema don't strip the BMC next-boot override
+  // (null → default pxe); the detail path skips the parse.
   ipmiBootDeviceOverride: z.string().nullable().optional(),
   uefiBoot: z.boolean().nullable(),
   secureBootEnabled: z.boolean().nullable(),
   iommuEnabled: z.boolean().nullable(),
   sriovEnabled: z.boolean().nullable(),
-  // Declared so the active-record parse (Zod strip mode) doesn't strip it — the presenter would read
-  // undefined and return null on every read. `.optional()` keeps pre-column device fixtures parsing.
-  ipxeBuildTarget: z.nativeEnum(IpxeBuildTarget).nullable().optional(),
 
   zoneId: z.string().nullable(),
   zone: z

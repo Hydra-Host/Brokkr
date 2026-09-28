@@ -9,6 +9,7 @@ import type {
   BridgeSnapshot,
   ConnectionRegistryPort,
   GrpcConfigPort,
+  PeerAnchorPort,
   SessionHandle,
   TopologyBroadcasterLogger,
   TopologyServerMessage,
@@ -53,22 +54,62 @@ class StubReader implements BridgeRegistryReaderPort {
   }
 }
 
-const silentLogger: TopologyBroadcasterLogger = {
-  debug: () => undefined,
-  info: () => undefined,
-  warning: () => undefined,
-};
+class StubAnchor implements PeerAnchorPort {
+  calls: string[] = [];
+  anchor: string | null = null;
+  error: Error | null = null;
+  async resolve(peerIp: string): Promise<string | null> {
+    this.calls.push(peerIp);
+    if (this.error !== null) throw this.error;
+    return this.anchor;
+  }
+}
+
+class RecordingLogger implements TopologyBroadcasterLogger {
+  warnings: string[] = [];
+  debug(): void {}
+  info(): void {}
+  warning(msg: string): void {
+    this.warnings.push(msg);
+  }
+}
 
 const grpcCfg: GrpcConfigPort = { externalPort: 443 };
 
 function setupBroadcaster(handles: StubSession[]): {
   broadcaster: TopologyBroadcasterService;
   reader: StubReader;
+  anchor: StubAnchor;
+  logger: RecordingLogger;
 } {
   const reader = new StubReader();
-  const broadcaster = new TopologyBroadcasterService(new StubRegistry(handles), reader, grpcCfg, silentLogger, 0);
-  return { broadcaster, reader };
+  const anchor = new StubAnchor();
+  const logger = new RecordingLogger();
+  const broadcaster = new TopologyBroadcasterService(new StubRegistry(handles), reader, anchor, grpcCfg, logger, 0);
+  return { broadcaster, reader, anchor, logger };
 }
+
+const BRIDGE_3427 = 'bridge-2247-334-242-3427';
+const BRIDGE_3428 = 'bridge-2247-334-242-3428';
+
+const ROUTED_SITE_SNAPSHOT: BridgeSnapshot = [
+  [
+    BRIDGE_3427,
+    [
+      { iface: 'eno8303', mac: '00', subnet: '192.168.105.0/24', ip: '192.168.105.33' },
+      { iface: 'wt0', mac: '01', subnet: '100.125.0.0/16', ip: '100.125.151.144' },
+      { iface: 'eth3', mac: 'aa', subnet: '10.2.0.0/16', ip: '10.2.0.2' },
+      { iface: 'eth4', mac: 'bb', subnet: '10.100.0.0/16', ip: '10.100.0.1' },
+    ],
+  ],
+  [
+    BRIDGE_3428,
+    [
+      { iface: 'eno8303', mac: '02', subnet: '192.168.105.0/24', ip: '192.168.105.215' },
+      { iface: 'eth3', mac: 'cc', subnet: '10.2.0.0/16', ip: '10.2.0.3' },
+    ],
+  ],
+];
 
 describe('build_endpoints', () => {
   it('shape matches agent.yaml format (bare host:port)', () => {
@@ -283,10 +324,98 @@ describe('TopologyBroadcaster — full queue is dropped', () => {
   });
 });
 
+describe('TopologyBroadcaster — routed peer anchor', () => {
+  it.each(['10.9.0.210', '::ffff:10.9.0.210'])(
+    'gives a routed /30 peer %s every bridge through the anchor subnet',
+    async (peerIp) => {
+      const handle = makeSession(peerIp);
+      const { broadcaster, reader, anchor, logger } = setupBroadcaster([handle]);
+      anchor.anchor = '10.2.0.2';
+      reader.hostnames = [BRIDGE_3427, BRIDGE_3428];
+      reader.snapshot = ROUTED_SITE_SNAPSHOT;
+
+      await broadcaster.pollOnce('t');
+
+      expect(handle.queue[0].topologyUpdate.hostsEntries).toEqual([
+        { ip: '10.2.0.2', hostname: BRIDGE_3427 },
+        { ip: '10.2.0.3', hostname: BRIDGE_3428 },
+      ]);
+      expect(anchor.calls).toEqual(['10.9.0.210']);
+      expect(logger.warnings).toEqual([]);
+    },
+  );
+
+  it('does not probe or warn on flat L2 when a sticky bridge on another subnet left the live registry', async () => {
+    const handle = makeSession('10.0.0.5');
+    const { broadcaster, reader, anchor, logger } = setupBroadcaster([handle]);
+    reader.hostnames = ['bridge-a', 'bridge-old'];
+    reader.snapshot = [
+      ['bridge-a', [{ iface: 'eth0', mac: 'aa', subnet: '10.0.0.0/24', ip: '10.0.0.231' }]],
+      ['bridge-old', [{ iface: 'eth0', mac: 'ee', subnet: '192.168.50.0/24', ip: '192.168.50.9' }]],
+    ];
+    await broadcaster.pollOnce('t');
+    handle.queue.length = 0;
+    anchor.calls = [];
+    logger.warnings = [];
+
+    reader.hostnames = ['bridge-a', 'bridge-b'];
+    reader.snapshot = [
+      ['bridge-a', [{ iface: 'eth0', mac: 'aa', subnet: '10.0.0.0/24', ip: '10.0.0.231' }]],
+      ['bridge-b', [{ iface: 'eth0', mac: 'bb', subnet: '10.0.0.0/24', ip: '10.0.0.232' }]],
+    ];
+    await broadcaster.pollOnce('t');
+
+    expect(handle.queue[0].topologyUpdate.hostsEntries).toEqual([
+      { ip: '10.0.0.231', hostname: 'bridge-a' },
+      { ip: '10.0.0.232', hostname: 'bridge-b' },
+    ]);
+    expect(anchor.calls).toEqual([]);
+    expect(logger.warnings).toEqual([]);
+  });
+
+  it.each([
+    ['returns null', (anchor: StubAnchor): void => void (anchor.anchor = null)],
+    ['throws', (anchor: StubAnchor): void => void (anchor.error = new Error('probe exploded'))],
+  ])('keeps the serving subnet bridges and warns once when the anchor %s', async (_label, arrange) => {
+    const h1 = makeSession('10.100.5.5');
+    const h2 = makeSession('10.100.5.6');
+    const { broadcaster, reader, anchor, logger } = setupBroadcaster([h1, h2]);
+    arrange(anchor);
+    reader.hostnames = [BRIDGE_3427, BRIDGE_3428];
+    reader.snapshot = ROUTED_SITE_SNAPSHOT;
+
+    await expect(broadcaster.pollOnce('t')).resolves.toBeUndefined();
+
+    for (const handle of [h1, h2]) {
+      expect(handle.queue).toHaveLength(1);
+      expect(handle.queue[0].topologyUpdate.hostsEntries).toEqual([{ ip: '10.100.0.1', hostname: BRIDGE_3427 }]);
+    }
+    expect(logger.warnings).toHaveLength(1);
+    expect(logger.warnings[0]).toContain('2/2 sessions');
+    expect(logger.warnings[0]).toContain(BRIDGE_3428);
+    expect(logger.warnings[0]).not.toContain(BRIDGE_3427);
+  });
+
+  it('does not warn with a single bridge', async () => {
+    const handle = makeSession('10.0.0.5');
+    const { broadcaster, reader, anchor, logger } = setupBroadcaster([handle]);
+    reader.hostnames = ['bridge-a'];
+    reader.snapshot = [['bridge-a', [{ iface: 'eth0', mac: 'aa', subnet: '10.0.0.0/24', ip: '10.0.0.231' }]]];
+
+    await broadcaster.pollOnce('t');
+
+    expect(handle.queue[0].topologyUpdate.hostsEntries).toEqual([{ ip: '10.0.0.231', hostname: 'bridge-a' }]);
+    expect(anchor.calls).toEqual([]);
+    expect(logger.warnings).toEqual([]);
+  });
+});
+
 describe('hostsEntriesForPeer (unit-level)', () => {
-  it('returns empty when peer is null/empty', () => {
-    expect(hostsEntriesForPeer(null, [])).toEqual([]);
-    expect(hostsEntriesForPeer('', [])).toEqual([]);
+  it('returns empty when peer is null/empty', async () => {
+    const anchor = new StubAnchor();
+    expect(await hostsEntriesForPeer(null, [], anchor)).toEqual({ hostsEntries: [], missingBridges: [] });
+    expect(await hostsEntriesForPeer('', [], anchor)).toEqual({ hostsEntries: [], missingBridges: [] });
+    expect(anchor.calls).toEqual([]);
   });
 });
 

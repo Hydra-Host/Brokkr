@@ -32,7 +32,6 @@ describe('SwitchRecord', () => {
     assetTag: null,
     role: DeviceRole.Switch,
     status: DeviceStatus.ACTIVE,
-    deviceType: null,
     networkType: null,
     architecture: null,
     uefiBoot: null,

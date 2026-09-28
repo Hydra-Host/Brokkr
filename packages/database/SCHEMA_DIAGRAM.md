@@ -14,7 +14,6 @@ erDiagram
         string serial
         enum status "PLANNED, STAGED, ACTIVE, MAINTENANCE (coarse, role-agnostic)"
         enum role "Baremetal, Hypervisor, Bridge, etc."
-        enum deviceType "Hypervisor, Baremetal"
         enum networkType "NAT, Public"
         string systemUuid UK "SMBIOS UUID from ghw_product"
         string productSku "Vendor SKU (e.g. 755258-B21)"
@@ -25,8 +24,7 @@ erDiagram
         string architecture "uname -m: x86_64 / aarch64"
         bool iommuEnabled
         bool sriovEnabled
-        enum ipxeBuildTarget "IPXE, SNP, SNPONLY (nullable; per-device PXE override)"
-        string bootFilename "exact per-device DHCP option 67 filename (nullable; overrides ipxeBuildTarget)"
+        string bootFilename "exact per-device DHCP option 67 filename (nullable; overrides Server.ipxeBuildTarget)"
     }
 
     DeviceModel {
@@ -88,7 +86,7 @@ erDiagram
         string deviceId FK "unique (1:1 with Device)"
         enum lifecycleStatus "INVENTORY, PROVISIONING, PROVISIONED, OFFLINE, FAILED, DEPROVISIONING (server-only operational state)"
         enum powerStatus "On, Off, PoweringOn, PoweringOff, Rebooting (nullable = unknown)"
-        string ipxeBuildTarget "which brokkr-live build the host fetches"
+        enum ipxeBuildTarget "IPXE, SNP, SNPONLY (nullable; per-device PXE override)"
         string ipxeBuildVersion
         bool purgeTtys "wipe leftover tty entries on install"
         json storageLayouts "available disk-layout options"

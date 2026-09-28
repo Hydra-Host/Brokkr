@@ -24,6 +24,7 @@ import type {
   SessionHandle as BroadcasterSessionHandle,
   ConnectionRegistryPort,
   GrpcConfigPort,
+  PeerAnchorPort,
   TopologyBroadcasterLogger,
   TopologyServerMessage,
 } from './topology-broadcaster.types';
@@ -56,10 +57,14 @@ const SHUTDOWN_JOIN_TIMEOUT_MS = 5_000;
 
 export type BridgeRegistryReaderInjectToken = Type<BridgeRegistryReaderPort> | string | symbol;
 
+export type PeerAnchorInjectToken = Type<PeerAnchorPort> | string | symbol;
+
 export interface TopologyBroadcasterModuleOptions {
   registry: ConnectionRegistry;
   reader?: BridgeRegistryReaderPort;
   readerToken?: BridgeRegistryReaderInjectToken;
+  anchorResolver?: PeerAnchorPort;
+  anchorResolverToken?: PeerAnchorInjectToken;
   readerImports?: Array<Type<unknown> | DynamicModule | Promise<DynamicModule> | ForwardReference>;
   grpcConfig: GrpcConfigPort;
   logger: TopologyBroadcasterLogger;
@@ -71,31 +76,38 @@ export class TopologyBroadcasterModule implements OnApplicationBootstrap, OnAppl
   constructor(private readonly service: TopologyBroadcasterService) {}
 
   static forRoot(options: TopologyBroadcasterModuleOptions): DynamicModule {
-    const buildService = (reader: BridgeRegistryReaderPort): TopologyBroadcasterService =>
+    const buildService = (
+      reader: BridgeRegistryReaderPort,
+      anchorResolver: PeerAnchorPort,
+    ): TopologyBroadcasterService =>
       new TopologyBroadcasterService(
         adaptConnectionRegistryForBroadcaster(options.registry),
         reader,
+        anchorResolver,
         options.grpcConfig,
         options.logger,
         options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
       );
     const directReader = options.reader;
+    const directAnchorResolver = options.anchorResolver;
     const readerToken = options.readerToken;
+    const anchorResolverToken = options.anchorResolverToken;
     let serviceProvider: Provider;
-    if (directReader !== undefined) {
+    if (directReader !== undefined && directAnchorResolver !== undefined) {
       serviceProvider = {
         provide: TopologyBroadcasterService,
-        useFactory: () => buildService(directReader),
+        useFactory: () => buildService(directReader, directAnchorResolver),
       };
-    } else if (readerToken !== undefined) {
+    } else if (readerToken !== undefined && anchorResolverToken !== undefined) {
       serviceProvider = {
         provide: TopologyBroadcasterService,
-        useFactory: (reader: BridgeRegistryReaderPort) => buildService(reader),
-        inject: [readerToken],
+        useFactory: (reader: BridgeRegistryReaderPort, anchorResolver: PeerAnchorPort) =>
+          buildService(reader, anchorResolver),
+        inject: [readerToken, anchorResolverToken],
       };
     } else {
       throw new Error(
-        'TopologyBroadcasterModule.forRoot requires either `reader` (test wiring) or `readerToken` (DI wiring)',
+        'TopologyBroadcasterModule.forRoot requires either `reader` + `anchorResolver` (test wiring) or `readerToken` + `anchorResolverToken` (DI wiring)',
       );
     }
     return {

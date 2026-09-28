@@ -1,6 +1,13 @@
 import type { AuthSubject } from '../../auth/agent-token.service';
 import type { SessionHandle } from '../connection-registry/connection-registry.types';
-import type { BridgeEndpoint, BridgeSnapshot, HostsEntry } from '../topology-broadcaster/topology-broadcaster.types';
+import type {
+  BridgeEndpoint,
+  BridgeSnapshot,
+  HostsEntry,
+  PeerAnchorPort,
+} from '../topology-broadcaster/topology-broadcaster.types';
+
+export type { PeerAnchorPort };
 
 export enum GrpcStatusCode {
   OK = 0,
@@ -258,6 +265,7 @@ export interface AgentServicerDeps {
   upgradeService: AgentUpgradeServicePort;
   authContext: AuthContextPort;
   bridgeRegistryReader: BridgeRegistryReaderPort;
+  peerAnchorResolver: PeerAnchorPort;
   buildEndpoints: BuildEndpointsFn;
   maybeEnqueueCollectionOnRegister: MaybeEnqueueCollectionFn;
   results: ResultsAdapterPort;

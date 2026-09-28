@@ -24,6 +24,7 @@ describe('CableRecord', () => {
     frontPort: { findMany: vi.fn() },
     rearPort: { findMany: vi.fn() },
     cableTermination: { findMany: vi.fn(), findFirst: vi.fn() },
+    $queryRaw: vi.fn(),
   };
 
   const validTerminations = [
@@ -346,6 +347,37 @@ describe('CableRecord', () => {
 
       const result = await CableRecord.findByIdOrThrow('cable-1', 'caller-org');
       expect(result.data.id).toBe('cable-1');
+    });
+  });
+
+  describe('listPaginated with supplier scope', () => {
+    const row = (id: string) => ({
+      id,
+      type: null,
+      status: CableStatus.CONNECTED,
+      label: null,
+      color: null,
+      length: null,
+      lengthUnit: null,
+      description: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    it('hydrates the SQL page in page order and reports the SQL total', async () => {
+      portDelegates.$queryRaw
+        .mockResolvedValueOnce([{ id: 'c-3' }, { id: 'c-1' }])
+        .mockResolvedValueOnce([{ count: 31707 }]);
+      mockDelegate.findMany.mockResolvedValue([row('c-1'), row('c-3')]);
+
+      const result = await CableRecord.listPaginated({ page: 2, pageSize: 2 }, 'org-1');
+
+      expect(result.data.map((c) => c.data.id)).toEqual(['c-3', 'c-1']);
+      expect(result.meta).toEqual({ page: 2, pageSize: 2, totalItems: 31707, totalPages: 15854 });
+      expect(mockDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: { in: ['c-3', 'c-1'] } } }),
+      );
+      expect(portDelegates.interface.findMany).not.toHaveBeenCalled();
     });
   });
 

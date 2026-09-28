@@ -1,20 +1,27 @@
+import { isIP } from 'node:net';
+
 import { Injectable } from '@nestjs/common';
+import { runWithConcurrency } from '@repo/utils';
 import { getErrorMessage } from '../../common/error-utils';
 
-import { parseAddress, subnetMatchEntries } from './subnet-match';
+import { missingBridgeHostnames, subnetMatchEntries } from '../../bridge-network/bridge-registry-reader';
+import { stripV4MappedPrefix } from '../../bridge-network/peer-anchor-resolver';
 import type {
   BridgeEndpoint,
   BridgeRegistryReaderPort,
   BridgeSnapshot,
   ConnectionRegistryPort,
   GrpcConfigPort,
-  HostsEntry,
-  SessionHandle,
+  PeerAnchorPort,
+  PeerHostsResult,
   SnapshotDiff,
   TopologyBroadcasterLogger,
 } from './topology-broadcaster.types';
 
 export const DEFAULT_POLL_INTERVAL_MS = 30_000;
+
+// Bounds cold-cache anchor probes after a restart, when every session misses at once.
+const ANCHOR_RESOLVE_CONCURRENCY = 8;
 
 export function buildEndpoints(hostnames: Iterable<string>, port: number): BridgeEndpoint[] {
   const endpoints: BridgeEndpoint[] = [];
@@ -39,11 +46,41 @@ export function diffTopologySnapshot(prev: ReadonlySet<string> | null, curr: Rea
   };
 }
 
-export function hostsEntriesForPeer(peerIp: string | null, snapshot: BridgeSnapshot): HostsEntry[] {
-  if (!peerIp) return [];
-  const clientAddr = parseAddress(peerIp);
-  if (clientAddr === null) return [];
-  return subnetMatchEntries(snapshot, clientAddr).map(([ip, hostname]) => ({ ip, hostname }));
+// Eligibility comes from `liveSnapshot` so a bridge that left the registry is not reported missing.
+export async function hostsEntriesForPeer(
+  peerIp: string | null,
+  snapshot: BridgeSnapshot,
+  anchorResolver: PeerAnchorPort,
+  liveSnapshot: BridgeSnapshot = snapshot,
+): Promise<PeerHostsResult> {
+  if (!peerIp) return { hostsEntries: [], missingBridges: [] };
+  const clientIp = stripV4MappedPrefix(peerIp);
+  if (isIP(clientIp) === 0) return { hostsEntries: [], missingBridges: [] };
+
+  let entries = subnetMatchEntries(snapshot, clientIp);
+  let missingBridges = missingBridgeHostnames(
+    liveSnapshot,
+    entries.map(([, hostname]) => hostname),
+  );
+  if (missingBridges.length > 0) {
+    const anchor = await resolveAnchorSafely(anchorResolver, clientIp);
+    if (anchor !== null) {
+      entries = subnetMatchEntries(snapshot, clientIp, anchor);
+      missingBridges = missingBridgeHostnames(
+        liveSnapshot,
+        entries.map(([, hostname]) => hostname),
+      );
+    }
+  }
+  return { hostsEntries: entries.map(([ip, hostname]) => ({ ip, hostname })), missingBridges };
+}
+
+async function resolveAnchorSafely(anchorResolver: PeerAnchorPort, clientIp: string): Promise<string | null> {
+  try {
+    return await anchorResolver.resolve(clientIp);
+  } catch {
+    return null;
+  }
 }
 
 @Injectable()
@@ -57,6 +94,7 @@ export class TopologyBroadcasterService {
   constructor(
     private readonly registry: ConnectionRegistryPort,
     private readonly reader: BridgeRegistryReaderPort,
+    private readonly anchorResolver: PeerAnchorPort,
     private readonly grpcConfig: GrpcConfigPort,
     private readonly logger: TopologyBroadcasterLogger,
     private readonly pollIntervalMs: number = DEFAULT_POLL_INTERVAL_MS,
@@ -131,26 +169,46 @@ export class TopologyBroadcasterService {
 
     const sortedHostnames = [...snapshot].sort();
     const endpoints = buildEndpoints(sortedHostnames, this.grpcConfig.externalPort);
-    for (const [hostname, interfaces] of await this.reader.getBridgeRegistrySnapshot(jobId)) {
+    const liveSnapshot = await this.reader.getBridgeRegistrySnapshot(jobId);
+    for (const [hostname, interfaces] of liveSnapshot) {
       if (interfaces.length > 0) this.stickyInterfaces.set(hostname, interfaces);
     }
     const registrySnapshot = sortedSnapshotFromMap(this.stickyInterfaces);
-    await this.broadcast(endpoints, registrySnapshot, jobId);
+    await this.broadcast(endpoints, registrySnapshot, liveSnapshot, jobId);
   }
 
   private async broadcast(
     bridges: readonly BridgeEndpoint[],
     registrySnapshot: BridgeSnapshot,
+    liveSnapshot: BridgeSnapshot,
     jobId: string,
   ): Promise<void> {
     const handles = await this.registry.snapshotSessionHandles();
+    const results = await runWithConcurrency(
+      handles.map(
+        (handle) => () => hostsEntriesForPeer(handle.peerIp, registrySnapshot, this.anchorResolver, liveSnapshot),
+      ),
+      ANCHOR_RESOLVE_CONCURRENCY,
+    );
     let dropped = 0;
-    for (const handle of handles) {
-      const hostsEntries = hostsEntriesForHandle(handle, registrySnapshot);
+    let partial = 0;
+    const missing = new Set<string>();
+    handles.forEach((handle, i) => {
+      const { hostsEntries, missingBridges } = results[i];
+      if (missingBridges.length > 0) {
+        partial += 1;
+        for (const hostname of missingBridges) missing.add(hostname);
+      }
       const ok = handle.enqueue({
         topologyUpdate: { bridges, hostsEntries },
       });
       if (!ok) dropped += 1;
+    });
+    if (partial > 0) {
+      await this.logger.warning(
+        `topology broadcaster: partial hostsEntries for ${partial}/${handles.length} sessions; unresolved bridges=${formatSorted(missing)}`,
+        jobId,
+      );
     }
     if (dropped > 0) {
       await this.logger.debug(
@@ -159,10 +217,6 @@ export class TopologyBroadcasterService {
       );
     }
   }
-}
-
-export function hostsEntriesForHandle(handle: SessionHandle, snapshot: BridgeSnapshot): HostsEntry[] {
-  return hostsEntriesForPeer(handle.peerIp, snapshot);
 }
 
 function setsEqual(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {

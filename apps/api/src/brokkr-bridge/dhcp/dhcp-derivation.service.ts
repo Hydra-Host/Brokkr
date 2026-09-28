@@ -48,7 +48,7 @@ interface ReservationRow {
   prefixId: string;
   mac: string;
   ip: string;
-  // Per-device iPXE build override (Device.ipxeBuildTarget). Null when the device has no
+  // Per-device iPXE build override (Server.ipxeBuildTarget). Null when the device has no
   // override — the reservation then inherits the prefix-level ipxeBuildTarget.
   ipxeBuildTarget: string | null;
   bootFilename: string | null;
@@ -372,7 +372,7 @@ export class DhcpDerivationService {
         p.id AS "prefixId",
         lower(iface."macAddress") AS mac,
         host(ip.address) AS ip,
-        dev."ipxeBuildTarget" AS "ipxeBuildTarget",
+        srv."ipxeBuildTarget" AS "ipxeBuildTarget",
         dev."bootFilename" AS "bootFilename",
         dev.name AS hostname,
         iface."deviceId" AS "deviceId",
@@ -397,6 +397,7 @@ export class DhcpDerivationService {
       LEFT JOIN "Device" dev
         ON dev.id = iface."deviceId"
         AND dev."deletedAt" IS NULL
+      LEFT JOIN "Server" srv ON srv."deviceId" = dev.id
       WHERE p.id = ANY(${prefixIds}::text[])
         AND p."deletedAt" IS NULL
         ${orgScope}

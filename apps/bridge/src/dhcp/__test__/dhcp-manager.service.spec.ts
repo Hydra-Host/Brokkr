@@ -1105,6 +1105,33 @@ describe('DhcpServerService broadcast reply egress (multihomed)', () => {
     await expect(start).resolves.toBeUndefined();
   });
 
+  it('answers a renewal that arrives on the served interface reply socket, from that socket', async () => {
+    vi.useFakeTimers();
+    const { service, sockets, replySockets } = buildService(
+      () => true,
+      makeRuntimeConfig(),
+      INTERFACES,
+      undefined,
+      bothSubnetsAtoms(),
+    );
+
+    const start = service.start('job-1');
+    await flush();
+    expect(replySockets).toHaveLength(2);
+
+    const unicast: dgram.RemoteInfo = { address: '10.0.0.10', port: 68, family: 'IPv4', size: 0 };
+    replySockets[0].emitMessage(renewalWire('00:0b:82:01:fc:42', '10.0.0.10'), unicast);
+
+    expect(replySockets[0].send).toHaveBeenCalledTimes(1);
+    expect(replySockets[0].send.mock.calls[0][1]).toBe(68);
+    expect(replySockets[0].send.mock.calls[0][2]).toBe('10.0.0.10');
+    expect(sockets[0].send).not.toHaveBeenCalled();
+    expect(replySockets[1].send).not.toHaveBeenCalled();
+
+    service.stop('job-1');
+    await expect(start).resolves.toBeUndefined();
+  });
+
   it('creates send sockets on bind and closes them all on stop', async () => {
     vi.useFakeTimers();
     const { service, sockets, replySockets } = buildService(
@@ -1510,6 +1537,61 @@ describe('DhcpServerService AF_PACKET (L2) transport', () => {
     expect(yiaddrOf(sent.send.mock.calls[0][0] as Buffer)).toBe('10.20.0.10');
     expect(sent.send.mock.calls[0][1]).toBe(67);
     expect(sent.send.mock.calls[0][2]).toBe(relayAgentIp);
+
+    service.stop('job-1');
+    await expect(start).resolves.toBeUndefined();
+  });
+
+  it('answers a relayed DISCOVER that arrives on a served interface reply socket', async () => {
+    vi.useFakeTimers();
+    const relayAgentIp = '192.0.2.1';
+    const atoms = new Map([
+      ['prefix-local', makeAtom()],
+      [
+        'prefix-relayed',
+        makeAtom({
+          subnet: '10.20.0.0/24',
+          pools: [{ start: '10.20.0.10', end: '10.20.0.20' }],
+          routers: ['10.20.0.1'],
+          dnsServers: ['10.20.0.1'],
+          relay: { relayAgentIp },
+        }),
+      ],
+    ]);
+    const { service, sockets, replySockets } = buildAfpacketService(async () => atoms);
+    const start = service.start('job-1');
+    await flush();
+    vi.advanceTimersByTime(POLL_MS);
+    await flush();
+
+    const rinfo: dgram.RemoteInfo = { address: relayAgentIp, port: 67, family: 'IPv4', size: 0 };
+    replySockets[0].emitMessage(discoverWire(CLIENT_MAC, { giaddr: relayAgentIp }), rinfo);
+
+    expect(replySockets[0].send).toHaveBeenCalledTimes(1);
+    expect(yiaddrOf(replySockets[0].send.mock.calls[0][0])).toBe('10.20.0.10');
+    expect(replySockets[0].send.mock.calls[0][1]).toBe(67);
+    expect(replySockets[0].send.mock.calls[0][2]).toBe(relayAgentIp);
+    expect(sockets[0].send).not.toHaveBeenCalled();
+
+    service.stop('job-1');
+    await expect(start).resolves.toBeUndefined();
+  });
+
+  it('answers a unicast renewal on a reply socket once under full AF_PACKET coverage', async () => {
+    vi.useFakeTimers();
+    const { service, packetSockets, sockets, replySockets } = buildAfpacketService();
+    const start = service.start('job-1');
+    await flush();
+    vi.advanceTimersByTime(POLL_MS);
+    await flush();
+
+    const eth0 = packetSockets.get('eth0')!;
+    const rinfo: dgram.RemoteInfo = { address: '10.0.0.10', port: 68, family: 'IPv4', size: 0 };
+    replySockets[0].emitMessage(renewalWire(CLIENT_MAC, '10.0.0.10'), rinfo);
+
+    expect(eth0.sent.length + totalSends(sockets, replySockets)).toBe(1);
+    expect(replySockets[0].send).toHaveBeenCalledTimes(1);
+    expect(replySockets[0].send.mock.calls[0][2]).toBe('10.0.0.10');
 
     service.stop('job-1');
     await expect(start).resolves.toBeUndefined();

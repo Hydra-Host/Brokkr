@@ -50,19 +50,18 @@ def generate() -> str:
         out.append(emit_device_zone_move_prep(device_id, zone_id))
         out.append(
             f"""INSERT INTO "Device" (
-    id, name, status, role, "deviceType",
+    id, name, status, role,
     "zoneId", "networkType",
     "supplierId",
     architecture, "netplanOverride", "updatedAt"
 ) VALUES (
-    {q(device_id)}, {q(name)}, 'PLANNED'::"DeviceStatus", NULL, 'Baremetal'::"DeviceType",
+    {q(device_id)}, {q(name)}, 'PLANNED'::"DeviceStatus", NULL,
     {q(zone_id)}, 'Public'::"DeviceNetworkType",
     {org},
     {q(host_arch)}, NULL, NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, status = EXCLUDED.status, role = EXCLUDED.role,
-    "deviceType" = EXCLUDED."deviceType",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",
     architecture = EXCLUDED.architecture, "netplanOverride" = NULL,

@@ -1197,7 +1197,7 @@ describe('DhcpEngine persists the granted lease time (#28)', () => {
   });
 });
 
-describe('DhcpEngine does not silently extend a lease without opt-51 (RFC 2131 ยง4.3.1)', () => {
+describe('DhcpEngine lease expiry without opt-51', () => {
   const mac = '00:0b:82:01:fc:42';
 
   function recordingStore(puts: LeaseRecord[]): LeaseStore {
@@ -1228,7 +1228,7 @@ describe('DhcpEngine does not silently extend a lease without opt-51 (RFC 2131 ย
     expect(puts.at(-1)!.expiresAt).toBe(4_600);
   });
 
-  it('a renewing REQUEST without opt-51 also preserves the prior expiry', async () => {
+  it('a renewing REQUEST for its pool address renews the full lease from now', async () => {
     let now = 1_000;
     const puts: LeaseRecord[] = [];
     const engine = buildEngine({ leaseTtlSeconds: 3600 }, () => now, recordingStore(puts));
@@ -1241,9 +1241,102 @@ describe('DhcpEngine does not silently extend a lease without opt-51 (RFC 2131 ย
       engine.handle(request(DHCPREQUEST, { chaddr: mac, ciaddr: '10.0.0.10' }), SERVER_ID)!.reply,
     );
     expect(ack.messageType).toBe(DHCPACK);
-    expect(ack.options.get(OPT_LEASE_TIME)!.readUInt32BE(0)).toBe(3100);
+    expect(ack.options.get(OPT_LEASE_TIME)!.readUInt32BE(0)).toBe(3600);
+    expect(ack.options.get(OPT_RENEWAL_TIME)!.readUInt32BE(0)).toBe(900);
+    expect(ack.options.get(OPT_REBINDING_TIME)!.readUInt32BE(0)).toBe(1800);
+    await Promise.resolve();
+    expect(puts.at(-1)!.expiresAt).toBe(5_100);
+  });
+
+  it('a SELECTING REQUEST after an OFFER grants the full lease', async () => {
+    let now = 1_000;
+    const puts: LeaseRecord[] = [];
+    const engine = buildEngine({ leaseTtlSeconds: 3600 }, () => now, recordingStore(puts));
+
+    engine.handle(request(DHCPDISCOVER, { chaddr: mac }), SERVER_ID);
+
+    now = 1_000.4;
+    const ack = decodeReply(
+      engine.handle(
+        request(DHCPREQUEST, {
+          chaddr: mac,
+          options: new Map([
+            [OPT_SERVER_ID, encodeIp(SERVER_ID)],
+            [OPT_REQUESTED_IP, encodeIp('10.0.0.10')],
+          ]),
+        }),
+        SERVER_ID,
+      )!.reply,
+    );
+    expect(ack.messageType).toBe(DHCPACK);
+    expect(ack.options.get(OPT_LEASE_TIME)!.readUInt32BE(0)).toBe(3600);
     await Promise.resolve();
     expect(puts.at(-1)!.expiresAt).toBe(4_600);
+  });
+
+  it('a renewing REQUEST for its reservation renews the full lease from now', async () => {
+    let now = 1_000;
+    const puts: LeaseRecord[] = [];
+    const engine = buildEngine(
+      { leaseTtlSeconds: 3600, reservations: [{ mac, ip: '10.0.0.11' }] },
+      () => now,
+      recordingStore(puts),
+    );
+
+    engine.handle(request(DHCPDISCOVER, { chaddr: mac }), SERVER_ID);
+    expect(puts[0].ip).toBe('10.0.0.11');
+
+    now = 2_000;
+    const ack = decodeReply(
+      engine.handle(request(DHCPREQUEST, { chaddr: mac, ciaddr: '10.0.0.11' }), SERVER_ID)!.reply,
+    );
+    expect(ack.options.get(OPT_LEASE_TIME)!.readUInt32BE(0)).toBe(3600);
+    await Promise.resolve();
+    expect(puts.at(-1)!.expiresAt).toBe(5_600);
+  });
+
+  it('a renewal by a MAC holding an address reserved for another MAC keeps its expiry', async () => {
+    let now = 1_000;
+    const puts: LeaseRecord[] = [];
+    const engine = buildEngine(
+      {
+        leaseTtlSeconds: 3600,
+        rangeStart: '10.0.0.10',
+        rangeEnd: '10.0.0.10',
+        reservations: [{ mac: 'ee:ee:ee:ee:ee:01', ip: '10.0.0.10' }],
+      },
+      () => now,
+      recordingStore(puts),
+    );
+    const dynMac = 'aa:aa:aa:aa:aa:01';
+    engine.handle(request(DHCPREQUEST, { chaddr: dynMac, ciaddr: '10.0.0.10' }), SERVER_ID);
+    expect(puts.at(-1)!.expiresAt).toBe(4_600);
+
+    now = 2_000;
+    const ack = decodeReply(
+      engine.handle(request(DHCPREQUEST, { chaddr: dynMac, ciaddr: '10.0.0.10' }), SERVER_ID)!.reply,
+    );
+    expect(ack.options.get(OPT_LEASE_TIME)!.readUInt32BE(0)).toBe(2600);
+    await Promise.resolve();
+    expect(puts.at(-1)!.expiresAt).toBe(4_600);
+  });
+
+  it('a renewal of a held out-of-pool binding keeps its expiry so a narrowed pool drains', async () => {
+    const now = 1_000;
+    const puts: LeaseRecord[] = [];
+    const store: LeaseStore = {
+      ...recordingStore(puts),
+      loadAll: async () => [{ ip: '10.0.0.200', mac, hostname: null, expiresAt: 2_000 }],
+    };
+    const engine = buildEngine({ leaseTtlSeconds: 3600 }, () => now, store);
+    await engine.hydrate();
+
+    const ack = decodeReply(
+      engine.handle(request(DHCPREQUEST, { chaddr: mac, ciaddr: '10.0.0.200' }), SERVER_ID)!.reply,
+    );
+    expect(ack.options.get(OPT_LEASE_TIME)!.readUInt32BE(0)).toBe(1000);
+    await Promise.resolve();
+    expect(puts.at(-1)!.expiresAt).toBe(2_000);
   });
 
   it('an explicit opt-51 still resets the lease from now', async () => {

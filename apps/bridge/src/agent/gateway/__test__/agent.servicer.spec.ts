@@ -106,6 +106,7 @@ interface DepsOverrides {
   redisCache?: AgentServicerDeps['redisCache'];
   results?: AgentServicerDeps['results'];
   bridgeRegistryReader?: AgentServicerDeps['bridgeRegistryReader'];
+  peerAnchorResolver?: AgentServicerDeps['peerAnchorResolver'];
   registry?: AgentServicerDeps['registry'];
   agentVersionConfig?: AgentServicerDeps['agentVersionConfig'];
   upgradeService?: AgentServicerDeps['upgradeService'];
@@ -164,6 +165,7 @@ function buildServicer(overrides: DepsOverrides = {}): {
       getAllBridgeHostnames: vi.fn(async () => []),
       getBridgeRegistrySnapshot: vi.fn(async () => []),
     },
+    peerAnchorResolver: overrides.peerAnchorResolver ?? { resolve: vi.fn(async () => null) },
     buildEndpoints: overrides.buildEndpoints ?? (() => []),
     maybeEnqueueCollectionOnRegister: overrides.maybeEnqueueCollectionOnRegister ?? (async () => undefined),
     results: overrides.results ?? {
@@ -262,7 +264,7 @@ describe('AgentServicer.OpenSession — auth-subject enforcement', () => {
 });
 
 describe('AgentServicer.OpenSession — initial topology', () => {
-  it('uses one registry snapshot for SessionAccepted and a subnet-matched TopologyUpdate', async () => {
+  it('uses one registry snapshot for SessionAccepted and a subnet matched TopologyUpdate', async () => {
     const registry = new ConnectionRegistry();
     const getAllBridgeHostnames = vi.fn(async () => ['unstable-bridge']);
     const getBridgeRegistrySnapshot = vi.fn(
@@ -318,7 +320,7 @@ describe('AgentServicer.OpenSession — initial topology', () => {
 
   it('sends a TopologyUpdate without host rows when no bridge subnet matches', async () => {
     const registry = new ConnectionRegistry();
-    const { servicer, authContext } = buildServicer({
+    const { servicer, authContext, logger } = buildServicer({
       registry: registry as unknown as AgentServicerDeps['registry'],
       bridgeRegistryReader: {
         getAllBridgeHostnames: vi.fn(async () => []),
@@ -345,6 +347,120 @@ describe('AgentServicer.OpenSession — initial topology', () => {
       },
       done: false,
     });
+    const partial = logger.warning.mock.calls.map(([msg]) => String(msg)).filter((msg) => msg.includes('partial'));
+    expect(partial).toHaveLength(1);
+    expect(partial[0]).toContain('peer=10.0.0.5');
+    expect(partial[0]).toContain('unresolved bridges=[bridge-a]');
+
+    await iterator.return?.();
+  });
+});
+
+describe('AgentServicer.OpenSession — routed peer anchor', () => {
+  const routedSiteSnapshot: BridgeSnapshot = [
+    [
+      'bridge-2247-334-242-3427',
+      [
+        { iface: 'eno8303', subnet: '192.168.105.0/24', ip: '192.168.105.33' },
+        { iface: 'eth3', subnet: '10.2.0.0/16', ip: '10.2.0.2' },
+      ],
+    ],
+    [
+      'bridge-2247-334-242-3428',
+      [
+        { iface: 'eno8303', subnet: '192.168.105.0/24', ip: '192.168.105.215' },
+        { iface: 'eth3', subnet: '10.2.0.0/16', ip: '10.2.0.3' },
+      ],
+    ],
+  ];
+
+  it.each(['10.9.0.210', '::ffff:10.9.0.210'])(
+    'gives a routed /30 peer %s every bridge in the session-open TopologyUpdate',
+    async (peerIp) => {
+      const resolve = vi.fn(async (): Promise<string | null> => '10.2.0.2');
+      const { servicer, authContext, logger } = buildServicer({
+        registry: new ConnectionRegistry() as unknown as AgentServicerDeps['registry'],
+        bridgeRegistryReader: {
+          getAllBridgeHostnames: vi.fn(async () => []),
+          getBridgeRegistrySnapshot: vi.fn(async () => routedSiteSnapshot),
+        },
+        peerAnchorResolver: { resolve },
+        buildEndpoints,
+      });
+      authContext.subject = dev('dev-1');
+      const { context } = abortContext();
+      context.metadata = (key) => (key === 'x-real-ip' ? [peerIp] : []);
+
+      const iterator = servicer.OpenSession(regReq(), context)[Symbol.asyncIterator]();
+      await iterator.next();
+      const topology = await iterator.next();
+
+      expect(topology.value).toEqual({
+        topologyUpdate: {
+          bridges: [
+            { address: 'bridge-2247-334-242-3427:443', bridgeId: 'bridge-2247-334-242-3427' },
+            { address: 'bridge-2247-334-242-3428:443', bridgeId: 'bridge-2247-334-242-3428' },
+          ],
+          hostsEntries: [
+            { ip: '10.2.0.2', hostname: 'bridge-2247-334-242-3427' },
+            { ip: '10.2.0.3', hostname: 'bridge-2247-334-242-3428' },
+          ],
+        },
+      });
+      expect(resolve).toHaveBeenCalledWith('10.9.0.210');
+      expect(logger.warning).not.toHaveBeenCalled();
+
+      await iterator.return?.();
+    },
+  );
+
+  it('opens the session and warns about the unresolved bridge when the anchor resolver throws', async () => {
+    const { servicer, authContext, logger } = buildServicer({
+      registry: new ConnectionRegistry() as unknown as AgentServicerDeps['registry'],
+      bridgeRegistryReader: {
+        getAllBridgeHostnames: vi.fn(async () => []),
+        getBridgeRegistrySnapshot: vi.fn(
+          async (): Promise<BridgeSnapshot> => [
+            [
+              'bridge-2247-334-242-3427',
+              [
+                { iface: 'eth3', subnet: '10.2.0.0/16', ip: '10.2.0.2' },
+                { iface: 'eth4', subnet: '10.100.0.0/16', ip: '10.100.0.1' },
+              ],
+            ],
+            ['bridge-2247-334-242-3428', [{ iface: 'eth3', subnet: '10.2.0.0/16', ip: '10.2.0.3' }]],
+          ],
+        ),
+      },
+      peerAnchorResolver: {
+        resolve: vi.fn(async (): Promise<string | null> => {
+          throw new Error('probe exploded');
+        }),
+      },
+      buildEndpoints,
+    });
+    authContext.subject = dev('dev-1');
+    const { context } = abortContext();
+    context.metadata = (key) => (key === 'x-real-ip' ? ['10.100.5.5'] : []);
+
+    const iterator = servicer.OpenSession(regReq(), context)[Symbol.asyncIterator]();
+    const accepted = await iterator.next();
+    const topology = await iterator.next();
+
+    expect(accepted.done).toBe(false);
+    expect(topology.value).toEqual({
+      topologyUpdate: {
+        bridges: [
+          { address: 'bridge-2247-334-242-3427:443', bridgeId: 'bridge-2247-334-242-3427' },
+          { address: 'bridge-2247-334-242-3428:443', bridgeId: 'bridge-2247-334-242-3428' },
+        ],
+        hostsEntries: [{ ip: '10.100.0.1', hostname: 'bridge-2247-334-242-3427' }],
+      },
+    });
+    const partial = logger.warning.mock.calls.map(([msg]) => String(msg)).filter((msg) => msg.includes('partial'));
+    expect(partial).toHaveLength(1);
+    expect(partial[0]).toContain('bridge-2247-334-242-3428');
+    expect(partial[0]).not.toContain('bridge-2247-334-242-3427');
 
     await iterator.return?.();
   });

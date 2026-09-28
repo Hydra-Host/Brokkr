@@ -148,3 +148,30 @@
   border-top-width: 0;
   border-bottom-width: 0;
 }
+
+/* Modern style: app sidebar nav. Rows become inset rounded items, the retro
+   row separators and the ASCII logo go, and the SVG wordmark takes over. */
+[data-style='modern'] [data-slot='nav-section'],
+[data-style='modern'] [data-slot='nav-panel'] {
+  border-bottom-width: 0;
+}
+
+[data-style='modern'] [data-slot='nav-section'],
+[data-style='modern'] [data-slot='nav-leaf'] {
+  margin-inline: 0.5rem;
+  width: calc(100% - 1rem);
+  border-radius: var(--radius-md);
+}
+
+[data-style='modern'] [data-slot='nav-pin'] {
+  right: 1rem;
+}
+
+[data-style='modern'] [data-slot='nav-logo-retro'],
+[data-style='modern'] [data-slot='crumb-cursor'] {
+  display: none;
+}
+
+[data-style='modern'] [data-slot='nav-logo-modern'] {
+  display: block;
+}

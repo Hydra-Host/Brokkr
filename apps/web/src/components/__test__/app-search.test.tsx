@@ -52,7 +52,7 @@ describe('AppSearch', () => {
   it('opens from the Search trigger and lists leaves until the query filters them', async () => {
     renderSearch();
 
-    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+    fireEvent.click(screen.getByRole('button', { name: /jump to anything/i }));
 
     expect(await screen.findByPlaceholderText('Jump to page...')).toBeInTheDocument();
     expect(screen.getByText('Servers')).toBeInTheDocument();
@@ -74,7 +74,7 @@ describe('AppSearch', () => {
 
   it('navigates to an internal leaf and closes', async () => {
     renderSearch();
-    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+    fireEvent.click(screen.getByRole('button', { name: /jump to anything/i }));
     expect(await screen.findByText('Servers')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Servers'));
@@ -87,7 +87,7 @@ describe('AppSearch', () => {
 
   it('clears the query when the palette closes', async () => {
     renderSearch();
-    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+    fireEvent.click(screen.getByRole('button', { name: /jump to anything/i }));
     const input = await screen.findByPlaceholderText('Jump to page...');
     fireEvent.change(input, { target: { value: 'serv' } });
     expect(screen.queryByText('Clusters')).not.toBeInTheDocument();
@@ -97,7 +97,7 @@ describe('AppSearch', () => {
       expect(screen.queryByPlaceholderText('Jump to page...')).not.toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+    fireEvent.click(screen.getByRole('button', { name: /jump to anything/i }));
     expect(await screen.findByPlaceholderText('Jump to page...')).toHaveValue('');
     expect(screen.getByText('Servers')).toBeInTheDocument();
     expect(screen.getByText('Clusters')).toBeInTheDocument();
@@ -141,7 +141,7 @@ describe('AppSearch', () => {
     renderSearch([
       { title: 'Status', url: 'https://status.example.com', icon: Icon, sectionTitle: 'Help', external: true },
     ]);
-    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+    fireEvent.click(screen.getByRole('button', { name: /jump to anything/i }));
     fireEvent.click(await screen.findByText('Status'));
     expect(openSpy).toHaveBeenCalledWith('https://status.example.com', '_blank', 'noopener,noreferrer');
     await waitFor(() => {
@@ -152,7 +152,7 @@ describe('AppSearch', () => {
 
   it('opens a popup leaf and closes the palette', async () => {
     renderSearch([{ title: 'Console', url: '/console', icon: Icon, sectionTitle: 'Tools', popup: true }]);
-    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+    fireEvent.click(screen.getByRole('button', { name: /jump to anything/i }));
     fireEvent.click(await screen.findByText('Console'));
     expect(openNavPopup).toHaveBeenCalledWith('/console');
     await waitFor(() => {
@@ -163,7 +163,7 @@ describe('AppSearch', () => {
   it('silently drops an untrusted URL', async () => {
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
     renderSearch([{ title: 'Evil', url: 'javascript:alert(1)', icon: Icon, sectionTitle: 'Nope' }]);
-    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+    fireEvent.click(screen.getByRole('button', { name: /jump to anything/i }));
     fireEvent.click(await screen.findByText('Evil'));
     expect(navigateSpy).not.toHaveBeenCalled();
     expect(openSpy).not.toHaveBeenCalled();
@@ -172,7 +172,7 @@ describe('AppSearch', () => {
 
   it('clears a non-empty query on Escape without closing the palette', async () => {
     renderSearch();
-    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+    fireEvent.click(screen.getByRole('button', { name: /jump to anything/i }));
     const input = await screen.findByPlaceholderText('Jump to page...');
     fireEvent.change(input, { target: { value: 'serv' } });
     expect(input).toHaveValue('serv');

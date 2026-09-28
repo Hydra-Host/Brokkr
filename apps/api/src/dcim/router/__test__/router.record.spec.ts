@@ -32,7 +32,6 @@ describe('RouterRecord', () => {
     assetTag: null,
     role: DeviceRole.Router,
     status: DeviceStatus.ACTIVE,
-    deviceType: null,
     networkType: null,
     architecture: null,
     uefiBoot: null,

@@ -26,6 +26,7 @@ export * from './power-control';
 export * from './redact-payload';
 export * from './render-domains';
 export * from './reservation-invite-helpers';
+export * from './run-with-concurrency';
 export * from './saga-runs';
 export * from './sleep';
 export * from './slug';

@@ -1,3 +1,5 @@
+export type { PeerAnchorPort } from '../../bridge-network/peer-anchor-resolver';
+
 export interface BridgeEndpoint {
   address: string;
   bridgeId: string;
@@ -6,6 +8,11 @@ export interface BridgeEndpoint {
 export interface HostsEntry {
   ip: string;
   hostname: string;
+}
+
+export interface PeerHostsResult {
+  hostsEntries: HostsEntry[];
+  missingBridges: string[];
 }
 
 export interface InterfaceEntry {

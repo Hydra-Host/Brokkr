@@ -19,6 +19,9 @@ export type BridgeRegistrySnapshot = [string, unknown][];
 
 export interface BridgeRegistryReaderOptions {
   jobId?: string;
+  /** Address whose subnet stands in for the client's when no bridge shares the client's own subnet
+   *  (e.g. a /30 inband-mgmt host): pass the serving bridge's IP for that client. */
+  fallbackAddr?: string | null;
 }
 
 export async function getBridgeHostsEntriesForClient(
@@ -26,7 +29,7 @@ export async function getBridgeHostsEntriesForClient(
   clientIp: string,
   options: BridgeRegistryReaderOptions = {},
 ): Promise<[string, string][]> {
-  const { jobId = '' } = options;
+  const { jobId = '', fallbackAddr = null } = options;
   if (isIP(clientIp) === 0) {
     void getLogger().warning(
       `bridge registry reader: invalid client_ip '${clientIp}' [${APP_CLASS_NAME}] job=${jobId}`,
@@ -35,20 +38,45 @@ export async function getBridgeHostsEntriesForClient(
   }
 
   const snapshot = await getBridgeRegistrySnapshot(redis, { jobId });
-  const result = subnetMatchEntries(snapshot, clientIp);
+  const result = subnetMatchEntries(snapshot, clientIp, fallbackAddr);
   void getLogger().debug(
     `bridge registry reader: ${result.length} host entries for client_ip=${clientIp} [${APP_CLASS_NAME}] job=${jobId}`,
   );
   return result;
 }
 
-export function subnetMatchEntries(snapshot: BridgeRegistrySnapshot, clientAddr: string): [string, string][] {
+/** One hosts entry per bridge: its interface on the client's subnet, else the one on `fallbackAddr`'s
+ *  subnet (a /30 inband-mgmt host shares no subnet with any bridge but routes to the serving bridge). */
+export function subnetMatchEntries(
+  snapshot: ReadonlyArray<readonly [string, unknown]>,
+  clientAddr: string,
+  fallbackAddr: string | null = null,
+): [string, string][] {
   const out: [string, string][] = [];
+  const fallback = fallbackAddr !== null && isRoutableUnicastIpv4(fallbackAddr) ? fallbackAddr : null;
   for (const [hostname, interfaces] of snapshot) {
-    const ip = pickInterfaceIpForSubnet(interfaces, clientAddr);
+    const ip =
+      pickInterfaceIpForSubnet(interfaces, clientAddr) ??
+      (fallback !== null ? pickInterfaceIpForSubnet(interfaces, fallback) : null);
     if (ip !== null) out.push([ip, hostname]);
   }
   return out;
+}
+
+function isEligibleBridge(interfaces: unknown): boolean {
+  return clientFacingIpv4s(interfaces).length > 0;
+}
+
+export function missingBridgeHostnames(
+  snapshot: ReadonlyArray<readonly [string, unknown]>,
+  presentHostnames: Iterable<string>,
+): string[] {
+  const present = new Set(presentHostnames);
+  const missing = new Set<string>();
+  for (const [hostname, interfaces] of snapshot) {
+    if (!present.has(hostname) && isEligibleBridge(interfaces)) missing.add(hostname);
+  }
+  return [...missing].sort();
 }
 
 function interfaceEntries(interfaces: unknown): Record<string, unknown>[] {

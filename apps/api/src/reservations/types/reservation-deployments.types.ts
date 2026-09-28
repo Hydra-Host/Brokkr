@@ -1,4 +1,4 @@
-import { DeviceRole, DeviceType } from '@repo/database';
+import { DeviceRole } from '@repo/database';
 import { z } from 'zod';
 
 export const StorageDiskSchema = z.object({
@@ -93,7 +93,6 @@ export const ReservationDeviceSchema = z.object({
     tenantType: z.string(),
     logo: z.string().nullable(),
   }),
-  deviceType: z.nativeEnum(DeviceType),
   price: z.number(),
   isListed: z.boolean(),
   createdAt: z.coerce.date(),

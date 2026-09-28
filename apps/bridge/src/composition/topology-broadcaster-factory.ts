@@ -12,6 +12,7 @@ import type {
   BridgeRegistryReaderPort,
   BridgeSnapshot,
   GrpcConfigPort,
+  PeerAnchorPort,
   TopologyBroadcasterLogger,
 } from '../agent/topology-broadcaster/topology-broadcaster.types.js';
 import {
@@ -19,6 +20,7 @@ import {
   getBridgeRegistrySnapshot,
   type RegistryRedis,
 } from '../bridge-network/bridge-registry-reader.js';
+import { PeerAnchorResolver } from '../bridge-network/peer-anchor-resolver.js';
 import { logDebug, logInfo, logWarning } from '../logger/logger.service.js';
 
 const APP_CLASS_NAME = 'topology-broadcaster';
@@ -64,6 +66,7 @@ export function buildBridgeRegistryReaderFromRedis(redis: RegistryRedis): Bridge
 
 export interface TopologyBroadcasterFactoryOptions {
   reader?: BridgeRegistryReaderPort;
+  anchorResolver?: PeerAnchorPort;
   grpcConfig?: GrpcConfigPort;
   logger?: TopologyBroadcasterLogger;
   pollIntervalMs?: number;
@@ -84,20 +87,24 @@ export function buildTopologyBroadcasterComposition(
   const grpcConfig = options.grpcConfig ?? getGrpcConfig();
   const logger = options.logger ?? defaultLogger;
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+  const anchorResolver =
+    options.anchorResolver ?? (options.reader !== undefined ? new PeerAnchorResolver() : undefined);
 
   const moduleOptions: TopologyBroadcasterModuleOptions = {
     registry,
     reader: options.reader,
+    anchorResolver,
     grpcConfig,
     logger,
     pollIntervalMs,
   };
 
   const service =
-    options.reader !== undefined
+    options.reader !== undefined && anchorResolver !== undefined
       ? new TopologyBroadcasterService(
           adaptConnectionRegistryForBroadcaster(registry),
           options.reader,
+          anchorResolver,
           grpcConfig,
           logger,
           pollIntervalMs,

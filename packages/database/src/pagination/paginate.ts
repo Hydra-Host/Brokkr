@@ -81,27 +81,45 @@ function resolveSortableField(entry: string | { field: string; nullsLast: boolea
   return { prismaField: entry.field, nullsLast: entry.nullsLast };
 }
 
+export interface SortTerm {
+  field: string;
+  direction: 'asc' | 'desc';
+  nullsLast: boolean;
+}
+
+export function resolveSortTerms(
+  sort: string,
+  sortableFields: Record<string, string | { field: string; nullsLast: boolean }>,
+): SortTerm[] {
+  const terms: SortTerm[] = [];
+  for (const pair of sort.split(',')) {
+    const [field, dir] = pair.trim().split(':');
+    if (!field || !sortableFields[field]) continue;
+    const { prismaField, nullsLast } = resolveSortableField(sortableFields[field]);
+    terms.push({ field: prismaField, direction: dir === 'desc' ? 'desc' : 'asc', nullsLast });
+  }
+  return terms;
+}
+
+export function defaultSortTerms(config: Pick<PaginationConfig, 'sortableFields' | 'defaultSort'>): SortTerm[] {
+  const sortableFields = config.sortableFields ?? {};
+  return (config.defaultSort ?? []).map(({ field, direction }) => {
+    const entry = sortableFields[field];
+    const { prismaField, nullsLast } = entry ? resolveSortableField(entry) : { prismaField: field, nullsLast: false };
+    return { field: prismaField, direction, nullsLast };
+  });
+}
+
 function parseSortString(
   sort: string,
   sortableFields: Record<string, string | { field: string; nullsLast: boolean }>,
 ): { orderBy: Record<string, unknown>[]; usedFields: Set<string> } {
   const orderBy: Record<string, unknown>[] = [];
   const usedFields = new Set<string>();
-
-  const pairs = sort
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  for (const pair of pairs) {
-    const [field, dir] = pair.split(':');
-    if (!field || !sortableFields[field]) continue;
-
-    const direction = dir === 'desc' ? 'desc' : 'asc';
-    const { prismaField, nullsLast } = resolveSortableField(sortableFields[field]);
-    orderBy.push(buildNestedOrderBy(prismaField, direction, nullsLast));
-    usedFields.add(prismaField);
+  for (const term of resolveSortTerms(sort, sortableFields)) {
+    orderBy.push(buildNestedOrderBy(term.field, term.direction, term.nullsLast));
+    usedFields.add(term.field);
   }
-
   return { orderBy, usedFields };
 }
 
@@ -187,36 +205,26 @@ function buildPaginationArgs(
 } {
   const page = query.page ?? 1;
   const pageSize = resolvePageSize(query.pageSize, config.defaultPageSize);
-  const defaultSort = config.defaultSort ?? [];
   const sortableFields = config.sortableFields ?? {};
-
-  const resolvePrismaField = (field: string) => {
-    const entry = sortableFields[field];
-    return entry ? resolveSortableField(entry).prismaField : field;
-  };
-  const resolveDefault = (s: { field: string; direction: 'asc' | 'desc' }) => {
-    const entry = sortableFields[s.field];
-    if (!entry) return buildNestedOrderBy(s.field, s.direction);
-    const { prismaField, nullsLast } = resolveSortableField(entry);
-    return buildNestedOrderBy(prismaField, s.direction, nullsLast);
-  };
+  const defaultSort = defaultSortTerms(config);
+  const toOrderBy = (term: SortTerm) => buildNestedOrderBy(term.field, term.direction, term.nullsLast);
 
   let orderBy: Record<string, unknown>[];
   if (query.sort) {
     const parsed = parseSortString(query.sort, sortableFields);
     orderBy = parsed.orderBy;
     if (orderBy.length === 0) {
-      orderBy = defaultSort.map(resolveDefault);
+      orderBy = defaultSort.map(toOrderBy);
     } else {
       // Non-unique user sort isn't a total order — offset pagination could skip/dup rows across pages; append uncovered default tie-breakers (they end in a unique key).
-      for (const s of defaultSort) {
-        if (!parsed.usedFields.has(resolvePrismaField(s.field))) {
-          orderBy.push(resolveDefault(s));
+      for (const term of defaultSort) {
+        if (!parsed.usedFields.has(term.field)) {
+          orderBy.push(toOrderBy(term));
         }
       }
     }
   } else {
-    orderBy = defaultSort.map(resolveDefault);
+    orderBy = defaultSort.map(toOrderBy);
   }
 
   const whereConditions: Record<string, unknown>[] = [];

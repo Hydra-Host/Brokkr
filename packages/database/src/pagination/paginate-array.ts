@@ -1,5 +1,5 @@
 import type { PaginatedResult, PaginationConfig, PaginationQuery } from './paginate';
-import { buildPaginatedResponse, parseFiltersString, resolvePageSize } from './paginate';
+import { buildPaginatedResponse, defaultSortTerms, parseFiltersString, resolvePageSize } from './paginate';
 
 type SortPair = { fieldPath: string; direction: 'asc' | 'desc'; nullsLast: boolean };
 
@@ -97,12 +97,11 @@ function compareBySortPairs(a: unknown, b: unknown, sortPairs: SortPair[]): numb
 }
 
 function resolveDefaultSortPairs(config: PaginationConfig): SortPair[] {
-  const sortableFields = config.sortableFields ?? {};
-  return (config.defaultSort ?? []).map(({ field, direction }) => {
-    const raw = sortableFields[field] ?? field;
-    const { fieldPath, nullsLast } = resolveSortableField(raw);
-    return { fieldPath, direction, nullsLast };
-  });
+  return defaultSortTerms(config).map(({ field, direction, nullsLast }) => ({
+    fieldPath: field,
+    direction,
+    nullsLast,
+  }));
 }
 
 export function paginateArray<T>(items: T[], query: PaginationQuery, config: PaginationConfig): PaginatedResult<T> {

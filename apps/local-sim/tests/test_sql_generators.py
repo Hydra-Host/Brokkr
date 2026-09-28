@@ -371,7 +371,6 @@ def test_unassigned_devices_generator_emits_two_role_null_planned(fixture_fleet)
     sql = mod.generate()
     assert sql.count('INSERT INTO "Device"') == 2
     assert "'unassigned-1'" in sql and "'unassigned-2'" in sql
-    assert sql.count("NULL, 'Baremetal'::\"DeviceType\"") == 2
     assert sql.count("'PLANNED'::\"DeviceStatus\"") == 2
     assert "00000000-0000-0000-0000-111111111111" in sql  # zone 0
     assert "00000000-0000-0000-0000-000000000000" in sql  # hydra org
@@ -1278,7 +1277,6 @@ def test_baremetal_generator_seeds_server_active_shape(tmp_path, monkeypatch):
     assert sql.count('INSERT INTO "Device"') == 2
     assert sql.count("'Server'::\"DeviceRole\"") == 2
     assert sql.count("'ACTIVE'::\"DeviceStatus\"") == 2
-    assert sql.count("'Baremetal'::\"DeviceType\"") == 2
     assert sql.count('INSERT INTO "Server"') == 2
     assert "ON CONFLICT (id) DO UPDATE" in sql
     assert 'ON CONFLICT ("deviceId") DO NOTHING' in sql

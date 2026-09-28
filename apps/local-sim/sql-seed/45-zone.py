@@ -121,11 +121,11 @@ def _bridge_sql(zone_id: str, bridge_name: str, bridge_id: str, org_id: str) -> 
 -- supplierId is the owner FK and MUST equal zone.organizationId.
 WITH up AS (
     INSERT INTO "Device" (
-        id, name, status, role, "deviceType",
+        id, name, status, role,
         "zoneId", "supplierId", "updatedAt"
     ) VALUES (
         {q(bridge_id)}, {q(bridge_name)}, 'PLANNED'::"DeviceStatus",
-        'Bridge'::"DeviceRole", 'Baremetal'::"DeviceType",
+        'Bridge'::"DeviceRole",
         {q(zone_id)}, {q(org_id)}, NOW()
     )
     ON CONFLICT (id) DO UPDATE SET

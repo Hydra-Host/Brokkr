@@ -79,7 +79,6 @@ export function createMockDeploymentAggregate(overrides: Partial<DeploymentAggre
         serial: 'SERIAL123',
         status: 'PROVISIONED' as any,
         role: 'Baremetal' as any,
-        deviceType: 'Baremetal' as any,
         networkType: 'Public' as any,
         zoneId: null,
         supplierId: 'supplier-123',

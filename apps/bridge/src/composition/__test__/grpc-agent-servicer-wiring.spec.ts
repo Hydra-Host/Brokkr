@@ -40,6 +40,7 @@ import {
   BRIDGE_REGISTRY_READER,
   buildDispatchModuleOptions,
   buildGatewayModuleOptions,
+  PEER_ANCHOR_RESOLVER,
 } from '../grpc-server-factory.js';
 
 const TEXT_ENCODER = new TextEncoder();
@@ -124,8 +125,9 @@ function makeBridgeRegistryReaderModule() {
         provide: BRIDGE_REGISTRY_READER,
         useValue: { getAllBridgeHostnames: async (): Promise<readonly string[]> => [] },
       },
+      { provide: PEER_ANCHOR_RESOLVER, useValue: { resolve: async (): Promise<string | null> => null } },
     ],
-    exports: [BRIDGE_REGISTRY_READER],
+    exports: [BRIDGE_REGISTRY_READER, PEER_ANCHOR_RESOLVER],
   })
   class FakeBridgeRegistryReaderModule {}
   return FakeBridgeRegistryReaderModule;
@@ -254,6 +256,7 @@ describe('grpc-agent-servicer + Dispatcher wired with real collaborators', () =>
             connectionRegistryToken: ConnectionRegistry,
             resultPublisherToken: ResultPublisherService,
             bridgeRegistryReaderToken: BRIDGE_REGISTRY_READER,
+            peerAnchorResolverToken: PEER_ANCHOR_RESOLVER,
             redisCacheToken: RedisService,
             resultsAdapterToken: FAKE_RESULTS_ADAPTER,
             agentUpgradeServiceToken: AGENT_UPGRADE_SERVICE,

@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 export type NavIcon = React.ComponentType<{ className?: string }>;
@@ -17,6 +17,8 @@ export interface NavSection {
   title: string;
   icon: NavIcon;
   items: NavLeaf[];
+  /** Rendered as a flat list pinned to the sidebar's bottom instead of an accordion. */
+  footer?: boolean;
 }
 
 export interface FlatLeaf extends NavLeaf {
@@ -263,28 +265,19 @@ export function findLeafByUrl(sections: NavSection[], url: string): FlatLeaf | n
   return getVisibleLeaves(sections).find((leaf) => leaf.url === url) ?? null;
 }
 
-const PINNED_STORAGE_KEY = 'web:pinned-leaves';
-
-function readPinnedFromStorage(): string[] {
+function readUrlList(key: string): string[] {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = window.localStorage.getItem(PINNED_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((v): v is string => typeof v === 'string');
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(key) ?? '[]');
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
   } catch {
     return [];
   }
 }
 
-export function usePinnedLeaves(): {
-  pinnedUrls: string[];
-  isPinned: (url: string) => boolean;
-  togglePin: (url: string) => void;
-  reorderPin: (fromUrl: string, toUrl: string, position: 'above' | 'below') => void;
-} {
-  const [pinnedUrls, setPinnedUrls] = useState<string[]>(() => readPinnedFromStorage());
+/** A URL list persisted in localStorage and kept in sync across tabs. */
+function useStoredUrls(key: string): [string[], Dispatch<SetStateAction<string[]>>] {
+  const [urls, setUrls] = useState<string[]>(() => readUrlList(key));
 
   const isInitialMount = useRef(true);
   useEffect(() => {
@@ -292,40 +285,83 @@ export function usePinnedLeaves(): {
       isInitialMount.current = false;
       return;
     }
-    if (typeof window === 'undefined') return;
     try {
-      window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(pinnedUrls));
+      window.localStorage.setItem(key, JSON.stringify(urls));
     } catch (error) {
-      console.info('Failed to persist pinned leaves', error);
+      console.info(`Failed to persist ${key}`, error);
     }
-  }, [pinnedUrls]);
+  }, [key, urls]);
 
   useEffect(() => {
     const handler = (e: StorageEvent) => {
-      if (e.key === PINNED_STORAGE_KEY) setPinnedUrls(readPinnedFromStorage());
+      if (e.key === key) setUrls(readUrlList(key));
     };
     window.addEventListener('storage', handler);
     return () => window.removeEventListener('storage', handler);
-  }, []);
+  }, [key]);
 
-  const togglePin = useCallback((url: string) => {
-    setPinnedUrls((prev) => (prev.includes(url) ? prev.filter((u) => u !== url) : [...prev, url]));
-  }, []);
+  return [urls, setUrls];
+}
 
-  const reorderPin = useCallback((fromUrl: string, toUrl: string, position: 'above' | 'below') => {
-    setPinnedUrls((prev) => {
-      const fromIdx = prev.indexOf(fromUrl);
-      const toIdx = prev.indexOf(toUrl);
-      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev;
-      const targetIdx = toIdx + (position === 'below' ? 1 : 0);
-      const insertIdx = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
-      if (insertIdx === fromIdx) return prev;
-      const next = prev.slice();
-      const [moved] = next.splice(fromIdx, 1);
-      next.splice(insertIdx, 0, moved!);
-      return next;
-    });
-  }, []);
+const RECENT_STORAGE_KEY = 'web:recent-leaves';
+const RECENT_LIMIT = 8;
+
+/** Most recently visited nav leaves, current page first. */
+export function useRecentLeaves(sections: NavSection[], pathname: string): FlatLeaf[] {
+  const [recentUrls, setRecentUrls] = useStoredUrls(RECENT_STORAGE_KEY);
+
+  useEffect(() => {
+    const current = getVisibleLeaves(sections)
+      .filter((leaf) => isLeafActive(pathname, leaf.url))
+      .sort((a, b) => b.url.length - a.url.length)[0];
+    if (!current) return;
+    setRecentUrls((prev) =>
+      prev[0] === current.url
+        ? prev
+        : [current.url, ...prev.filter((url) => url !== current.url)].slice(0, RECENT_LIMIT),
+    );
+  }, [sections, pathname, setRecentUrls]);
+
+  return useMemo(
+    () => recentUrls.map((url) => findLeafByUrl(sections, url)).filter((l): l is FlatLeaf => l !== null),
+    [recentUrls, sections],
+  );
+}
+
+const PINNED_STORAGE_KEY = 'web:pinned-leaves';
+
+export function usePinnedLeaves(): {
+  pinnedUrls: string[];
+  isPinned: (url: string) => boolean;
+  togglePin: (url: string) => void;
+  reorderPin: (fromUrl: string, toUrl: string, position: 'above' | 'below') => void;
+} {
+  const [pinnedUrls, setPinnedUrls] = useStoredUrls(PINNED_STORAGE_KEY);
+
+  const togglePin = useCallback(
+    (url: string) => {
+      setPinnedUrls((prev) => (prev.includes(url) ? prev.filter((u) => u !== url) : [...prev, url]));
+    },
+    [setPinnedUrls],
+  );
+
+  const reorderPin = useCallback(
+    (fromUrl: string, toUrl: string, position: 'above' | 'below') => {
+      setPinnedUrls((prev) => {
+        const fromIdx = prev.indexOf(fromUrl);
+        const toIdx = prev.indexOf(toUrl);
+        if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev;
+        const targetIdx = toIdx + (position === 'below' ? 1 : 0);
+        const insertIdx = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
+        if (insertIdx === fromIdx) return prev;
+        const next = prev.slice();
+        const [moved] = next.splice(fromIdx, 1);
+        next.splice(insertIdx, 0, moved!);
+        return next;
+      });
+    },
+    [setPinnedUrls],
+  );
 
   const isPinned = useCallback((url: string) => pinnedUrls.includes(url), [pinnedUrls]);
 

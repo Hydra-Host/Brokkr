@@ -309,7 +309,7 @@ export class BaremetalService {
   }
 
   private async updateIpxeBuildTarget(deviceId: string, value: IpxeBuildTarget | null) {
-    await this.prisma.device.update({ where: { id: deviceId }, data: { ipxeBuildTarget: value } });
+    await this.prisma.server.update({ where: { deviceId }, data: { ipxeBuildTarget: value } });
   }
 
   async provisionServer(deviceUuid: string, body: ProvisionServerRequest) {

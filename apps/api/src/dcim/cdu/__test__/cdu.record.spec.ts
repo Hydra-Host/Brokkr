@@ -32,7 +32,6 @@ describe('CduRecord', () => {
     assetTag: null,
     role: DeviceRole.CDU,
     status: DeviceStatus.ACTIVE,
-    deviceType: null,
     networkType: null,
     architecture: null,
     uefiBoot: null,

@@ -7,6 +7,7 @@ import {
   DeviceTestRun,
   DeviceTestStatus,
   DeviceTestType,
+  IpxeBuildTarget,
   JobStatus,
   JobType,
   Prisma,
@@ -77,7 +78,7 @@ export const BaremetalPersistenceSchema = DeviceSpecColumnsSchema.extend({
     lifecycleStatus: z.nativeEnum(ServerLifecycleStatus),
     updatedAt: z.date(),
     powerStatus: z.nativeEnum(ServerPowerStatus).nullable(),
-    ipxeBuildTarget: z.string().nullable(),
+    ipxeBuildTarget: z.nativeEnum(IpxeBuildTarget).nullable(),
     ipxeBuildVersion: z.string().nullable(),
     purgeTtys: z.boolean().nullable(),
     storageLayouts: z.unknown(),
@@ -187,10 +188,6 @@ export class BaremetalRecord extends createActiveRecord(BaremetalPersistenceSche
 
   setConfigTemplate(configTemplateId: string | null): this {
     return this.set({ server: { configTemplateId } });
-  }
-
-  setIpxeBuild(target: string | null, version: string | null): this {
-    return this.set({ server: { ipxeBuildTarget: target, ipxeBuildVersion: version } });
   }
 
   setNetplanOverride(yaml: string | null): this {

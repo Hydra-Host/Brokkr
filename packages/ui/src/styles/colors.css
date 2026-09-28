@@ -9,7 +9,7 @@
    Adding a stock color = one seed block here + one THEME_COLORS entry in
    theme-provider.tsx. */
 :root {
-  --seed-accent-strong: #eceaff;
+  --seed-accent-strong: #a19af6;
   --seed-accent: #857cff;
   --seed-accent-deep: #635bff;
 }
@@ -26,7 +26,7 @@
 }
 
 [data-color='violet'] {
-  --seed-accent-strong: #eceaff;
+  --seed-accent-strong: #a19af6;
   --seed-accent: #857cff;
   --seed-accent-deep: #635bff;
 }

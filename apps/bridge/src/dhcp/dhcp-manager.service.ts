@@ -247,8 +247,8 @@ export class DhcpServerService implements BackgroundService {
     return this.serverId;
   }
 
-  // NIC-granular, so a served NIC's other addresses are bound too; harmless because a reply socket
-  // registers no 'message' handler and socketFor only ever picks one whose CIDR holds the target.
+  // NIC-granular, so a served NIC's other addresses are bound too; each one also receives the unicast
+  // sent to its address, and socketFor only ever picks one whose CIDR holds the target.
   private servedInterfaces(): NetworkInterface[] {
     if (this.servedInterfaceNames.size === 0) return [];
     return this.resolveInterfaces().filter((iface) => this.servedInterfaceNames.has(iface.name));
@@ -287,10 +287,15 @@ export class DhcpServerService implements BackgroundService {
     // only a fallback for engine.handle and dgram lookups.
     this.refreshServerId(jobId);
 
-    this.replySockets = new ReplySocketSet(this.createReplySocket, () => this.servedInterfaces(), {
-      info: (message) => this.logger.info(message, { jobId }),
-      warn: (message) => this.logger.warn(message, { jobId }),
-    });
+    this.replySockets = new ReplySocketSet(
+      this.createReplySocket,
+      () => this.servedInterfaces(),
+      {
+        info: (message) => this.logger.info(message, { jobId }),
+        warn: (message) => this.logger.warn(message, { jobId }),
+      },
+      (socket, msg, rinfo) => this.handleMessage(socket, msg, rinfo, jobId, false),
+    );
 
     this.logger.info('DHCP server starting (atoms-only, hot-standby reconcile loop)', { jobId });
 

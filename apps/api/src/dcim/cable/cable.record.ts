@@ -2,8 +2,9 @@ import { BadRequestException, ConflictException, ForbiddenException, NotFoundExc
 import { ActiveRecordRegistry, createActiveRecord } from '@repo/active-record';
 import { CableLengthUnit, CableSide, CableStatus, CableTerminationType, CableType, Prisma } from '@repo/database';
 import type { PaginatedResult, PaginationQuery } from '@repo/database/pagination';
-import { paginateArray, paginateQuery } from '@repo/database/pagination';
+import { buildPaginatedResponse, paginateQuery } from '@repo/database/pagination';
 import { z } from 'zod';
+import { listOwnedCablePage } from './cable-ownership.query';
 import { cablePaginationConfig } from './cable.pagination';
 
 const CablePersistenceSchema = z.object({
@@ -93,12 +94,9 @@ const ALL_TERMINATION_TYPES: CableTerminationType[] = [
 async function findOwnedPortIds(
   client: typeof ActiveRecordRegistry.client,
   terminationType: CableTerminationType,
-  filter: { ids?: string[]; supplierId: string },
+  filter: { ids: string[]; supplierId: string },
 ): Promise<string[]> {
-  const where = {
-    ...(filter.ids ? { id: { in: filter.ids } } : {}),
-    device: { supplierId: filter.supplierId },
-  };
+  const where = { id: { in: filter.ids }, device: { supplierId: filter.supplierId } };
   switch (terminationType) {
     case CableTerminationType.INTERFACE: {
       const rows = await client.interface.findMany({ where, select: { id: true } });
@@ -166,52 +164,16 @@ export class CableRecord extends createActiveRecord(CablePersistenceSchema, 'cab
         data: result.data.map((row) => this.fromRow(row)),
       };
     }
-    const owned = await this.listAll(supplierId);
-    const rows = owned.map((r) => r.data);
-    const result = paginateArray<z.infer<typeof CablePersistenceSchema>>(rows, query, cablePaginationConfig);
-    return {
-      ...result,
-      data: result.data.map((row) => this.fromRow(row)),
-    };
-  }
-
-  static async listAll(supplierId?: string): Promise<CableRecord[]> {
-    this.requireAction('read');
-    if (!supplierId) {
-      return this.findMany({
-        include: { terminations: true },
-        orderBy: { createdAt: 'desc' },
-      });
-    }
-    const ownedByType = await this.collectSupplierPortIds(supplierId);
-    const orConditions = this.terminationOrConditions(ownedByType);
-    if (orConditions.length === 0) {
-      return [];
-    }
-
-    const cables = await this.findMany({
-      where: { terminations: { some: { OR: orConditions } } },
-      include: { terminations: true },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    const client = ActiveRecordRegistry.client;
-    const ids: string[] = cables.map((c) => c.data.id);
-    const allTerms = await client.cableTermination.findMany({
-      where: { cableId: { in: ids } },
-      select: { cableId: true, terminationType: true, terminationId: true },
-    });
-    const termsByCable = new Map<string, Array<{ terminationType: CableTerminationType; terminationId: string }>>();
-    for (const t of allTerms) {
-      const list = termsByCable.get(t.cableId) ?? [];
-      list.push({ terminationType: t.terminationType, terminationId: t.terminationId });
-      termsByCable.set(t.cableId, list);
-    }
-    return cables.filter((cable) => {
-      const cableId: string = cable.data.id;
-      const terminations = termsByCable.get(cableId) ?? [];
-      return terminations.length > 0 && terminations.every((t) => ownedByType[t.terminationType].has(t.terminationId));
-    });
+    const { ids, totalItems } = await listOwnedCablePage(
+      ActiveRecordRegistry.client,
+      supplierId,
+      query,
+      cablePaginationConfig,
+    );
+    const records = await this.findMany({ where: { id: { in: ids } }, include: { terminations: true } });
+    const byId = new Map<string, CableRecord>(records.map((record) => [record.data.id, record]));
+    const ordered = ids.map((id) => byId.get(id)).filter((record) => record !== undefined);
+    return buildPaginatedResponse(ordered, totalItems, query, cablePaginationConfig.defaultPageSize);
   }
 
   static async findByIdOrThrow(id: string, supplierId?: string): Promise<CableRecord> {
@@ -350,40 +312,6 @@ export class CableRecord extends createActiveRecord(CablePersistenceSchema, 'cab
 
     const results = await Promise.all(checks);
     return results.every((r) => r.count === r.expected);
-  }
-
-  private static async collectSupplierPortIds(supplierId: string): Promise<Record<CableTerminationType, Set<string>>> {
-    const client = ActiveRecordRegistry.client;
-    const entries = await Promise.all(
-      ALL_TERMINATION_TYPES.map(async (t) => {
-        const ids = await findOwnedPortIds(client, t, { supplierId });
-        return [t, new Set(ids)] as const;
-      }),
-    );
-    const out: Record<CableTerminationType, Set<string>> = {
-      [CableTerminationType.INTERFACE]: new Set(),
-      [CableTerminationType.CONSOLE_PORT]: new Set(),
-      [CableTerminationType.CONSOLE_SERVER_PORT]: new Set(),
-      [CableTerminationType.POWER_PORT]: new Set(),
-      [CableTerminationType.POWER_OUTLET]: new Set(),
-      [CableTerminationType.FRONT_PORT]: new Set(),
-      [CableTerminationType.REAR_PORT]: new Set(),
-    };
-    for (const [t, ids] of entries) out[t] = ids;
-    return out;
-  }
-
-  private static terminationOrConditions(
-    ownedByType: Record<CableTerminationType, Set<string>>,
-  ): Prisma.CableTerminationWhereInput[] {
-    const orConditions: Prisma.CableTerminationWhereInput[] = [];
-    for (const t of ALL_TERMINATION_TYPES) {
-      const ids = ownedByType[t];
-      if (ids && ids.size > 0) {
-        orConditions.push({ terminationType: t, terminationId: { in: Array.from(ids) } });
-      }
-    }
-    return orConditions;
   }
 
   static validateLengthUnit(length?: unknown, lengthUnit?: CableLengthUnit | string | null) {

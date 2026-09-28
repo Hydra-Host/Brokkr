@@ -11,6 +11,7 @@ interface ClickToCopyStringProps {
   truncate?: boolean;
   maxWidth?: string;
   showIcon?: boolean;
+  iconPosition?: 'left' | 'right';
   tooltipSide?: 'top' | 'right' | 'bottom' | 'left';
 }
 
@@ -21,6 +22,7 @@ export function ClickToCopyString({
   truncate = false,
   maxWidth = '300px',
   showIcon = true,
+  iconPosition = 'right',
   tooltipSide = 'left',
 }: ClickToCopyStringProps) {
   const [copied, setCopied] = useState(false);
@@ -34,20 +36,23 @@ export function ClickToCopyString({
   const shownText = displayValue ?? value;
   const needsTooltip = truncate || !!displayValue;
 
+  const icon = showIcon && (
+    <div className="opacity-0 transition-opacity group-hover:opacity-100">
+      {copied ? (
+        <ClipboardCheck className="h-4 w-4 text-emerald-500" />
+      ) : (
+        <Clipboard className="text-muted-foreground h-4 w-4" />
+      )}
+    </div>
+  );
+
   const content = (
     <div className={cn('group flex cursor-pointer items-center gap-2', className)} onClick={handleCopy}>
+      {iconPosition === 'left' && icon}
       <span className={cn('font-mono text-sm', truncate && 'truncate')} style={truncate ? { maxWidth } : undefined}>
         {shownText}
       </span>
-      {showIcon && (
-        <div className="opacity-0 transition-opacity group-hover:opacity-100">
-          {copied ? (
-            <ClipboardCheck className="h-4 w-4 text-emerald-500" />
-          ) : (
-            <Clipboard className="text-muted-foreground h-4 w-4" />
-          )}
-        </div>
-      )}
+      {iconPosition === 'right' && icon}
     </div>
   );
 

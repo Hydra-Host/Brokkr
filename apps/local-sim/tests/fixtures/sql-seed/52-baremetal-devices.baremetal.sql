@@ -9,19 +9,18 @@ UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()
 WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' AND name = 'bench-1'
   AND id <> '0e8c9981-6781-5e20-9d8e-a84ccf7f548a' AND "supplierId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
 INSERT INTO "Device" (
-    id, name, status, role, "deviceType",
+    id, name, status, role,
     "zoneId", "networkType",
     "supplierId",
     architecture, "updatedAt"
 ) VALUES (
-    '0e8c9981-6781-5e20-9d8e-a84ccf7f548a', 'bench-1', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
+    '0e8c9981-6781-5e20-9d8e-a84ccf7f548a', 'bench-1', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole",
     '00000000-0000-0000-0000-111111111111', 'Public'::"DeviceNetworkType",
     (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
     'amd64', NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
-    "deviceType" = EXCLUDED."deviceType",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",
     architecture = EXCLUDED.architecture,
@@ -67,19 +66,18 @@ UPDATE "Device" SET "deletedAt" = NOW(), "updatedAt" = NOW()
 WHERE "deletedAt" IS NULL AND "zoneId" = '00000000-0000-0000-0000-111111111111' AND name = 'bench-2'
   AND id <> '95cea2ca-2407-5fd7-886c-a36fe707c379' AND "supplierId" = (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111');
 INSERT INTO "Device" (
-    id, name, status, role, "deviceType",
+    id, name, status, role,
     "zoneId", "networkType",
     "supplierId",
     architecture, "updatedAt"
 ) VALUES (
-    '95cea2ca-2407-5fd7-886c-a36fe707c379', 'bench-2', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
+    '95cea2ca-2407-5fd7-886c-a36fe707c379', 'bench-2', 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole",
     '00000000-0000-0000-0000-111111111111', 'Public'::"DeviceNetworkType",
     (SELECT "organizationId" FROM "Zone" WHERE id = '00000000-0000-0000-0000-111111111111'),
     'arm64', NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
-    "deviceType" = EXCLUDED."deviceType",
     "zoneId" = EXCLUDED."zoneId", "networkType" = EXCLUDED."networkType",
     "supplierId" = EXCLUDED."supplierId",
     architecture = EXCLUDED.architecture,

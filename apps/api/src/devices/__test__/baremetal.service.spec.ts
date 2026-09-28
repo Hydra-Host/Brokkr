@@ -106,6 +106,9 @@ describe('BaremetalService', () => {
       count: vi.fn(),
       update: vi.fn(),
     },
+    server: {
+      update: vi.fn(),
+    },
     $transaction: vi.fn(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx)),
   };
 
@@ -416,15 +419,15 @@ describe('BaremetalService', () => {
       expect(findSpy).not.toHaveBeenCalled();
     });
 
-    it('maps a provided ipxeBuildTarget to the Prisma enum via device.update', async () => {
+    it('maps a provided ipxeBuildTarget to the Prisma enum via server.update', async () => {
       const record = { data: { id: 'device-uuid-1' } };
       vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
-      mockPrismaClient.device.update.mockResolvedValue({});
+      mockPrismaClient.server.update.mockResolvedValue({});
 
       await service.updateServerInfo('device-uuid-1', { ipxeBuildTarget: 'SNP' });
 
-      expect(mockPrismaClient.device.update).toHaveBeenCalledWith({
-        where: { id: 'device-uuid-1' },
+      expect(mockPrismaClient.server.update).toHaveBeenCalledWith({
+        where: { deviceId: 'device-uuid-1' },
         data: { ipxeBuildTarget: IpxeBuildTarget.SNP },
       });
       // ipxeBuildTarget feeds the per-device DHCP reservation atom — updateServerInfo must eagerly
@@ -432,15 +435,15 @@ describe('BaremetalService', () => {
       expect(mockDhcpRepublishForDevice).toHaveBeenCalledWith('device-uuid-1');
     });
 
-    it('clears ipxeBuildTarget (null) via device.update', async () => {
+    it('clears ipxeBuildTarget (null) via server.update', async () => {
       const record = { data: { id: 'device-uuid-1' } };
       vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
-      mockPrismaClient.device.update.mockResolvedValue({});
+      mockPrismaClient.server.update.mockResolvedValue({});
 
       await service.updateServerInfo('device-uuid-1', { ipxeBuildTarget: null });
 
-      expect(mockPrismaClient.device.update).toHaveBeenCalledWith({
-        where: { id: 'device-uuid-1' },
+      expect(mockPrismaClient.server.update).toHaveBeenCalledWith({
+        where: { deviceId: 'device-uuid-1' },
         data: { ipxeBuildTarget: null },
       });
       expect(mockDhcpRepublishForDevice).toHaveBeenCalledWith('device-uuid-1');
@@ -453,23 +456,23 @@ describe('BaremetalService', () => {
         save: vi.fn().mockResolvedValue(undefined),
       };
       vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
-      mockPrismaClient.device.update.mockResolvedValue({});
+      mockPrismaClient.server.update.mockResolvedValue({});
 
       await service.updateServerInfo('device-uuid-1', { nickname: 'renamed' });
 
       expect(record.updateNickname).toHaveBeenCalledWith('renamed');
       // ipxeBuildTarget undefined (not null) → no per-device DHCP atom change → no eager republish,
-      // and device.update must not spuriously write the field.
+      // and server.update must not spuriously write the field.
       expect(mockDhcpRepublishForDevice).not.toHaveBeenCalled();
-      for (const call of mockPrismaClient.device.update.mock.calls) {
+      for (const call of mockPrismaClient.server.update.mock.calls) {
         expect(call[0].data).not.toHaveProperty('ipxeBuildTarget');
       }
     });
 
-    it('propagates a device.update failure and does not republish DHCP', async () => {
+    it('propagates a server.update failure and does not republish DHCP', async () => {
       const record = { data: { id: 'device-uuid-1' } };
       vi.spyOn(BaremetalRecord, 'findByDeviceIdOrThrow').mockResolvedValue(record as unknown as BaremetalRecord);
-      mockPrismaClient.device.update.mockRejectedValueOnce(new Error('db write failed'));
+      mockPrismaClient.server.update.mockRejectedValueOnce(new Error('db write failed'));
 
       await expect(service.updateServerInfo('device-uuid-1', { ipxeBuildTarget: 'SNP' })).rejects.toThrow(
         'db write failed',

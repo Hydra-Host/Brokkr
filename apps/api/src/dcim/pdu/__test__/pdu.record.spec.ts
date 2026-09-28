@@ -32,7 +32,6 @@ describe('PduRecord', () => {
     assetTag: null,
     role: DeviceRole.PDU,
     status: DeviceStatus.ACTIVE,
-    deviceType: null,
     networkType: null,
     architecture: null,
     uefiBoot: null,

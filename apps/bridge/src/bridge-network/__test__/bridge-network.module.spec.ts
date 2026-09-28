@@ -1,4 +1,3 @@
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetApplicationConfigForTests } from '../../core/application.config';
@@ -95,26 +94,20 @@ function stubInterfaces(service: BridgeIpResolutionService): void {
 
 describe('BridgeNetworkModule wiring', () => {
   it('forRoot wires the concrete netplanAddressExtractor by default (no silent degradation)', async () => {
-    const dynamic = BridgeNetworkModule.forRoot();
+    const dynamic = BridgeNetworkModule.forRoot({ resolution: { interfaceDiscovery: multiHomedInterfaces } });
     const service = resolveServiceFromModule(dynamic.providers ?? []);
-    stubInterfaces(service);
-    const fallback = vi.fn(async () => '10.10.0.1');
-    service.getBridgeIpForHostsFile = fallback;
 
-    const result = await service.getBridgeIpForDevice(MULTI_HOMED_NETPLAN);
+    const result = await service.resolveBridgeIpForDevice(MULTI_HOMED_NETPLAN);
 
-    expect(result).toBe('10.20.0.1');
-    expect(fallback).not.toHaveBeenCalled();
+    expect(result).toEqual({ ip: '10.20.0.1', authoritative: true });
   });
 
   it('forRoot lets the composition root override the extractor for tests', async () => {
     const extract = vi.fn(() => ['10.20.0.99']);
     const dynamic = BridgeNetworkModule.forRoot({
-      resolution: { netplanAddressExtractor: { extract } },
+      resolution: { netplanAddressExtractor: { extract }, interfaceDiscovery: multiHomedInterfaces },
     });
     const service = resolveServiceFromModule(dynamic.providers ?? []);
-    stubInterfaces(service);
-    service.getBridgeIpForHostsFile = vi.fn(async () => '10.10.0.1');
 
     const result = await service.getBridgeIpForDevice(MULTI_HOMED_NETPLAN);
 

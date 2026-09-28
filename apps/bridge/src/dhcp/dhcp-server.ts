@@ -804,7 +804,10 @@ export class DhcpEngine {
       return { wire, expiresAt: Math.floor(now + wire) };
     }
     const prior = subnet.leaseFor(mac);
-    if (prior !== undefined && prior.ip === ip && prior.expiresAt > now) {
+    // a REQUEST renews in full while the subnet would still assign this address, as Kea does; a
+    // re-DISCOVER (RFC 2131 §4.3.1) or a binding the subnet no longer backs keeps its expiry
+    const renewsInFull = request.messageType === DHCPREQUEST && subnet.selectAddress(mac, ip) === ip;
+    if (!renewsInFull && prior !== undefined && prior.ip === ip && prior.expiresAt > now) {
       const remaining = Math.min(Math.floor(prior.expiresAt - now), max);
       return { wire: Math.max(1, remaining), expiresAt: prior.expiresAt };
     }

@@ -104,13 +104,13 @@ def generate() -> str:
         out.append(emit_device_zone_move_prep(device_id, zone_id))
         out.append(
             f"""INSERT INTO "Device" (
-    id, name, status, role, "deviceType",
+    id, name, status, role,
     serial, "systemSerial", "chassisSerial", "baseboardSerial",
     "zoneId", "networkType",
     "supplierId",
     architecture, "updatedAt"
 ) VALUES (
-    {q(device_id)}, {q(name)}, 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole", 'Baremetal'::"DeviceType",
+    {q(device_id)}, {q(name)}, 'ACTIVE'::"DeviceStatus", 'Server'::"DeviceRole",
     {q(serial)}, {q(serial)}, {q(serial)}, {q(serial)},
     {q(zone_id)}, {q(network_type)}::"DeviceNetworkType",
     {sup},
@@ -118,7 +118,6 @@ def generate() -> str:
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name, status = EXCLUDED.status, role = EXCLUDED.role,
-    "deviceType" = EXCLUDED."deviceType",
     serial = EXCLUDED.serial,
     "systemSerial" = EXCLUDED."systemSerial", "chassisSerial" = EXCLUDED."chassisSerial",
     "baseboardSerial" = EXCLUDED."baseboardSerial",

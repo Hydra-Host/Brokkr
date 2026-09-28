@@ -45,7 +45,7 @@ A prefix's DHCP policy reaches the wire only when all of the following hold. Bro
 
 ## Authoritative mode
 
-**Lease TTL** sets how long each lease is valid, in seconds. The minimum is 120 and the default is 600. A client may request a shorter lease. The Bridge clamps the request between 120 seconds and the configured TTL. The renewal (T1) and rebind (T2) timers derive automatically at 25% and 50% of the granted lease.
+**Lease TTL** sets how long each lease is valid, in seconds. The minimum is 120 and the default is 600. A client may request a shorter lease. The Bridge clamps the request between 120 seconds and the configured TTL. The renewal (T1) and rebind (T2) timers derive automatically at 25% and 50% of the granted lease. Each renewal grants the full lease again.
 
 **Custom DHCP options** accept up to 32 code/value pairs. Codes range from 1 to 254 and values are limited to 255 characters. The Bridge rejects duplicate codes. Reserved codes are auto-managed and cannot be set manually. These are the codes the Bridge computes itself, such as the subnet mask, routers, DNS servers, and the lease timers. For any other code, your value takes precedence over the value the Bridge would have generated.
 

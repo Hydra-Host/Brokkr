@@ -27,6 +27,8 @@ export class ReplySocketSet {
     private readonly createSocket: () => dgram.Socket,
     private readonly enumerate: () => NetworkInterface[],
     private readonly logger: ReplySocketLogger,
+    private readonly onMessage: (socket: dgram.Socket, msg: Buffer, rinfo: dgram.RemoteInfo) => void,
+    private readonly port: number = DHCP_SERVER_PORT,
   ) {}
 
   async refresh(): Promise<void> {
@@ -71,13 +73,13 @@ export class ReplySocketSet {
     return new Promise<void>((resolve) => {
       const onError = (error: Error): void => {
         this.logger.warn(
-          `DHCP reply-socket bind failed on ${iface.name} ${iface.ip}:${DHCP_SERVER_PORT}: ${getErrorMessage(error)}`,
+          `DHCP reply-socket bind failed on ${iface.name} ${iface.ip}:${this.port}: ${getErrorMessage(error)}`,
         );
         this.closeSocket(socket);
         resolve();
       };
       socket.once('error', onError);
-      socket.bind(DHCP_SERVER_PORT, iface.ip, () => {
+      socket.bind(this.port, iface.ip, () => {
         socket.removeListener('error', onError);
         if (this.released) {
           this.closeSocket(socket);
@@ -105,8 +107,10 @@ export class ReplySocketSet {
             this.byIp.delete(iface.ip);
           }
         });
+        // the kernel hands unicast for this address (RENEW, relay) to this socket, not to the 0.0.0.0 listener
+        socket.on('message', (msg: Buffer, rinfo: dgram.RemoteInfo) => this.onMessage(socket, msg, rinfo));
         this.byIp.set(iface.ip, { socket, network: iface.network, interface: iface.name });
-        this.logger.info(`DHCP reply-socket bound on ${iface.name} ${iface.ip}:${DHCP_SERVER_PORT}`);
+        this.logger.info(`DHCP reply-socket bound on ${iface.name} ${iface.ip}:${this.port}`);
         resolve();
       });
     });

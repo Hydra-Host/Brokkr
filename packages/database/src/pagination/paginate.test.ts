@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPaginatedResponse,
   createPaginationConfig,
+  defaultSortTerms,
   paginateQuery,
   parseFiltersString,
+  resolveSortTerms,
   type PaginationConfig,
   type PaginationQuery,
 } from './paginate';
@@ -125,6 +127,46 @@ describe('paginateQuery: paging', () => {
     const result = await paginateQuery(delegate, { page: 2, pageSize: 2 }, config);
     expect(result.data).toBe(rows);
     expect(result.meta).toEqual({ page: 2, pageSize: 2, totalItems: 12, totalPages: 6 });
+  });
+});
+
+describe('resolveSortTerms', () => {
+  const sortableFields = { name: 'name', email: 'user.email', price: { field: 'price', nullsLast: true } };
+
+  it('returns no terms for an empty sort string', () => {
+    expect(resolveSortTerms('', sortableFields)).toEqual([]);
+  });
+
+  it('maps sort keys to their prisma field, coerces direction and carries nullsLast', () => {
+    expect(resolveSortTerms('email:sideways, price:desc', sortableFields)).toEqual([
+      { field: 'user.email', direction: 'asc', nullsLast: false },
+      { field: 'price', direction: 'desc', nullsLast: true },
+    ]);
+  });
+
+  it('drops sort keys that are not allowlisted', () => {
+    expect(resolveSortTerms('hackerField:desc,name:asc', sortableFields)).toEqual([
+      { field: 'name', direction: 'asc', nullsLast: false },
+    ]);
+  });
+});
+
+describe('defaultSortTerms', () => {
+  it('resolves default sort keys through sortableFields and keeps unmapped keys verbatim', () => {
+    const config: PaginationConfig = {
+      searchableFields: [],
+      sortableFields: { created: 'createdAt', price: { field: 'price', nullsLast: true } },
+      defaultSort: [
+        { field: 'created', direction: 'desc' },
+        { field: 'price', direction: 'asc' },
+        { field: 'id', direction: 'asc' },
+      ],
+    };
+    expect(defaultSortTerms(config)).toEqual([
+      { field: 'createdAt', direction: 'desc', nullsLast: false },
+      { field: 'price', direction: 'asc', nullsLast: true },
+      { field: 'id', direction: 'asc', nullsLast: false },
+    ]);
   });
 });
 

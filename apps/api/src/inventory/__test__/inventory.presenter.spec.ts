@@ -24,7 +24,6 @@ const mockDevice: DeviceAggregate = {
   },
   powerStatus: 'Running',
   role: DeviceRole.Baremetal,
-  deviceType: null,
   cpuModel: 'Intel Xeon',
   cpuThreadCount: 64,
   cpuCoreCount: 32,
